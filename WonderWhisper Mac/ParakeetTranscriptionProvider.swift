@@ -7,6 +7,7 @@ import OSLog
 
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var asrManager: AsrManager?
+    private var vadManager: VadManager?
     private var modelsDirectory: URL
     private let log = Logger(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
@@ -143,6 +144,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
         let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
         samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
+        // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
+        do {
+            if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
+                if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
+                    samples = trimmed
+                }
+            }
+        } catch {
+            // Non-fatal: proceed without VAD
+        }
         let stats = Self.stats(samples: samples)
         log.notice("[Parakeet] transcribe samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
         AppLog.dictation.log("[Parakeet] samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")
@@ -179,6 +190,72 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         scheduleIdleUnload()
         return text
+    }
+
+    // MARK: - VAD (Silero) integration
+    private func ensureVadManager() async throws -> VadManager? {
+        if let v = vadManager { return v }
+        do {
+            let cfg = VadConfig(
+                threshold: Float(UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double ?? 0.5),
+                debugMode: false,
+                computeUnits: .cpuAndNeuralEngine
+            )
+            let v = try await VadManager(config: cfg)
+            vadManager = v
+            return v
+        } catch {
+            return nil
+        }
+    }
+
+    // Returns trimmed samples if VAD succeeds; nil otherwise
+    private func applyVADIfAvailable(_ samples: [Float]) async throws -> [Float]? {
+        guard let vad = try await ensureVadManager() else { return nil }
+        if samples.isEmpty { return nil }
+        let chunk = 512
+        let total = samples.count
+        var activeRuns: [(startChunk: Int, endChunk: Int)] = []
+        var runStart: Int? = nil
+        var idx = 0
+        while idx < total {
+            let end = min(idx + chunk, total)
+            let window = Array(samples[idx..<end])
+            let res = try await vad.processChunk(window)
+            if res.isVoiceActive {
+                if runStart == nil { runStart = idx / chunk }
+            } else if let s = runStart {
+                let e = (idx / chunk) - 1
+                if e >= s { activeRuns.append((s, e)) }
+                runStart = nil
+            }
+            idx += chunk
+        }
+        if let s = runStart {
+            let e = (total - 1) / chunk
+            if e >= s { activeRuns.append((s, e)) }
+        }
+        // Merge small gaps (<=2 chunks) to avoid over-fragmentation
+        var merged: [(Int, Int)] = []
+        for seg in activeRuns.sorted(by: { $0.startChunk < $1.startChunk }) {
+            if let last = merged.last {
+                if seg.startChunk - last.1 <= 2 {
+                    merged[merged.count - 1].1 = max(last.1, seg.1)
+                } else {
+                    merged.append(seg)
+                }
+            } else {
+                merged.append(seg)
+            }
+        }
+        var out: [Float] = []
+        out.reserveCapacity(samples.count)
+        for (s, e) in merged {
+            let startIdx = s * chunk
+            let endIdx = min((e + 1) * chunk, total)
+            if endIdx > startIdx { out.append(contentsOf: samples[startIdx..<endIdx]) }
+        }
+        return out.isEmpty ? nil : out
     }
 
     // Decode arbitrary audio to mono 16k Float32 samples

@@ -17,6 +17,7 @@ actor DictationController {
     private let history: HistoryStore?
 
     private var llmEnabled: Bool = true
+    private var screenContextEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
@@ -77,7 +78,7 @@ actor DictationController {
                 state = .recording
                 // Pre-capture screen context early (AX first, OCR fallback)
                 preCapturedScreenText = nil
-                if llmEnabled {
+                if llmEnabled && screenContextEnabled {
                     Task { await self.preCaptureScreenContext() }
                 }
             } catch {
@@ -154,29 +155,33 @@ actor DictationController {
 
             var output = transcript
             var llmDT: TimeInterval = 0
-            let selected = screenContext.selectedText()
+            let selected = screenContextEnabled ? screenContext.selectedText() : nil
             var screenText: String? = nil
             var screenMethod: String? = nil
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
             if llmEnabled {
                 state = .processing
-                let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                // Prefer pre-captured context if available; else AX-first, then OCR
-                if let pre = preCapturedScreenText, !pre.isEmpty {
-                    screenText = pre
-                    screenMethod = preCapturedScreenMethod
-                } else if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
-                    screenText = focused
-                    screenMethod = "AX"
-                } else {
-                    screenText = await screenContext.captureActiveWindowText()
-                    screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
+                var appNameForPrompt: String? = nil
+                let (name, _) = screenContext.frontmostAppNameAndBundle()
+                appNameForPrompt = name
+                if screenContextEnabled {
+                    // Prefer pre-captured context if available; else AX-first, then OCR
+                    if let pre = preCapturedScreenText, !pre.isEmpty {
+                        screenText = pre
+                        screenMethod = preCapturedScreenMethod
+                    } else if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
+                        screenText = focused
+                        screenMethod = "AX"
+                    } else {
+                        screenText = await screenContext.captureActiveWindowText()
+                        screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
+                    }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
-                    appName: appName,
+                    appName: appNameForPrompt,
                     screenContents: screenText
                 )
                 // Capture full user message for history
@@ -215,12 +220,16 @@ actor DictationController {
             state = .idle
 
             // Record history entry
-            let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
+            var appNameHist: String? = nil
+            var bundleIDHist: String? = nil
+            let pair = screenContext.frontmostAppNameAndBundle()
+            appNameHist = pair.0
+            bundleIDHist = screenContextEnabled ? pair.1 : nil
             let totalDT = Date().timeIntervalSince(overallStart)
             await history?.append(
                 fileURL: recordingFileURL ?? currentRecordingURL,
-                appName: appName,
-                bundleID: bundleID,
+                appName: appNameHist,
+                bundleID: bundleIDHist,
                 transcript: transcript,
                 output: output,
                 screenContext: screenText,
@@ -239,16 +248,20 @@ actor DictationController {
             AppLog.dictation.error("Pipeline error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
             os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
             // Persist audio so the user can reprocess later even on failure
-            let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
+            var appNameHist: String? = nil
+            var bundleIDHist: String? = nil
+            let pair = screenContext.frontmostAppNameAndBundle()
+            appNameHist = pair.0
+            bundleIDHist = screenContextEnabled ? pair.1 : nil
             await history?.append(
                 fileURL: recordingFileURL,
-                appName: appName,
-                bundleID: bundleID,
+                appName: appNameHist,
+                bundleID: bundleIDHist,
                 transcript: "",
                 output: "",
                 screenContext: nil,
                 screenContextMethod: nil,
-                selectedText: screenContext.selectedText(),
+                selectedText: screenContextEnabled ? screenContext.selectedText() : nil,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,
@@ -270,6 +283,7 @@ actor DictationController {
     func updateTranscriberSettings(_ s: TranscriptionSettings) { self.transcriberSettings = s }
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
+    func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
 
@@ -331,24 +345,28 @@ actor DictationController {
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
 
-            let selected = screenContext.selectedText()
+            let selected = screenContextEnabled ? screenContext.selectedText() : nil
             var screenText: String? = nil
             var screenMethod: String? = nil
             if llmEnabled {
                 state = .processing
-                let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                // Prefer AX over OCR when no selection is present
-                if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
-                    screenText = focused
-                    screenMethod = "AX"
-                } else {
-                    screenText = await screenContext.captureActiveWindowText()
-                    screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
+                var appNameForPrompt: String? = nil
+                let (name, _) = screenContext.frontmostAppNameAndBundle()
+                appNameForPrompt = name
+                if screenContextEnabled {
+                    // Prefer AX over OCR when no selection is present
+                    if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
+                        screenText = focused
+                        screenMethod = "AX"
+                    } else {
+                        screenText = await screenContext.captureActiveWindowText()
+                        screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
+                    }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
-                    appName: appName,
+                    appName: appNameForPrompt,
                     screenContents: screenText
                 )
                 // Capture full user message for history
@@ -389,6 +407,7 @@ actor DictationController {
 // MARK: - Pre-capture helpers
 extension DictationController {
     private func preCaptureScreenContext() async {
+        if !screenContextEnabled { return }
         // Try AX first as it's near-instant; fallback to OCR if needed
         if let focused = screenContext.focusedText(), !focused.isEmpty {
             self.preCapturedScreenText = focused

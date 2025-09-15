@@ -21,7 +21,7 @@ struct SettingsModelsView: View {
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
                 }
-                
+
                 if vm.transcriptionModel == "groq-streaming" {
                     GroupBox("Groq Chunked Streaming") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -69,6 +69,9 @@ struct SettingsModelsView: View {
             }
             Section("LLM") {
                 Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
+                Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
+                    .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
+
                 Picker("LLM Provider", selection: $vm.llmProvider) {
                     Text("Groq").tag("groq")
                     Text("OpenRouter").tag("openrouter")

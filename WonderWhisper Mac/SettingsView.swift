@@ -75,6 +75,9 @@ struct SettingsView: View {
                         Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
                     }
                     Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
+                    Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
+                        .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
+
                     Picker("LLM model", selection: $vm.llmModel) {
                         Text("moonshotai/kimi-k2-instruct").tag("moonshotai/kimi-k2-instruct")
                         Text("openai/gpt-oss-120b").tag("openai/gpt-oss-120b")

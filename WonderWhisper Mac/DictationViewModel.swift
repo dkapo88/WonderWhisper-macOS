@@ -18,6 +18,8 @@ final class DictationViewModel: ObservableObject {
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // LLM provider selection: "groq" (default) or "openrouter"
     @Published var llmProvider: String = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq" { didSet { persistAndUpdate() } }
@@ -97,6 +99,8 @@ final class DictationViewModel: ObservableObject {
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
         let persistedTranscriptionModel = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel
         let persistedLLMEnabled = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true
+        let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
+
         let persistedLLMModel = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
@@ -158,8 +162,11 @@ final class DictationViewModel: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor in self.audioLevel = level }
         }
-        // Apply initial LLM enabled
-        Task { await controller.updateLLMEnabled(persistedLLMEnabled) }
+        // Apply initial LLM/screen-context flags
+        Task {
+            await controller.updateLLMEnabled(persistedLLMEnabled)
+            await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
+        }
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -303,6 +310,8 @@ final class DictationViewModel: ObservableObject {
     private func persistAndUpdate() {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
+        UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
+
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(llmProvider, forKey: "llm.provider")
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
@@ -355,6 +364,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMProvider(llmProviderInstance)
             await controller.updateLLMSettings(lSettings)
             await controller.updateLLMEnabled(llmEnabled)
+            await controller.updateScreenContextEnabled(screenContextEnabled)
         }
     }
 
