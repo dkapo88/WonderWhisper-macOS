@@ -326,7 +326,16 @@ final class DictationViewModel: ObservableObject {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         var provider: TranscriptionProvider? = nil
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-        if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
+        if transcriptionModel == "apple-native" {
+            if #available(macOS 26, *) {
+                provider = NativeAppleTranscriptionProvider()
+                tSettings = TranscriptionSettings(endpoint: URL(string: "https://apple-native.local")!, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+            } else {
+                AppLog.dictation.error("Apple native transcription requires macOS 26 or later; falling back to Groq.")
+                provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+                tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: AppConfig.defaultTranscriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+            }
+        } else if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
             provider = ParakeetTranscriptionProvider()
             tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)
         } else if transcriptionModel == "assemblyai-streaming" {

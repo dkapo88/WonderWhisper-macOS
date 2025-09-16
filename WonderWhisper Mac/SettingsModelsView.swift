@@ -16,6 +16,9 @@ struct SettingsModelsView: View {
                     Text("whisper-large-v3-turbo").tag("whisper-large-v3-turbo")
                     Text("whisper-large-v3").tag("whisper-large-v3")
                     Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
+                    if #available(macOS 26, *) {
+                        Text("Apple Native (macOS 26+)").tag("apple-native")
+                    }
                     Text("Groq (Chunked Streaming)").tag("groq-streaming")
                     Text("Parakeet v3 (local)").tag("parakeet-local")
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
