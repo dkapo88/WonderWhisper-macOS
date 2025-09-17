@@ -1,0 +1,224 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/HistoryView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Delete this history entry?",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 77
+        }
+      },
+      {
+        "comment": "",
+        "key": "Start a dictation to see it here.",
+        "location": {
+          "startingColumn": 98,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "No history yet",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "Max entries",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 27
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy Processed",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 63
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy Original",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 64
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reveal in Finder",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 65
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 96,
+          "startingLine": 67
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 78
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "This will delete the entry and any associated audio file.\n\n%@ — %@",
+        "location": {
+          "startingColumn": 45,
+          "startingLine": 83
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select an entry",
+        "location": {
+          "startingColumn": 48,
+          "startingLine": 173
+        }
+      },
+      {
+        "comment": "",
+        "key": "Processed",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 122
+        }
+      },
+      {
+        "comment": "",
+        "key": "Original Transcript",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 129
+        }
+      },
+      {
+        "comment": "",
+        "key": "System Message",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 138
+        }
+      },
+      {
+        "comment": "",
+        "key": "User Message",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 146
+        }
+      },
+      {
+        "comment": "",
+        "key": "Selected Text",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 154
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reveal",
+        "location": {
+          "startingColumn": 90,
+          "startingLine": 98
+        }
+      },
+      {
+        "comment": "",
+        "key": "Voice: %@",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 102
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM: %@",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 105
+        }
+      },
+      {
+        "comment": "",
+        "key": "Context: %@",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 108
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy Processed",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 125
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy Original",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 132
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy System Message",
+        "location": {
+          "startingColumn": 53,
+          "startingLine": 141
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy User Message",
+        "location": {
+          "startingColumn": 53,
+          "startingLine": 149
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reprocess",
+        "location": {
+          "startingColumn": 99,
+          "startingLine": 167
+        }
+      }
+    ]
+  },
+  "version": 1
+}

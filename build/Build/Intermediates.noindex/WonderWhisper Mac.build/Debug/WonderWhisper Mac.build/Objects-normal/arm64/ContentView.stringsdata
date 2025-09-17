@@ -1,0 +1,104 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ContentView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "WonderWhisper",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "WonderWhisper",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 77
+        }
+      },
+      {
+        "comment": "",
+        "key": "Dictation",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "History",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · General",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 97
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · Models",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · Prompts",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 103
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · Vocabulary",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 106
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · Shortcuts",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 109
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings · API Keys",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Scratchpad — click here and use your shortcut to dictate, or type notes…",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 138
+        }
+      }
+    ]
+  },
+  "version": 1
+}

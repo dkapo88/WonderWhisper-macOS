@@ -1,0 +1,23 @@
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Shared/ASRConstants.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ASRConstants.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ASRConstants.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ASRConstants.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ASRConstants.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ASRConstants.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Shared/AudioConverter.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioConverter.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioConverter.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioConverter.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioConverter.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioConverter.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/VAD/VadAudioProcessor.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/VadAudioProcessor.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/VadAudioProcessor.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/VadAudioProcessor.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/VadAudioProcessor.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/VadAudioProcessor.swiftdeps"
+  }
+}

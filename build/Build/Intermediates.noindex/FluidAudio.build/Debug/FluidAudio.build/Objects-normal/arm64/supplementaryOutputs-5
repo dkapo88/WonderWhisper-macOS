@@ -1,0 +1,23 @@
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/TDT/TdtDecoder.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoder.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoder.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoder.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoder.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoder.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/TDT/TdtDecoderState.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoderState.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoderState.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoderState.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoderState.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtDecoderState.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/TDT/TdtHypothesis.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtHypothesis.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtHypothesis.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtHypothesis.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtHypothesis.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/TdtHypothesis.swiftdeps"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/AudioValidation.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioValidation.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioValidation.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioValidation.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioValidation.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/AudioValidation.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/DiarizerManager.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerManager.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerManager.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerManager.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerManager.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerManager.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/DiarizerModels.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerModels.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerModels.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerModels.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerModels.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DiarizerModels.swiftdeps"
+  }
+}

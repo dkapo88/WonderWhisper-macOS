@@ -1,0 +1,264 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Settings",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 12
+        }
+      },
+      {
+        "comment": "",
+        "key": "API Keys",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "Global Shortcut",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 43
+        }
+      },
+      {
+        "comment": "",
+        "key": "Transcription & LLM",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 70
+        }
+      },
+      {
+        "comment": "",
+        "key": "Vocabulary & Text Replacements",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq API Key",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enter Groq API Key",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 20
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 23
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Groq Key",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 22
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI API Key",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 30
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enter AssemblyAI API Key",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save AssemblyAI Key",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "Shortcut",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 45
+        }
+      },
+      {
+        "comment": "",
+        "key": "This shortcut requires Accessibility permission (for modifier/Fn detection).",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 56
+        }
+      },
+      {
+        "comment": "",
+        "key": "System Settings → Privacy & Security → Accessibility",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 60
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open Accessibility Settings",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 59
+        }
+      },
+      {
+        "comment": "",
+        "key": "Voice model",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 72
+        }
+      },
+      {
+        "comment": "",
+        "key": "Post-processing with LLM",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 77
+        }
+      },
+      {
+        "comment": "",
+        "key": "Include screen context (selection/OCR)",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 78
+        }
+      },
+      {
+        "comment": "",
+        "key": "When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM model",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use AX direct insertion (faster when supported)",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "Requires Accessibility permission. Falls back to paste if not supported.",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 86
+        }
+      },
+      {
+        "comment": "",
+        "key": "whisper-large-v3-turbo",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 73
+        }
+      },
+      {
+        "comment": "",
+        "key": "whisper-large-v3",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "distil-whisper-large-v3-en",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 75
+        }
+      },
+      {
+        "comment": "",
+        "key": "moonshotai/kimi-k2-instruct",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "openai/gpt-oss-120b",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 83
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom vocabulary (comma-separated)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 92
+        }
+      },
+      {
+        "comment": "",
+        "key": "Text replacements (from=to per line; applied on-device after LLM)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "e.g. Groq, Kimi, WonderWhisper",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 93
+        }
+      }
+    ]
+  },
+  "version": 1
+}

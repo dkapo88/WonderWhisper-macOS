@@ -1,0 +1,23 @@
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/MLArrayCache.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MLArrayCache.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MLArrayCache.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MLArrayCache.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MLArrayCache.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MLArrayCache.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/MetalAcceleration.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MetalAcceleration.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MetalAcceleration.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MetalAcceleration.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MetalAcceleration.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/MetalAcceleration.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/PerformanceMetrics.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.swiftdeps"
+  }
+}

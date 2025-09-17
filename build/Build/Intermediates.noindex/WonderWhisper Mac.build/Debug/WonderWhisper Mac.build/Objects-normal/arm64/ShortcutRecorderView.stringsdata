@@ -1,0 +1,32 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ShortcutRecorderView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Press keys…",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "Change…",
+        "location": {
+          "startingColumn": 52,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 23
+        }
+      }
+    ]
+  },
+  "version": 1
+}

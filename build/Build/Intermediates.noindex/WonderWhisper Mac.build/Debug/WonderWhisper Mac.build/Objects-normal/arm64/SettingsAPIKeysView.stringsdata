@@ -1,0 +1,136 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsAPIKeysView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Groq",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 12
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 26
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 14
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Groq Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 28
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save AssemblyAI Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 32
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 47
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Deepgram Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 46
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 56
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 61
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save OpenRouter Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 60
+        }
+      }
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,400 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsModelsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Transcription",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 14
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 73
+        }
+      },
+      {
+        "comment": "",
+        "key": "Voice model",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 15
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq Chunked Streaming",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 29
+        }
+      },
+      {
+        "comment": "",
+        "key": "Parakeet Status",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 47
+        }
+      },
+      {
+        "comment": "",
+        "key": "Parakeet Advanced",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 68
+        }
+      },
+      {
+        "comment": "",
+        "key": "whisper-large-v3-turbo",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "whisper-large-v3",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 17
+        }
+      },
+      {
+        "comment": "",
+        "key": "distil-whisper-large-v3-en",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "Apple Native (macOS 26+)",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 20
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq (Chunked Streaming)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 22
+        }
+      },
+      {
+        "comment": "",
+        "key": "Parakeet v3 (local)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 23
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI (Streaming)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 24
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram (Streaming)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "• Processes audio in 3-second chunks for faster response times",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 37
+        }
+      },
+      {
+        "comment": "",
+        "key": "• Results appear within seconds instead of waiting for full recording",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 38
+        }
+      },
+      {
+        "comment": "",
+        "key": "• Ideal for longer recordings and real-time feedback",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 39
+        }
+      },
+      {
+        "comment": "",
+        "key": "• Uses whisper-large-v3-turbo for optimal speed/accuracy balance",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "Faster results through intelligent audio chunking",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Path: %@",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Framework: Linked",
+        "location": {
+          "startingColumn": 66,
+          "startingLine": 50
+        }
+      },
+      {
+        "comment": "",
+        "key": "Framework: Not Linked",
+        "location": {
+          "startingColumn": 88,
+          "startingLine": 50
+        }
+      },
+      {
+        "comment": "",
+        "key": "Models: Present",
+        "location": {
+          "startingColumn": 73,
+          "startingLine": 52
+        }
+      },
+      {
+        "comment": "",
+        "key": "Models: Missing",
+        "location": {
+          "startingColumn": 93,
+          "startingLine": 52
+        }
+      },
+      {
+        "comment": "",
+        "key": "Download/Update Models",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 56
+        }
+      },
+      {
+        "comment": "",
+        "key": "Show in Finder",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "Remove Models",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 59
+        }
+      },
+      {
+        "comment": "",
+        "key": "Post-processing with LLM",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Include screen context (selection/OCR)",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 75
+        }
+      },
+      {
+        "comment": "",
+        "key": "When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 76
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM Provider",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 78
+        }
+      },
+      {
+        "comment": "",
+        "key": "Routing Preference",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 84
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM model",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 92
+        }
+      },
+      {
+        "comment": "",
+        "key": "Streaming (SSE)",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 99
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enable streaming responses for faster time-to-first-token. Uses the same prompt and output format.",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 80
+        }
+      },
+      {
+        "comment": "",
+        "key": "Prioritize latency",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "Prioritize throughput",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 86
+        }
+      },
+      {
+        "comment": "",
+        "key": "moonshotai/kimi-k2-instruct",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 93
+        }
+      },
+      {
+        "comment": "",
+        "key": "moonshotai/kimi-k2-instruct-0905",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "openai/gpt-oss-120b",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 95
+        }
+      },
+      {
+        "comment": "",
+        "key": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 96
+        }
+      },
+      {
+        "comment": "",
+        "key": "Loading…",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 143
+        }
+      },
+      {
+        "comment": "",
+        "key": "No models found",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 143
+        }
+      },
+      {
+        "comment": "",
+        "key": "Search OpenRouter models",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 132
+        }
+      },
+      {
+        "comment": "",
+        "key": "Refreshing…",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 135
+        }
+      },
+      {
+        "comment": "",
+        "key": "Refresh",
+        "location": {
+          "startingColumn": 54,
+          "startingLine": 135
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tip: choose 'openrouter/auto' to let OpenRouter route by %@.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 157
+        }
+      }
+    ]
+  },
+  "version": 1
+}

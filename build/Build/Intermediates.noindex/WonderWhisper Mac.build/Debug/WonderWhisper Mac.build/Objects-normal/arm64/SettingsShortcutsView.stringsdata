@@ -1,0 +1,64 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsShortcutsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Global Shortcut",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 10
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste Last Transcript",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "Shortcut",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 11
+        }
+      },
+      {
+        "comment": "",
+        "key": "This shortcut requires Accessibility permission (for modifier/Fn detection).",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 22
+        }
+      },
+      {
+        "comment": "",
+        "key": "System Settings → Privacy & Security → Accessibility",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 26
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open Accessibility Settings",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Default: ⌃⌘V. Pastes last output (LLM preferred).",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 36
+        }
+      }
+    ]
+  },
+  "version": 1
+}
