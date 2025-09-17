@@ -450,16 +450,20 @@ final class DictationViewModel: ObservableObject {
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
-            await controller.toggle(userPrompt: promptText)
+            let state = await controller.currentState()
+            switch state {
+            case .idle, .error:
+                await controller.toggle(userPrompt: promptText)
+            default:
+                break
+            }
         case .up:
             let start = promptPressTimes.removeValue(forKey: id)
             guard let start else { return }
             let duration = Date().timeIntervalSince(start)
-            if duration >= promptPressThreshold {
-                let state = await controller.currentState()
-                if case .recording = state {
-                    await controller.finish(userPrompt: promptText)
-                }
+            let state = await controller.currentState()
+            if case .recording = state {
+                await controller.finish(userPrompt: promptText)
             }
         }
     }
