@@ -422,8 +422,8 @@ final class DictationViewModel: ObservableObject {
         if let userText { updated.userPrompt = userText }
         if updated != prompts[index] {
             prompts[index] = updated
+            updateProviders()
         }
-        updateProviders()
     }
 
     private func refreshPromptHotkeys() {

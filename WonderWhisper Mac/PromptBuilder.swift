@@ -91,15 +91,15 @@ struct PromptBuilder {
         func trimEquals(_ line: String, _ token: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines) == token }
         func leadingSpaces(_ line: String) -> String { String(line.prefix { $0 == " " || $0 == "\t" }) }
 
-        // 1) Self-closing form: <VOCABULARY/>
-        if let idx = lines.firstIndex(where: { trimEquals($0, "<VOCABULARY/>") }) {
+        // 1) Self-closing form: <VOCABULARY/> or <VOCABULARY />
+        if let idx = lines.firstIndex(where: { let t = $0.trimmingCharacters(in: .whitespacesAndNewlines); return t == "<VOCABULARY/>" || t == "<VOCABULARY />" }) {
             let indent = leadingSpaces(lines[idx])
             let block = ["\(indent)<VOCABULARY>", "\(indent)\(vocabJoined)", "\(indent)</VOCABULARY>"]
             lines.replaceSubrange(idx...idx, with: block)
             return lines.joined(separator: "\n")
         }
 
-        // 2) Block form: <VOCABULARY> ... </VOCABULARY>
+        // 2) Block form (line based)
         if let open = lines.firstIndex(where: { trimEquals($0, "<VOCABULARY>") }) {
             if let close = lines.indices.dropFirst(open + 1).first(where: { idx in
                 trimEquals(lines[idx], "</VOCABULARY>")
@@ -109,6 +109,22 @@ struct PromptBuilder {
                 lines.replaceSubrange((open+1)..<close, with: contentLines)
                 return lines.joined(separator: "\n")
             }
+        }
+
+        // 3) General fallback: replace inline block even if tags share a line
+        if let openRange = template.range(of: "<VOCABULARY>"), let closeRange = template.range(of: "</VOCABULARY>", range: openRange.upperBound..<template.endIndex) {
+            let lastNewline = template[..<openRange.lowerBound].lastIndex(of: "\n")
+            let indent: String
+            if let lastNewline {
+                let start = template.index(after: lastNewline)
+                indent = String(template[start..<openRange.lowerBound].prefix { $0 == " " || $0 == "\t" })
+            } else {
+                indent = ""
+            }
+            let replacement = "<VOCABULARY>\n\(indent)\(vocabJoined)\n\(indent)</VOCABULARY>"
+            var output = template
+            output.replaceSubrange(openRange.lowerBound..<closeRange.upperBound, with: replacement)
+            return output
         }
 
         // If no placeholder found, return as-is
