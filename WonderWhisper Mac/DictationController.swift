@@ -49,6 +49,12 @@ actor DictationController {
                 AppLog.dictation.log("Recording start")
                 
                 // Always use file-based recording (memory recording removed due to unreliable output)
+                // For Apple's native Speech provider, switch to a high-quality capture profile.
+                if transcriber is NativeAppleTranscriptionProvider {
+                    recorder.captureProfile = .appleNativeHighQuality
+                } else {
+                    recorder.captureProfile = .standard16k
+                }
                 let url = try recorder.startRecording()
                 currentRecordingURL = url
 
@@ -275,6 +281,8 @@ actor DictationController {
         // Reset pre-captured context for the next run
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        // Restore capture profile to default for subsequent runs
+        recorder.captureProfile = .standard16k
         os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
     }
 

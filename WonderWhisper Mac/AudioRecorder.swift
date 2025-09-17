@@ -2,6 +2,10 @@ import Foundation
 import AVFoundation
 
 final class AudioRecorder: NSObject {
+    enum CaptureProfile {
+        case standard16k            // default for cloud/local Whisper providers
+        case appleNativeHighQuality // optimized for Apple's native Speech on macOS 26
+    }
     private var recorder: AVAudioRecorder?
     private var levelTimer: Timer?
     private(set) var isRecording: Bool = false
@@ -18,9 +22,24 @@ final class AudioRecorder: NSObject {
     private var onPCM16Frame: ((Data) -> Void)?
     
     // Memory recording removed due to unreliable output
+    // Current capture profile (selected by controller based on active provider)
+    var captureProfile: CaptureProfile = .standard16k
 
     // MARK: - Audio Format Configuration
     private func audioFormatSettings(format: String) throws -> (filename: String, settings: [String: Any]) {
+        // When capturing for Apple's native Speech (Tahoe), prefer a high-quality,
+        // uncompressed 48 kHz mono WAV so the transcriber avoids resampling and
+        // keeps high‑frequency cues for better accuracy.
+        if captureProfile == .appleNativeHighQuality {
+            return ("wav", [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 48_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsBigEndianKey: false
+            ])
+        }
         switch format {
         case "mp3":
             // Note: macOS doesn't natively support MP3 recording via AVAudioRecorder
