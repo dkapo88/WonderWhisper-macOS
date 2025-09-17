@@ -440,6 +440,8 @@ final class DictationViewModel: ObservableObject {
     private var promptPressTimes: [UUID: Date] = [:]
     private let promptPressThreshold: TimeInterval = 0.8
 
+    private var promptRecordingState: [UUID: Bool] = [:]
+
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
         await MainActor.run {
             if self.selectedPromptID != id {
@@ -454,16 +456,26 @@ final class DictationViewModel: ObservableObject {
             switch state {
             case .idle, .error:
                 await controller.toggle(userPrompt: promptText)
+                promptRecordingState[id] = true
+            case .recording:
+                if promptRecordingState[id] != true {
+                    await controller.finish(userPrompt: promptText)
+                    promptRecordingState[id] = false
+                }
             default:
                 break
             }
         case .up:
             let start = promptPressTimes.removeValue(forKey: id)
-            guard let start else { return }
-            let duration = Date().timeIntervalSince(start)
             let state = await controller.currentState()
-            if case .recording = state {
-                await controller.finish(userPrompt: promptText)
+            if promptRecordingState[id] == true {
+                promptRecordingState[id] = false
+                if case .recording = state {
+                    await controller.finish(userPrompt: promptText)
+                }
+            }
+            if start == nil {
+                promptRecordingState[id] = false
             }
         }
     }
