@@ -3,7 +3,12 @@ import Carbon.HIToolbox
 import Cocoa
 
 final class PromptHotkeyManager {
-    var onActivatePrompt: ((UUID) -> Void)?
+    enum TriggerPhase {
+        case down
+        case up
+    }
+
+    var onPromptEvent: ((UUID, TriggerPhase) -> Void)?
 
     private struct ShortcutEntry {
         let promptID: UUID
@@ -95,7 +100,10 @@ final class PromptHotkeyManager {
     // MARK: - Shortcut handler
     private func ensureShortcutHandler() {
         guard handlerRef == nil else { return }
-        let specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))]
+        let specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
         let callback: EventHandlerUPP = { (_, evt, userData) -> OSStatus in
             guard let userData = userData else { return noErr }
             let manager = Unmanaged<PromptHotkeyManager>.fromOpaque(userData).takeUnretainedValue()
@@ -103,7 +111,8 @@ final class PromptHotkeyManager {
             var size = MemoryLayout<EventHotKeyID>.size
             let status = GetEventParameter(evt, UInt32(kEventParamDirectObject), UInt32(typeEventHotKeyID), nil, size, &size, &hotKeyID)
             guard status == noErr, let entry = manager.shortcutEntries[hotKeyID.id] else { return noErr }
-            manager.onActivatePrompt?(entry.promptID)
+            let phase: TriggerPhase = (GetEventKind(evt) == UInt32(kEventHotKeyPressed)) ? .down : .up
+            manager.onPromptEvent?(entry.promptID, phase)
             return noErr
         }
         let ptr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -195,10 +204,13 @@ final class PromptHotkeyManager {
             if isActive && !wasActive {
                 selectionActiveStates[selection] = true
                 for id in promptIDs {
-                    onActivatePrompt?(id)
+                    onPromptEvent?(id, .down)
                 }
             } else if !isActive && wasActive {
                 selectionActiveStates[selection] = false
+                for id in promptIDs {
+                    onPromptEvent?(id, .up)
+                }
             }
         }
     }

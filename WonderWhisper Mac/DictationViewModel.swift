@@ -178,8 +178,8 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
         }
 
-        promptHotkeyManager.onActivatePrompt = { [weak self] id in
-            Task { await self?.handlePromptHotkey(id: id) }
+        promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
+            Task { await self?.handlePromptHotkey(id: id, phase: phase) }
         }
         refreshPromptHotkeys()
 
@@ -437,19 +437,30 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func handlePromptHotkey(id: UUID) async {
+    private var promptPressTimes: [UUID: Date] = [:]
+    private let promptPressThreshold: TimeInterval = 0.8
+
+    private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
         await MainActor.run {
             if self.selectedPromptID != id {
                 self.selectedPromptID = id
             }
         }
-        let state = await controller.currentState()
-        switch state {
-        case .idle, .error(_):
-            let promptText = await MainActor.run { self.userPrompt }
+        let promptText = await MainActor.run { self.userPrompt }
+        switch phase {
+        case .down:
+            promptPressTimes[id] = Date()
             await controller.toggle(userPrompt: promptText)
-        default:
-            break
+        case .up:
+            let start = promptPressTimes.removeValue(forKey: id)
+            guard let start else { return }
+            let duration = Date().timeIntervalSince(start)
+            if duration >= promptPressThreshold {
+                let state = await controller.currentState()
+                if case .recording = state {
+                    await controller.finish(userPrompt: promptText)
+                }
+            }
         }
     }
 

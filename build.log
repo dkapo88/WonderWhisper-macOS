@@ -38,8 +38,8 @@ ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --
 
 ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
 
-Build description signature: b2efe91d5020c00b0b8d4d2cce388edb
-Build description path: /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/XCBuildData/b2efe91d5020c00b0b8d4d2cce388edb.xcbuilddata
+Build description signature: 17429d093dfee4e45b7253a796fa66b2
+Build description path: /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/XCBuildData/17429d093dfee4e45b7253a796fa66b2.xcbuilddata
 ClangStatCache /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk /Users/danekapoor/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx26.0-25A352-28806144b0707e398aac92880fa50324.sdkstatcache
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac.xcodeproj
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk -o /Users/danekapoor/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx26.0-25A352-28806144b0707e398aac92880fa50324.sdkstatcache
@@ -52,9 +52,9 @@ WriteAuxiliaryFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderW
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     write-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftFileList
 
-WriteAuxiliaryFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.LinkFileList (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+WriteAuxiliaryFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftConstValuesFileList (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    write-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.LinkFileList
+    write-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftConstValuesFileList
 
 ProcessProductPackaging /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper_Mac.entitlements /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.app.xcent (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
@@ -72,9 +72,9 @@ ProcessProductPackaging /Users/danekapoor/Development/WonderWhisper\ Mac/WonderW
     
     builtin-productPackagingUtility /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper_Mac.entitlements -entitlements -format xml -o /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.app.xcent
 
-WriteAuxiliaryFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftConstValuesFileList (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+WriteAuxiliaryFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.LinkFileList (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    write-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftConstValuesFileList
+    write-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.LinkFileList
 
 ProcessProductPackagingDER /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.app.xcent /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.app.xcent.der (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
@@ -87,36 +87,31 @@ SwiftDriver WonderWhisper\ Mac normal arm64 com.apple.xcode.tools.swift.compiler
 ExtractAppIntentsMetadata (in target 'FluidAudio' from project 'FluidAudio')
     cd /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/SourcePackages/checkouts/FluidAudio
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name FluidAudio --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk --xcode-version 17A324 --platform-family macOS --deployment-target 13.0 --bundle-identifier fluidaudio.FluidAudio --output /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/FluidAudio.appintents --target-triple arm64-apple-macos13.0 --binary-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/FluidAudio.o --dependency-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudio_dependency_info.dat --stringsdata-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudio.SwiftFileList --metadata-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/FluidAudio.DependencyMetadataFileList --static-metadata-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/FluidAudio.DependencyStaticMetadataFileList --swift-const-vals-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudio.SwiftConstValuesFileList --force --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
-2025-09-17 22:13:30.792 appintentsmetadataprocessor[24365:1904777] Starting appintentsmetadataprocessor export
-2025-09-17 22:13:30.868 appintentsmetadataprocessor[24365:1904777] Extracted no relevant App Intents symbols, skipping writing output
+2025-09-17 22:33:24.205 appintentsmetadataprocessor[26444:1940396] Starting appintentsmetadataprocessor export
+2025-09-17 22:33:24.284 appintentsmetadataprocessor[26444:1940396] Extracted no relevant App Intents symbols, skipping writing output
 
 RegisterExecutionPolicyException /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/FluidAudio.o (in target 'FluidAudio' from project 'FluidAudio')
     cd /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/SourcePackages/checkouts/FluidAudio
     builtin-RegisterExecutionPolicyException /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/FluidAudio.o
 
-Ld /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/MacOS/__preview.dylib normal (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-macos15.5 -dynamiclib -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk -O0 -L/Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug -F/Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/PackageFrameworks -F/Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug -install_name @rpath/WonderWhisper\ Mac.debug.dylib -rdynamic -Xlinker -no_deduplicate -Xlinker -debug_variant -Xlinker -dependency_info -Xlinker /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac_dependency_info.dat -Xlinker -no_adhoc_codesign -o /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/MacOS/__preview.dylib
-
 ProcessInfoPlistFile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/Info.plist /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/empty-WonderWhisper\ Mac.plist (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     builtin-infoPlistUtility /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/empty-WonderWhisper\ Mac.plist -producttype com.apple.product-type.application -genpkginfo /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/PkgInfo -expandbuildsettings -platform macosx -additionalcontentfile /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/assetcatalog_generated_info.plist -o /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/Info.plist
-
-SwiftEmitModule normal arm64 Emitting\ module\ for\ WonderWhisper_Mac (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-EmitSwiftModule normal arm64 (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
 
 SwiftCompile normal arm64 Compiling\ PromptHotkeyManager.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/PromptHotkeyManager.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/PromptHotkeyManager.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
-/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/PromptHotkeyManager.swift:40:13: warning: variable 'hotKeyID' was never mutated; consider changing to 'let' constant
+/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/PromptHotkeyManager.swift:45:13: warning: variable 'hotKeyID' was never mutated; consider changing to 'let' constant
         var hotKeyID = EventHotKeyID(signature: OSType(0x57575054), id: nextIdentifier) // 'WWPT'
         ~~~ ^
         let
+
+SwiftEmitModule normal arm64 Emitting\ module\ for\ WonderWhisper_Mac (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+EmitSwiftModule normal arm64 (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
 
 SwiftCompile normal arm64 Compiling\ DictationViewModel.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/DictationViewModel.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/DictationViewModel.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
@@ -183,6 +178,31 @@ SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/Wonde
     private var idleSkipCounter: Int = 0
                 ^
 
+SwiftDriverJobDiscovery normal arm64 Compiling PromptHotkeyManager.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 Compiling\ HistoryView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
+
+SwiftCompile normal arm64 Compiling\ ContentView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
+
+SwiftCompile normal arm64 Compiling\ SettingsAPIKeysView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
+
+SwiftCompile normal arm64 Compiling\ SettingsGeneralView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
+
 SwiftCompile normal arm64 Compiling\ SettingsPromptsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsPromptsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsPromptsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
@@ -197,23 +217,15 @@ SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/Wonde
         .onChange(of: selectionValue) { newValue in
          ^
 
-SwiftCompile normal arm64 Compiling\ PromptConfiguration.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/PromptConfiguration.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 Compiling\ SettingsModelsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/PromptConfiguration.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
 
-SwiftDriverJobDiscovery normal arm64 Compiling PromptConfiguration.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 Compiling\ SettingsShortcutsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftCompile normal arm64 Compiling\ SettingsAPIKeysView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ ContentView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
 
@@ -232,33 +244,9 @@ SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/Wonde
             .onChange(of: replaceTarget) { _ in replacementWarning = nil }
              ^
 
-SwiftCompile normal arm64 Compiling\ SettingsModelsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ SettingsGeneralView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
 SwiftCompile normal arm64 Compiling\ WonderWhisper_MacApp.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper_MacApp.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper_MacApp.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ SettingsShortcutsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ HistoryView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
 
@@ -267,16 +255,6 @@ SwiftCompile normal arm64 Compiling\ SettingsView.swift /Users/danekapoor/Develo
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/SettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
-
-SwiftDriverJobDiscovery normal arm64 Compiling PromptHotkeyManager.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling WonderWhisper_MacApp.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftDriverJobDiscovery normal arm64 Emitting module for WonderWhisper_Mac (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
@@ -296,30 +274,17 @@ Copy /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbe
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper_Mac.swiftsourceinfo /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper_Mac.swiftmodule/Project/arm64-apple-macos.swiftsourceinfo
 
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsVocabularyView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
 SwiftDriverJobDiscovery normal arm64 Compiling DictationViewModel.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 Compiling\ WaveformOverlayController.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WaveformOverlayController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WaveformOverlayController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
 
 SwiftCompile normal arm64 Compiling\ MenuBarController.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/MenuBarController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/MenuBarController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ ParakeetAdvancedSettingsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
-
-SwiftCompile normal arm64 Compiling\ WaveformOverlayController.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WaveformOverlayController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/WaveformOverlayController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
 
@@ -329,24 +294,39 @@ SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/Wonde
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     
 
-SwiftDriverJobDiscovery normal arm64 Compiling HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsAPIKeysView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftDriverJobDiscovery normal arm64 Compiling ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftCompile normal arm64 Compiling\ ParakeetAdvancedSettingsView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
+    
+
+SwiftDriverJobDiscovery normal arm64 Compiling WonderWhisper_MacApp.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsShortcutsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsGeneralView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling ContentView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsModelsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsVocabularyView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftDriverJobDiscovery normal arm64 Compiling MenuBarController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftDriverJobDiscovery normal arm64 Compiling NotchIndicatorController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftDriverJobDiscovery normal arm64 Compiling SettingsPromptsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftDriverJobDiscovery normal arm64 Compiling ParakeetAdvancedSettingsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftCompile normal arm64 Compiling\ ShortcutRecorderView.swift /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ShortcutRecorderView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-SwiftCompile normal arm64 /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac/WonderWhisper\ Mac/ShortcutRecorderView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
-    cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
-    
+SwiftDriverJobDiscovery normal arm64 Compiling HistoryView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftDriverJobDiscovery normal arm64 Compiling WaveformOverlayController.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
-SwiftDriverJobDiscovery normal arm64 Compiling ShortcutRecorderView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
+SwiftDriverJobDiscovery normal arm64 Compiling SettingsPromptsView.swift (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
 
 SwiftDriver\ Compilation WonderWhisper\ Mac normal arm64 com.apple.xcode.tools.swift.compiler (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
@@ -372,8 +352,8 @@ CopySwiftLibs /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhispe
 ExtractAppIntentsMetadata (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name WonderWhisper_Mac --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk --xcode-version 17A324 --platform-family macOS --deployment-target 15.5 --bundle-identifier com.slumdev88.wonderwhisper.WonderWhisper-Mac --output /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/Resources --target-triple arm64-apple-macos15.5 --binary-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/MacOS/WonderWhisper\ Mac --dependency-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac_dependency_info.dat --stringsdata-file /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftFileList --metadata-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.DependencyMetadataFileList --static-metadata-file-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/WonderWhisper\ Mac.DependencyStaticMetadataFileList --swift-const-vals-list /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Intermediates.noindex/WonderWhisper\ Mac.build/Debug/WonderWhisper\ Mac.build/Objects-normal/arm64/WonderWhisper\ Mac.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
-2025-09-17 22:13:33.006 appintentsmetadataprocessor[24407:1904963] Starting appintentsmetadataprocessor export
-2025-09-17 22:13:33.007 appintentsmetadataprocessor[24407:1904963] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+2025-09-17 22:33:26.438 appintentsmetadataprocessor[26469:1940541] Starting appintentsmetadataprocessor export
+2025-09-17 22:33:26.439 appintentsmetadataprocessor[26469:1940541] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
 
 CodeSign /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/MacOS/WonderWhisper\ Mac.debug.dylib (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
@@ -388,6 +368,7 @@ CodeSign /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac
     Signing Identity:     "Apple Development: dane.kapoor@gmail.com (8BV7XWUY29)"
     
     /usr/bin/codesign --force --sign BA34261FD74B6E4E7EC0D72033AEF7D7DA29D36F -o runtime --timestamp\=none --generate-entitlement-der /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app/Contents/MacOS/__preview.dylib
+/Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper Mac.app/Contents/MacOS/__preview.dylib: replacing existing signature
 
 CodeSign /Users/danekapoor/Library/Developer/Xcode/DerivedData/WonderWhisper_Mac-fbedzewqdccmijhafdzjzmzuzdor/Build/Products/Debug/WonderWhisper\ Mac.app (in target 'WonderWhisper Mac' from project 'WonderWhisper Mac')
     cd /Users/danekapoor/Development/WonderWhisper\ Mac/WonderWhisper\ Mac
