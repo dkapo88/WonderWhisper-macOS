@@ -10,10 +10,12 @@ final class DictationViewModel: ObservableObject {
     @Published var audioLevel: Float = 0
 
     // Prompts
+    @Published var prompts: [PromptConfiguration] = [] { didSet { persistPromptLibrary() } }
+    @Published var selectedPromptID: UUID? { didSet { applySelection() } }
     // System prompt is sent as the system role content
-    @Published var systemPrompt: String = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? "" { didSet { persistAndUpdate() } }
+    @Published var systemPrompt: String = "" { didSet { updateActivePrompt(systemText: systemPrompt) } }
     // User prompt is an additional user message appended after the structured transcript context
-    @Published var userPrompt: String = UserDefaults.standard.string(forKey: "llm.userMessage") ?? "" { didSet { UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage") } }
+    @Published var userPrompt: String = "" { didSet { updateActivePrompt(userText: userPrompt) } }
 
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
@@ -64,6 +66,8 @@ final class DictationViewModel: ObservableObject {
     private var timer: Timer?
     private var idleSkipCounter: Int = 0
     let history = HistoryStore()
+    private let promptHotkeyManager = PromptHotkeyManager()
+    private var isApplyingPromptFromSelection = false
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -131,12 +135,11 @@ final class DictationViewModel: ObservableObject {
         var llm: LLMProvider = GroqLLMProvider(client: http)
         // Pre-warm chat endpoint to reduce cold-start latency
         GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
-        // Initialize prompts: use persisted systemPrompt if set; otherwise seed with the default system template
-        let initialSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
-        self.systemPrompt = initialSystem
-        self.userPrompt = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
+        let storedSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
+        let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
+        let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: legacyBasePrompt)
 
-        let renderedInitial = PromptBuilder.renderSystemPrompt(template: initialSystem, customVocabulary: persistedVocabCustom)
+        let renderedInitial = PromptBuilder.renderSystemPrompt(template: promptBootstrap.activeSystem, customVocabulary: persistedVocabCustom)
         var llmSettings = LLMSettings(
             endpoint: AppConfig.groqChatCompletions,
             model: persistedLLMModel,
@@ -157,6 +160,13 @@ final class DictationViewModel: ObservableObject {
             inserter: inserter,
             history: history
         )
+        isApplyingPromptFromSelection = true
+        prompts = promptBootstrap.prompts
+        selectedPromptID = promptBootstrap.selectedID
+        systemPrompt = promptBootstrap.activeSystem
+        userPrompt = promptBootstrap.activeUser
+        isApplyingPromptFromSelection = false
+        persistPromptLibrary()
         // Now that self is fully initialized, hook up level monitoring
         recorder.onLevel = { [weak self] level in
             guard let self = self else { return }
@@ -167,6 +177,11 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMEnabled(persistedLLMEnabled)
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
         }
+
+        promptHotkeyManager.onActivatePrompt = { [weak self] id in
+            Task { await self?.handlePromptHotkey(id: id) }
+        }
+        refreshPromptHotkeys()
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -219,15 +234,12 @@ final class DictationViewModel: ObservableObject {
     }
 
     func toggle() {
-        // Persist prompts whenever toggling, so changes aren't lost
-        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
-        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
+        persistPromptLibrary()
         Task { await controller.toggle(userPrompt: userPrompt) }
     }
 
     func finish() {
-        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
-        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
+        persistPromptLibrary()
         Task { await controller.finish(userPrompt: userPrompt) }
     }
 
@@ -307,6 +319,54 @@ final class DictationViewModel: ObservableObject {
         // InsertionService instance is held inside controller; no direct setter. This flag will be refreshed on next controller creation.
     }
 
+    // MARK: - Prompt management
+
+    func addPrompt() {
+        let baseName = "Prompt"
+        var counter = 1
+        var candidate = "\(baseName) \(counter)"
+        let existingNames = Set(prompts.map { $0.name.lowercased() })
+        while existingNames.contains(candidate.lowercased()) {
+            counter += 1
+            candidate = "\(baseName) \(counter)"
+        }
+        let newPrompt = PromptConfiguration(name: candidate, systemPrompt: AppConfig.defaultSystemPromptTemplate, userPrompt: "")
+        prompts.append(newPrompt)
+        selectedPromptID = newPrompt.id
+    }
+
+    func deletePrompt(id: UUID) {
+        guard prompts.count > 1 else { return }
+        if let idx = prompts.firstIndex(where: { $0.id == id }) {
+            prompts.remove(at: idx)
+            if selectedPromptID == id {
+                selectedPromptID = prompts.first?.id
+            }
+        }
+    }
+
+    func renamePrompt(id: UUID, to newName: String) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if prompts[idx].name == trimmed { return }
+        var updated = prompts[idx]
+        updated.name = trimmed
+        prompts[idx] = updated
+    }
+
+    func updateShortcut(for id: UUID, to shortcut: HotkeyManager.Shortcut?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        updated.shortcut = shortcut
+        prompts[idx] = updated
+    }
+
+    func selectPrompt(id: UUID) {
+        guard prompts.contains(where: { $0.id == id }) else { return }
+        selectedPromptID = id
+    }
+
     private func persistAndUpdate() {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
@@ -317,9 +377,69 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
-        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
-        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
         updateProviders()
+    }
+
+    private func persistPromptLibrary() {
+        if isApplyingPromptFromSelection { return }
+        let defaults = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(prompts) {
+            defaults.set(data, forKey: "prompts.library")
+        }
+        if let id = selectedPromptID {
+            defaults.set(id.uuidString, forKey: "prompts.selected.id")
+        }
+        defaults.set(systemPrompt, forKey: "llm.systemPrompt")
+        defaults.set(userPrompt, forKey: "llm.userMessage")
+        refreshPromptHotkeys()
+    }
+
+    private func applySelection() {
+        guard !isApplyingPromptFromSelection else { return }
+        guard let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first else { return }
+        isApplyingPromptFromSelection = true
+        systemPrompt = prompt.systemPrompt
+        userPrompt = prompt.userPrompt
+        isApplyingPromptFromSelection = false
+        persistPromptLibrary()
+        updateProviders()
+    }
+
+    private func updateActivePrompt(systemText: String? = nil, userText: String? = nil) {
+        guard !isApplyingPromptFromSelection else { return }
+        guard let id = selectedPromptID, let index = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[index]
+        if let systemText { updated.systemPrompt = systemText }
+        if let userText { updated.userPrompt = userText }
+        if updated != prompts[index] {
+            prompts[index] = updated
+        }
+        updateProviders()
+    }
+
+    private func refreshPromptHotkeys() {
+        promptHotkeyManager.unregisterAll()
+        for prompt in prompts {
+            if let shortcut = prompt.shortcut {
+                promptHotkeyManager.register(shortcut: shortcut, for: prompt.id)
+            }
+        }
+    }
+
+    private func handlePromptHotkey(id: UUID) async {
+        await MainActor.run {
+            if self.selectedPromptID != id {
+                self.selectedPromptID = id
+            }
+        }
+        let state = await controller.currentState()
+        switch state {
+        case .idle, .error(_):
+            let promptText = await MainActor.run { self.userPrompt }
+            await controller.toggle(userPrompt: promptText)
+        default:
+            break
+        }
     }
 
     private func updateProviders() {
@@ -388,5 +508,39 @@ final class DictationViewModel: ObservableObject {
         let text = first.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? first.transcript : first.output
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
         Task { await controller.insert(text) }
+    }
+}
+
+private struct PromptBootstrap {
+    let prompts: [PromptConfiguration]
+    let selectedID: UUID
+    let activeSystem: String
+    let activeUser: String
+}
+
+private extension DictationViewModel {
+    static func bootstrapPromptLibrary(initialSystem: String, initialUser: String, legacyBasePrompt: String) -> PromptBootstrap {
+        let defaults = UserDefaults.standard
+        var loaded: [PromptConfiguration] = []
+        if let data = defaults.data(forKey: "prompts.library"), let decoded = try? JSONDecoder().decode([PromptConfiguration].self, from: data) {
+            loaded = decoded
+        }
+        if loaded.isEmpty {
+            let defaultPrompt = PromptConfiguration(
+                name: "Default",
+                systemPrompt: initialSystem.isEmpty ? AppConfig.defaultSystemPromptTemplate : initialSystem,
+                userPrompt: initialUser.isEmpty ? legacyBasePrompt : initialUser,
+                shortcut: nil
+            )
+            loaded = [defaultPrompt]
+        }
+        let selectedID: UUID
+        if let idString = defaults.string(forKey: "prompts.selected.id"), let id = UUID(uuidString: idString), loaded.contains(where: { $0.id == id }) {
+            selectedID = id
+        } else {
+            selectedID = loaded.first?.id ?? UUID()
+        }
+        let active = loaded.first(where: { $0.id == selectedID }) ?? loaded.first ?? PromptConfiguration(name: "Default", systemPrompt: initialSystem, userPrompt: initialUser)
+        return PromptBootstrap(prompts: loaded, selectedID: active.id, activeSystem: active.systemPrompt, activeUser: active.userPrompt)
     }
 }

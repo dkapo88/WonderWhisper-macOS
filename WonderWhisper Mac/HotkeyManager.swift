@@ -37,7 +37,7 @@ final class HotkeyManager {
             }
         }
     }
-    struct Shortcut: Equatable, Codable {
+    struct Shortcut: Equatable, Codable, Hashable {
         var keyCode: UInt32 // kVK_ constants (e.g., 49 for Space)
         var modifiers: UInt32 // Carbon modifier mask: cmdKey, optionKey, controlKey, shiftKey
     }
