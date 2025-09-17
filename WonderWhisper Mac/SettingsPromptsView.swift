@@ -99,9 +99,12 @@ struct SettingsPromptsView: View {
                 .buttonStyle(.borderless)
             }
 
-            PromptShortcutEditor(prompt: prompt, capturingPromptID: $capturingPromptID) { newShortcut in
-                vm.updateShortcut(for: prompt.id, to: newShortcut)
-            }
+            PromptTriggerEditor(
+                prompt: prompt,
+                capturingPromptID: $capturingPromptID,
+                onShortcutChange: { vm.updateShortcut(for: prompt.id, to: $0) },
+                onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) }
+            )
             .padding(.top, 2)
 
             if vm.selectedPromptID == prompt.id {
@@ -163,27 +166,78 @@ struct SettingsPromptsView: View {
     }
 }
 
-private struct PromptShortcutEditor: View {
+private struct PromptTriggerEditor: View {
+    enum TriggerMode: String, CaseIterable, Identifiable {
+        case shortcut
+        case selection
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .shortcut: return "Key Combination"
+            case .selection: return "Single Key"
+            }
+        }
+    }
+
     let prompt: PromptConfiguration
     @Binding var capturingPromptID: UUID?
-    let onChange: (HotkeyManager.Shortcut?) -> Void
+    let onShortcutChange: (HotkeyManager.Shortcut?) -> Void
+    let onSelectionChange: (HotkeyManager.Selection?) -> Void
 
-    private var isCapturing: Bool { capturingPromptID == prompt.id }
+    @State private var mode: TriggerMode
+    @State private var selectionValue: HotkeyManager.Selection?
+
+    private var isCapturing: Bool { capturingPromptID == prompt.id && mode == .shortcut }
+
+    init(prompt: PromptConfiguration,
+         capturingPromptID: Binding<UUID?>,
+         onShortcutChange: @escaping (HotkeyManager.Shortcut?) -> Void,
+         onSelectionChange: @escaping (HotkeyManager.Selection?) -> Void) {
+        self.prompt = prompt
+        self._capturingPromptID = capturingPromptID
+        self.onShortcutChange = onShortcutChange
+        self.onSelectionChange = onSelectionChange
+        let initialMode: TriggerMode = prompt.selection != nil ? .selection : .shortcut
+        self._mode = State(initialValue: initialMode)
+        self._selectionValue = State(initialValue: prompt.selection)
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(shortcutSummary())
-                .font(.subheadline)
-            Spacer()
-            Button(isCapturing ? "Press keys…" : "Set Hotkey") {
-                capturingPromptID = prompt.id
-            }
-            .buttonStyle(.bordered)
-            if prompt.shortcut != nil {
-                Button("Clear") {
-                    onChange(nil)
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Trigger type", selection: $mode) {
+                ForEach(TriggerMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
                 }
-                .buttonStyle(.bordered)
+            }
+            .pickerStyle(.segmented)
+
+            if mode == .shortcut {
+                shortcutControls
+            } else {
+                selectionControls
+            }
+        }
+        .onChange(of: prompt) { newPrompt in
+            let derivedMode: TriggerMode = newPrompt.selection != nil ? .selection : .shortcut
+            if mode != derivedMode {
+                mode = derivedMode
+            }
+            selectionValue = newPrompt.selection
+        }
+        .onChange(of: mode) { newMode in
+            if newMode == .shortcut {
+                capturingPromptID = nil
+                selectionValue = nil
+                onSelectionChange(nil)
+            } else {
+                capturingPromptID = nil
+                onShortcutChange(nil)
+            }
+        }
+        .onChange(of: selectionValue) { newValue in
+            if mode == .selection {
+                onSelectionChange(newValue)
             }
         }
         .overlay(
@@ -192,7 +246,7 @@ private struct PromptShortcutEditor: View {
                     ShortcutCaptureOverlay { event in
                         capturingPromptID = nil
                         if let evt = event, let shortcut = shortcutFromEvent(evt) {
-                            onChange(shortcut)
+                            onShortcutChange(shortcut)
                         }
                     }
                 }
@@ -200,13 +254,58 @@ private struct PromptShortcutEditor: View {
         )
     }
 
-    private func shortcutSummary() -> String {
-        guard let shortcut = prompt.shortcut else { return "No hotkey" }
-        return shortcutDescription(shortcut)
+    private var shortcutControls: some View {
+        HStack(spacing: 8) {
+            Text(prompt.shortcut.map(shortcutDescription) ?? "No hotkey")
+                .font(.subheadline)
+            Spacer()
+            Button(isCapturing ? "Press keys…" : "Set Hotkey") {
+                capturingPromptID = prompt.id
+            }
+            .buttonStyle(.bordered)
+            if prompt.shortcut != nil {
+                Button("Clear") {
+                    capturingPromptID = nil
+                    onShortcutChange(nil)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var selectionControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Single key", selection: Binding(get: {
+                selectionValue
+            }, set: { newValue in
+                selectionValue = newValue
+            })) {
+                Text("None").tag(HotkeyManager.Selection?.none)
+                ForEach(selectionOptions, id: \.self) { option in
+                    Text(option.displayName).tag(Optional(option))
+                }
+            }
+            .pickerStyle(.menu)
+
+            if let selectionValue {
+                HStack {
+                    Text("Selected: \(selectionValue.displayName)")
+                    Spacer()
+                    Button("Clear") {
+                        self.selectionValue = nil
+                    }
+                }
+                .font(.subheadline)
+            }
+        }
+    }
+
+    private var selectionOptions: [HotkeyManager.Selection] {
+        HotkeyManager.Selection.allCases.filter { $0 != .f5 }
     }
 }
 
-// MARK: - Shortcut capture utilities
+// MARK: - Shared helpers for keyboard capture
 private func shortcutDescription(_ s: HotkeyManager.Shortcut) -> String {
     var parts: [String] = []
     if s.modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
@@ -214,7 +313,7 @@ private func shortcutDescription(_ s: HotkeyManager.Shortcut) -> String {
     if s.modifiers & UInt32(shiftKey) != 0 { parts.append("⇧") }
     if s.modifiers & UInt32(controlKey) != 0 { parts.append("⌃") }
     parts.append(keyName(from: UInt16(s.keyCode)))
-    return parts.joined(separator: "")
+    return parts.joined()
 }
 
 private func keyName(from code: UInt16) -> String {
@@ -262,8 +361,11 @@ private func keyName(from code: UInt16) -> String {
 private func shortcutFromEvent(_ event: NSEvent) -> HotkeyManager.Shortcut? {
     let code = UInt16(event.keyCode)
     let modifiers = HotkeyManager.carbonModifiers(from: event.modifierFlags)
-    let isModifierOnly = [UInt16(kVK_Command), UInt16(kVK_Shift), UInt16(kVK_CapsLock), UInt16(kVK_Option), UInt16(kVK_Control), UInt16(kVK_RightShift), UInt16(kVK_RightOption), UInt16(kVK_RightControl), UInt16(kVK_RightCommand)].contains(code)
-    guard !isModifierOnly else { return nil }
+    let modifierOnly: Set<UInt16> = [
+        UInt16(kVK_Command), UInt16(kVK_Shift), UInt16(kVK_CapsLock), UInt16(kVK_Option), UInt16(kVK_Control),
+        UInt16(kVK_RightShift), UInt16(kVK_RightOption), UInt16(kVK_RightControl), UInt16(kVK_RightCommand)
+    ]
+    guard !modifierOnly.contains(code) else { return nil }
     return HotkeyManager.Shortcut(keyCode: UInt32(code), modifiers: modifiers)
 }
 
@@ -273,9 +375,7 @@ private struct ShortcutCaptureOverlay: NSViewRepresentable {
     func makeNSView(context: Context) -> ShortcutCaptureView {
         let view = ShortcutCaptureView()
         view.onComplete = onComplete
-        DispatchQueue.main.async {
-            view.beginCapture()
-        }
+        DispatchQueue.main.async { view.beginCapture() }
         return view
     }
 
@@ -290,14 +390,6 @@ private struct ShortcutCaptureOverlay: NSViewRepresentable {
     final class ShortcutCaptureView: NSView {
         var onComplete: ((NSEvent?) -> Void)?
         private var monitor: Any?
-
-        override init(frame frameRect: NSRect) {
-            super.init(frame: frameRect)
-            wantsLayer = true
-            layer?.backgroundColor = NSColor.clear.cgColor
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         override var acceptsFirstResponder: Bool { true }
 

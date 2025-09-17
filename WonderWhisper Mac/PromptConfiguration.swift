@@ -6,13 +6,15 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     var systemPrompt: String
     var userPrompt: String
     var shortcut: HotkeyManager.Shortcut?
+    var selection: HotkeyManager.Selection?
 
-    init(id: UUID = UUID(), name: String, systemPrompt: String, userPrompt: String, shortcut: HotkeyManager.Shortcut? = nil) {
+    init(id: UUID = UUID(), name: String, systemPrompt: String, userPrompt: String, shortcut: HotkeyManager.Shortcut? = nil, selection: HotkeyManager.Selection? = nil) {
         self.id = id
         self.name = name
         self.systemPrompt = systemPrompt
         self.userPrompt = userPrompt
         self.shortcut = shortcut
+        self.selection = selection
     }
 }
 

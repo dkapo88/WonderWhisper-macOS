@@ -359,6 +359,15 @@ final class DictationViewModel: ObservableObject {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
         updated.shortcut = shortcut
+        if shortcut != nil { updated.selection = nil }
+        prompts[idx] = updated
+    }
+
+    func updateSelection(for id: UUID, to selection: HotkeyManager.Selection?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        updated.selection = selection
+        if selection != nil { updated.shortcut = nil }
         prompts[idx] = updated
     }
 
@@ -420,7 +429,9 @@ final class DictationViewModel: ObservableObject {
     private func refreshPromptHotkeys() {
         promptHotkeyManager.unregisterAll()
         for prompt in prompts {
-            if let shortcut = prompt.shortcut {
+            if let selection = prompt.selection {
+                promptHotkeyManager.register(selection: selection, for: prompt.id)
+            } else if let shortcut = prompt.shortcut {
                 promptHotkeyManager.register(shortcut: shortcut, for: prompt.id)
             }
         }
