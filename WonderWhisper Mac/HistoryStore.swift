@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import OSLog
 
 @MainActor
 final class HistoryStore: ObservableObject {
@@ -23,20 +24,28 @@ final class HistoryStore: ObservableObject {
     }()
 
     init() {
-        let fm = FileManager.default
-        let appSupport = try! fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let root = appSupport.appendingPathComponent("WonderWhisper", isDirectory: true)
-        let base = root.appendingPathComponent("History", isDirectory: true)
-        self.baseDir = base
-        self.entriesDir = base.appendingPathComponent("entries", isDirectory: true)
-        self.audioDir = base.appendingPathComponent("audio", isDirectory: true)
-        try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
-        let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
-        self.maxEntries = persisted ?? 50
-        load()
-        enforceMaxEntries()
-    }
+       let fm = FileManager.default
+       let appSupport: URL
+       do {
+           appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+       } catch {
+           // Fallback to a default location in case the system directory is inaccessible
+           // This shouldn't normally happen, but we'll handle it gracefully
+           AppLog.dictation.error("Failed to access Application Support directory: \(error)")
+           appSupport = URL(fileURLWithPath: "/tmp/WonderWhisper")
+       }
+       let root = appSupport.appendingPathComponent("WonderWhisper", isDirectory: true)
+       let base = root.appendingPathComponent("History", isDirectory: true)
+       self.baseDir = base
+       self.entriesDir = base.appendingPathComponent("entries", isDirectory: true)
+       self.audioDir = base.appendingPathComponent("audio", isDirectory: true)
+       try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
+       try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
+       let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
+       self.maxEntries = persisted ?? 50
+       load()
+       enforceMaxEntries()
+   }
 
     func load() {
         let fm = FileManager.default
@@ -84,7 +93,7 @@ final class HistoryStore: ObservableObject {
             }
         }
 
-        var entry = HistoryEntry(
+        let entry = HistoryEntry(
             id: id,
             date: date,
             appName: appName,

@@ -56,7 +56,7 @@ final class NativeAppleTranscriptionProvider: TranscriptionProvider {
         
         var output = String(transcript.characters).trimmingCharacters(in: .whitespacesAndNewlines)
         if UserDefaults.standard.object(forKey: "transcription.postprocess.enabled") as? Bool ?? true {
-            output = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Post-processing can be added here if needed, but no redundant trimming
         }
         logger.notice("Native Apple transcription finished chars=\(output.count)")
         return output
@@ -81,23 +81,37 @@ final class NativeAppleTranscriptionProvider: TranscriptionProvider {
     }
     
     private func mapToAppleLocale(_ code: String) -> String {
-        let lower = code.lowercased()
-        let mapping: [String: String] = [
-            "en": "en-US",
-            "es": "es-ES",
-            "fr": "fr-FR",
-            "de": "de-DE",
-            "ar": "ar-SA",
-            "it": "it-IT",
-            "ja": "ja-JP",
-            "ko": "ko-KR",
-            "pt": "pt-BR",
-            "yue": "yue-CN",
-            "zh": "zh-CN"
-        ]
-        if lower.contains("-") { return code }
-        return mapping[lower] ?? "en-US"
-    }
+       let lower = code.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+       let mapping: [String: String] = [
+           "en": "en-US",
+           "es": "es-ES",
+           "fr": "fr-FR",
+           "de": "de-DE",
+           "ar": "ar-SA",
+           "it": "it-IT",
+           "ja": "ja-JP",
+           "ko": "ko-KR",
+           "pt": "pt-BR",
+           "yue": "yue-CN",
+           "zh": "zh-CN"
+       ]
+       
+       // If the code already contains a dash and appears to be a valid locale format, use it as is
+       if lower.contains("-") {
+           let components = lower.split(separator: "-")
+           if components.count >= 2 && !components[0].isEmpty && !components[1].isEmpty {
+               return code
+           }
+       }
+       
+       // Try to map the language code to a full locale identifier
+       if let mappedLocale = mapping[lower] {
+           return mappedLocale
+       }
+       
+       // Fallback to en-US for unmapped languages
+       return "en-US"
+   }
     
     // MARK: - Asset availability logging
     @available(macOS 26, *)
