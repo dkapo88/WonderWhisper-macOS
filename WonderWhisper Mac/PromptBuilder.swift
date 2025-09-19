@@ -23,21 +23,12 @@ struct PromptBuilder {
         out += "The <TRANSCRIPT> content is your primary focus - enhance it using context as reference only.\n"
         out += "</CONTEXT_USAGE_INSTRUCTIONS>\n\n"
 
-        // <VOCABULARY> contains items from customVocabulary only (no device-level replacements here)
-        var vocabItems: [String] = []
-        let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedVocab.isEmpty {
-            let separators: Set<Character> = [",", "\n", "\r"]
-            let parts = trimmedVocab.split(whereSeparator: { separators.contains($0) })
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            vocabItems.append(contentsOf: parts)
-        }
+        // Note: As of the updated prompt structure, do NOT inject vocabulary content into the system message.
+        // Leave any <VOCABULARY> tags in the system message as reference/instruction placeholders only.
+        // The actual vocabulary content (with tags) now lives in the user message.
         // Note: customSpelling (text replacements) are NOT included in the prompt.
         out += "<VOCABULARY>\n"
-        if !vocabItems.isEmpty {
-            out += vocabItems.joined(separator: ", ")
-        }
+        out += ""
         out += "\n</VOCABULARY>\n\n"
 
         out += "**Output Format:**\n"
@@ -48,10 +39,12 @@ struct PromptBuilder {
     }
 
     // Mirrors Android TextProcessingUtils.buildStructuredUserMessage
+    // Now includes <VOCABULARY> in the user message alongside other dynamic content.
     static func buildUserMessage(transcription: String,
                                  selectedText: String?,
                                  appName: String?,
-                                 screenContents: String?) -> String {
+                                 screenContents: String?,
+                                 customVocabulary: String?) -> String {
         var out = ""
         out += "<TRANSCRIPT>\n"
         out += transcription
@@ -68,66 +61,26 @@ struct PromptBuilder {
         out += "<SELECTED_TEXT>\n"
         out += (selectedText ?? "")
         out += "\n</SELECTED_TEXT>\n\n"
+
+        // Include vocabulary here (moved from system message)
+        out += "<VOCABULARY>\n"
+        let trimmedVocab = (customVocabulary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedVocab.isEmpty {
+            let separators: Set<Character> = [",", "\n", "\r"]
+            let items = trimmedVocab.split(whereSeparator: { separators.contains($0) })
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !items.isEmpty {
+                out += items.joined(separator: ", ")
+            }
+        }
+        out += "\n</VOCABULARY>\n\n"
         return out
     }
 
-    // Render a user-configurable system prompt template by injecting current vocabulary.
-    // IMPORTANT: Only replace placeholders that appear on their own line to avoid
-    // clobbering inline mentions like "`<VOCABULARY>`" inside prose.
+    // Render a user-configurable system prompt template WITHOUT injecting vocabulary content.
+    // Existing <VOCABULARY> tags are left untouched as reference/instruction placeholders.
     static func renderSystemPrompt(template: String, customVocabulary: String) -> String {
-        // Build vocabulary string (comma-separated, trimmed)
-        let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
-        var vocabItems: [String] = []
-        if !trimmedVocab.isEmpty {
-            let separators: Set<Character> = [",", "\n", "\r"]
-            vocabItems = trimmedVocab.split(whereSeparator: { separators.contains($0) })
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        }
-        let vocabJoined = vocabItems.joined(separator: ", ")
-
-        // Line-wise replacement to avoid matching inline code examples
-        var lines = template.components(separatedBy: .newlines)
-        func trimEquals(_ line: String, _ token: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines) == token }
-        func leadingSpaces(_ line: String) -> String { String(line.prefix { $0 == " " || $0 == "\t" }) }
-
-        // 1) Self-closing form: <VOCABULARY/> or <VOCABULARY />
-        if let idx = lines.firstIndex(where: { let t = $0.trimmingCharacters(in: .whitespacesAndNewlines); return t == "<VOCABULARY/>" || t == "<VOCABULARY />" }) {
-            let indent = leadingSpaces(lines[idx])
-            let block = ["\(indent)<VOCABULARY>", "\(indent)\(vocabJoined)", "\(indent)</VOCABULARY>"]
-            lines.replaceSubrange(idx...idx, with: block)
-            return lines.joined(separator: "\n")
-        }
-
-        // 2) Block form (line based)
-        if let open = lines.firstIndex(where: { trimEquals($0, "<VOCABULARY>") }) {
-            if let close = lines.indices.dropFirst(open + 1).first(where: { idx in
-                trimEquals(lines[idx], "</VOCABULARY>")
-            }) {
-                let indent = leadingSpaces(lines[open])
-                let contentLines = vocabJoined.isEmpty ? [] : ["\(indent)\(vocabJoined)"]
-                lines.replaceSubrange((open+1)..<close, with: contentLines)
-                return lines.joined(separator: "\n")
-            }
-        }
-
-        // 3) General fallback: replace inline block even if tags share a line
-        if let openRange = template.range(of: "<VOCABULARY>"), let closeRange = template.range(of: "</VOCABULARY>", range: openRange.upperBound..<template.endIndex) {
-            let lastNewline = template[..<openRange.lowerBound].lastIndex(of: "\n")
-            let indent: String
-            if let lastNewline {
-                let start = template.index(after: lastNewline)
-                indent = String(template[start..<openRange.lowerBound].prefix { $0 == " " || $0 == "\t" })
-            } else {
-                indent = ""
-            }
-            let replacement = "<VOCABULARY>\n\(indent)\(vocabJoined)\n\(indent)</VOCABULARY>"
-            var output = template
-            output.replaceSubrange(openRange.lowerBound..<closeRange.upperBound, with: replacement)
-            return output
-        }
-
-        // If no placeholder found, return as-is
         return template
     }
 }

@@ -188,7 +188,8 @@ actor DictationController {
                     transcription: transcript,
                     selectedText: selected,
                     appName: appNameForPrompt,
-                    screenContents: screenText
+                    screenContents: screenText,
+                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
                 )
                 // Capture full user message for history
                 userMsgForHistory = userMsg
@@ -375,7 +376,8 @@ actor DictationController {
                     transcription: transcript,
                     selectedText: selected,
                     appName: appNameForPrompt,
-                    screenContents: screenText
+                    screenContents: screenText,
+                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
                 )
                 // Capture full user message for history
                 userMsgForHistory = userMsg
