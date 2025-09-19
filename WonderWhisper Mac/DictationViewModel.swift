@@ -21,6 +21,7 @@ final class DictationViewModel: ObservableObject {
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    @Published var organizeScreenContentEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false { didSet { persistAndUpdate() } }
 
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // LLM provider selection: "groq" (default) or "openrouter"
@@ -104,8 +105,10 @@ final class DictationViewModel: ObservableObject {
         let persistedTranscriptionModel = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel
         let persistedLLMEnabled = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true
         let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
+        let persistedOrganizeScreenContentEnabled = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false
 
         let persistedLLMModel = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel
+        let persistedLLMProvider = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq"
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
@@ -132,21 +135,31 @@ final class DictationViewModel: ObservableObject {
             transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: persistedTranscriptionModel, timeout: 180)
         }
 
-        var llm: LLMProvider = GroqLLMProvider(client: http)
-        // Pre-warm chat endpoint to reduce cold-start latency
-        GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
+        // Choose initial LLM provider/endpoints based on persisted settings
         let storedSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
         let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
         let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: legacyBasePrompt)
 
         let renderedInitial = PromptBuilder.renderSystemPrompt(template: promptBootstrap.activeSystem, customVocabulary: persistedVocabCustom)
-        var llmSettings = LLMSettings(
-            endpoint: AppConfig.groqChatCompletions,
-            model: persistedLLMModel,
-            systemPrompt: renderedInitial,
-            timeout: 60,
-            streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false
-        )
+
+        var llm: LLMProvider
+        var llmSettings: LLMSettings
+        switch persistedLLMProvider.lowercased() {
+        case "openrouter":
+            llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+            llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: persistedLLMModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
+        case "cerebras":
+            llm = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
+            llmSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: persistedLLMModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
+        default:
+            // Groq as default
+            let httpClient = http
+            llm = GroqLLMProvider(client: httpClient)
+            llmSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: persistedLLMModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
+        }
 
         let recorder = AudioRecorder()
         let inserter = InsertionService()
@@ -176,6 +189,7 @@ final class DictationViewModel: ObservableObject {
         Task {
             await controller.updateLLMEnabled(persistedLLMEnabled)
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
+            await controller.updateOrganizeScreenContentEnabled(persistedOrganizeScreenContentEnabled)
         }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
@@ -282,6 +296,15 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func saveCerebrasKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.cerebrasAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+    }
+
     func saveOpenRouterKey(_ value: String) {
         let kc = KeychainService()
         do { try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias) } catch {
@@ -380,6 +403,7 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
+        UserDefaults.standard.set(organizeScreenContentEnabled, forKey: "screenContext.organize")
 
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(llmProvider, forKey: "llm.provider")
@@ -508,12 +532,20 @@ final class DictationViewModel: ObservableObject {
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
 
         // Choose LLM provider and endpoint
-        var llmProviderInstance: LLMProvider = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
-        if llmProvider.lowercased() == "openrouter" {
+        var llmProviderInstance: LLMProvider
+        switch llmProvider.lowercased() {
+        case "openrouter":
             lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
-            // Pre-warm OpenRouter endpoint for better latency
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
             llmProviderInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+        case "cerebras":
+            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
+            llmProviderInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
+        default:
+            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
+            llmProviderInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
 
         Task {
@@ -523,6 +555,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMSettings(lSettings)
             await controller.updateLLMEnabled(llmEnabled)
             await controller.updateScreenContextEnabled(screenContextEnabled)
+            await controller.updateOrganizeScreenContentEnabled(organizeScreenContentEnabled)
         }
     }
 

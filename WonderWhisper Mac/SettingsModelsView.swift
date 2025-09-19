@@ -78,6 +78,7 @@ struct SettingsModelsView: View {
                 Picker("LLM Provider", selection: $vm.llmProvider) {
                     Text("Groq").tag("groq")
                     Text("OpenRouter").tag("openrouter")
+                    Text("Cerebras").tag("cerebras")
                 }
                 if vm.llmProvider == "openrouter" {
                     // Routing preference
@@ -87,6 +88,22 @@ struct SettingsModelsView: View {
                     }
                     // Searchable model selector for OpenRouter
                     OpenRouterModelSelector(selectedModel: $vm.llmModel)
+                } else if vm.llmProvider == "cerebras" {
+                    // Cerebras models (Production + Preview)
+                    Picker("LLM model", selection: $vm.llmModel) {
+                        // Production
+                        Text("llama-4-scout-17b-16e-instruct").tag("llama-4-scout-17b-16e-instruct")
+                        Text("llama3.1-8b").tag("llama3.1-8b")
+                        Text("llama-3.3-70b").tag("llama-3.3-70b")
+                        Text("gpt-oss-120b").tag("gpt-oss-120b")
+                        Text("qwen-3-32b").tag("qwen-3-32b")
+                        Divider()
+                        // Preview (not for production)
+                        Text("[Preview] llama-4-maverick-17b-128e-instruct").tag("llama-4-maverick-17b-128e-instruct")
+                        Text("[Preview] qwen-3-235b-a22b-instruct-2507").tag("qwen-3-235b-a22b-instruct-2507")
+                        Text("[Preview] qwen-3-235b-a22b-thinking-2507").tag("qwen-3-235b-a22b-thinking-2507")
+                        Text("[Preview] qwen-3-coder-480b").tag("qwen-3-coder-480b")
+                    }
                 } else {
                     // Existing static picker for Groq-backed models
                     Picker("LLM model", selection: $vm.llmModel) {

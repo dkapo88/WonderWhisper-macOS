@@ -18,10 +18,12 @@ actor DictationController {
 
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
+    private var organizeScreenContentEnabled: Bool = false
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
-    
+    private var screenOrganizationTask: Task<String?, Never>?
+
     // Removed memory recording feature due to unreliable output
 
     init(recorder: AudioRecorder,
@@ -183,6 +185,23 @@ actor DictationController {
                         screenText = await screenContext.captureActiveWindowText()
                         screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
                     }
+                    // If organizing is enabled and we used OCR, ensure organized content is available (wait if needed)
+                    if organizeScreenContentEnabled, screenMethod == "OCR", let raw = screenText, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if let t = screenOrganizationTask {
+                            let organized = await t.value
+                            if let organized, !organized.isEmpty { screenText = organized }
+                        } else {
+                            // Start and await organization now if it wasn't pre-started
+                            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
+                            let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+                            do {
+                                let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
+                                if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
+                            } catch {
+                                AppLog.dictation.error("Screen organization LLM (fallback) failed: \(error.localizedDescription)")
+                            }
+                        }
+                    }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
@@ -282,6 +301,7 @@ actor DictationController {
         // Reset pre-captured context for the next run
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        screenOrganizationTask = nil
         // Restore capture profile to default for subsequent runs
         recorder.captureProfile = .standard16k
         os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
@@ -293,6 +313,7 @@ actor DictationController {
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
+    func updateOrganizeScreenContentEnabled(_ enabled: Bool) { self.organizeScreenContentEnabled = enabled }
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
 
@@ -321,6 +342,7 @@ actor DictationController {
         // Reset any pre-captured context
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        screenOrganizationTask = nil
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
     }
@@ -370,6 +392,17 @@ actor DictationController {
                     } else {
                         screenText = await screenContext.captureActiveWindowText()
                         screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
+                    }
+                    // Apply organization for OCR in reprocess flow if enabled
+                    if organizeScreenContentEnabled, screenMethod == "OCR", let raw = screenText, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
+                        let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+                        do {
+                            let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
+                            if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
+                        } catch {
+                            AppLog.dictation.error("Screen organization LLM (reprocess) failed: \(error.localizedDescription)")
+                        }
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
@@ -427,5 +460,19 @@ extension DictationController {
         let ocr = await screenContext.captureActiveWindowText()
         self.preCapturedScreenText = ocr
         self.preCapturedScreenMethod = (ocr?.isEmpty ?? true) ? nil : "OCR"
+        // Kick off LLM organization in parallel if enabled and we have OCR text
+        if organizeScreenContentEnabled, let ocrText = ocr, !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
+            let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+            self.screenOrganizationTask = Task { [ocrText] in
+                do {
+                    let organized = try await llm.process(text: ocrText, userPrompt: instruction, settings: orgSettings)
+                    return organized.trimmingCharacters(in: .whitespacesAndNewlines)
+                } catch {
+                    AppLog.dictation.error("Screen organization LLM failed: \(error.localizedDescription)")
+                    return ocrText
+                }
+            }
+        }
     }
 }

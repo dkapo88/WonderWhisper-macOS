@@ -6,6 +6,7 @@ struct SettingsAPIKeysView: View {
     @State private var assemblyAIKeyInput: String = ""
     @State private var deepgramKeyInput: String = ""
     @State private var openrouterKeyInput: String = ""
+    @State private var cerebrasKeyInput: String = ""
 
     var body: some View {
         Form {
@@ -50,7 +51,7 @@ struct SettingsAPIKeysView: View {
                     }
                 }
             }
-        
+
             Section("OpenRouter") {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("OpenRouter API Key", text: $openrouterKeyInput)
@@ -63,6 +64,20 @@ struct SettingsAPIKeysView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+            Section("Cerebras") {
+                VStack(alignment: .leading, spacing: 8) {
+                    SecureField("Cerebras API Key", text: $cerebrasKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 420)
+                    HStack(spacing: 8) {
+                        Button("Save Cerebras Key") { vm.saveCerebrasKey(cerebrasKeyInput); cerebrasKeyInput = "" }
+                        Text("Stored as \(AppConfig.cerebrasAPIKeyAlias)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
             }
         }
         .formStyle(.grouped)

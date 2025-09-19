@@ -11,6 +11,10 @@ struct AppConfig {
     static let openrouterChatCompletions = openrouterBase.appendingPathComponent("chat/completions")
     static let openrouterModels = openrouterBase.appendingPathComponent("models")
 
+    // Cerebras base and endpoints (OpenAI-compatible)
+    static let cerebrasBase = URL(string: "https://api.cerebras.ai/v1")!
+    static let cerebrasChatCompletions = cerebrasBase.appendingPathComponent("chat/completions")
+
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
@@ -20,6 +24,8 @@ struct AppConfig {
     static let groqAPIKeyAlias = "GROQ_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
+    // Keychain alias for the Cerebras API key
+    static let cerebrasAPIKeyAlias = "CEREBRAS_API_KEY"
 
     // Keychain alias for the AssemblyAI API key
     static let assemblyAIAPIKeyAlias = "ASSEMBLYAI_API_KEY"
