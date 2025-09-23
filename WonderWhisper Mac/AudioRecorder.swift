@@ -226,12 +226,14 @@ extension AudioRecorder {
         engine.mainMixerNode.outputVolume = 0
         engine.connect(input, to: engine.mainMixerNode, format: inputFormat)
 
-        let targetFormat = AVAudioFormat(
+        guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: 16_000,
             channels: 1,
             interleaved: true
-        )!
+        ) else {
+            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create target audio format"])
+        }
 
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create audio converter"])

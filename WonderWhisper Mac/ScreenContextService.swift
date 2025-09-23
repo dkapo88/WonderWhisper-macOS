@@ -16,7 +16,9 @@ final class ScreenContextService {
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         guard err == .success, let element = focused else { return nil }
         var value: AnyObject?
-        let err2 = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXValueAttribute as CFString, &value)
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        let axElement = element as! AXUIElement
+        let err2 = AXUIElementCopyAttributeValue(axElement, kAXValueAttribute as CFString, &value)
         if err2 == .success, let str = value as? String { return str }
         return nil
     }
@@ -29,15 +31,18 @@ final class ScreenContextService {
         if err == .success, let element = focused {
             // Direct selected text
             var sel: AnyObject?
-            let res = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextAttribute as CFString, &sel)
+            guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+            let axElement = element as! AXUIElement
+            let res = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextAttribute as CFString, &sel)
             if res == .success, let s = sel as? String, !s.isEmpty { return s }
             // Range-based selected text
             var rangeValue: AnyObject?
-            let res2 = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
+            let res2 = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
             if res2 == .success, let axRange = rangeValue {
                 var strForRange: AnyObject?
+
                 let paramRes = AXUIElementCopyParameterizedAttributeValue(
-                    element as! AXUIElement,
+                    axElement,
                     kAXStringForRangeParameterizedAttribute as CFString,
                     axRange,
                     &strForRange
@@ -115,6 +120,7 @@ private extension ScreenContextService {
         var menubarObj: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appAX, kAXMenuBarAttribute as CFString, &menubarObj) == .success,
               let menubarCF = menubarObj else { return false }
+        guard CFGetTypeID(menubarCF) == AXUIElementGetTypeID() else { return false }
         let menubar = menubarCF as! AXUIElement
         if let item = findMenuItem(in: menubar, titled: "Copy") {
             let res = AXUIElementPerformAction(item, kAXPressAction as CFString)

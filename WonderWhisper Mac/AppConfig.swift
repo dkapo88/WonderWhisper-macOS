@@ -2,17 +2,35 @@ import Foundation
 
 struct AppConfig {
     // Groq uses OpenAI-compatible endpoints under /openai/v1
-    static let groqBase = URL(string: "https://api.groq.com/openai/v1")!
+    private static let groqBaseString = "https://api.groq.com/openai/v1"
+    static let groqBase: URL = {
+        guard let url = URL(string: groqBaseString) else {
+            fatalError("Invalid Groq base URL")
+        }
+        return url
+    }()
     static let groqAudioTranscriptions = groqBase.appendingPathComponent("audio/transcriptions")
     static let groqChatCompletions = groqBase.appendingPathComponent("chat/completions")
 
     // OpenRouter base and endpoints (OpenAI-compatible)
-    static let openrouterBase = URL(string: "https://openrouter.ai/api/v1")!
+    private static let openrouterBaseString = "https://openrouter.ai/api/v1"
+    static let openrouterBase: URL = {
+        guard let url = URL(string: openrouterBaseString) else {
+            fatalError("Invalid OpenRouter base URL")
+        }
+        return url
+    }()
     static let openrouterChatCompletions = openrouterBase.appendingPathComponent("chat/completions")
     static let openrouterModels = openrouterBase.appendingPathComponent("models")
 
     // Cerebras base and endpoints (OpenAI-compatible)
-    static let cerebrasBase = URL(string: "https://api.cerebras.ai/v1")!
+    private static let cerebrasBaseString = "https://api.cerebras.ai/v1"
+    static let cerebrasBase: URL = {
+        guard let url = URL(string: cerebrasBaseString) else {
+            fatalError("Invalid Cerebras base URL")
+        }
+        return url
+    }()
     static let cerebrasChatCompletions = cerebrasBase.appendingPathComponent("chat/completions")
 
     // Default model IDs (replace with the exact IDs you use in production)

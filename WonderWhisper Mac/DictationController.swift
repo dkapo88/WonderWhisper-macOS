@@ -50,7 +50,7 @@ actor DictationController {
             do {
                 AppLog.dictation.log("Recording start")
                 
-                // Always use file-based recording (memory recording removed due to unreliable output)
+                // Always start file recording as backup for all providers
                 // For Apple's native Speech provider, switch to a high-quality capture profile.
                 if transcriber is NativeAppleTranscriptionProvider {
                     recorder.captureProfile = .appleNativeHighQuality
@@ -107,7 +107,7 @@ actor DictationController {
         if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is GroqStreamingProvider { recorder.stopStreamingPCM16() }
         
-        var recordingFileURL: URL? = nil // Track the file URL for history - defined at function scope
+        let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
         
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
@@ -120,40 +120,32 @@ actor DictationController {
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
             
             os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
-            // Handle streaming providers first
+            // Handle streaming providers first (prefer live, fallback to file if empty)
             if let aai = transcriber as? AssemblyAIStreamingProvider {
                 // Prefer the live session's final transcript for speed
                 transcript = try await aai.endRealtimeSessionAndGetTranscript()
                 // If empty (fallback), run file-based for safety
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let maybeURL = await recorder.stopRecordingAndWait()
-                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
-                    recordingFileURL = fileURL
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else if let dg = transcriber as? DeepgramStreamingProvider {
                 // Prefer Deepgram live session transcript gathered during recording
                 transcript = try await dg.endRealtime()
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let maybeURL = await recorder.stopRecordingAndWait()
-                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
-                    recordingFileURL = fileURL
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else if let groq = transcriber as? GroqStreamingProvider {
                 // Prefer Groq chunked streaming transcript for speed
                 transcript = try await groq.endRealtime()
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let maybeURL = await recorder.stopRecordingAndWait()
-                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
-                    recordingFileURL = fileURL
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else {
                 // Standard file-based transcription for non-streaming providers
-                let maybeURL = await recorder.stopRecordingAndWait()
-                guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
-                recordingFileURL = fileURL
+                guard let fileURL = recordingFileURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
                 AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber))) file=\(fileURL.lastPathComponent)")
                 transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
             }
