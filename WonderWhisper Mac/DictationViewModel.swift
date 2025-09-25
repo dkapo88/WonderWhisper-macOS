@@ -71,6 +71,7 @@ final class DictationViewModel: ObservableObject {
     let history = HistoryStore()
     private let promptHotkeyManager = PromptHotkeyManager()
     private var isApplyingPromptFromSelection = false
+    private var providerUpdateTask: Task<Void, Never>?
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -254,12 +255,20 @@ final class DictationViewModel: ObservableObject {
 
     func toggle() {
         persistPromptLibrary()
-        Task { await controller.toggle(userPrompt: userPrompt) }
+        Task {
+            await waitForLatestProviderUpdate()
+            let prompt = await MainActor.run { self.userPrompt }
+            await controller.toggle(userPrompt: prompt)
+        }
     }
 
     func finish() {
         persistPromptLibrary()
-        Task { await controller.finish(userPrompt: userPrompt) }
+        Task {
+            await waitForLatestProviderUpdate()
+            let prompt = await MainActor.run { self.userPrompt }
+            await controller.finish(userPrompt: prompt)
+        }
     }
 
     func cancel() {
@@ -476,6 +485,7 @@ final class DictationViewModel: ObservableObject {
                 self.selectedPromptID = id
             }
         }
+        await waitForLatestProviderUpdate()
         let promptText = await MainActor.run { self.userPrompt }
         switch phase {
         case .down:
@@ -554,20 +564,33 @@ final class DictationViewModel: ObservableObject {
             llmProviderInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
 
-        Task {
-            if let p = provider { await controller.updateTranscriberProvider(p) }
-            await controller.updateTranscriberSettings(tSettings)
-            await controller.updateLLMProvider(llmProviderInstance)
-            await controller.updateLLMSettings(lSettings)
-            await controller.updateLLMEnabled(llmEnabled)
-            await controller.updateScreenContextEnabled(screenContextEnabled)
-            await controller.updateOrganizeScreenContentEnabled(organizeScreenContentEnabled)
-            await controller.updateScreenOrganizePrompt(screenOrganizePrompt)
+        let providerToApply = provider
+        let transcriberSettings = tSettings
+        let llmProviderToApply = llmProviderInstance
+        let llmSettingsToApply = lSettings
+        let isLLMEnabled = llmEnabled
+        let isScreenContextEnabled = screenContextEnabled
+        let isOrganizeScreenContentEnabled = organizeScreenContentEnabled
+        let screenOrganizePromptToApply = screenOrganizePrompt
+
+        let task = Task {
+            if let providerToApply {
+                await controller.updateTranscriberProvider(providerToApply)
+            }
+            await controller.updateTranscriberSettings(transcriberSettings)
+            await controller.updateLLMProvider(llmProviderToApply)
+            await controller.updateLLMSettings(llmSettingsToApply)
+            await controller.updateLLMEnabled(isLLMEnabled)
+            await controller.updateScreenContextEnabled(isScreenContextEnabled)
+            await controller.updateOrganizeScreenContentEnabled(isOrganizeScreenContentEnabled)
+            await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
+        providerUpdateTask = task
     }
 
     // Reprocess a saved history entry with current settings
     func reprocessHistoryEntry(_ entry: HistoryEntry) async {
+        await waitForLatestProviderUpdate()
         await controller.reprocess(entry: entry, userPrompt: userPrompt)
     }
 
@@ -588,6 +611,13 @@ private struct PromptBootstrap {
 }
 
 private extension DictationViewModel {
+    @MainActor
+    func waitForLatestProviderUpdate() async {
+        if let task = providerUpdateTask {
+            await task.value
+        }
+    }
+
     static func bootstrapPromptLibrary(initialSystem: String, initialUser: String, legacyBasePrompt: String) -> PromptBootstrap {
         let defaults = UserDefaults.standard
         var loaded: [PromptConfiguration] = []
