@@ -89,8 +89,6 @@ struct SettingsGeneralView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Accurate OCR for code editors", isOn: $vm.accurateOCRForEditors)
                             .help("Improves text capture in editors like Cursor/VS Code/Xcode at the cost of a small latency increase (~0.2–0.6s). Turn off to prioritize speed.")
-                        Toggle("Organize Screen Content", isOn: $vm.organizeScreenContentEnabled)
-                            .help("Preprocesses OCR text with a quick LLM pass to group related content and extract key names/terms before the main prompt.")
                     }
                 }
 

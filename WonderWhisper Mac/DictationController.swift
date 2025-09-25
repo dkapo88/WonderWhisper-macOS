@@ -24,6 +24,9 @@ actor DictationController {
     private var preCapturedScreenMethod: String?
     private var screenOrganizationTask: Task<String?, Never>?
 
+
+    private var screenOrganizePrompt: String = AppConfig.defaultScreenOrganizePrompt
+
     // Removed memory recording feature due to unreliable output
 
     init(recorder: AudioRecorder,
@@ -49,7 +52,7 @@ actor DictationController {
         case .idle, .error:
             do {
                 AppLog.dictation.log("Recording start")
-                
+
                 // Always start file recording as backup for all providers
                 // For Apple's native Speech provider, switch to a high-quality capture profile.
                 if transcriber is NativeAppleTranscriptionProvider {
@@ -106,19 +109,19 @@ actor DictationController {
         if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is GroqStreamingProvider { recorder.stopStreamingPCM16() }
-        
+
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
-        
+
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
-        
+
         do {
             let overallStart = Date()
             state = .transcribing
             let t0 = Date()
             var transcript: String = ""
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
-            
+
             os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
             // Handle streaming providers first (prefer live, fallback to file if empty)
             if let aai = transcriber as? AssemblyAIStreamingProvider {
@@ -185,7 +188,7 @@ actor DictationController {
                         } else {
                             // Start and await organization now if it wasn't pre-started
                             let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-                            let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+                            let instruction = screenOrganizePrompt
                             do {
                                 let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
                                 if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
@@ -306,6 +309,8 @@ actor DictationController {
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
     func updateOrganizeScreenContentEnabled(_ enabled: Bool) { self.organizeScreenContentEnabled = enabled }
+    func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
+
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
 
@@ -388,7 +393,7 @@ actor DictationController {
                     // Apply organization for OCR in reprocess flow if enabled
                     if organizeScreenContentEnabled, screenMethod == "OCR", let raw = screenText, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-                        let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+                        let instruction = screenOrganizePrompt
                         do {
                             let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
                             if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
@@ -455,7 +460,7 @@ extension DictationController {
         // Kick off LLM organization in parallel if enabled and we have OCR text
         if organizeScreenContentEnabled, let ocrText = ocr, !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-            let instruction = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+            let instruction = screenOrganizePrompt
             self.screenOrganizationTask = Task { [ocrText] in
                 do {
                     let organized = try await llm.process(text: ocrText, userPrompt: instruction, settings: orgSettings)

@@ -23,6 +23,8 @@ final class DictationViewModel: ObservableObject {
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var organizeScreenContentEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false { didSet { persistAndUpdate() } }
 
+    @Published var screenOrganizePrompt: String = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt { didSet { persistAndUpdate() } }
+
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // LLM provider selection: "groq" (default) or "openrouter"
     @Published var llmProvider: String = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq" { didSet { persistAndUpdate() } }
@@ -105,6 +107,8 @@ final class DictationViewModel: ObservableObject {
         let persistedTranscriptionModel = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel
         let persistedLLMEnabled = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true
         let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
+        let persistedOrganizePrompt = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt
+
         let persistedOrganizeScreenContentEnabled = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false
 
         let persistedLLMModel = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel
@@ -190,6 +194,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMEnabled(persistedLLMEnabled)
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
             await controller.updateOrganizeScreenContentEnabled(persistedOrganizeScreenContentEnabled)
+            await controller.updateScreenOrganizePrompt(persistedOrganizePrompt)
         }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
@@ -410,6 +415,7 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
+        UserDefaults.standard.set(screenOrganizePrompt, forKey: "screenContext.organizePrompt")
         updateProviders()
     }
 
@@ -556,6 +562,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMEnabled(llmEnabled)
             await controller.updateScreenContextEnabled(screenContextEnabled)
             await controller.updateOrganizeScreenContentEnabled(organizeScreenContentEnabled)
+            await controller.updateScreenOrganizePrompt(screenOrganizePrompt)
         }
     }
 

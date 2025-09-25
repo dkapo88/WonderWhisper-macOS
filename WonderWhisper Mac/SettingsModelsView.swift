@@ -75,6 +75,26 @@ struct SettingsModelsView: View {
                 Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
                     .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
 
+                // Organize OCR screen content before main LLM step
+                Toggle("Organize Screen Content", isOn: $vm.organizeScreenContentEnabled)
+                    .help("Preprocesses OCR text with a quick LLM pass to group related content and extract key names/terms before the main prompt.")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Organization prompt")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $vm.screenOrganizePrompt)
+                        .font(.body)
+                        .frame(minHeight: 60, maxHeight: 120)
+                        .disabled(!vm.organizeScreenContentEnabled)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.2))
+                        )
+                        .help("Customize the instruction sent to the quick LLM pass that organizes OCR'd screen content before your main prompt.")
+                }
+                .padding(.top, 4)
+
+
                 Picker("LLM Provider", selection: $vm.llmProvider) {
                     Text("Groq").tag("groq")
                     Text("OpenRouter").tag("openrouter")
