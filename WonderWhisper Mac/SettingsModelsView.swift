@@ -25,6 +25,40 @@ struct SettingsModelsView: View {
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
                 }
 
+                // Groq Whisper options (language + prompt), shown for Groq Whisper models and streaming
+                if ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en", "groq-streaming"].contains(vm.transcriptionModel) {
+                    GroupBox("Groq Whisper options") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Language code")
+                                Spacer()
+                                TextField("en", text: $vm.transcriptionLanguage)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(maxWidth: 160)
+                            }
+                            .help("BCP-47 language code (e.g., en, es, fr). Default is en.")
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Custom transcription prompt")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                TextEditor(text: $vm.transcriptionPrompt)
+                                    .font(.body)
+                                    .frame(minHeight: 60, maxHeight: 120)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.secondary.opacity(0.2))
+                                    )
+                                    .help("Optional hint sent to the Whisper model. Your Vocabulary and Spellings are automatically appended to this prompt.")
+                                Text("Vocabulary and Spellings from Settings → Prompts are automatically included.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
                 if vm.transcriptionModel == "groq-streaming" {
                     GroupBox("Groq Chunked Streaming") {
                         VStack(alignment: .leading, spacing: 8) {
