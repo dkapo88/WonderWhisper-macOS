@@ -3,29 +3,94 @@ import AppKit
 import Vision
 import ScreenCaptureKit
 import OSLog
+import CoreImage
+import ImageIO
+import UniformTypeIdentifiers
 
 final class ScreenCaptureService: NSObject {
     private static let signposter = OSSignposter(logger: AppLog.ocr)
+
     private func frontmostWindow(in content: SCShareableContent) -> SCWindow? {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let pid = frontApp?.processIdentifier
-        // Prefer the largest on-screen window for the frontmost app to avoid selecting tiny overlays/panels
+
+        // Enhanced window selection with multiple strategies
         if let pid {
-            let candidates = content.windows.filter { $0.owningApplication?.processID == pid && $0.isOnScreen }
-            if let best = candidates
-                .filter({ $0.frame.width >= 300 && $0.frame.height >= 200 })
-                .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) {
-                return best
+            let candidates = content.windows.filter {
+                $0.owningApplication?.processID == pid && $0.isOnScreen
             }
-            // If all are small (overlays), still pick the largest visible one
-            if let anyBest = candidates.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) {
-                return anyBest
+
+            // Strategy 1: Find main content windows (larger than typical overlays)
+            let mainWindows = candidates.filter {
+                $0.frame.width >= 400 && $0.frame.height >= 300
+            }
+
+            // Strategy 2: Exclude likely system UI elements and overlays
+            let contentWindows = mainWindows.filter { window in
+                let title = window.title ?? ""
+                let frame = window.frame
+
+                // Exclude very small windows (likely overlays)
+                if frame.width < 200 || frame.height < 150 { return false }
+
+                // Exclude windows with system-like titles
+                let systemTitles = ["", "Window", "Panel", "Menu", "Popup", "Tooltip"]
+                if systemTitles.contains(title) { return false }
+
+                // Exclude windows that are too narrow or too short (likely panels)
+                let aspectRatio = frame.width / frame.height
+                if aspectRatio < 0.3 || aspectRatio > 5.0 { return false }
+
+                return true
+            }
+
+            // Strategy 3: Prefer windows with meaningful titles
+            if !contentWindows.isEmpty {
+                // First try to find windows with substantial titles
+                let titledWindows = contentWindows.filter {
+                    ($0.title?.count ?? 0) > 3
+                }
+
+                if !titledWindows.isEmpty {
+                    return titledWindows.max(by: {
+                        $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+                    })
+                }
+
+                // Fallback to largest content window
+                return contentWindows.max(by: {
+                    $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+                })
+            }
+
+            // Strategy 4: Fallback to any reasonable-sized window
+            let reasonableWindows = candidates.filter {
+                $0.frame.width >= 200 && $0.frame.height >= 150
+            }
+
+            if !reasonableWindows.isEmpty {
+                return reasonableWindows.max(by: {
+                    $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+                })
+            }
+
+            // Strategy 5: Last resort - any visible window
+            if !candidates.isEmpty {
+                return candidates.max(by: {
+                    $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+                })
             }
         }
-        // Fallback to the largest on-screen window not owned by us
+
+        // Final fallback: largest on-screen window not owned by us
         let ownPID = NSRunningApplication.current.processIdentifier
-        let others = content.windows.filter { $0.owningApplication?.processID != ownPID && $0.isOnScreen }
-        return others.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+        let others = content.windows.filter {
+            $0.owningApplication?.processID != ownPID && $0.isOnScreen &&
+            $0.frame.width >= 200 && $0.frame.height >= 150
+        }
+        return others.max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        })
     }
 
     private final class OneShotOutput: NSObject, SCStreamOutput {
@@ -44,156 +109,155 @@ final class ScreenCaptureService: NSObject {
             let state_sc = Self.signposter.beginInterval("SCShareableContent.current", id: sid)
             let content = try await SCShareableContent.current
             Self.signposter.endInterval("SCShareableContent.current", state_sc)
-            guard let window = frontmostWindow(in: content) else { return nil }
-            // Heuristics: detect code editors (Cursor, VS Code, JetBrains, Xcode)
+
+            guard let window = frontmostWindow(in: content) else {
+                if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                    AppLog.ocr.error("No suitable window found for OCR")
+                }
+                return nil
+            }
+
+            // Enhanced app detection and configuration
             let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
             let isCodeEditor = [
-                // Cursor
                 "com.cursorai.cursor",
-                "com.todesktop.cursor", // legacy/toDesktop variants
-                // VS Code
+                "com.todesktop.cursor",
                 "com.microsoft.VSCode",
                 "com.microsoft.VSCodeInsiders",
-                // Xcode
                 "com.apple.dt.Xcode",
-                // JetBrains IDEs (common prefix)
                 "com.jetbrains"
             ].contains(where: { frontBundle.hasPrefix($0) })
+
+            let isBrowser = [
+                "com.apple.Safari",
+                "com.google.Chrome",
+                "org.mozilla.firefox",
+                "com.microsoft.edgemac",
+                "com.operasoftware.Opera"
+            ].contains(where: { frontBundle.hasPrefix($0) })
+
             let preferAccurate = (UserDefaults.standard.object(forKey: "ocr.accurateForEditors") as? Bool ?? true)
-            let shouldPreferAccurate = isCodeEditor && preferAccurate
+            let forceAccurate = UserDefaults.standard.bool(forKey: "ocr.forceAccurate")
+            let shouldPreferAccurate = forceAccurate || (isCodeEditor && preferAccurate) || isBrowser
+
+            // Enhanced debugging
             if UserDefaults.standard.bool(forKey: "ocr.debug") {
                 let title = window.title ?? "(no title)"
                 let f = window.frame
                 let bid = window.owningApplication?.bundleIdentifier ?? "(unknown)"
-                #if DEBUG
-                print("[OCR] chosen window title=\(title) size=\(Int(f.width))x\(Int(f.height)) app=\(bid)")
-                #endif
+                AppLog.ocr.info("OCR target: '\(title)' (\(Int(f.width))x\(Int(f.height))) app=\(bid) editor=\(isCodeEditor) browser=\(isBrowser) accurate=\(shouldPreferAccurate)")
             }
+
             let filter = SCContentFilter(desktopIndependentWindow: window)
             let config = SCStreamConfiguration()
             let size = window.frame.size
-            // Capture at (approx) 1:1 device pixels to avoid blurring text
+
+            // Capture at native scaled size (avoid upscaling to prevent blur)
             let scale = NSScreen.screens.first(where: { $0.frame.intersects(window.frame) })?.backingScaleFactor
                 ?? NSScreen.main?.backingScaleFactor
                 ?? 2.0
-            config.width = max(1, Int((size.width * scale).rounded()))
-            config.height = max(1, Int((size.height * scale).rounded()))
+
+            let scaledWidth = Int((size.width * scale).rounded())
+            let scaledHeight = Int((size.height * scale).rounded())
+
+            config.width = scaledWidth
+            config.height = scaledHeight
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             config.queueDepth = 1
 
-            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-            var capturedText: String?
-            // Prepare two OCR requests: a fast pass and an accurate fallback
-            let fastReq = VNRecognizeTextRequest { _, _ in }
-            fastReq.recognitionLevel = shouldPreferAccurate ? .accurate : .fast
-            fastReq.usesLanguageCorrection = !shouldPreferAccurate
-            // Allow Vision to auto-detect languages (no explicit list)
-            // Disable minimum text height by default (can be overridden via UserDefaults)
-            let userMinH = UserDefaults.standard.object(forKey: "ocr.minimumTextHeight") as? Double
-            let finalFast = Float(userMinH ?? 0.0)
-            fastReq.minimumTextHeight = max(0.0, finalFast)
-            let minHFast = finalFast
-            if #available(macOS 13.0, *) {
-                fastReq.revision = VNRecognizeTextRequestRevision3
+            // Validate capture configuration
+            if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                AppLog.ocr.info("Capture config: \(config.width)x\(config.height) scale=\(scale)")
             }
 
-            let accurateReq = VNRecognizeTextRequest { _, _ in }
-            accurateReq.recognitionLevel = .accurate
-            accurateReq.usesLanguageCorrection = !isCodeEditor
-            // Allow Vision to auto-detect languages (no explicit list)
-            let finalAcc = Float(userMinH ?? 0.0)
-            accurateReq.minimumTextHeight = max(0.0, finalAcc)
-            let minHAcc = finalAcc
+            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+            // Await the first processed frame or a timeout via AsyncStream
+            var textContinuation: AsyncStream<String?>.Continuation?
+            let textStream = AsyncStream<String?> { continuation in
+                textContinuation = continuation
+            }
+
+            // Enhanced OCR configuration with app-specific optimizations
+            let userMinH = UserDefaults.standard.object(forKey: "ocr.minimumTextHeight") as? Double
+            let dynamicMinHeight = calculateMinimumTextHeight(
+                imageWidth: config.width,
+                imageHeight: config.height,
+                isCodeEditor: isCodeEditor,
+                isBrowser: isBrowser,
+                userOverride: userMinH
+            )
+
+            // Primary OCR request with optimized settings
+            let primaryReq = VNRecognizeTextRequest { _, _ in }
+            primaryReq.recognitionLevel = shouldPreferAccurate ? .accurate : .fast
+            primaryReq.usesLanguageCorrection = isBrowser ? true : (!isCodeEditor)
+            primaryReq.minimumTextHeight = max(0.0008, dynamicMinHeight * (config.width < 900 ? 0.5 : 1.0))
+
+            // Configure for better text detection
             if #available(macOS 13.0, *) {
-                accurateReq.revision = VNRecognizeTextRequestRevision3
+                primaryReq.revision = VNRecognizeTextRequestRevision3
+            }
+
+            // Fallback OCR request with different settings
+            let fallbackReq = VNRecognizeTextRequest { _, _ in }
+            fallbackReq.recognitionLevel = .accurate
+            fallbackReq.usesLanguageCorrection = false
+            fallbackReq.minimumTextHeight = max(0.0, primaryReq.minimumTextHeight * 0.5) // More permissive
+
+            if #available(macOS 13.0, *) {
+                fallbackReq.revision = VNRecognizeTextRequestRevision3
             }
 
             let queue = DispatchQueue(label: "ScreenCaptureService.SampleHandler", qos: .userInitiated)
             let output = OneShotOutput { sample in
-                guard let px = CMSampleBufferGetImageBuffer(sample) else { return }
-                // Helper to evaluate text quality (confidence only; no ASCII filtering)
-                func qualityScore(_ observations: [VNRecognizedTextObservation]?) -> (score: Double, text: String?) {
-                    guard let observations else { return (0, nil) }
-                    var totalConfidence: Double = 0
-                    var count: Double = 0
-                    var raw = ""
-                    for obs in observations {
-                        guard let top = obs.topCandidates(1).first else { continue }
-                        totalConfidence += Double(top.confidence)
-                        count += 1
-                        raw.append(top.string)
-                        raw.append("\n")
-                    }
-                    let avgConf = count > 0 ? totalConfidence / count : 0
-                    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return (avgConf, text.isEmpty ? nil : text)
-                }
-
-                do {
-                    let handler = VNImageRequestHandler(cvPixelBuffer: px, options: [:])
-                    let sid = Self.signposter.makeSignpostID()
-                    let state_fast = Self.signposter.beginInterval("OCR.fast", id: sid)
-                    try handler.perform([fastReq])
-                    Self.signposter.endInterval("OCR.fast", state_fast)
-                    var bestScore: Double = 0
-                    var bestText: String? = nil
-                    do {
-                        let (s, t) = qualityScore(fastReq.results)
-                        bestScore = s
-                        bestText = t
-                    }
-                    let lc = bestText?.split(separator: "\n").count ?? 0
-                    let cc = bestText?.count ?? 0
-                    let goodEnough = (lc >= 15) || (cc >= 200) || (bestScore >= 0.50)
-                    if !goodEnough {
-                        if bestScore < 0.6 && shouldPreferAccurate {
-                            let sid2 = Self.signposter.makeSignpostID()
-                            let state_acc = Self.signposter.beginInterval("OCR.accurate", id: sid2)
-                            try handler.perform([accurateReq])
-                            Self.signposter.endInterval("OCR.accurate", state_acc)
-                            let (s2, t2) = qualityScore(accurateReq.results)
-                            if s2 > bestScore { bestScore = s2; bestText = t2 }
-                        } else if bestScore < 0.30 {
-                            // Safety net: even if accurate is off, attempt once when quality is catastrophic
-                            let sid2 = Self.signposter.makeSignpostID()
-                            let state_acc = Self.signposter.beginInterval("OCR.accurate", id: sid2)
-                            try? handler.perform([accurateReq])
-                            Self.signposter.endInterval("OCR.accurate", state_acc)
-                            let (s2, t2) = qualityScore(accurateReq.results)
-                            if s2 > bestScore { bestScore = s2; bestText = t2 }
-                        }
-                    }
-                    // Optional debug: log dimensions and line count for troubleshooting
-                    if UserDefaults.standard.bool(forKey: "ocr.debug") {
-                        var lineCount = 0
-                        if let txt = bestText {
-                            lineCount = txt.split(separator: "\n").count
-                        }
-                        let w = CVPixelBufferGetWidth(px)
-                        let h = CVPixelBufferGetHeight(px)
-                        #if DEBUG
-                        print("[OCR] image=\(w)x\(h) score=\(String(format: "%.2f", bestScore)) lines=\(lineCount) editor=\(isCodeEditor) accurate=\(shouldPreferAccurate) minFast=\(String(format: "%.4f", minHFast)) minAcc=\(String(format: "%.4f", minHAcc))")
-                        #endif
-                    }
-                    if let text = bestText, !text.isEmpty {
-                        capturedText = text
-                    }
-                } catch {
-                    // Ignore OCR errors for one-shot
+                if let text = self.processSample(
+                    sample,
+                    primaryReq: primaryReq,
+                    fallbackReq: fallbackReq,
+                    isCodeEditor: isCodeEditor,
+                    isBrowser: isBrowser,
+                    shouldPreferAccurate: shouldPreferAccurate
+                ) {
+                    textContinuation?.yield(text)
+                    textContinuation?.finish()
                 }
             }
+
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
-            // Wait for the first recognized text or timeout quickly
-            let baseTimeout: TimeInterval = shouldPreferAccurate ? 0.60 : 0.17
-            let deadline = Date().addingTimeInterval(baseTimeout)
-            while capturedText == nil && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 30_000_000) // 30 ms slices
-                if capturedText != nil { break }
+
+            // Enhanced timeout logic with better defaults
+            let extendedTimeout = UserDefaults.standard.bool(forKey: "ocr.extendedTimeout")
+            let baseTimeout: TimeInterval = extendedTimeout ? 2.0 : (shouldPreferAccurate ? 1.0 : 0.5)
+            let timeoutNanos: UInt64 = UInt64(baseTimeout * 1_000_000_000)
+
+            let result: String? = try await withThrowingTaskGroup(of: String?.self) { group in
+                group.addTask {
+                    for await t in textStream { return t }
+                    return nil
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: timeoutNanos)
+                    return nil
+                }
+                let first = try await group.next() ?? nil
+                group.cancelAll()
+                return first
             }
+
+            // Finish and stop capture
+            textContinuation?.finish()
             try await stream.stopCapture()
-            return capturedText
+
+            if UserDefaults.standard.bool(forKey: "ocr.debug") && result == nil {
+                AppLog.ocr.warning("OCR timeout after \(baseTimeout)s - no text captured")
+            }
+
+            return result
         } catch {
+            if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                AppLog.ocr.error("Screen capture failed: \(error.localizedDescription)")
+            }
             return nil
         }
     }
@@ -203,6 +267,200 @@ final class ScreenCaptureService: NSObject {
         if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
         return await captureAndRecognizeActiveWindowText()
     }
+
+    // MARK: - Helper Methods
+
+    private func calculateMinimumTextHeight(imageWidth: Int, imageHeight: Int, isCodeEditor: Bool, isBrowser: Bool, userOverride: Double?) -> Float {
+        if let override = userOverride {
+            return Float(override)
+        }
+
+        // Dynamic minimum text height based on image size and app type
+        let imageArea = Double(imageWidth * imageHeight)
+        let baseHeight: Double
+
+        if isCodeEditor {
+            // Code editors typically have smaller, more precise text
+            baseHeight = 0.003
+        } else if isBrowser {
+            // Browsers have varied text sizes, be more permissive
+            baseHeight = 0.002
+        } else {
+            // General applications
+            baseHeight = 0.0025
+        }
+
+        // Scale based on image resolution
+        let scaleFactor = min(2.0, max(0.5, imageArea / 1_000_000.0))
+        return Float(baseHeight * scaleFactor)
+    }
+
+    private func cleanTextSegment(_ text: String, confidence: Float) -> String {
+        var cleaned = text
+
+        // Remove obvious OCR artifacts
+        cleaned = cleaned.replacingOccurrences(of: "�", with: "")
+
+        // Remove isolated single characters that are likely noise (unless high confidence)
+        if confidence < 0.7 && cleaned.count == 1 {
+            let char = cleaned.first!
+            if !char.isLetter && !char.isNumber {
+                return ""
+            }
+        }
+
+        // Remove segments that are mostly special characters (likely corruption)
+        let alphanumericCount = cleaned.filter { $0.isLetter || $0.isNumber || $0.isWhitespace }.count
+        let totalCount = cleaned.count
+
+        if totalCount > 0 && Double(alphanumericCount) / Double(totalCount) < 0.3 && confidence < 0.6 {
+            return ""
+        }
+
+        // Clean up excessive whitespace
+        cleaned = cleaned.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned
+    }
+
+    private func saveImageForDebugging(_ pixelBuffer: CVPixelBuffer, prefix: String) {
+        guard let cgImage = createCGImage(from: pixelBuffer) else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let timestamp = formatter.string(from: Date())
+
+        let filename = "\(prefix)_\(timestamp).png"
+        let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let fileURL = desktopURL.appendingPathComponent(filename)
+
+        let destination = CGImageDestinationCreateWithURL(fileURL as CFURL, UTType.png.identifier as CFString, 1, nil)
+        if let destination = destination {
+            CGImageDestinationAddImage(destination, cgImage, nil)
+            CGImageDestinationFinalize(destination)
+            AppLog.ocr.info("Saved debug image: \(filename)")
+        }
+    }
+
+    private func createCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let context = CIContext()
+        return context.createCGImage(ciImage, from: ciImage.extent)
+    }
+    private func computeQualityScore(from observations: [VNRecognizedTextObservation]?) -> (score: Double, text: String?, cleanText: String?) {
+        guard let observations else { return (0, nil, nil) }
+        var totalConfidence: Double = 0
+        var count: Double = 0
+        var rawText = ""
+        var cleanedSegments: [String] = []
+
+        for obs in observations {
+            guard let top = obs.topCandidates(1).first else { continue }
+            let confidence = Double(top.confidence)
+            if confidence < 0.1 { continue }
+            totalConfidence += confidence
+            count += 1
+            rawText.append(top.string)
+            rawText.append("\n")
+            let cleaned = self.cleanTextSegment(top.string, confidence: Float(confidence))
+            if !cleaned.isEmpty { cleanedSegments.append(cleaned) }
+        }
+        let avgConf = count > 0 ? totalConfidence / count : 0
+        let raw = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = cleanedSegments.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (avgConf, raw.isEmpty ? nil : raw, clean.isEmpty ? nil : clean)
+    }
+    private func processSample(_ sample: CMSampleBuffer,
+                               primaryReq: VNRecognizeTextRequest,
+                               fallbackReq: VNRecognizeTextRequest,
+                               isCodeEditor: Bool,
+                               isBrowser: Bool,
+                               shouldPreferAccurate: Bool) -> String? {
+        guard let px = CMSampleBufferGetImageBuffer(sample) else {
+            if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                AppLog.ocr.error("Failed to get image buffer from sample")
+            }
+            return nil
+        }
+
+        let imageWidth = CVPixelBufferGetWidth(px)
+        let imageHeight = CVPixelBufferGetHeight(px)
+        if imageWidth < 100 || imageHeight < 100 {
+            if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                AppLog.ocr.error("Image too small for OCR: \(imageWidth)x\(imageHeight)")
+            }
+            return nil
+        }
+
+        if UserDefaults.standard.bool(forKey: "ocr.saveImages") {
+            self.saveImageForDebugging(px, prefix: "captured")
+        }
+
+        do {
+            let handler = VNImageRequestHandler(cvPixelBuffer: px, options: [:])
+            // Primary
+            let sid = Self.signposter.makeSignpostID()
+            let state_primary = Self.signposter.beginInterval("OCR.primary", id: sid)
+            try handler.perform([primaryReq])
+            Self.signposter.endInterval("OCR.primary", state_primary)
+
+            let primary = self.computeQualityScore(from: primaryReq.results)
+            var bestScore: Double = primary.score
+            var bestText: String? = primary.text
+            var bestCleanText: String? = primary.cleanText
+
+            let lineCount = bestText?.split(separator: "\n").count ?? 0
+            let charCount = bestText?.count ?? 0
+            let cleanCharCount = bestCleanText?.count ?? 0
+            let goodEnough = (lineCount >= 5) || (charCount >= 50) || (cleanCharCount >= 30) || (bestScore >= 0.3)
+
+            if !goodEnough || bestScore < 0.4 {
+                let sid2 = Self.signposter.makeSignpostID()
+                let state_fallback = Self.signposter.beginInterval("OCR.fallback", id: sid2)
+                do {
+                    try handler.perform([fallbackReq])
+                    Self.signposter.endInterval("OCR.fallback", state_fallback)
+                    let fallback = self.computeQualityScore(from: fallbackReq.results)
+                    let betterScore = fallback.score > bestScore * 1.2
+                    let fallbackCleanLen = fallback.cleanText?.count ?? 0
+                    let currentCleanLen = bestCleanText?.count ?? 0
+                    let betterClean = fallbackCleanLen > Int(Double(currentCleanLen) * 1.5)
+                    if betterScore || betterClean {
+                        bestScore = fallback.score
+                        bestText = fallback.text
+                        bestCleanText = fallback.cleanText
+                    }
+                } catch {
+                    Self.signposter.endInterval("OCR.fallback", state_fallback)
+                    if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                        AppLog.ocr.error("Fallback OCR failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+
+            if UserDefaults.standard.bool(forKey: "ocr.debug") || UserDefaults.standard.bool(forKey: "ocr.verboseLogging") {
+                AppLog.ocr.info("OCR results: \(imageWidth)x\(imageHeight) score=\(String(format: "%.3f", bestScore)) lines=\(lineCount) chars=\(charCount) clean=\(cleanCharCount) editor=\(isCodeEditor) browser=\(isBrowser) accurate=\(shouldPreferAccurate)")
+                if let text = bestText, UserDefaults.standard.bool(forKey: "ocr.verboseLogging") {
+                    let preview = String(text.prefix(100)).replacingOccurrences(of: "\n", with: "\\n")
+                    AppLog.ocr.info("OCR preview: \(preview)")
+                }
+            }
+
+            if let cleanText = bestCleanText, cleanText.count >= 10 {
+                return cleanText
+            } else if let rawText = bestText, !rawText.isEmpty {
+                return rawText
+            }
+        } catch {
+            if UserDefaults.standard.bool(forKey: "ocr.debug") {
+                AppLog.ocr.error("OCR processing failed: \(error.localizedDescription)")
+            }
+        }
+        return nil
+    }
+
+
 }
 
 private extension Comparable {
