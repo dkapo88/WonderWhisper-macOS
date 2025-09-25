@@ -96,21 +96,67 @@ private extension ScreenContextService {
         }
         let pb = NSPasteboard.general
         let snap = snapshotPasteboard()
-        // Clear to isolate next copy
+
+        // Record changeCount and clear to isolate next copy
+        let beforeClear = pb.changeCount
         pb.clearContents()
+        let afterClear = pb.changeCount
 
         // Try AX menu "Copy" first; fallback to synthesizing Cmd+C
         if !axPressCopyInFrontApp() {
             synthesizeCmdC()
         }
-        // Allow time for clipboard update
-        Thread.sleep(forTimeInterval: 0.12)
 
-        let text = pb.string(forType: .string)
-        let ourChange = pb.changeCount
-        // Restore prior clipboard if nothing else changed since
-        restorePasteboard(snap, ifChangeCountEquals: ourChange)
-        if let s = text?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty { return s }
+        // Wait for the pasteboard to change (up to ~350ms) rather than a fixed sleep
+        _ = waitForPasteboardChange(since: afterClear, timeout: 0.35)
+
+        // Read best-effort string from pasteboard (plain text -> RTF)
+        if let s = readStringFromPasteboard(), !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let observed = pb.changeCount
+            restorePasteboard(snap, ifChangeCountEquals: observed)
+            return s
+        }
+
+        // Retry once with a direct Cmd+C (some apps ignore the AX menu path intermittently)
+        pb.clearContents()
+        let afterClear2 = pb.changeCount
+        synthesizeCmdC()
+        _ = waitForPasteboardChange(since: afterClear2, timeout: 0.25)
+        if let s2 = readStringFromPasteboard(), !s2.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let observed2 = pb.changeCount
+            restorePasteboard(snap, ifChangeCountEquals: observed2)
+            return s2
+        }
+
+        // Nothing captured; restore original clipboard if still untouched
+        let observedFinal = pb.changeCount
+        restorePasteboard(snap, ifChangeCountEquals: observedFinal)
+        return nil
+    }
+
+    private func waitForPasteboardChange(since base: Int, timeout: TimeInterval) -> Int? {
+        let pb = NSPasteboard.general
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let c = pb.changeCount
+            if c > base { return c }
+            usleep(10_000) // 10ms
+        }
+        return nil
+    }
+
+    private func readStringFromPasteboard() -> String? {
+        let pb = NSPasteboard.general
+        if let s = pb.string(forType: .string), !s.isEmpty { return s }
+        if let rtfData = pb.data(forType: .rtf),
+           let attr = try? NSAttributedString(
+                data: rtfData,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+           ) {
+            let text = attr.string
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+        }
         return nil
     }
 

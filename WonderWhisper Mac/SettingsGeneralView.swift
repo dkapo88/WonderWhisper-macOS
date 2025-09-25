@@ -13,18 +13,6 @@ struct SettingsGeneralView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                GroupBox("Groq API Key") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SecureField("Enter Groq API Key", text: $apiKeyText)
-                        HStack {
-                            Button("Save API Key") { vm.saveGroqApiKey(apiKeyText); apiKeyText = "" }
-                            Text("Stored in Keychain as \(AppConfig.groqAPIKeyAlias)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
 
                 GroupBox("Insertion") {
                     VStack(alignment: .leading, spacing: 8) {

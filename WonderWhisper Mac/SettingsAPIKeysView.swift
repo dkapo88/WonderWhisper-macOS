@@ -8,9 +8,16 @@ struct SettingsAPIKeysView: View {
     @State private var openrouterKeyInput: String = ""
     @State private var cerebrasKeyInput: String = ""
 
+    private let keychain = KeychainService()
+    private var hasGroq: Bool { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) != nil }
+    private var hasAssemblyAI: Bool { keychain.getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) != nil }
+    private var hasDeepgram: Bool { keychain.getSecret(forKey: AppConfig.deepgramAPIKeyAlias) != nil }
+    private var hasOpenRouter: Bool { keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias) != nil }
+    private var hasCerebras: Bool { keychain.getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) != nil }
+
     var body: some View {
         Form {
-            Section("Groq") {
+            Section(header: HStack(spacing: 6) { Text("Groq"); if hasGroq { Image(systemName: "checkmark.circle.fill").foregroundColor(.green).help("Key stored") } }) {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("Groq API Key", text: $groqKeyInput)
                         .textFieldStyle(.roundedBorder)
@@ -24,7 +31,7 @@ struct SettingsAPIKeysView: View {
                 }
             }
 
-            Section("AssemblyAI") {
+            Section(header: HStack(spacing: 6) { Text("AssemblyAI"); if hasAssemblyAI { Image(systemName: "checkmark.circle.fill").foregroundColor(.green).help("Key stored") } }) {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("AssemblyAI API Key", text: $assemblyAIKeyInput)
                         .textFieldStyle(.roundedBorder)
@@ -38,7 +45,7 @@ struct SettingsAPIKeysView: View {
                 }
             }
 
-            Section("Deepgram") {
+            Section(header: HStack(spacing: 6) { Text("Deepgram"); if hasDeepgram { Image(systemName: "checkmark.circle.fill").foregroundColor(.green).help("Key stored") } }) {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("Deepgram API Key", text: $deepgramKeyInput)
                         .textFieldStyle(.roundedBorder)
@@ -52,7 +59,7 @@ struct SettingsAPIKeysView: View {
                 }
             }
 
-            Section("OpenRouter") {
+            Section(header: HStack(spacing: 6) { Text("OpenRouter"); if hasOpenRouter { Image(systemName: "checkmark.circle.fill").foregroundColor(.green).help("Key stored") } }) {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("OpenRouter API Key", text: $openrouterKeyInput)
                         .textFieldStyle(.roundedBorder)
@@ -64,7 +71,7 @@ struct SettingsAPIKeysView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-            Section("Cerebras") {
+            Section(header: HStack(spacing: 6) { Text("Cerebras"); if hasCerebras { Image(systemName: "checkmark.circle.fill").foregroundColor(.green).help("Key stored") } }) {
                 VStack(alignment: .leading, spacing: 8) {
                     SecureField("Cerebras API Key", text: $cerebrasKeyInput)
                         .textFieldStyle(.roundedBorder)
