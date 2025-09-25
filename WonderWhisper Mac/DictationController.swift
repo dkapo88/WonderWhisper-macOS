@@ -23,6 +23,8 @@ actor DictationController {
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
     private var screenOrganizationTask: Task<String?, Never>?
+    private var preCapturedSelectedText: String?
+
 
 
     private var screenOrganizePrompt: String = AppConfig.defaultScreenOrganizePrompt
@@ -89,6 +91,8 @@ actor DictationController {
                 state = .recording
                 // Pre-capture screen context early (AX first, OCR fallback)
                 preCapturedScreenText = nil
+                preCapturedSelectedText = nil
+
                 if llmEnabled && screenContextEnabled {
                     Task { await self.preCaptureScreenContext() }
                 }
@@ -154,11 +158,15 @@ actor DictationController {
             }
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
+            // Cancel any in-flight screen organization to avoid post-stop work
+            if let t = screenOrganizationTask { t.cancel() }
+            screenOrganizationTask = nil
+
             os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
 
             var output = transcript
             var llmDT: TimeInterval = 0
-            let selected = screenContextEnabled ? screenContext.selectedText() : nil
+            let selected = screenContextEnabled ? preCapturedSelectedText : nil
             var screenText: String? = nil
             var screenMethod: String? = nil
             var userMsgForHistory: String? = nil
@@ -169,33 +177,13 @@ actor DictationController {
                 let (name, _) = screenContext.frontmostAppNameAndBundle()
                 appNameForPrompt = name
                 if screenContextEnabled {
-                    // Prefer pre-captured context if available; else AX-first, then OCR
+                    // Use only pre-captured context; do not attempt any new gathering after stop
                     if let pre = preCapturedScreenText, !pre.isEmpty {
                         screenText = pre
                         screenMethod = preCapturedScreenMethod
-                    } else if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
-                        screenText = focused
-                        screenMethod = "AX"
                     } else {
-                        screenText = await screenContext.captureActiveWindowText()
-                        screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
-                    }
-                    // If organizing is enabled and we used OCR, ensure organized content is available (wait if needed)
-                    if organizeScreenContentEnabled, screenMethod == "OCR", let raw = screenText, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        if let t = screenOrganizationTask {
-                            let organized = await t.value
-                            if let organized, !organized.isEmpty { screenText = organized }
-                        } else {
-                            // Start and await organization now if it wasn't pre-started
-                            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-                            let instruction = screenOrganizePrompt
-                            do {
-                                let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
-                                if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
-                            } catch {
-                                AppLog.dictation.error("Screen organization LLM (fallback) failed: \(error.localizedDescription)")
-                            }
-                        }
+                        screenText = nil
+                        screenMethod = nil
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
@@ -449,6 +437,11 @@ extension DictationController {
     private func preCaptureScreenContext() async {
         if !screenContextEnabled { return }
         // Try AX first as it's near-instant; fallback to OCR if needed
+        // Capture selected text early (may wait briefly but happens during recording)
+        if let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.preCapturedSelectedText = sel
+        }
+
         if let focused = screenContext.focusedText(), !focused.isEmpty {
             self.preCapturedScreenText = focused
             self.preCapturedScreenMethod = "AX"
@@ -461,15 +454,24 @@ extension DictationController {
         if organizeScreenContentEnabled, let ocrText = ocr, !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
             let instruction = screenOrganizePrompt
-            self.screenOrganizationTask = Task { [ocrText] in
+            self.screenOrganizationTask = Task { [ocrText, weak self] in
                 do {
                     let organized = try await llm.process(text: ocrText, userPrompt: instruction, settings: orgSettings)
-                    return organized.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmed = organized.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        await self?.setOrganizedScreenText(trimmed)
+                    }
+                    return trimmed
                 } catch {
                     AppLog.dictation.error("Screen organization LLM failed: \(error.localizedDescription)")
                     return ocrText
                 }
             }
         }
+    }
+
+    private func setOrganizedScreenText(_ text: String) {
+        self.preCapturedScreenText = text
+        self.preCapturedScreenMethod = "OCR-Organized"
     }
 }
