@@ -28,31 +28,35 @@ struct SettingsModelsView: View {
                 // Groq Whisper options (language + prompt), shown for Groq Whisper models and streaming
                 if ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en", "groq-streaming"].contains(vm.transcriptionModel) {
                     GroupBox("Groq Whisper options") {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Language picker (common codes)
                             HStack {
-                                Text("Language code")
+                                Text("Language")
                                 Spacer()
-                                TextField("en", text: $vm.transcriptionLanguage)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: 160)
-                            }
-                            .help("BCP-47 language code (e.g., en, es, fr). Default is en.")
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Custom transcription prompt")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                TextEditor(text: $vm.transcriptionPrompt)
-                                    .font(.body)
-                                    .frame(minHeight: 60, maxHeight: 120)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.secondary.opacity(0.2))
-                                    )
-                                    .help("Optional hint sent to the Whisper model. Your Vocabulary and Spellings are automatically appended to this prompt.")
-                                Text("Vocabulary and Spellings from Settings → Prompts are automatically included.")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                Picker("Language", selection: $vm.transcriptionLanguage) {
+                                    Text("English (en)").tag("en")
+                                    Text("Spanish (es)").tag("es")
+                                    Text("French (fr)").tag("fr")
+                                    Text("German (de)").tag("de")
+                                    Text("Italian (it)").tag("it")
+                                    Text("Portuguese (pt)").tag("pt")
+                                    Text("Chinese (zh)").tag("zh")
+                                    Text("Japanese (ja)").tag("ja")
+                                    Text("Korean (ko)").tag("ko")
+                                    Text("Hindi (hi)").tag("hi")
+                                    Text("Arabic (ar)").tag("ar")
+                                    Text("Russian (ru)").tag("ru")
+                                    Text("Dutch (nl)").tag("nl")
+                                    Text("Swedish (sv)").tag("sv")
+                                    Text("Turkish (tr)").tag("tr")
+                                    Text("Vietnamese (vi)").tag("vi")
+                                    Text("Polish (pl)").tag("pl")
+                                    Divider()
+                                    Text("Custom (\(vm.transcriptionLanguage))").tag(vm.transcriptionLanguage)
+                                }
+                                .labelsHidden()
+                                .frame(maxWidth: 220)
+                                .help("BCP-47 language code sent to Groq (default: English)")
                             }
                         }
                         .padding(.top, 4)
@@ -135,6 +139,7 @@ struct SettingsModelsView: View {
                     Text("Cerebras").tag("cerebras")
                 }
                 if vm.llmProvider == "openrouter" {
+
                     // Routing preference
                     Picker("Routing Preference", selection: $vm.openrouterRouting) {
                         Text("Prioritize latency").tag("latency")
@@ -215,6 +220,7 @@ fileprivate struct OpenRouterModelSelector: View {
             } else {
                 List(filtered, id: \.self) { id in
                     HStack {
+
                         Text(id)
                         Spacer()
                         if id == selectedModel { Image(systemName: "checkmark").foregroundColor(.accentColor) }
@@ -267,3 +273,4 @@ fileprivate struct OpenRouterModelSelector: View {
 fileprivate extension Array where Element: Hashable {
     func uniqued() -> [Element] { Array(Set(self)).sorted { String(describing: $0) < String(describing: $1) } }
 }
+

@@ -61,10 +61,6 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             fields["language"] = String(lang)
         }
         fields["temperature"] = "0"
-        // Provide a prompt to improve vocabulary/spelling handling
-        if let prompt = buildGroqWhisperPrompt(), !prompt.isEmpty {
-            fields["prompt"] = prompt
-        }
 
         // Signpost around upload+response to measure wall-clock
         let signpostID = OSSignpostID(log: spLog)
@@ -125,81 +121,4 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         return d
     }()
 
-    // Compose a concise Whisper prompt from user-configured prompt + vocabulary/spellings
-    private func buildGroqWhisperPrompt() -> String? {
-        let defaults = UserDefaults.standard
-        // User-provided short hint
-        let rawUser = (defaults.string(forKey: "transcription.prompt") ?? "")
-        let userPrompt = sanitizeFreeText(rawUser, maxLen: 200)
-        // Vocabulary and spelling -> convert to a compact, clean terms list
-        let rawVocab = defaults.string(forKey: "vocab.custom") ?? ""
-        let rawSpelling = defaults.string(forKey: "vocab.spelling") ?? ""
-        let terms = compactTerms(fromVocab: rawVocab, spelling: rawSpelling, maxTerms: 20)
-        var parts: [String] = []
-        if !userPrompt.isEmpty { parts.append(userPrompt) }
-        if !terms.isEmpty { parts.append("Preferred terms: " + terms.joined(separator: ", ") + ".") }
-        let combined = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if combined.isEmpty { return nil }
-        return String(combined.prefix(350))
-    }
-
-    // Remove XML/markup and compress whitespace; limit length
-    private func sanitizeFreeText(_ s: String, maxLen: Int) -> String {
-        var t = s.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        t = t.replacingOccurrences(of: "[\n\r\t]+", with: " ", options: .regularExpression)
-        t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.count > maxLen { t = String(t.prefix(maxLen)) }
-        return t
-    }
-
-    // Extract a safe, short list of target terms from vocab/spelling
-    private func compactTerms(fromVocab vocab: String, spelling: String, maxTerms: Int) -> [String] {
-        func scrub(_ s: String) -> String {
-            var t = s.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            t = t.replacingOccurrences(of: "[\\[\\]{}]", with: " ", options: .regularExpression)
-            t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            return t
-        }
-        var candidates: [String] = []
-        let v = scrub(vocab)
-        if !v.isEmpty {
-            let splits = v.split(whereSeparator: { ",;\n".contains($0) })
-            for s in splits {
-                let t = String(s).trimmingCharacters(in: .whitespacesAndNewlines)
-                if t.count >= 2 && t.count <= 40 { candidates.append(t) }
-            }
-        }
-        // Parse spelling pairs like "foo -> Foo" and take the right side as the preferred form
-        let sp = scrub(spelling)
-        if !sp.isEmpty {
-            for line in sp.components(separatedBy: ["\n"]) {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty { continue }
-                let seps = ["->", "=>", "="]
-                if let sep = seps.first(where: { trimmed.contains($0) }) {
-                    let parts = trimmed.components(separatedBy: sep)
-                    if parts.count >= 2 {
-                        let rhs = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                        if rhs.count >= 2 && rhs.count <= 40 { candidates.append(rhs) }
-                    }
-                } else {
-                    // If no arrow, treat the token as-is
-                    if trimmed.count >= 2 && trimmed.count <= 40 { candidates.append(trimmed) }
-                }
-            }
-        }
-        // Deduplicate and cap
-        var seen = Set<String>()
-        var out: [String] = []
-        for c in candidates {
-            let key = c.lowercased()
-            if !seen.contains(key) {
-                seen.insert(key)
-                out.append(c)
-            }
-            if out.count >= maxTerms { break }
-        }
-        return out
-    }
 }

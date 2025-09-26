@@ -26,12 +26,7 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
-    @Published var transcriptionPrompt: String = UserDefaults.standard.string(forKey: "transcription.prompt") ?? "" {
-        didSet {
-            UserDefaults.standard.set(transcriptionPrompt, forKey: "transcription.prompt")
-            updateProviders()
-        }
-    }
+
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var organizeScreenContentEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false { didSet { persistAndUpdate() } }
