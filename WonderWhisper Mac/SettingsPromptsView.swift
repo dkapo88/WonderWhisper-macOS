@@ -1,11 +1,13 @@
 import SwiftUI
 import Carbon.HIToolbox
+import UniformTypeIdentifiers
 
 struct SettingsPromptsView: View {
     @ObservedObject var vm: DictationViewModel
     @State private var renamingPromptID: UUID?
     @State private var nameDraft: String = ""
     @State private var capturingPromptID: UUID?
+    @State private var draggedPromptID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -52,7 +54,29 @@ struct SettingsPromptsView: View {
                                 .padding(10)
                                 .background(selectionBackground(for: prompt))
                                 .cornerRadius(8)
+                                .onDrag {
+                                    draggedPromptID = prompt.id
+                                    return NSItemProvider(object: prompt.id.uuidString as NSString)
+                                }
+                                .onDrop(
+                                    of: [UTType.text],
+                                    delegate: PromptReorderDropDelegate(
+                                        targetPromptID: prompt.id,
+                                        viewModel: vm,
+                                        draggedPromptID: $draggedPromptID
+                                    )
+                                )
                         }
+                        Color.clear
+                            .frame(height: 12)
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: PromptReorderDropDelegate(
+                                    targetPromptID: nil,
+                                    viewModel: vm,
+                                    draggedPromptID: $draggedPromptID
+                                )
+                            )
                     }
                 }
                 .frame(minHeight: 220)
@@ -305,6 +329,42 @@ private struct PromptTriggerEditor: View {
 
     private var selectionOptions: [HotkeyManager.Selection] {
         HotkeyManager.Selection.allCases.filter { $0 != .f5 }
+    }
+}
+
+private struct PromptReorderDropDelegate: DropDelegate {
+    let targetPromptID: UUID?
+    let viewModel: DictationViewModel
+    @Binding var draggedPromptID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedID = draggedPromptID,
+              let targetPromptID,
+              draggedID != targetPromptID,
+              let targetIndex = viewModel.prompts.firstIndex(where: { $0.id == targetPromptID }) else { return }
+        withAnimation {
+            viewModel.movePrompt(id: draggedID, to: targetIndex)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let draggedID = draggedPromptID else { return false }
+        if let targetPromptID,
+           let targetIndex = viewModel.prompts.firstIndex(where: { $0.id == targetPromptID }) {
+            withAnimation {
+                viewModel.movePrompt(id: draggedID, to: targetIndex)
+            }
+        } else {
+            withAnimation {
+                viewModel.movePrompt(id: draggedID, to: viewModel.prompts.count)
+            }
+        }
+        draggedPromptID = nil
+        return true
     }
 }
 

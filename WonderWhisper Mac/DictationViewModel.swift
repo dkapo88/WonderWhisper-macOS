@@ -390,6 +390,15 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func movePrompt(id: UUID, to destinationIndex: Int) {
+        guard let currentIndex = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var targetIndex = destinationIndex
+        let prompt = prompts.remove(at: currentIndex)
+        if targetIndex > currentIndex { targetIndex -= 1 }
+        targetIndex = max(0, min(targetIndex, prompts.count))
+        prompts.insert(prompt, at: targetIndex)
+    }
+
     func renamePrompt(id: UUID, to newName: String) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
