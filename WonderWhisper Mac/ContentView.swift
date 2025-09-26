@@ -86,7 +86,7 @@ struct ContentView: View {
         } detail: {
             switch selection ?? .home {
             case .home:
-                BasicDictationView(vm: vm, selection: $selection)
+                ScratchpadView(vm: vm, openPromptSettings: { selection = .settingsPrompts })
                     .navigationTitle("Scratchpad")
             case .history:
                 HistoryView(vm: vm)
@@ -119,32 +119,6 @@ struct ContentView: View {
         }
     }
 }
-
-private struct BasicDictationView: View {
-    @ObservedObject var vm: DictationViewModel
-    @Binding var selection: SidebarItem?
-    @State private var scratchText: String = UserDefaults.standard.string(forKey: "scratchpad.text") ?? ""
-
-    var body: some View {
-        TextEditor(text: $scratchText)
-            .font(.body)
-            .padding(8)
-            .onChange(of: scratchText) { _, newValue in
-                UserDefaults.standard.set(newValue, forKey: "scratchpad.text")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topLeading) {
-                if scratchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Scratchpad — click here and use your shortcut to dictate, or type notes…")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 12)
-                        .padding(.leading, 14)
-                }
-            }
-    }
-}
-
 #Preview {
     ContentView(vm: DictationViewModel())
 }

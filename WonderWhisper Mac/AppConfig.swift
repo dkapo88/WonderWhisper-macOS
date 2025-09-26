@@ -41,6 +41,12 @@ struct AppConfig {
     // Default prompt for organizing OCR screen content before main LLM step
     static let defaultScreenOrganizePrompt: String = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
 
+    static let scratchpadTitleSystemPrompt: String = """
+You are an assistant that creates concise, human-friendly titles for notes. Output must never include quotation marks or trailing punctuation. Keep the title within 6 words and use Title Case.
+"""
+
+    static let scratchpadTitleUserPrompt: String = "Generate a short title (max 6 words) for the note inside <NOTE_CONTENT>. Respond with the title only, no prefixes or suffixes."
+
     // Keychain alias for the Groq API key
     static let groqAPIKeyAlias = "GROQ_API_KEY"
     // Keychain alias for the OpenRouter API key

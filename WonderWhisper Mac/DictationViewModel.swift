@@ -609,6 +609,47 @@ final class DictationViewModel: ObservableObject {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
         Task { await controller.insert(text) }
     }
+
+    func generateScratchpadTitle(for content: String) async throws -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard llmEnabled else {
+            throw NSError(domain: "DictationViewModel", code: -2100, userInfo: [NSLocalizedDescriptionKey: "LLM processing is disabled in settings."])
+        }
+        await waitForLatestProviderUpdate()
+        let noteText = """
+        <NOTE_CONTENT>
+        \(trimmed)
+        </NOTE_CONTENT>
+        """
+        let response = try await controller.runLLM(
+            text: noteText,
+            userPrompt: AppConfig.scratchpadTitleUserPrompt,
+            systemPromptOverride: AppConfig.scratchpadTitleSystemPrompt,
+            streamingOverride: false
+        )
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func runScratchpadPrompt(content: String, prompt: PromptConfiguration) async throws -> String {
+        guard llmEnabled else {
+            throw NSError(domain: "DictationViewModel", code: -2101, userInfo: [NSLocalizedDescriptionKey: "LLM processing is disabled in settings."])
+        }
+        await waitForLatestProviderUpdate()
+        let system = PromptBuilder.renderSystemPrompt(template: prompt.systemPrompt, customVocabulary: vocabCustom)
+        let noteText = """
+        <NOTE_CONTENT>
+        \(content)
+        </NOTE_CONTENT>
+        """
+        let response = try await controller.runLLM(
+            text: noteText,
+            userPrompt: prompt.userPrompt,
+            systemPromptOverride: system,
+            streamingOverride: llmStreaming
+        )
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 private struct PromptBootstrap {
