@@ -6,7 +6,7 @@
 	<integer>11</integer>
 	<key>logs</key>
 	<dict>
-		<key>350D4BF3-8307-4876-85F7-39DE79174E5E</key>
+		<key>5C7BFF3C-A823-46CB-95DC-556C072E504E</key>
 		<dict>
 			<key>className</key>
 			<string>IDECommandLineBuildLog</string>
@@ -15,7 +15,7 @@
 			<key>domainType</key>
 			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
 			<key>fileName</key>
-			<string>350D4BF3-8307-4876-85F7-39DE79174E5E.xcactivitylog</string>
+			<string>5C7BFF3C-A823-46CB-95DC-556C072E504E.xcactivitylog</string>
 			<key>hasPrimaryLog</key>
 			<true/>
 			<key>primaryObservable</key>
@@ -34,15 +34,15 @@
 			<key>signature</key>
 			<string>Resolve Packages</string>
 			<key>timeStartedRecording</key>
-			<real>779123837.08999598</real>
+			<real>780593815.83471704</real>
 			<key>timeStoppedRecording</key>
-			<real>779123837.13759804</real>
+			<real>780593815.90332401</real>
 			<key>title</key>
 			<string>Resolve Packages</string>
 			<key>uniqueIdentifier</key>
-			<string>350D4BF3-8307-4876-85F7-39DE79174E5E</string>
+			<string>5C7BFF3C-A823-46CB-95DC-556C072E504E</string>
 		</dict>
-		<key>CABE25C2-C486-41E6-976C-42557B847A61</key>
+		<key>D8B89422-3C4A-4162-B59E-9AFE65EE0C24</key>
 		<dict>
 			<key>className</key>
 			<string>IDECommandLineBuildLog</string>
@@ -51,7 +51,7 @@
 			<key>domainType</key>
 			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
 			<key>fileName</key>
-			<string>CABE25C2-C486-41E6-976C-42557B847A61.xcactivitylog</string>
+			<string>D8B89422-3C4A-4162-B59E-9AFE65EE0C24.xcactivitylog</string>
 			<key>hasPrimaryLog</key>
 			<true/>
 			<key>primaryObservable</key>
@@ -70,13 +70,13 @@
 			<key>signature</key>
 			<string>Resolve Packages</string>
 			<key>timeStartedRecording</key>
-			<real>779123818.48577404</real>
+			<real>780591565.534536</real>
 			<key>timeStoppedRecording</key>
-			<real>779123818.55102801</real>
+			<real>780591565.58469903</real>
 			<key>title</key>
 			<string>Resolve Packages</string>
 			<key>uniqueIdentifier</key>
-			<string>CABE25C2-C486-41E6-976C-42557B847A61</string>
+			<string>D8B89422-3C4A-4162-B59E-9AFE65EE0C24</string>
 		</dict>
 	</dict>
 </dict>

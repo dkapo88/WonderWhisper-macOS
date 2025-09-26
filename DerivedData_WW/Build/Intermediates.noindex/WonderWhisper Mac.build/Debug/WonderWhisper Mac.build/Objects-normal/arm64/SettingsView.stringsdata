@@ -39,7 +39,7 @@
         "key": "Vocabulary & Text Replacements",
         "location": {
           "startingColumn": 22,
-          "startingLine": 87
+          "startingLine": 90
         }
       },
       {
@@ -156,7 +156,7 @@
       },
       {
         "comment": "",
-        "key": "LLM model",
+        "key": "Include screen context (selection/OCR)",
         "location": {
           "startingColumn": 28,
           "startingLine": 78
@@ -164,10 +164,26 @@
       },
       {
         "comment": "",
+        "key": "When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "LLM model",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
         "key": "Use AX direct insertion (faster when supported)",
         "location": {
           "startingColumn": 28,
-          "startingLine": 82
+          "startingLine": 85
         }
       },
       {
@@ -175,7 +191,7 @@
         "key": "Requires Accessibility permission. Falls back to paste if not supported.",
         "location": {
           "startingColumn": 31,
-          "startingLine": 83
+          "startingLine": 86
         }
       },
       {
@@ -207,7 +223,7 @@
         "key": "moonshotai/kimi-k2-instruct",
         "location": {
           "startingColumn": 30,
-          "startingLine": 79
+          "startingLine": 82
         }
       },
       {
@@ -215,7 +231,7 @@
         "key": "openai/gpt-oss-120b",
         "location": {
           "startingColumn": 30,
-          "startingLine": 80
+          "startingLine": 83
         }
       },
       {
@@ -223,7 +239,7 @@
         "key": "Custom vocabulary (comma-separated)",
         "location": {
           "startingColumn": 26,
-          "startingLine": 89
+          "startingLine": 92
         }
       },
       {
@@ -231,7 +247,7 @@
         "key": "Text replacements (from=to per line; applied on-device after LLM)",
         "location": {
           "startingColumn": 26,
-          "startingLine": 91
+          "startingLine": 94
         }
       },
       {
@@ -239,7 +255,7 @@
         "key": "e.g. Groq, Kimi, WonderWhisper",
         "location": {
           "startingColumn": 31,
-          "startingLine": 90
+          "startingLine": 93
         }
       }
     ]

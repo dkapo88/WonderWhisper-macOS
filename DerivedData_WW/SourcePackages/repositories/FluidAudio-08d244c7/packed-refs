@@ -1,16 +1,6 @@
 # pack-refs with: peeled fully-peeled sorted 
-92ba9d89e3be9670107f69e0e1c9508db0e34bc4 refs/heads/claude/issue-65-20250810-2232
-6efe0ef6aa62b1ef1099d620bf3f6987b13ea894 refs/heads/diarizermanager
-8ddbd69bf4231aa6864117d94a0b88798d51b91a refs/heads/diarizermanager2
 8cc38d7d055f521c0b05bd6ba217bca66108efc1 refs/heads/main
-c7a85afb579f49d0631d2f2d5fe93eb6ccaf1ba4 refs/heads/openbench
 7b173706a28eff8c8c17949db17e4771fce523af refs/heads/reset-decoder-between-chunks
-47de60f4c0110dc5925aa297af068a957336f4f5 refs/heads/some-tuning-to-streaming
-a3c529b08536043f09006bc92bfb7045b68a64ff refs/heads/streaming-fix-v3
-38a930322c0b5ef223b4f23f036011c00084554f refs/heads/swift-format
-549fca760ab6a8353e168acdbc41baef1f79fa6c refs/heads/tdt-v3
-5f1c588a101e2ffc5a6e3629c041c62259090ce1 refs/heads/tdtoptimize2
-38aa11e080a312511a2a314f26ea202cbb11a438 refs/heads/v3
 6bee0f97fd78aa476106bb5493ad8e20ab94c454 refs/pull/1/head
 f9341727d1f4a1e9801480468844698bce64215c refs/pull/11/head
 db698c972df49db0867950430d1f884a402e2f04 refs/pull/12/head
@@ -69,11 +59,9 @@ d2e179a5d3d59af375881245174b74e912e3abc4 refs/pull/70/head
 47de60f4c0110dc5925aa297af068a957336f4f5 refs/pull/71/head
 a39763fc0c519a4da5be9e77b2262df5f8a344f5 refs/pull/72/head
 38aa11e080a312511a2a314f26ea202cbb11a438 refs/pull/73/head
-6a81c0f51caf6577421132a9d8ff9389ce4287d1 refs/pull/73/merge
 24a3d41b520754675cfaa40c257d00908e0152e0 refs/pull/75/head
 a3c529b08536043f09006bc92bfb7045b68a64ff refs/pull/76/head
 549fca760ab6a8353e168acdbc41baef1f79fa6c refs/pull/77/head
-2283f8b66cf664abb82f214a2f8ce38b43ccb60d refs/pull/77/merge
 4508c64465d5ca614381439f0058143a98c7592a refs/pull/8/head
 bd3c3d8a63f54fc516051d2bbd4ecca774c60ab6 refs/pull/9/head
 f8a6a23fad8a39cb71b3274d451a71008307905c refs/tags/v0.0.1

@@ -1,0 +1,30 @@
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/OpenRouterHTTPClient.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/OpenRouterLLMProvider.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterLLMProvider.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterLLMProvider.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterLLMProvider.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterLLMProvider.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterLLMProvider.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ParakeetAdvancedSettingsView.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetAdvancedSettingsView.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetAdvancedSettingsView.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetAdvancedSettingsView.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetAdvancedSettingsView.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetAdvancedSettingsView.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ParakeetManager.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetManager.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetManager.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetManager.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetManager.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ParakeetManager.swiftdeps"
+  }
+}

@@ -6,48 +6,96 @@
         "comment": "",
         "key": "Custom vocabulary",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 9
+          "startingColumn": 14,
+          "startingLine": 39
         }
       },
       {
         "comment": "",
         "key": "Text replacements",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 24
+          "startingColumn": 14,
+          "startingLine": 93
         }
       },
       {
         "comment": "",
-        "key": "One per line or comma-separated",
+        "key": "Add words that the transcriber should treat as known vocabulary.",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 11
+          "startingColumn": 14,
+          "startingLine": 41
         }
       },
       {
         "comment": "",
-        "key": "Examples:\nGroq\nKimi\nWonderWhisper",
+        "key": "No custom vocabulary yet. Add words above to build your list.",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 16
+          "startingColumn": 16,
+          "startingLine": 63
         }
       },
       {
         "comment": "",
-        "key": "Use one rule per line in the form from=to",
+        "key": "Add new word",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 26
+          "startingColumn": 21,
+          "startingLine": 46
         }
       },
       {
         "comment": "",
-        "key": "Examples: steven=Stephen\nEZY pay=Ezypay",
+        "key": "Add",
         "location": {
-          "startingColumn": 18,
-          "startingLine": 31
+          "startingColumn": 19,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Automatically substitute spoken phrases with your preferred wording.",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 95
+        }
+      },
+      {
+        "comment": "",
+        "key": "No text replacements yet. Add a phrase above to get started.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 123
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tip: rules are case-insensitive and applied before LLM post-processing.",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 151
+        }
+      },
+      {
+        "comment": "",
+        "key": "Heard phrase",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Replace with",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 106
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 111
         }
       }
     ]

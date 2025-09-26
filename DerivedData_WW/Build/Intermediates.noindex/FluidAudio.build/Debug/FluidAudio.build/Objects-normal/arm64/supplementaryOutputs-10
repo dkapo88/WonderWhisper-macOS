@@ -1,18 +1,23 @@
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ModelNames.swift":
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.o"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.swiftconstvalues"
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.swiftdeps"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.dia"
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.d"
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Shared/ANEMemoryOptimizer.swift":
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.d"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.swiftconstvalues"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.dia"
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.swiftdeps"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.o"
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/FluidAudioSwift.swift":
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.d"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.dia"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.o"
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.swiftdeps"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.swiftconstvalues"
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ModelNames.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ModelNames.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Shared/ANEMemoryOptimizer.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryOptimizer.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Shared/ANEMemoryUtils.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryUtils.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryUtils.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryUtils.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryUtils.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/ANEMemoryUtils.swiftdeps"
+  }
+}

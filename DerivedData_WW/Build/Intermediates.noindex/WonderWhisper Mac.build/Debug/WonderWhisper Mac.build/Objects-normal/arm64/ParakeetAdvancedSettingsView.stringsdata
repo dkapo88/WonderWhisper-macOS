@@ -7,7 +7,7 @@
         "key": "Helps low-volume speech: enable pre-emphasis, use 50–60 Hz high-pass, RMS ≈ 0.06–0.07.",
         "location": {
           "startingColumn": 18,
-          "startingLine": 33
+          "startingLine": 43
         }
       },
       {
@@ -15,7 +15,15 @@
         "key": "Pre-emphasis (0.97)",
         "location": {
           "startingColumn": 20,
-          "startingLine": 12
+          "startingLine": 14
+        }
+      },
+      {
+        "comment": "",
+        "key": "Voice Activity Detection (Silero)",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 36
         }
       },
       {
@@ -23,7 +31,7 @@
         "key": "High-pass cutoff",
         "location": {
           "startingColumn": 22,
-          "startingLine": 14
+          "startingLine": 16
         }
       },
       {
@@ -31,7 +39,7 @@
         "key": "High-pass cutoff",
         "location": {
           "startingColumn": 24,
-          "startingLine": 16
+          "startingLine": 18
         }
       },
       {
@@ -39,7 +47,7 @@
         "key": "Off",
         "location": {
           "startingColumn": 26,
-          "startingLine": 17
+          "startingLine": 19
         }
       },
       {
@@ -47,7 +55,7 @@
         "key": "%lld Hz",
         "location": {
           "startingColumn": 30,
-          "startingLine": 19
+          "startingLine": 21
         }
       },
       {
@@ -55,7 +63,15 @@
         "key": "Target RMS",
         "location": {
           "startingColumn": 26,
-          "startingLine": 27
+          "startingLine": 29
+        }
+      },
+      {
+        "comment": "",
+        "key": "VAD Threshold",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 38
         }
       }
     ]

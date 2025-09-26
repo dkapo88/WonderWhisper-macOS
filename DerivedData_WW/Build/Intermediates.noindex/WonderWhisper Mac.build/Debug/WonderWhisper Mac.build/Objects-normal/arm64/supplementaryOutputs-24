@@ -1,24 +1,30 @@
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ContentView.swift":
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.d"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.o"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftconstvalues"
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftdeps"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.dia"
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/DeepgramStreamingProvider.swift":
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.swiftdeps"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.dia"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.o"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.swiftconstvalues"
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.d"
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/KeychainService.swift":
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/KeychainService.swiftconstvalues"
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/KeychainService.d"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/KeychainService.dia"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/KeychainService.o"
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/KeychainService.swiftdeps"
-"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsVocabularyView.swift":
-  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/SettingsVocabularyView.swiftdeps"
-  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/SettingsVocabularyView.dia"
-  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/SettingsVocabularyView.o"
-  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/SettingsVocabularyView.swiftconstvalues"
-  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/SettingsVocabularyView.d"
+{
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/TranscriptionCache.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/TranscriptionCache.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/TranscriptionCache.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/TranscriptionCache.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/TranscriptionCache.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/TranscriptionCache.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/WaveformOverlayController.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WaveformOverlayController.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WaveformOverlayController.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WaveformOverlayController.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WaveformOverlayController.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WaveformOverlayController.swiftdeps"
+  },
+  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper_MacApp.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WonderWhisper_MacApp.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WonderWhisper_MacApp.d",
+    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WonderWhisper_MacApp.dia",
+    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WonderWhisper_MacApp.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/WonderWhisper_MacApp.swiftdeps"
+  }
+}

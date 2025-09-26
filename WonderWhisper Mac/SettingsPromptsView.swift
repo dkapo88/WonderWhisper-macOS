@@ -168,14 +168,15 @@ struct SettingsPromptsView: View {
 
 private struct PromptTriggerEditor: View {
     enum TriggerMode: String, CaseIterable, Identifiable {
-        case shortcut
+        // Order matters: show Single Key (selection) on the left
         case selection
+        case shortcut
 
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .shortcut: return "Key Combination"
             case .selection: return "Single Key"
+            case .shortcut: return "Key Combination"
             }
         }
     }
@@ -198,7 +199,8 @@ private struct PromptTriggerEditor: View {
         self._capturingPromptID = capturingPromptID
         self.onShortcutChange = onShortcutChange
         self.onSelectionChange = onSelectionChange
-        let initialMode: TriggerMode = prompt.selection != nil ? .selection : .shortcut
+        // Default to Single Key when nothing configured; preserve existing choices otherwise
+        let initialMode: TriggerMode = (prompt.selection != nil || (prompt.selection == nil && prompt.shortcut == nil)) ? .selection : .shortcut
         self._mode = State(initialValue: initialMode)
         self._selectionValue = State(initialValue: prompt.selection)
     }
@@ -219,7 +221,8 @@ private struct PromptTriggerEditor: View {
             }
         }
         .onChange(of: prompt) { newPrompt in
-            let derivedMode: TriggerMode = newPrompt.selection != nil ? .selection : .shortcut
+            // Keep Single Key as default when neither is set
+            let derivedMode: TriggerMode = (newPrompt.selection != nil || (newPrompt.selection == nil && newPrompt.shortcut == nil)) ? .selection : .shortcut
             if mode != derivedMode {
                 mode = derivedMode
             }

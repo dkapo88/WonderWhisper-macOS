@@ -6,24 +6,16 @@
         "comment": "",
         "key": "Groq",
         "location": {
-          "startingColumn": 21,
-          "startingLine": 11
+          "startingColumn": 55,
+          "startingLine": 20
         }
       },
       {
         "comment": "",
-        "key": "AssemblyAI",
+        "key": "Key stored",
         "location": {
-          "startingColumn": 21,
-          "startingLine": 25
-        }
-      },
-      {
-        "comment": "",
-        "key": "Deepgram",
-        "location": {
-          "startingColumn": 21,
-          "startingLine": 39
+          "startingColumn": 149,
+          "startingLine": 20
         }
       },
       {
@@ -31,7 +23,7 @@
         "key": "Groq API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 13
+          "startingLine": 22
         }
       },
       {
@@ -39,7 +31,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 18
+          "startingLine": 27
         }
       },
       {
@@ -47,7 +39,23 @@
         "key": "Save Groq Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 17
+          "startingLine": 26
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 161,
+          "startingLine": 34
         }
       },
       {
@@ -55,7 +63,7 @@
         "key": "AssemblyAI API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 27
+          "startingLine": 36
         }
       },
       {
@@ -63,7 +71,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 32
+          "startingLine": 41
         }
       },
       {
@@ -71,7 +79,23 @@
         "key": "Save AssemblyAI Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 31
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 157,
+          "startingLine": 48
         }
       },
       {
@@ -79,7 +103,7 @@
         "key": "Deepgram API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 41
+          "startingLine": 50
         }
       },
       {
@@ -87,7 +111,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 46
+          "startingLine": 55
         }
       },
       {
@@ -95,7 +119,87 @@
         "key": "Save Deepgram Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 45
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 161,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 64
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 69
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save OpenRouter Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 68
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cerebras",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 157,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cerebras API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 76
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Cerebras Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 80
         }
       }
     ]

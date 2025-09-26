@@ -32,7 +32,7 @@ private enum SidebarItem: Hashable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "Dictation"
+        case .home: return "Scratchpad"
         case .history: return "History"
         case .settingsGeneral: return "General"
         case .settingsModels: return "Models"
@@ -87,7 +87,7 @@ struct ContentView: View {
             switch selection ?? .home {
             case .home:
                 BasicDictationView(vm: vm, selection: $selection)
-                    .navigationTitle("Dictation")
+                    .navigationTitle("Scratchpad")
             case .history:
                 HistoryView(vm: vm)
                     .environmentObject(vm.history)
