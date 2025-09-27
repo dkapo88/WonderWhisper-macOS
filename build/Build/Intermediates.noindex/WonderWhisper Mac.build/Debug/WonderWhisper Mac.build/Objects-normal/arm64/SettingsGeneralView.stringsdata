@@ -15,7 +15,7 @@
         "key": "Audio",
         "location": {
           "startingColumn": 26,
-          "startingLine": 30
+          "startingLine": 43
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Network & Transcription",
         "location": {
           "startingColumn": 26,
-          "startingLine": 51
+          "startingLine": 71
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Performance Optimizations",
         "location": {
           "startingColumn": 26,
-          "startingLine": 69
+          "startingLine": 96
         }
       },
       {
@@ -39,12 +39,20 @@
         "key": "Screen Context",
         "location": {
           "startingColumn": 26,
-          "startingLine": 80
+          "startingLine": 107
         }
       },
       {
         "comment": "",
-        "key": "Default: ⌃⌘V. Pastes last output (LLM preferred).",
+        "key": "Inserts text via Accessibility APIs for lower latency in apps that support it.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "Keeps rich text when possible. Turn off for strictly plain text.",
         "location": {
           "startingColumn": 30,
           "startingLine": 24
@@ -52,7 +60,7 @@
       },
       {
         "comment": "",
-        "key": "Use AX direct insertion (faster when supported)",
+        "key": "Use direct insertion when available",
         "location": {
           "startingColumn": 32,
           "startingLine": 16
@@ -60,7 +68,7 @@
       },
       {
         "comment": "",
-        "key": "Requires Accessibility permission. Falls back to paste if not supported.",
+        "key": "Requires Accessibility permission. Falls back to clipboard paste if not supported.",
         "location": {
           "startingColumn": 35,
           "startingLine": 17
@@ -71,7 +79,7 @@
         "key": "Paste with formatting (HTML/RTF)",
         "location": {
           "startingColumn": 32,
-          "startingLine": 18
+          "startingLine": 22
         }
       },
       {
@@ -79,7 +87,31 @@
         "key": "Preserves paragraph spacing in apps that support rich text; falls back to plain text elsewhere.",
         "location": {
           "startingColumn": 35,
-          "startingLine": 19
+          "startingLine": 23
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste Last Transcript shortcut",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Set a global hotkey to paste your most recent output. Uses cleaned LLM output when available; otherwise pastes the raw transcript. Default: ⌃⌘V",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 35
+        }
+      },
+      {
+        "comment": "",
+        "key": "Improves clarity in noisy or low‑volume recordings at a minor CPU cost.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 47
         }
       },
       {
@@ -87,31 +119,15 @@
         "key": "Audio enhancement (beta)",
         "location": {
           "startingColumn": 32,
-          "startingLine": 32
+          "startingLine": 45
         }
       },
       {
         "comment": "",
-        "key": "Applies a subtle high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.",
+        "key": "Applies a high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.",
         "location": {
           "startingColumn": 35,
-          "startingLine": 33
-        }
-      },
-      {
-        "comment": "",
-        "key": "MP3 uses aggressive AAC compression (16kbps) for 75% smaller uploads. AAC uses standard 32kbps compression.",
-        "location": {
-          "startingColumn": 31,
-          "startingLine": 47
-        }
-      },
-      {
-        "comment": "",
-        "key": "Recording format",
-        "location": {
-          "startingColumn": 34,
-          "startingLine": 37
+          "startingLine": 46
         }
       },
       {
@@ -119,7 +135,7 @@
         "key": "Recording Format",
         "location": {
           "startingColumn": 36,
-          "startingLine": 39
+          "startingLine": 53
         }
       },
       {
@@ -127,7 +143,7 @@
         "key": "WAV (largest, compatible)",
         "location": {
           "startingColumn": 38,
-          "startingLine": 40
+          "startingLine": 54
         }
       },
       {
@@ -135,23 +151,39 @@
         "key": "AAC/M4A (smaller)",
         "location": {
           "startingColumn": 38,
-          "startingLine": 41
+          "startingLine": 55
         }
       },
       {
         "comment": "",
-        "key": "MP3 (aggressive AAC, smallest)",
+        "key": "MP3 (smallest)",
         "location": {
           "startingColumn": 38,
-          "startingLine": 42
+          "startingLine": 56
         }
       },
       {
         "comment": "",
-        "key": "If no response within this time, the request fails and will be retried per network policy.",
+        "key": "Recording format",
         "location": {
-          "startingColumn": 31,
+          "startingColumn": 38,
           "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Choose file size vs. compatibility. MP3/AAC upload faster; WAV is largest but widely supported.",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 63
+        }
+      },
+      {
+        "comment": "",
+        "key": "Useful if your network has trouble with HTTP/3/QUIC. Leave off unless uploads stall.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 90
         }
       },
       {
@@ -159,23 +191,15 @@
         "key": "Force HTTP/2 for uploads (experimental)",
         "location": {
           "startingColumn": 32,
-          "startingLine": 64
+          "startingLine": 88
         }
       },
       {
         "comment": "",
-        "key": "Bypasses HTTP/3/QUIC for multipart uploads to avoid network stalls on some networks.",
+        "key": "Bypasses HTTP/3/QUIC for multipart uploads to avoid stalls on some networks.",
         "location": {
           "startingColumn": 35,
-          "startingLine": 65
-        }
-      },
-      {
-        "comment": "",
-        "key": "Transcription timeout",
-        "location": {
-          "startingColumn": 34,
-          "startingLine": 54
+          "startingLine": 89
         }
       },
       {
@@ -183,15 +207,31 @@
         "key": "%llds",
         "location": {
           "startingColumn": 38,
-          "startingLine": 57
+          "startingLine": 75
         }
       },
       {
         "comment": "",
-        "key": "⚡ This experimental feature can improve transcription speed by skipping unnecessary processing on clean audio.",
+        "key": "Transcription timeout",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "Maximum time to wait before failing a request. Retries follow network policy.",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "Automatically skips enhancement on clean audio to reduce latency. Experimental.",
         "location": {
           "startingColumn": 30,
-          "startingLine": 74
+          "startingLine": 101
         }
       },
       {
@@ -199,7 +239,7 @@
         "key": "Smart audio preprocessing",
         "location": {
           "startingColumn": 32,
-          "startingLine": 71
+          "startingLine": 98
         }
       },
       {
@@ -207,7 +247,15 @@
         "key": "Only applies audio enhancement when needed based on quality analysis. Saves processing time for clean audio.",
         "location": {
           "startingColumn": 35,
-          "startingLine": 72
+          "startingLine": 99
+        }
+      },
+      {
+        "comment": "",
+        "key": "Improves capture fidelity in IDEs like Cursor, VS Code, and Xcode with a small latency trade‑off.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 111
         }
       },
       {
@@ -215,7 +263,7 @@
         "key": "OCR Debugging (Debug Build Only)",
         "location": {
           "startingColumn": 30,
-          "startingLine": 88
+          "startingLine": 118
         }
       },
       {
@@ -223,7 +271,7 @@
         "key": "Accurate OCR for code editors",
         "location": {
           "startingColumn": 32,
-          "startingLine": 82
+          "startingLine": 109
         }
       },
       {
@@ -231,7 +279,7 @@
         "key": "Improves text capture in editors like Cursor/VS Code/Xcode at the cost of a small latency increase (~0.2–0.6s). Turn off to prioritize speed.",
         "location": {
           "startingColumn": 35,
-          "startingLine": 83
+          "startingLine": 110
         }
       },
       {
@@ -239,7 +287,7 @@
         "key": "Enable OCR debug logging",
         "location": {
           "startingColumn": 32,
-          "startingLine": 92
+          "startingLine": 122
         }
       },
       {
@@ -247,7 +295,7 @@
         "key": "Logs detailed OCR processing information to help diagnose capture issues.",
         "location": {
           "startingColumn": 31,
-          "startingLine": 96
+          "startingLine": 126
         }
       },
       {
@@ -255,7 +303,7 @@
         "key": "Save captured images to Desktop",
         "location": {
           "startingColumn": 32,
-          "startingLine": 98
+          "startingLine": 128
         }
       },
       {
@@ -263,7 +311,7 @@
         "key": "Saves screenshots used for OCR to Desktop for analysis. Use sparingly as this creates many files.",
         "location": {
           "startingColumn": 31,
-          "startingLine": 102
+          "startingLine": 132
         }
       },
       {
@@ -271,7 +319,7 @@
         "key": "Force accurate OCR for all apps",
         "location": {
           "startingColumn": 32,
-          "startingLine": 104
+          "startingLine": 134
         }
       },
       {
@@ -279,7 +327,7 @@
         "key": "Always use the most accurate (but slower) OCR mode regardless of app type.",
         "location": {
           "startingColumn": 31,
-          "startingLine": 108
+          "startingLine": 138
         }
       },
       {
@@ -287,7 +335,7 @@
         "key": "Extended OCR timeout",
         "location": {
           "startingColumn": 32,
-          "startingLine": 110
+          "startingLine": 140
         }
       },
       {
@@ -295,7 +343,7 @@
         "key": "Use longer timeouts for OCR processing. May help with complex content but increases latency.",
         "location": {
           "startingColumn": 31,
-          "startingLine": 114
+          "startingLine": 144
         }
       }
     ]
