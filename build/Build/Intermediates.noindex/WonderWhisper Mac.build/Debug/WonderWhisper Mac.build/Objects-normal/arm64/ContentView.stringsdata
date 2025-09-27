@@ -7,7 +7,7 @@
         "key": "WonderWhisper",
         "location": {
           "startingColumn": 30,
-          "startingLine": 85
+          "startingLine": 81
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "WonderWhisper",
         "location": {
           "startingColumn": 25,
-          "startingLine": 71
+          "startingLine": 67
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Settings",
         "location": {
           "startingColumn": 25,
-          "startingLine": 77
+          "startingLine": 73
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Scratchpad",
         "location": {
           "startingColumn": 38,
-          "startingLine": 90
+          "startingLine": 86
         }
       },
       {
@@ -39,7 +39,7 @@
         "key": "History",
         "location": {
           "startingColumn": 38,
-          "startingLine": 94
+          "startingLine": 90
         }
       },
       {
@@ -47,7 +47,7 @@
         "key": "Settings · General",
         "location": {
           "startingColumn": 38,
-          "startingLine": 97
+          "startingLine": 93
         }
       },
       {
@@ -55,7 +55,7 @@
         "key": "Settings · Models",
         "location": {
           "startingColumn": 38,
-          "startingLine": 100
+          "startingLine": 96
         }
       },
       {
@@ -63,7 +63,7 @@
         "key": "Settings · Prompts",
         "location": {
           "startingColumn": 38,
-          "startingLine": 103
+          "startingLine": 99
         }
       },
       {
@@ -71,15 +71,7 @@
         "key": "Settings · Vocabulary",
         "location": {
           "startingColumn": 38,
-          "startingLine": 106
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings · Shortcuts",
-        "location": {
-          "startingColumn": 38,
-          "startingLine": 109
+          "startingLine": 102
         }
       },
       {
@@ -87,7 +79,7 @@
         "key": "Settings · API Keys",
         "location": {
           "startingColumn": 38,
-          "startingLine": 112
+          "startingLine": 105
         }
       }
     ]
