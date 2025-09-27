@@ -11,6 +11,11 @@ struct SettingsPromptsView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var dragBaseTranslation: CGFloat = 0
     @State private var promptHeights: [UUID: CGFloat] = [:]
+    // Track indices during an active drag, without committing reorder to the model.
+    @State private var dragStartIndex: Int?
+    @State private var dragCurrentIndex: Int?
+
+    private let promptSpacing: CGFloat = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -59,11 +64,12 @@ struct SettingsPromptsView: View {
                                 .background(selectionBackground(for: prompt, isDragging: isDragging))
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(heightReader(for: prompt))
-                                .offset(y: isDragging ? dragOffset : 0)
+                                .offset(y: rowOffset(for: prompt))
                                 .shadow(color: isDragging ? Color.black.opacity(0.18) : .clear, radius: isDragging ? 10 : 0, y: isDragging ? 6 : 0)
                                 .zIndex(isDragging ? 10 : 0)
-                                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.82, blendDuration: 0.15), value: vm.prompts)
+                                // Animate rows shifting out of the way and the dragged card moving
                                 .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.82, blendDuration: 0.15), value: dragOffset)
+                                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.82, blendDuration: 0.15), value: dragCurrentIndex)
                                 .highPriorityGesture(dragGesture(for: prompt))
                         }
                     }
@@ -161,66 +167,93 @@ struct SettingsPromptsView: View {
                     draggedPromptID = prompt.id
                     dragOffset = 0
                     dragBaseTranslation = 0
+                    // Snapshot starting index once at drag begin
+                    dragStartIndex = vm.prompts.firstIndex(where: { $0.id == prompt.id })
+                    dragCurrentIndex = dragStartIndex
                 }
                 guard draggedPromptID == prompt.id else { return }
                 handleDragChange(for: prompt.id, translation: value.translation.height)
             }
             .onEnded { _ in
                 guard draggedPromptID == prompt.id else { return }
+                let start = dragStartIndex
+                let target = dragCurrentIndex
+                // Reset visual offsets first so the commit animates smoothly
                 withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.82, blendDuration: 0.2)) {
                     dragOffset = 0
                 }
                 draggedPromptID = nil
                 dragBaseTranslation = 0
+                let spring = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.85, blendDuration: 0.15)
+                if let s = start, let t = target, s != t {
+                    withAnimation(spring) {
+                        // Commit a single reorder to the model to avoid mid-drag churn
+                        if s < vm.prompts.count, t < vm.prompts.count, s >= 0, t >= 0 {
+                            vm.movePrompt(id: vm.prompts[s].id, to: t)
+                        }
+                    }
+                }
+                dragStartIndex = nil
+                dragCurrentIndex = nil
             }
     }
 
     private func handleDragChange(for promptID: UUID, translation: CGFloat) {
-        guard var currentIndex = vm.prompts.firstIndex(where: { $0.id == promptID }) else { return }
+        guard let startIndex = dragStartIndex else { return }
+        guard var currentIndex = dragCurrentIndex ?? vm.prompts.firstIndex(where: { $0.id == promptID }) else { return }
         let defaultHeight: CGFloat = 72
-        let spring = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.85, blendDuration: 0.15)
+        let draggedHeight = promptHeights[promptID] ?? defaultHeight
 
         var delta = translation - dragBaseTranslation
 
-        while delta > thresholdDown(for: currentIndex) && currentIndex < vm.prompts.count - 1 {
-            let nextIndex = currentIndex + 1
-            let nextID = vm.prompts[nextIndex].id
-            let height = promptHeights[nextID] ?? defaultHeight
-            dragBaseTranslation += height
-            withAnimation(spring) {
-                vm.movePrompt(id: promptID, to: nextIndex)
-            }
-            currentIndex = nextIndex
+        // Move down: cross into the next index when the dragged card's center passes
+        // the neighbor's center. Threshold = half dragged + spacing + half neighbor.
+        while currentIndex < vm.prompts.count - 1 {
+            let nextID = vm.prompts[currentIndex + 1].id
+            let nextH = promptHeights[nextID] ?? defaultHeight
+            let step = (draggedHeight / 2) + promptSpacing + (nextH / 2)
+            guard delta > step else { break }
+            dragBaseTranslation += step
+            currentIndex += 1
             delta = translation - dragBaseTranslation
         }
 
-        while delta < -thresholdUp(for: currentIndex) && currentIndex > 0 {
-            let previousIndex = currentIndex - 1
-            let previousID = vm.prompts[previousIndex].id
-            let height = promptHeights[previousID] ?? defaultHeight
-            dragBaseTranslation -= height
-            withAnimation(spring) {
-                vm.movePrompt(id: promptID, to: previousIndex)
-            }
-            currentIndex = previousIndex
+        // Move up: symmetric threshold vs the previous neighbor
+        while currentIndex > 0 {
+            let prevID = vm.prompts[currentIndex - 1].id
+            let prevH = promptHeights[prevID] ?? defaultHeight
+            let step = (draggedHeight / 2) + promptSpacing + (prevH / 2)
+            guard delta < -step else { break }
+            dragBaseTranslation -= step
+            currentIndex -= 1
             delta = translation - dragBaseTranslation
         }
 
-        dragOffset = delta
+        dragOffset = translation
+        dragCurrentIndex = currentIndex
     }
 
-    private func thresholdDown(for index: Int) -> CGFloat {
-        guard index < vm.prompts.count - 1 else { return .infinity }
-        let nextID = vm.prompts[index + 1].id
-        let height = promptHeights[nextID] ?? 72
-        return height * 0.45
-    }
+    // Compute per-row offset during an active drag without mutating the model array.
+    private func rowOffset(for prompt: PromptConfiguration) -> CGFloat {
+        guard let draggedID = draggedPromptID,
+              let from = dragStartIndex,
+              let to = dragCurrentIndex,
+              let idx = vm.prompts.firstIndex(where: { $0.id == prompt.id }) else { return 0 }
 
-    private func thresholdUp(for index: Int) -> CGFloat {
-        guard index > 0 else { return .infinity }
-        let previousID = vm.prompts[index - 1].id
-        let height = promptHeights[previousID] ?? 72
-        return height * 0.45
+        if prompt.id == draggedID { return dragOffset }
+
+        let defaultHeight: CGFloat = 72
+        let draggedHeight = promptHeights[draggedID] ?? defaultHeight
+        let shift = draggedHeight + promptSpacing
+
+        if to > from {
+            // Rows between from+1...to shift up to make space
+            if idx > from && idx <= to { return -shift }
+        } else if to < from {
+            // Rows between to...from-1 shift down to make space
+            if idx >= to && idx < from { return +shift }
+        }
+        return 0
     }
 
     private func heightReader(for prompt: PromptConfiguration) -> some View {
