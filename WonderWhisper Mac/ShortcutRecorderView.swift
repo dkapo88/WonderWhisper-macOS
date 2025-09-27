@@ -7,20 +7,30 @@ struct ShortcutRecorderView: View {
     @State private var isRecording: Bool = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(shortcutDescription(shortcut))
                 .monospaced()
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.12)))
-            Button(isRecording ? "Press keys…" : "Change…") { isRecording.toggle() }
+
+            HStack(spacing: 8) {
+                Button(isRecording ? "Press keys…" : "Change…") { isRecording.toggle() }
+                Button("Reset") {
+                    shortcut = HotkeyManager.Shortcut(
+                        keyCode: UInt32(kVK_ANSI_V),
+                        modifiers: UInt32(cmdKey | controlKey)
+                    )
+                }
+            }
+
             ShortcutCaptureRepresentable(isRecording: $isRecording) { evt in
                 if let evt = evt, let sc = shortcutFromEvent(evt) {
                     shortcut = sc
                 }
                 isRecording = false
             }
-            Button("Reset") { shortcut = HotkeyManager.Shortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey | controlKey)) }
+            .frame(width: 0, height: 0)
         }
     }
 }

@@ -27,15 +27,15 @@ struct SettingsGeneralView: View {
 
                         Divider()
 
-                        LabeledContent {
-                            ShortcutRecorderView(shortcut: $vm.pasteShortcut)
-                        } label: {
+                        VStack(alignment: .leading, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Paste Last Transcript shortcut")
                                 Text("Set a global hotkey to paste your most recent output. Uses cleaned LLM output when available; otherwise pastes the raw transcript. Default: ⌃⌘V")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
+
+                            ShortcutRecorderView(shortcut: $vm.pasteShortcut)
                         }
                     }
                 }
