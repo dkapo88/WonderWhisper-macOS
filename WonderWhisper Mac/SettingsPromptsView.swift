@@ -129,6 +129,13 @@ struct SettingsPromptsView: View {
             )
             .padding(.top, 2)
 
+            PromptLLMModelEditor(
+                prompt: prompt,
+                defaultModel: vm.llmModel,
+                provider: vm.llmProvider,
+                onUpdate: { vm.updateLLMModel(for: prompt.id, to: $0) }
+            )
+
             if vm.selectedPromptID == prompt.id {
                 Text("Active prompt")
                     .font(.caption)
@@ -440,6 +447,124 @@ private struct PromptTriggerEditor: View {
 
     private var selectionOptions: [HotkeyManager.Selection] {
         HotkeyManager.Selection.allCases.filter { $0 != .f5 }
+    }
+}
+
+private struct PromptLLMModelEditor: View {
+    let prompt: PromptConfiguration
+    let defaultModel: String
+    let provider: String
+    let onUpdate: (String?) -> Void
+
+    @State private var modelDraft: String
+    @FocusState private var isFieldFocused: Bool
+
+    init(prompt: PromptConfiguration,
+         defaultModel: String,
+         provider: String,
+         onUpdate: @escaping (String?) -> Void) {
+        self.prompt = prompt
+        self.defaultModel = defaultModel
+        self.provider = provider
+        self.onUpdate = onUpdate
+        _modelDraft = State(initialValue: prompt.llmModelOverride ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("LLM model")
+                    .font(.subheadline)
+                    .bold()
+                if hasOverride {
+                    Text("Override active")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
+            }
+
+            TextField("Use default (\(defaultModel))", text: $modelDraft)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFieldFocused)
+                .onSubmit { commit() }
+                .onChange(of: isFieldFocused) { focused in
+                    if !focused { commit() }
+                }
+
+            HStack(spacing: 8) {
+                if !quickOptions.isEmpty {
+                    Menu("Quick pick") {
+                        ForEach(quickOptions, id: \.self) { option in
+                            Button(option) {
+                                modelDraft = option
+                                commit()
+                            }
+                        }
+                    }
+                }
+
+                Button("Use default") {
+                    modelDraft = ""
+                    commit()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!hasOverride && modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer()
+                Text("Using \(effectiveModel)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .onChange(of: prompt.llmModelOverride) { newValue in
+            if !isFieldFocused {
+                modelDraft = newValue ?? ""
+            }
+        }
+    }
+
+    private var hasOverride: Bool {
+        guard let override = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !override.isEmpty
+    }
+
+    private var effectiveModel: String {
+        if let override = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        return defaultModel
+    }
+
+    private var quickOptions: [String] {
+        switch provider.lowercased() {
+        case "openrouter":
+            return ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o-mini"]
+        case "cerebras":
+            return [
+                "llama-4-scout-17b-16e-instruct",
+                "llama3.1-8b",
+                "llama-3.3-70b",
+                "gpt-oss-120b",
+                "qwen-3-32b"
+            ]
+        default:
+            return [
+                "moonshotai/kimi-k2-instruct",
+                "moonshotai/kimi-k2-instruct-0905",
+                "openai/gpt-oss-120b",
+                "meta-llama/llama-4-scout-17b-16e-instruct"
+            ]
+        }
+    }
+
+    private func commit() {
+        let trimmed = modelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.isEmpty ? nil : trimmed
+        let current = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized == (current?.isEmpty == true ? nil : current) {
+            return
+        }
+        onUpdate(normalized)
     }
 }
 

@@ -347,13 +347,17 @@ actor DictationController {
         state = .idle
     }
 
-    func runLLM(text: String, userPrompt: String, systemPromptOverride: String? = nil, streamingOverride: Bool? = nil) async throws -> String {
+    func runLLM(text: String,
+                userPrompt: String,
+                systemPromptOverride: String? = nil,
+                streamingOverride: Bool? = nil,
+                modelOverride: String? = nil) async throws -> String {
         guard llmEnabled else {
             throw NSError(domain: "DictationController", code: -2000, userInfo: [NSLocalizedDescriptionKey: "LLM processing is currently disabled."])
         }
         let settings = LLMSettings(
             endpoint: llmSettings.endpoint,
-            model: llmSettings.model,
+            model: modelOverride ?? llmSettings.model,
             systemPrompt: systemPromptOverride ?? llmSettings.systemPrompt,
             timeout: llmSettings.timeout,
             streaming: streamingOverride ?? llmSettings.streaming

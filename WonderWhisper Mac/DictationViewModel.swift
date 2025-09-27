@@ -423,6 +423,19 @@ final class DictationViewModel: ObservableObject {
         prompts[idx] = updated
     }
 
+    func updateLLMModel(for id: UUID, to override: String?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        let normalized = override?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (normalized?.isEmpty ?? true) ? nil : normalized
+        var updated = prompts[idx]
+        if updated.llmModelOverride == value { return }
+        updated.llmModelOverride = value
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
     func selectPrompt(id: UUID) {
         guard prompts.contains(where: { $0.id == id }) else { return }
         selectedPromptID = id
@@ -530,6 +543,8 @@ final class DictationViewModel: ObservableObject {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         var provider: TranscriptionProvider? = nil
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+        let activePrompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
+        let modelForActivePrompt = resolvedLLMModel(for: activePrompt)
         if transcriptionModel == "apple-native" {
             if #available(macOS 26, *) {
                 provider = NativeAppleTranscriptionProvider()
@@ -560,21 +575,21 @@ final class DictationViewModel: ObservableObject {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
-        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
 
         // Choose LLM provider and endpoint
         var llmProviderInstance: LLMProvider
         switch llmProvider.lowercased() {
         case "openrouter":
-            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
             llmProviderInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
         case "cerebras":
-            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
             llmProviderInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
         default:
-            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
             llmProviderInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
@@ -653,7 +668,8 @@ final class DictationViewModel: ObservableObject {
             text: noteText,
             userPrompt: prompt.userPrompt,
             systemPromptOverride: system,
-            streamingOverride: llmStreaming
+            streamingOverride: llmStreaming,
+            modelOverride: resolvedLLMModel(for: prompt)
         )
         return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -697,5 +713,13 @@ private extension DictationViewModel {
         }
         let active = loaded.first(where: { $0.id == selectedID }) ?? loaded.first ?? PromptConfiguration(name: "Default", systemPrompt: initialSystem, userPrompt: initialUser)
         return PromptBootstrap(prompts: loaded, selectedID: active.id, activeSystem: active.systemPrompt, activeUser: active.userPrompt)
+    }
+
+    func resolvedLLMModel(for prompt: PromptConfiguration?) -> String {
+        if let override = prompt?.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        let fallback = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? AppConfig.defaultLLMModel : fallback
     }
 }
