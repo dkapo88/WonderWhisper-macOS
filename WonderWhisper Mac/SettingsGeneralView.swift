@@ -13,56 +13,83 @@ struct SettingsGeneralView: View {
 
                 GroupBox("Insertion") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Use AX direct insertion (faster when supported)", isOn: $vm.useAXInsertion)
-                            .help("Requires Accessibility permission. Falls back to paste if not supported.")
+                        Toggle("Use direct insertion when available", isOn: $vm.useAXInsertion)
+                            .help("Requires Accessibility permission. Falls back to clipboard paste if not supported.")
+                        Text("Inserts text via Accessibility APIs for lower latency in apps that support it.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
                         Toggle("Paste with formatting (HTML/RTF)", isOn: $vm.pasteFormatted)
                             .help("Preserves paragraph spacing in apps that support rich text; falls back to plain text elsewhere.")
+                        Text("Keeps rich text when possible. Turn off for strictly plain text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
                         Divider()
 
-                        ShortcutRecorderView(shortcut: $vm.pasteShortcut)
-                        Text("Default: ⌃⌘V. Pastes last output (LLM preferred).")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        LabeledContent {
+                            ShortcutRecorderView(shortcut: $vm.pasteShortcut)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Paste Last Transcript shortcut")
+                                Text("Set a global hotkey to paste your most recent output. Uses cleaned LLM output when available; otherwise pastes the raw transcript. Default: ⌃⌘V")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                 }
 
                 GroupBox("Audio") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Audio enhancement (beta)", isOn: $vm.audioEnhancementEnabled)
-                            .help("Applies a subtle high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.")
+                            .help("Applies a high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.")
+                        Text("Improves clarity in noisy or low‑volume recordings at a minor CPU cost.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         
                         // Audio recording format selection for better compression
-                        HStack {
-                            Text("Recording format")
-                            Spacer()
+                        LabeledContent {
                             Picker("Recording Format", selection: $selectedAudioFormat) {
                                 Text("WAV (largest, compatible)").tag("wav")
-                                Text("AAC/M4A (smaller)").tag("aac")  
-                                Text("MP3 (aggressive AAC, smallest)").tag("mp3")
+                                Text("AAC/M4A (smaller)").tag("aac")
+                                Text("MP3 (smallest)").tag("mp3")
                             }
                             .pickerStyle(MenuPickerStyle())
-                            .frame(maxWidth: 200)
+                            .frame(maxWidth: 220)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Recording format")
+                                Text("Choose file size vs. compatibility. MP3/AAC upload faster; WAV is largest but widely supported.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        .help("MP3 uses aggressive AAC compression (16kbps) for 75% smaller uploads. AAC uses standard 32kbps compression.")
                     }
                 }
 
                 GroupBox("Network & Transcription") {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Transcription timeout")
-                            Spacer()
+                        LabeledContent {
                             Stepper(value: $vm.transcriptionTimeoutSeconds, in: 5...120, step: 1) {
                                 Text("\(Int(vm.transcriptionTimeoutSeconds))s")
                                     .monospacedDigit()
                             }
                             .frame(maxWidth: 160)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Transcription timeout")
+                                Text("Maximum time to wait before failing a request. Retries follow network policy.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        .help("If no response within this time, the request fails and will be retried per network policy.")
 
                         Toggle("Force HTTP/2 for uploads (experimental)", isOn: $vm.forceHTTP2Uploads)
-                            .help("Bypasses HTTP/3/QUIC for multipart uploads to avoid network stalls on some networks.")
+                            .help("Bypasses HTTP/3/QUIC for multipart uploads to avoid stalls on some networks.")
+                        Text("Useful if your network has trouble with HTTP/3/QUIC. Leave off unless uploads stall.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 
@@ -71,7 +98,7 @@ struct SettingsGeneralView: View {
                         Toggle("Smart audio preprocessing", isOn: $smartPreprocessingEnabled)
                             .help("Only applies audio enhancement when needed based on quality analysis. Saves processing time for clean audio.")
                         
-                        Text("⚡ This experimental feature can improve transcription speed by skipping unnecessary processing on clean audio.")
+                        Text("Automatically skips enhancement on clean audio to reduce latency. Experimental.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -81,6 +108,9 @@ struct SettingsGeneralView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Accurate OCR for code editors", isOn: $vm.accurateOCRForEditors)
                             .help("Improves text capture in editors like Cursor/VS Code/Xcode at the cost of a small latency increase (~0.2–0.6s). Turn off to prioritize speed.")
+                        Text("Improves capture fidelity in IDEs like Cursor, VS Code, and Xcode with a small latency trade‑off.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
                         #if DEBUG
                         Divider()
