@@ -1,0 +1,176 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ScratchpadView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Error",
+        "location": {
+          "startingColumn": 12,
+          "startingLine": 20
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 21
+        }
+      },
+      {
+        "comment": "",
+        "key": "New Note",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "Saving note…",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "Scratchpad — type or use the dictation shortcut to capture a note…",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 61
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add Note",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 73
+        }
+      },
+      {
+        "comment": "",
+        "key": "No notes yet",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 91
+        }
+      },
+      {
+        "comment": "",
+        "key": "Capture ideas with the input above, or dictate directly into the scratchpad.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 113
+        }
+      },
+      {
+        "comment": "",
+        "key": "·",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 135
+        }
+      },
+      {
+        "comment": "",
+        "key": "Created %@",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 177
+        }
+      },
+      {
+        "comment": "",
+        "key": "Title",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 170
+        }
+      },
+      {
+        "comment": "",
+        "key": "Start writing or dictate to capture the full note…",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 192
+        }
+      },
+      {
+        "comment": "",
+        "key": "Processing with AI…",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 247
+        }
+      },
+      {
+        "comment": "",
+        "key": "Prompt",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 203
+        }
+      },
+      {
+        "comment": "",
+        "key": "Manage Prompts",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 216
+        }
+      },
+      {
+        "comment": "",
+        "key": "Run Prompt",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 230
+        }
+      },
+      {
+        "comment": "",
+        "key": "Regenerate Title",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 241
+        }
+      },
+      {
+        "comment": "",
+        "key": "Note unavailable",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 263
+        }
+      },
+      {
+        "comment": "",
+        "key": "This note may have been deleted.",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 265
+        }
+      }
+    ]
+  },
+  "version": 1
+}

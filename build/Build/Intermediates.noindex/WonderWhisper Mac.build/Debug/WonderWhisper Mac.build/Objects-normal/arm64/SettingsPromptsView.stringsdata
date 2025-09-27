@@ -7,7 +7,7 @@
         "key": "Saved prompts",
         "location": {
           "startingColumn": 18,
-          "startingLine": 42
+          "startingLine": 52
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "Prompt editor",
         "location": {
           "startingColumn": 18,
-          "startingLine": 132
+          "startingLine": 267
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Prompt Library",
         "location": {
           "startingColumn": 18,
-          "startingLine": 29
+          "startingLine": 39
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Add Prompt",
         "location": {
           "startingColumn": 23,
-          "startingLine": 36
+          "startingLine": 46
         }
       },
       {
@@ -39,7 +39,7 @@
         "key": "No prompts yet. Use \"Add Prompt\" to create one.",
         "location": {
           "startingColumn": 22,
-          "startingLine": 44
+          "startingLine": 54
         }
       },
       {
@@ -47,7 +47,7 @@
         "key": "Active prompt",
         "location": {
           "startingColumn": 22,
-          "startingLine": 111
+          "startingLine": 133
         }
       },
       {
@@ -55,7 +55,7 @@
         "key": "Select this prompt",
         "location": {
           "startingColumn": 24,
-          "startingLine": 115
+          "startingLine": 137
         }
       },
       {
@@ -63,7 +63,7 @@
         "key": "Prompt name",
         "location": {
           "startingColumn": 31,
-          "startingLine": 68
+          "startingLine": 90
         }
       },
       {
@@ -71,7 +71,7 @@
         "key": "Done",
         "location": {
           "startingColumn": 58,
-          "startingLine": 97
+          "startingLine": 119
         }
       },
       {
@@ -79,7 +79,7 @@
         "key": "Rename",
         "location": {
           "startingColumn": 67,
-          "startingLine": 97
+          "startingLine": 119
         }
       },
       {
@@ -87,7 +87,7 @@
         "key": "Select a prompt to edit its content.",
         "location": {
           "startingColumn": 22,
-          "startingLine": 160
+          "startingLine": 295
         }
       },
       {
@@ -95,7 +95,7 @@
         "key": "System Prompt",
         "location": {
           "startingColumn": 26,
-          "startingLine": 135
+          "startingLine": 270
         }
       },
       {
@@ -103,7 +103,7 @@
         "key": "User Prompt",
         "location": {
           "startingColumn": 26,
-          "startingLine": 146
+          "startingLine": 281
         }
       },
       {
@@ -111,7 +111,7 @@
         "key": "Reset to Default",
         "location": {
           "startingColumn": 28,
-          "startingLine": 140
+          "startingLine": 275
         }
       },
       {
@@ -119,7 +119,7 @@
         "key": "Editing: %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 154
+          "startingLine": 289
         }
       },
       {
@@ -127,7 +127,7 @@
         "key": "Clear",
         "location": {
           "startingColumn": 32,
-          "startingLine": 152
+          "startingLine": 287
         }
       },
       {
@@ -135,7 +135,7 @@
         "key": "Trigger type",
         "location": {
           "startingColumn": 20,
-          "startingLine": 208
+          "startingLine": 345
         }
       },
       {
@@ -143,7 +143,7 @@
         "key": "Press keys…",
         "location": {
           "startingColumn": 34,
-          "startingLine": 262
+          "startingLine": 400
         }
       },
       {
@@ -151,7 +151,7 @@
         "key": "Set Hotkey",
         "location": {
           "startingColumn": 52,
-          "startingLine": 262
+          "startingLine": 400
         }
       },
       {
@@ -159,7 +159,7 @@
         "key": "Clear",
         "location": {
           "startingColumn": 24,
-          "startingLine": 267
+          "startingLine": 405
         }
       },
       {
@@ -167,7 +167,7 @@
         "key": "Single key",
         "location": {
           "startingColumn": 20,
-          "startingLine": 278
+          "startingLine": 416
         }
       },
       {
@@ -175,7 +175,7 @@
         "key": "None",
         "location": {
           "startingColumn": 22,
-          "startingLine": 283
+          "startingLine": 421
         }
       },
       {
@@ -183,7 +183,7 @@
         "key": "Selected: %@",
         "location": {
           "startingColumn": 26,
-          "startingLine": 292
+          "startingLine": 430
         }
       },
       {
@@ -191,7 +191,7 @@
         "key": "Clear",
         "location": {
           "startingColumn": 28,
-          "startingLine": 294
+          "startingLine": 432
         }
       }
     ]

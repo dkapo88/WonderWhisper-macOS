@@ -28,7 +28,7 @@
       },
       {
         "comment": "",
-        "key": "Dictation",
+        "key": "Scratchpad",
         "location": {
           "startingColumn": 38,
           "startingLine": 90
@@ -88,14 +88,6 @@
         "location": {
           "startingColumn": 38,
           "startingLine": 112
-        }
-      },
-      {
-        "comment": "",
-        "key": "Scratchpad — click here and use your shortcut to dictate, or type notes…",
-        "location": {
-          "startingColumn": 26,
-          "startingLine": 138
         }
       }
     ]

@@ -19,7 +19,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			1usojjZl73jRUYQXidYCb97wV5k=
+			yumsVkzOfBLLcZEHELuVdD7LNzA=
 			</data>
 			<key>requirement</key>
 			<string>identifier "WonderWhisper Mac.debug" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: dane.kapoor@gmail.com (8BV7XWUY29)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */</string>

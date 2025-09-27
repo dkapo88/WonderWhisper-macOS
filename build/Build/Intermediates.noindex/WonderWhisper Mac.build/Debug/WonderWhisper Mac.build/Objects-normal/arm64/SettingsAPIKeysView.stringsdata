@@ -6,32 +6,16 @@
         "comment": "",
         "key": "Groq",
         "location": {
-          "startingColumn": 21,
-          "startingLine": 12
+          "startingColumn": 55,
+          "startingLine": 20
         }
       },
       {
         "comment": "",
-        "key": "AssemblyAI",
+        "key": "Key stored",
         "location": {
-          "startingColumn": 21,
-          "startingLine": 26
-        }
-      },
-      {
-        "comment": "",
-        "key": "Deepgram",
-        "location": {
-          "startingColumn": 21,
-          "startingLine": 40
-        }
-      },
-      {
-        "comment": "",
-        "key": "OpenRouter",
-        "location": {
-          "startingColumn": 21,
-          "startingLine": 54
+          "startingColumn": 149,
+          "startingLine": 20
         }
       },
       {
@@ -39,7 +23,7 @@
         "key": "Groq API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 14
+          "startingLine": 22
         }
       },
       {
@@ -47,7 +31,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 19
+          "startingLine": 27
         }
       },
       {
@@ -55,7 +39,23 @@
         "key": "Save Groq Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 18
+          "startingLine": 26
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 161,
+          "startingLine": 34
         }
       },
       {
@@ -63,7 +63,7 @@
         "key": "AssemblyAI API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 28
+          "startingLine": 36
         }
       },
       {
@@ -71,7 +71,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 33
+          "startingLine": 41
         }
       },
       {
@@ -79,7 +79,23 @@
         "key": "Save AssemblyAI Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 32
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 157,
+          "startingLine": 48
         }
       },
       {
@@ -87,7 +103,7 @@
         "key": "Deepgram API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 42
+          "startingLine": 50
         }
       },
       {
@@ -95,7 +111,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 47
+          "startingLine": 55
         }
       },
       {
@@ -103,7 +119,23 @@
         "key": "Save Deepgram Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 46
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenRouter",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 161,
+          "startingLine": 62
         }
       },
       {
@@ -111,7 +143,7 @@
         "key": "OpenRouter API Key",
         "location": {
           "startingColumn": 33,
-          "startingLine": 56
+          "startingLine": 64
         }
       },
       {
@@ -119,7 +151,7 @@
         "key": "Stored as %@",
         "location": {
           "startingColumn": 30,
-          "startingLine": 61
+          "startingLine": 69
         }
       },
       {
@@ -127,7 +159,47 @@
         "key": "Save OpenRouter Key",
         "location": {
           "startingColumn": 32,
-          "startingLine": 60
+          "startingLine": 68
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cerebras",
+        "location": {
+          "startingColumn": 55,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Key stored",
+        "location": {
+          "startingColumn": 157,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cerebras API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 76
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Cerebras Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 80
         }
       }
     ]

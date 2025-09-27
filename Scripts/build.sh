@@ -6,7 +6,7 @@
 set -e  # Exit on any error
 
 echo "Building WonderWhisper Mac..."
-xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug build
+xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug -derivedDataPath build/ build
 
 echo "Build completed successfully!"
 echo "Build artifacts are located in the build/ directory"

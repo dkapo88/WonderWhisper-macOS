@@ -6,7 +6,7 @@
 set -e  # Exit on any error
 
 echo "Launching WonderWhisper Mac..."
-open "build/Debug/WonderWhisper Mac.app"
+open "build/Build/Products/Debug/WonderWhisper Mac.app"
 
 echo "Application launched successfully!"
 echo "You can also run the app directly from Xcode using the ▶︎ button"
