@@ -1,10 +1,7 @@
 import SwiftUI
-import ApplicationServices
 
 struct SettingsGeneralView: View {
     @ObservedObject var vm: DictationViewModel
-    @State private var apiKeyText: String = ""
-    @State private var showAXInfo: Bool = false
     
     // Performance settings using @AppStorage for automatic UserDefaults sync
     @AppStorage("audio.recording.format") private var selectedAudioFormat: String = "wav"
@@ -20,6 +17,13 @@ struct SettingsGeneralView: View {
                             .help("Requires Accessibility permission. Falls back to paste if not supported.")
                         Toggle("Paste with formatting (HTML/RTF)", isOn: $vm.pasteFormatted)
                             .help("Preserves paragraph spacing in apps that support rich text; falls back to plain text elsewhere.")
+
+                        Divider()
+
+                        ShortcutRecorderView(shortcut: $vm.pasteShortcut)
+                        Text("Default: ⌃⌘V. Pastes last output (LLM preferred).")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -116,11 +120,5 @@ struct SettingsGeneralView: View {
             }
             .padding(16)
         }
-        .onAppear { showAXInfo = vm.hotkeySelection.requiresAX && !Self.isAXTrusted() }
-    }
-
-    private static func isAXTrusted() -> Bool {
-        let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false] as CFDictionary
-        return AXIsProcessTrustedWithOptions(opts)
     }
 }
