@@ -1,6 +1,6 @@
 import SwiftUI
 import Carbon.HIToolbox
-import UniformTypeIdentifiers
+import AppKit
 
 struct SettingsPromptsView: View {
     @ObservedObject var vm: DictationViewModel
@@ -8,6 +8,9 @@ struct SettingsPromptsView: View {
     @State private var nameDraft: String = ""
     @State private var capturingPromptID: UUID?
     @State private var draggedPromptID: UUID?
+    @State private var dragOffset: CGFloat = 0
+    @State private var dragBaseTranslation: CGFloat = 0
+    @State private var promptHeights: [UUID: CGFloat] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -50,33 +53,22 @@ struct SettingsPromptsView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(vm.prompts) { prompt in
-                            promptRow(prompt)
-                                .padding(10)
-                                .background(selectionBackground(for: prompt))
-                                .cornerRadius(8)
-                                .onDrag {
-                                    draggedPromptID = prompt.id
-                                    return NSItemProvider(object: prompt.id.uuidString as NSString)
-                                }
-                                .onDrop(
-                                    of: [UTType.text],
-                                    delegate: PromptReorderDropDelegate(
-                                        targetPromptID: prompt.id,
-                                        viewModel: vm,
-                                        draggedPromptID: $draggedPromptID
-                                    )
-                                )
+                            let isDragging = draggedPromptID == prompt.id
+                            promptRow(prompt, isDragging: isDragging)
+                                .padding(12)
+                                .background(selectionBackground(for: prompt, isDragging: isDragging))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(heightReader(for: prompt))
+                                .offset(y: isDragging ? dragOffset : 0)
+                                .shadow(color: isDragging ? Color.black.opacity(0.18) : .clear, radius: isDragging ? 10 : 0, y: isDragging ? 6 : 0)
+                                .zIndex(isDragging ? 10 : 0)
+                                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.82, blendDuration: 0.15), value: vm.prompts)
+                                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.82, blendDuration: 0.15), value: dragOffset)
+                                .highPriorityGesture(dragGesture(for: prompt))
                         }
-                        Color.clear
-                            .frame(height: 12)
-                            .onDrop(
-                                of: [UTType.text],
-                                delegate: PromptReorderDropDelegate(
-                                    targetPromptID: nil,
-                                    viewModel: vm,
-                                    draggedPromptID: $draggedPromptID
-                                )
-                            )
+                    }
+                    .onPreferenceChange(PromptRowHeightPreferenceKey.self) { newHeights in
+                        promptHeights.merge(newHeights) { _, new in new }
                     }
                 }
                 .frame(minHeight: 220)
@@ -85,7 +77,7 @@ struct SettingsPromptsView: View {
         .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func promptRow(_ prompt: PromptConfiguration) -> some View {
+    private func promptRow(_ prompt: PromptConfiguration, isDragging _: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if renamingPromptID == prompt.id {
@@ -142,13 +134,99 @@ struct SettingsPromptsView: View {
         }
     }
 
-    private func selectionBackground(for prompt: PromptConfiguration) -> some View {
-        Group {
-            if vm.selectedPromptID == prompt.id {
-                RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12))
-            } else {
-                RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.08))
+    private func selectionBackground(for prompt: PromptConfiguration, isDragging: Bool) -> some View {
+        let baseFill = Color(nsColor: .controlBackgroundColor)
+        let isSelected = vm.selectedPromptID == prompt.id
+
+        return RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(baseFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(isSelected ? 0.18 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        isDragging ? Color.accentColor.opacity(0.65) : (isSelected ? Color.accentColor.opacity(0.45) : Color.black.opacity(0.08)),
+                        lineWidth: isDragging ? 1.6 : (isSelected ? 1.2 : 1)
+                    )
+            )
+    }
+
+    private func dragGesture(for prompt: PromptConfiguration) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                guard renamingPromptID == nil else { return }
+                if draggedPromptID == nil {
+                    draggedPromptID = prompt.id
+                    dragOffset = 0
+                    dragBaseTranslation = 0
+                }
+                guard draggedPromptID == prompt.id else { return }
+                handleDragChange(for: prompt.id, translation: value.translation.height)
             }
+            .onEnded { _ in
+                guard draggedPromptID == prompt.id else { return }
+                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.82, blendDuration: 0.2)) {
+                    dragOffset = 0
+                }
+                draggedPromptID = nil
+                dragBaseTranslation = 0
+            }
+    }
+
+    private func handleDragChange(for promptID: UUID, translation: CGFloat) {
+        guard var currentIndex = vm.prompts.firstIndex(where: { $0.id == promptID }) else { return }
+        let defaultHeight: CGFloat = 72
+        let spring = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.85, blendDuration: 0.15)
+
+        var delta = translation - dragBaseTranslation
+
+        while delta > thresholdDown(for: currentIndex) && currentIndex < vm.prompts.count - 1 {
+            let nextIndex = currentIndex + 1
+            let nextID = vm.prompts[nextIndex].id
+            let height = promptHeights[nextID] ?? defaultHeight
+            dragBaseTranslation += height
+            withAnimation(spring) {
+                vm.movePrompt(id: promptID, to: nextIndex)
+            }
+            currentIndex = nextIndex
+            delta = translation - dragBaseTranslation
+        }
+
+        while delta < -thresholdUp(for: currentIndex) && currentIndex > 0 {
+            let previousIndex = currentIndex - 1
+            let previousID = vm.prompts[previousIndex].id
+            let height = promptHeights[previousID] ?? defaultHeight
+            dragBaseTranslation -= height
+            withAnimation(spring) {
+                vm.movePrompt(id: promptID, to: previousIndex)
+            }
+            currentIndex = previousIndex
+            delta = translation - dragBaseTranslation
+        }
+
+        dragOffset = delta
+    }
+
+    private func thresholdDown(for index: Int) -> CGFloat {
+        guard index < vm.prompts.count - 1 else { return .infinity }
+        let nextID = vm.prompts[index + 1].id
+        let height = promptHeights[nextID] ?? 72
+        return height * 0.45
+    }
+
+    private func thresholdUp(for index: Int) -> CGFloat {
+        guard index > 0 else { return .infinity }
+        let previousID = vm.prompts[index - 1].id
+        let height = promptHeights[previousID] ?? 72
+        return height * 0.45
+    }
+
+    private func heightReader(for prompt: PromptConfiguration) -> some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(key: PromptRowHeightPreferenceKey.self, value: [prompt.id: proxy.size.height])
         }
     }
 
@@ -332,39 +410,11 @@ private struct PromptTriggerEditor: View {
     }
 }
 
-private struct PromptReorderDropDelegate: DropDelegate {
-    let targetPromptID: UUID?
-    let viewModel: DictationViewModel
-    @Binding var draggedPromptID: UUID?
+private struct PromptRowHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGFloat] = [:]
 
-    func dropEntered(info: DropInfo) {
-        guard let draggedID = draggedPromptID,
-              let targetPromptID,
-              draggedID != targetPromptID,
-              let targetIndex = viewModel.prompts.firstIndex(where: { $0.id == targetPromptID }) else { return }
-        withAnimation {
-            viewModel.movePrompt(id: draggedID, to: targetIndex)
-        }
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        guard let draggedID = draggedPromptID else { return false }
-        if let targetPromptID,
-           let targetIndex = viewModel.prompts.firstIndex(where: { $0.id == targetPromptID }) {
-            withAnimation {
-                viewModel.movePrompt(id: draggedID, to: targetIndex)
-            }
-        } else {
-            withAnimation {
-                viewModel.movePrompt(id: draggedID, to: viewModel.prompts.count)
-            }
-        }
-        draggedPromptID = nil
-        return true
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 

@@ -392,10 +392,8 @@ final class DictationViewModel: ObservableObject {
 
     func movePrompt(id: UUID, to destinationIndex: Int) {
         guard let currentIndex = prompts.firstIndex(where: { $0.id == id }) else { return }
-        var targetIndex = destinationIndex
         let prompt = prompts.remove(at: currentIndex)
-        if targetIndex > currentIndex { targetIndex -= 1 }
-        targetIndex = max(0, min(targetIndex, prompts.count))
+        let targetIndex = max(0, min(destinationIndex, prompts.count))
         prompts.insert(prompt, at: targetIndex)
     }
 
