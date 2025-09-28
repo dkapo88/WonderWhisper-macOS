@@ -137,6 +137,14 @@ struct SettingsPromptsView: View {
                 onUpdate: { model, provider in vm.updateLLMOverride(for: prompt.id, model: model, provider: provider) }
             )
 
+            PromptScreenContextEditor(
+                prompt: prompt,
+                defaultScreenContext: vm.screenContextEnabled,
+                defaultOrganize: vm.organizeScreenContentEnabled,
+                onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
+                onOrganizeUpdate: { vm.updateOrganizeScreenContextOverride(for: prompt.id, to: $0) }
+            )
+            
             if vm.selectedPromptID == prompt.id {
                 Text("Active prompt")
                     .font(.caption)
@@ -656,6 +664,136 @@ private struct PromptLLMModelEditor: View {
         case "openrouter": return "OpenRouter"
         case "cerebras": return "Cerebras"
         default: return "Groq"
+        }
+    }
+}
+
+private enum PromptOverrideChoice: String, CaseIterable, Identifiable {
+    case inherit
+    case enabled
+    case disabled
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .inherit: return "Default"
+        case .enabled: return "On"
+        case .disabled: return "Off"
+        }
+    }
+
+    var boolValue: Bool? {
+        switch self {
+        case .inherit: return nil
+        case .enabled: return true
+        case .disabled: return false
+        }
+    }
+
+    func resolved(defaultValue: Bool) -> Bool {
+        switch self {
+        case .inherit: return defaultValue
+        case .enabled: return true
+        case .disabled: return false
+        }
+    }
+
+    static func choice(for override: Bool?) -> PromptOverrideChoice {
+        guard let override else { return .inherit }
+        return override ? .enabled : .disabled
+    }
+}
+
+private struct PromptScreenContextEditor: View {
+    let prompt: PromptConfiguration
+    let defaultScreenContext: Bool
+    let defaultOrganize: Bool
+    let onScreenUpdate: (Bool?) -> Void
+    let onOrganizeUpdate: (Bool?) -> Void
+
+    @State private var screenChoice: PromptOverrideChoice
+    @State private var organizeChoice: PromptOverrideChoice
+
+    init(prompt: PromptConfiguration,
+         defaultScreenContext: Bool,
+         defaultOrganize: Bool,
+         onScreenUpdate: @escaping (Bool?) -> Void,
+         onOrganizeUpdate: @escaping (Bool?) -> Void) {
+        self.prompt = prompt
+        self.defaultScreenContext = defaultScreenContext
+        self.defaultOrganize = defaultOrganize
+        self.onScreenUpdate = onScreenUpdate
+        self.onOrganizeUpdate = onOrganizeUpdate
+        _screenChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.screenContextOverride))
+        _organizeChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.organizeScreenContextOverride))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Screen context")
+                        .font(.subheadline).bold()
+                    Spacer()
+                    Text(defaultScreenContext ? "Default: On" : "Default: Off")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Picker("Screen context", selection: $screenChoice) {
+                    ForEach(PromptOverrideChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: screenChoice) { newValue in
+                    onScreenUpdate(newValue.boolValue)
+                    if !newValue.resolved(defaultValue: defaultScreenContext) {
+                        organizeChoice = .disabled
+                        onOrganizeUpdate(nil)
+                    } else if organizeChoice == .inherit {
+                        onOrganizeUpdate(nil)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                let inheritedOrganize = defaultOrganize && defaultScreenContext
+                let screenResolved = screenChoice.resolved(defaultValue: defaultScreenContext)
+                HStack {
+                    Text("Organize screen content")
+                        .font(.subheadline).bold()
+                    Spacer()
+                    Text(inheritedOrganize ? "Default: On" : "Default: Off")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Picker("Organize screen content", selection: $organizeChoice) {
+                    ForEach(PromptOverrideChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(!screenResolved || !defaultScreenContext)
+                .onChange(of: organizeChoice) { newValue in
+                    onOrganizeUpdate(newValue.boolValue)
+                }
+                .onChange(of: screenChoice) { newValue in
+                    let resolved = newValue.resolved(defaultValue: defaultScreenContext)
+                    if !resolved {
+                        organizeChoice = .disabled
+                    } else if organizeChoice == .disabled && (prompt.organizeScreenContextOverride ?? defaultOrganize) {
+                        organizeChoice = PromptOverrideChoice.choice(for: prompt.organizeScreenContextOverride)
+                    }
+                }
+            }
+        }
+        .padding(.top, 6)
+        .onChange(of: prompt.screenContextOverride) { newValue in
+            screenChoice = PromptOverrideChoice.choice(for: newValue)
+        }
+        .onChange(of: prompt.organizeScreenContextOverride) { newValue in
+            organizeChoice = PromptOverrideChoice.choice(for: newValue)
         }
     }
 }

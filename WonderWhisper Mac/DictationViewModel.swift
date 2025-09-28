@@ -484,6 +484,35 @@ final class DictationViewModel: ObservableObject {
         favoriteLLMModels.removeAll { $0.id == id }
     }
 
+    func updateScreenContextOverride(for id: UUID, to override: Bool?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        if updated.screenContextOverride == override {
+            return
+        }
+        updated.screenContextOverride = override
+        if override == false {
+            updated.organizeScreenContextOverride = nil
+        }
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
+    func updateOrganizeScreenContextOverride(for id: UUID, to override: Bool?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        if updated.organizeScreenContextOverride == override {
+            return
+        }
+        updated.organizeScreenContextOverride = override
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
     func selectPrompt(id: UUID) {
         guard prompts.contains(where: { $0.id == id }) else { return }
         selectedPromptID = id
@@ -673,8 +702,8 @@ final class DictationViewModel: ObservableObject {
         let llmProviderToApply = llmProviderInstance
         let llmSettingsToApply = lSettings
         let isLLMEnabled = llmEnabled
-        let isScreenContextEnabled = screenContextEnabled
-        let isOrganizeScreenContentEnabled = organizeScreenContentEnabled
+        let useScreenContext = resolvedScreenContext(for: activePrompt)
+        let useOrganizeScreenContent = resolvedOrganizeScreenContent(for: activePrompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
 
         let task = Task {
@@ -685,8 +714,8 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMProvider(llmProviderToApply)
             await controller.updateLLMSettings(llmSettingsToApply)
             await controller.updateLLMEnabled(isLLMEnabled)
-            await controller.updateScreenContextEnabled(isScreenContextEnabled)
-            await controller.updateOrganizeScreenContentEnabled(isOrganizeScreenContentEnabled)
+            await controller.updateScreenContextEnabled(useScreenContext)
+            await controller.updateOrganizeScreenContentEnabled(useOrganizeScreenContent)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
         providerUpdateTask = task
@@ -837,5 +866,21 @@ private extension DictationViewModel {
         }
         let fallback = llmProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? "groq" : fallback
+    }
+
+    func resolvedScreenContext(for prompt: PromptConfiguration?) -> Bool {
+        if !screenContextEnabled { return false }
+        if let override = prompt?.screenContextOverride {
+            return screenContextEnabled && override
+        }
+        return screenContextEnabled
+    }
+
+    func resolvedOrganizeScreenContent(for prompt: PromptConfiguration?) -> Bool {
+        guard resolvedScreenContext(for: prompt) else { return false }
+        if let override = prompt?.organizeScreenContextOverride {
+            return override
+        }
+        return organizeScreenContentEnabled
     }
 }

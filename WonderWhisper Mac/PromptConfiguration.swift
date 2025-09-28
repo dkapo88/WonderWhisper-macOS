@@ -9,6 +9,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     var selection: HotkeyManager.Selection?
     var llmModelOverride: String?
     var llmProviderOverride: String?
+    var screenContextOverride: Bool?
+    var organizeScreenContextOverride: Bool?
 
     init(id: UUID = UUID(),
          name: String,
@@ -17,7 +19,9 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
          shortcut: HotkeyManager.Shortcut? = nil,
          selection: HotkeyManager.Selection? = nil,
          llmModelOverride: String? = nil,
-         llmProviderOverride: String? = nil) {
+         llmProviderOverride: String? = nil,
+         screenContextOverride: Bool? = nil,
+         organizeScreenContextOverride: Bool? = nil) {
         self.id = id
         self.name = name
         self.systemPrompt = systemPrompt
@@ -26,6 +30,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
         self.selection = selection
         self.llmModelOverride = llmModelOverride
         self.llmProviderOverride = llmProviderOverride
+        self.screenContextOverride = screenContextOverride
+        self.organizeScreenContextOverride = organizeScreenContextOverride
     }
 }
 
