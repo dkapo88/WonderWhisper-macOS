@@ -8,6 +8,7 @@ import FluidAudio
 
 struct SettingsModelsView: View {
     @ObservedObject var vm: DictationViewModel
+    @AppStorage("parakeet.version") private var parakeetVersion: String = "v3"
 
     var body: some View {
         Form {
@@ -20,7 +21,7 @@ struct SettingsModelsView: View {
                         Text("Apple Native (macOS 26+)").tag("apple-native")
                     }
                     Text("Groq (Chunked Streaming)").tag("groq-streaming")
-                    Text("Parakeet v3 (local)").tag("parakeet-local")
+                    Text("Parakeet (local)").tag("parakeet-local")
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
                 }
@@ -103,6 +104,26 @@ struct SettingsModelsView: View {
                         }
                         .padding(.top, 4)
                     }
+                    GroupBox("Parakeet Model Version") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("Version", selection: $parakeetVersion) {
+                                Text("v3 (Multilingual)").tag("v3")
+                                Text("v2 (English only)").tag("v2")
+                            }
+                            .frame(maxWidth: 260)
+                            HStack(spacing: 12) {
+                                Label(ParakeetManager.v3ModelsPresent() ? "v3 installed" : "v3 not installed",
+                                      systemImage: ParakeetManager.v3ModelsPresent() ? "checkmark.seal" : "xmark.seal")
+                                    .foregroundColor(ParakeetManager.v3ModelsPresent() ? .green : .secondary)
+                                Label(ParakeetManager.v2ModelsPresent() ? "v2 installed" : "v2 not installed",
+                                      systemImage: ParakeetManager.v2ModelsPresent() ? "checkmark.seal" : "xmark.seal")
+                                    .foregroundColor(ParakeetManager.v2ModelsPresent() ? .green : .secondary)
+                            }
+                            Text("Download/Update installs v3. To use v2, place your v2 Core ML bundle under Application Support (e.g., ‘parakeet-tdt-0.6b’). When selected, the app will prefer v2 if present.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                     GroupBox("Parakeet Advanced") {
                         ParakeetAdvancedSettingsView()
                     }
@@ -184,8 +205,11 @@ struct SettingsModelsView: View {
     private func downloadParakeet() async {
         #if canImport(FluidAudio)
         do {
-            try? FileManager.default.createDirectory(at: ParakeetManager.modelsDirectory, withIntermediateDirectories: true)
-            _ = try await AsrModels.downloadAndLoad(to: ParakeetManager.modelsDirectory)
+            if #available(macOS 13.0, *), parakeetVersion.lowercased() != "v2" {
+                try? ParakeetManager.purgeV3Models()
+            }
+            // FluidAudio 0.6: use default download location
+            _ = try await AsrModels.downloadAndLoad()
         } catch {
             // ignore; UI shows present/missing
         }
@@ -273,4 +297,3 @@ fileprivate struct OpenRouterModelSelector: View {
 fileprivate extension Array where Element: Hashable {
     func uniqued() -> [Element] { Array(Set(self)).sorted { String(describing: $0) < String(describing: $1) } }
 }
-

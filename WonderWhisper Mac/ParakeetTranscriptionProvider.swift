@@ -82,15 +82,42 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
             AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
         }
-        // Prefer downloading to our directory, but if the package ignores it, fall back
-        let models: AsrModels
-        do {
-            models = try await AsrModels.downloadAndLoad(to: modelsDirectory)
-        } catch {
-            log.notice("[Parakeet] downloadAndLoad(to:) failed: \(error.localizedDescription, privacy: .public). Retrying with default location…")
-            AppLog.dictation.error("[Parakeet] downloadAndLoad(to:) failed: \(error.localizedDescription)")
+        // Load models based on selected version
+        let selectedVersion = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
+        var models: AsrModels
+        if selectedVersion == "v2" {
+            #if canImport(FluidAudio)
+            if let v2 = try await ParakeetManager.loadV2AsrModelsIfPresent() {
+                log.notice("[Parakeet] Using v2 models from local install")
+                AppLog.dictation.log("[Parakeet] Using v2 models from local install")
+                models = v2
+            } else {
+                log.notice("[Parakeet] v2 models not found; falling back to v3")
+                AppLog.dictation.log("[Parakeet] v2 not found; falling back to v3")
+                models = try await AsrModels.downloadAndLoad()
+            }
+            #else
+            models = try await AsrModels.downloadAndLoad()
+            #endif
+        } else {
+            // Default to v3 via FluidAudio 0.6 downloader
             models = try await AsrModels.downloadAndLoad()
         }
+
+        #if canImport(FluidAudio)
+        if selectedVersion != "v2" {
+            // Detect legacy preprocessor outputs and force a re-download once
+            let outputKeys = Set(models.preprocessor.modelDescription.outputDescriptionsByName.keys)
+            if !outputKeys.contains("length"), outputKeys.contains("melspectrogram_length") {
+                log.notice("[Parakeet] Detected legacy Parakeet models (missing 'length'); forcing v3 re-download")
+                AppLog.dictation.log("[Parakeet] Legacy models detected; forcing v3 re-download")
+                if #available(macOS 13.0, *) {
+                    try? ParakeetManager.purgeV3Models()
+                }
+                models = try await AsrModels.downloadAndLoad()
+            }
+        }
+        #endif
         let mgr = AsrManager(config: .default)
         try await mgr.initialize(models: models)
         #if compiler(>=5.9)
@@ -171,9 +198,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         let result: ASRResult
         do {
-            result = try await mgr.transcribe(samples)
-            // Reset decoder state for next session while keeping models warm
-            try? await mgr.resetDecoderState(for: .microphone)
+            // Provide source hint per 0.6 API
+            result = try await mgr.transcribe(samples, source: .microphone)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -209,53 +235,24 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
     }
 
-    // Returns trimmed samples if VAD succeeds; nil otherwise
+    // Returns trimmed samples if VAD finds speech; nil otherwise
     private func applyVADIfAvailable(_ samples: [Float]) async throws -> [Float]? {
         guard let vad = try await ensureVadManager() else { return nil }
         if samples.isEmpty { return nil }
-        let chunk = 512
-        let total = samples.count
-        var activeRuns: [(startChunk: Int, endChunk: Int)] = []
-        var runStart: Int? = nil
-        var idx = 0
-        while idx < total {
-            let end = min(idx + chunk, total)
-            let window = Array(samples[idx..<end])
-            let res = try await vad.processChunk(window)
-            if res.isVoiceActive {
-                if runStart == nil { runStart = idx / chunk }
-            } else if let s = runStart {
-                let e = (idx / chunk) - 1
-                if e >= s { activeRuns.append((s, e)) }
-                runStart = nil
-            }
-            idx += chunk
-        }
-        if let s = runStart {
-            let e = (total - 1) / chunk
-            if e >= s { activeRuns.append((s, e)) }
-        }
-        // Merge small gaps (<=2 chunks) to avoid over-fragmentation
-        var merged: [(Int, Int)] = []
-        for seg in activeRuns.sorted(by: { $0.startChunk < $1.startChunk }) {
-            if let last = merged.last {
-                if seg.startChunk - last.1 <= 2 {
-                    merged[merged.count - 1].1 = max(last.1, seg.1)
-                } else {
-                    merged.append(seg)
-                }
-            } else {
-                merged.append(seg)
-            }
-        }
-        var out: [Float] = []
-        out.reserveCapacity(samples.count)
-        for (s, e) in merged {
-            let startIdx = s * chunk
-            let endIdx = min((e + 1) * chunk, total)
-            if endIdx > startIdx { out.append(contentsOf: samples[startIdx..<endIdx]) }
-        }
-        return out.isEmpty ? nil : out
+        // Use 0.6 segmentation API for robust trimming
+        var segCfg = VadSegmentationConfig.default
+        // Lightly-tuned defaults for single-speaker dictation
+        segCfg.minSpeechDuration = 0.25
+        segCfg.minSilenceDuration = 0.35
+        segCfg.speechPadding = 0.1
+        let segments = try await vad.segmentSpeech(samples, config: segCfg)
+        guard let first = segments.first, let last = segments.last else { return nil }
+        // Convert seconds to sample indices at 16kHz
+        let sr = 16_000.0
+        let startIdx = max(0, Int(first.startTime * sr))
+        let endIdx = min(samples.count, Int(last.endTime * sr))
+        guard endIdx > startIdx else { return nil }
+        return Array(samples[startIdx..<endIdx])
     }
 
     // Decode arbitrary audio to mono 16k Float32 samples
