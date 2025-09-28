@@ -44,6 +44,9 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
+    @Published var favoriteLLMModels: [String] = UserDefaults.standard.stringArray(forKey: "llm.models.favorites") ?? [] {
+        didSet { persistFavoriteLLMModels() }
+    }
 
     // API Key inputs (not persisted directly; saved via Keychain on action)
     @Published var assemblyAIKeyInput: String = ""
@@ -436,6 +439,22 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func addFavoriteLLMModel(_ model: String) {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Avoid duplicates (case-insensitive)
+        if favoriteLLMModels.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) { return }
+        favoriteLLMModels.append(trimmed)
+    }
+
+    func removeFavoriteLLMModel(_ model: String) {
+        favoriteLLMModels.removeAll { $0.caseInsensitiveCompare(model) == .orderedSame }
+    }
+
+    func removeFavoriteLLMModel(at offsets: IndexSet) {
+        favoriteLLMModels.remove(atOffsets: offsets)
+    }
+
     func selectPrompt(id: UUID) {
         guard prompts.contains(where: { $0.id == id }) else { return }
         selectedPromptID = id
@@ -454,6 +473,15 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
         UserDefaults.standard.set(screenOrganizePrompt, forKey: "screenContext.organizePrompt")
         updateProviders()
+    }
+
+    private func persistFavoriteLLMModels() {
+        let unique = Array(NSOrderedSet(array: favoriteLLMModels.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })) as? [String] ?? []
+        if unique != favoriteLLMModels {
+            favoriteLLMModels = unique
+            return
+        }
+        UserDefaults.standard.set(favoriteLLMModels, forKey: "llm.models.favorites")
     }
 
     private func persistPromptLibrary() {

@@ -133,6 +133,7 @@ struct SettingsPromptsView: View {
                 prompt: prompt,
                 defaultModel: vm.llmModel,
                 provider: vm.llmProvider,
+                favorites: vm.favoriteLLMModels,
                 onUpdate: { vm.updateLLMModel(for: prompt.id, to: $0) }
             )
 
@@ -454,6 +455,7 @@ private struct PromptLLMModelEditor: View {
     let prompt: PromptConfiguration
     let defaultModel: String
     let provider: String
+    let favorites: [String]
     let onUpdate: (String?) -> Void
 
     @State private var modelDraft: String
@@ -462,10 +464,12 @@ private struct PromptLLMModelEditor: View {
     init(prompt: PromptConfiguration,
          defaultModel: String,
          provider: String,
+         favorites: [String],
          onUpdate: @escaping (String?) -> Void) {
         self.prompt = prompt
         self.defaultModel = defaultModel
         self.provider = provider
+        self.favorites = favorites
         self.onUpdate = onUpdate
         _modelDraft = State(initialValue: prompt.llmModelOverride ?? "")
     }
@@ -493,7 +497,7 @@ private struct PromptLLMModelEditor: View {
 
             HStack(spacing: 8) {
                 if !quickOptions.isEmpty {
-                    Menu("Quick pick") {
+                    Menu(favoritesMenuTitle) {
                         ForEach(quickOptions, id: \.self) { option in
                             Button(option) {
                                 modelDraft = option
@@ -536,6 +540,12 @@ private struct PromptLLMModelEditor: View {
     }
 
     private var quickOptions: [String] {
+        let cleanedFavorites = favorites
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanedFavorites.isEmpty {
+            return Array(NSOrderedSet(array: cleanedFavorites)) as? [String] ?? cleanedFavorites
+        }
         switch provider.lowercased() {
         case "openrouter":
             return ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o-mini"]
@@ -555,6 +565,10 @@ private struct PromptLLMModelEditor: View {
                 "meta-llama/llama-4-scout-17b-16e-instruct"
             ]
         }
+    }
+
+    private var favoritesMenuTitle: String {
+        favorites.isEmpty ? "Quick pick" : "Favorites"
     }
 
     private func commit() {

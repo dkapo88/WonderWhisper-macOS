@@ -8,7 +8,7 @@ import FluidAudio
 
 struct SettingsModelsView: View {
     @ObservedObject var vm: DictationViewModel
-    @AppStorage("parakeet.version") private var parakeetVersion: String = "v3"
+    @State private var favoriteModelDraft: String = ""
 
     var body: some View {
         Form {
@@ -104,26 +104,6 @@ struct SettingsModelsView: View {
                         }
                         .padding(.top, 4)
                     }
-                    GroupBox("Parakeet Model Version") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Picker("Version", selection: $parakeetVersion) {
-                                Text("v3 (Multilingual)").tag("v3")
-                                Text("v2 (English only)").tag("v2")
-                            }
-                            .frame(maxWidth: 260)
-                            HStack(spacing: 12) {
-                                Label(ParakeetManager.v3ModelsPresent() ? "v3 installed" : "v3 not installed",
-                                      systemImage: ParakeetManager.v3ModelsPresent() ? "checkmark.seal" : "xmark.seal")
-                                    .foregroundColor(ParakeetManager.v3ModelsPresent() ? .green : .secondary)
-                                Label(ParakeetManager.v2ModelsPresent() ? "v2 installed" : "v2 not installed",
-                                      systemImage: ParakeetManager.v2ModelsPresent() ? "checkmark.seal" : "xmark.seal")
-                                    .foregroundColor(ParakeetManager.v2ModelsPresent() ? .green : .secondary)
-                            }
-                            Text("Download/Update installs v3. To use v2, place your v2 Core ML bundle under Application Support (e.g., ‘parakeet-tdt-0.6b’). When selected, the app will prefer v2 if present.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
                     GroupBox("Parakeet Advanced") {
                         ParakeetAdvancedSettingsView()
                     }
@@ -195,20 +175,72 @@ struct SettingsModelsView: View {
                 }
                 Toggle("Streaming (SSE)", isOn: $vm.llmStreaming)
                     .help("Enable streaming responses for faster time-to-first-token. Uses the same prompt and output format.")
+
+                GroupBox("Favorite LLM models") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            TextField("Add model identifier", text: $favoriteModelDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 320)
+                                .onSubmit { addFavoriteDraft() }
+                            Button("Add") { addFavoriteDraft() }
+                                .disabled(favoriteModelDraftTrimmed.isEmpty)
+                        }
+
+                        Button("Add current model (\(vm.llmModel))") {
+                            vm.addFavoriteLLMModel(vm.llmModel)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(vm.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFavorite(vm.llmModel))
+
+                        if vm.favoriteLLMModels.isEmpty {
+                            Text("No favorites yet. Add the identifiers of the models you use most often. These appear in the prompt library quick picker.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(vm.favoriteLLMModels, id: \.self) { model in
+                                    HStack {
+                                        Text(model)
+                                            .font(.system(.body, design: .monospaced))
+                                        Spacer()
+                                        Button("Remove") { vm.removeFavoriteLLMModel(model) }
+                                            .buttonStyle(.borderless)
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
             }
         }
         .formStyle(.grouped)
         .padding()
     }
 
+    private var favoriteModelDraftTrimmed: String {
+        favoriteModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func addFavoriteDraft() {
+        let trimmed = favoriteModelDraftTrimmed
+        guard !trimmed.isEmpty else { return }
+        vm.addFavoriteLLMModel(trimmed)
+        favoriteModelDraft = ""
+    }
+
+    private func isFavorite(_ model: String) -> Bool {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return vm.favoriteLLMModels.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
     @MainActor
     private func downloadParakeet() async {
         #if canImport(FluidAudio)
         do {
-            if #available(macOS 13.0, *), parakeetVersion.lowercased() != "v2" {
-                try? ParakeetManager.purgeV3Models()
-            }
-            // FluidAudio 0.6: use default download location
             _ = try await AsrModels.downloadAndLoad()
         } catch {
             // ignore; UI shows present/missing

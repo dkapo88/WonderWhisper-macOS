@@ -82,40 +82,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
             AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
         }
-        // Load models based on selected version
-        let selectedVersion = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
-        var models: AsrModels
-        if selectedVersion == "v2" {
-            #if canImport(FluidAudio)
-            if let v2 = try await ParakeetManager.loadV2AsrModelsIfPresent() {
-                log.notice("[Parakeet] Using v2 models from local install")
-                AppLog.dictation.log("[Parakeet] Using v2 models from local install")
-                models = v2
-            } else {
-                log.notice("[Parakeet] v2 models not found; falling back to v3")
-                AppLog.dictation.log("[Parakeet] v2 not found; falling back to v3")
-                models = try await AsrModels.downloadAndLoad()
-            }
-            #else
-            models = try await AsrModels.downloadAndLoad()
-            #endif
-        } else {
-            // Default to v3 via FluidAudio 0.6 downloader
-            models = try await AsrModels.downloadAndLoad()
-        }
+        // Always use the current FluidAudio bundle (v3)
+        var models = try await AsrModels.downloadAndLoad()
 
         #if canImport(FluidAudio)
-        if selectedVersion != "v2" {
-            // Detect legacy preprocessor outputs and force a re-download once
-            let outputKeys = Set(models.preprocessor.modelDescription.outputDescriptionsByName.keys)
-            if !outputKeys.contains("length"), outputKeys.contains("melspectrogram_length") {
-                log.notice("[Parakeet] Detected legacy Parakeet models (missing 'length'); forcing v3 re-download")
-                AppLog.dictation.log("[Parakeet] Legacy models detected; forcing v3 re-download")
-                if #available(macOS 13.0, *) {
-                    try? ParakeetManager.purgeV3Models()
-                }
-                models = try await AsrModels.downloadAndLoad()
-            }
+        // Detect legacy preprocessor outputs and force a re-download once
+        let outputKeys = Set(models.preprocessor.modelDescription.outputDescriptionsByName.keys)
+        if !outputKeys.contains("length"), outputKeys.contains("melspectrogram_length") {
+            log.notice("[Parakeet] Detected legacy Parakeet models (missing 'length'); forcing re-download")
+            AppLog.dictation.log("[Parakeet] Legacy models detected; forcing re-download")
+            models = try await AsrModels.downloadAndLoad()
         }
         #endif
         let mgr = AsrManager(config: .default)
