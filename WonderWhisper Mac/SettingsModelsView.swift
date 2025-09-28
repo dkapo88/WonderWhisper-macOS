@@ -213,16 +213,23 @@ struct SettingsModelsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         } else {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(vm.favoriteLLMModels) { favorite in
-                                    HStack {
-                                        Text("\(providerDisplayName(favorite.provider)) · \(favorite.model)")
-                                            .font(.system(.body, design: .monospaced))
-                                        Spacer()
-                                        Button("Remove") { vm.removeFavoriteLLMModel(id: favorite.id) }
-                                            .buttonStyle(.borderless)
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(groupedFavorites, id: \.provider) { provider, models in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(providerDisplayName(provider))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        ForEach(models) { favorite in
+                                            HStack {
+                                                Text(favorite.model)
+                                                    .font(.system(.body, design: .monospaced))
+                                                Spacer()
+                                                Button("Remove") { vm.removeFavoriteLLMModel(id: favorite.id) }
+                                                    .buttonStyle(.borderless)
+                                            }
+                                            .padding(.vertical, 2)
+                                        }
                                     }
-                                    .padding(.vertical, 2)
                                 }
                             }
                         }
@@ -256,10 +263,8 @@ struct SettingsModelsView: View {
         let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedModel.isEmpty else { return false }
         let normalizedProvider = (trimmedProvider.isEmpty ? vm.llmProvider : trimmedProvider).lowercased()
-        return vm.favoriteLLMModels.contains {
-            $0.model.caseInsensitiveCompare(trimmedModel) == .orderedSame &&
-            $0.provider.caseInsensitiveCompare(normalizedProvider) == .orderedSame
-        }
+        let candidate = FavoriteLLMModel(provider: normalizedProvider, model: trimmedModel)
+        return vm.favoriteLLMModels.contains { $0.key == candidate.key }
     }
 
     private func providerDisplayName(_ provider: String) -> String {
@@ -282,6 +287,17 @@ struct SettingsModelsView: View {
             }
         }
         return options
+    }
+
+    private var groupedFavorites: [(provider: String, models: [FavoriteLLMModel])] {
+        var order: [String] = []
+        var groups: [String: [FavoriteLLMModel]] = [:]
+        for favorite in vm.favoriteLLMModels {
+            let key = favorite.provider.lowercased()
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(favorite)
+        }
+        return order.map { ($0, groups[$0] ?? []) }
     }
 
     @MainActor

@@ -459,7 +459,7 @@ private struct PromptLLMModelEditor: View {
     let onUpdate: (String?, String?) -> Void
 
     @State private var modelDraft: String
-    @State private var providerDraft: String
+    @State private var providerState: String
     @FocusState private var isFieldFocused: Bool
 
     init(prompt: PromptConfiguration,
@@ -473,13 +473,13 @@ private struct PromptLLMModelEditor: View {
         self.favorites = favorites
         self.onUpdate = onUpdate
         _modelDraft = State(initialValue: prompt.llmModelOverride ?? "")
-        _providerDraft = State(initialValue: (prompt.llmProviderOverride ?? provider).lowercased())
+        _providerState = State(initialValue: (prompt.llmProviderOverride ?? provider).lowercased())
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text("LLM model")
+                Text("LLM model override")
                     .font(.subheadline)
                     .bold()
                 if hasOverride {
@@ -488,14 +488,6 @@ private struct PromptLLMModelEditor: View {
                         .foregroundColor(.accentColor)
                 }
             }
-
-            Picker("Provider", selection: $providerDraft) {
-                ForEach(providerOptions, id: \.self) { option in
-                    Text(providerDisplayName(option)).tag(option)
-                }
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: providerDraft) { _ in commit() }
 
             TextField("Use default (\(defaultModel))", text: $modelDraft)
                 .textFieldStyle(.roundedBorder)
@@ -506,14 +498,18 @@ private struct PromptLLMModelEditor: View {
                 }
 
             HStack(spacing: 8) {
-                if !quickOptions.isEmpty {
+                let groups = groupedQuickOptions
+                if !groups.isEmpty {
                     Menu(favoritesMenuTitle) {
-                        ForEach(quickOptions.indices, id: \.self) { index in
-                            let option = quickOptions[index]
-                            Button("\(providerDisplayName(option.provider)) · \(option.model)") {
-                                providerDraft = option.provider.lowercased()
-                                modelDraft = option.model
-                                commit()
+                        ForEach(groups, id: \.provider) { group in
+                            Section(providerDisplayName(group.provider)) {
+                                ForEach(group.models, id: \.key) { option in
+                                    Button(option.model) {
+                                        providerState = option.provider.lowercased()
+                                        modelDraft = option.model
+                                        commit()
+                                    }
+                                }
                             }
                         }
                     }
@@ -521,11 +517,11 @@ private struct PromptLLMModelEditor: View {
 
                 Button("Use default") {
                     modelDraft = ""
-                    providerDraft = provider
+                    providerState = provider.lowercased()
                     commit()
                 }
                 .buttonStyle(.borderless)
-                .disabled(!hasOverride && modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && providerDraft.caseInsensitiveCompare(provider) == .orderedSame)
+                .disabled(!hasOverride && modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && providerState.caseInsensitiveCompare(provider) == .orderedSame)
 
                 Spacer()
                 Text("Using \(providerDisplayName(effectiveProvider)) · \(effectiveModel)")
@@ -540,7 +536,13 @@ private struct PromptLLMModelEditor: View {
         }
         .onChange(of: prompt.llmProviderOverride) { newValue in
             if !isFieldFocused {
-                providerDraft = (newValue ?? provider).lowercased()
+                providerState = (newValue ?? provider).lowercased()
+            }
+        }
+        .onChange(of: favorites) { _ in
+            // Ensure provider state remains valid if favorites removed
+            if !availableProviders.contains(where: { $0.caseInsensitiveCompare(providerState) == .orderedSame }) {
+                providerState = provider.lowercased()
             }
         }
     }
@@ -548,7 +550,7 @@ private struct PromptLLMModelEditor: View {
     private var hasOverride: Bool {
         guard let override = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
         if !override.isEmpty { return true }
-        return providerDraft.caseInsensitiveCompare(provider) != .orderedSame
+        return providerState.caseInsensitiveCompare(provider) != .orderedSame
     }
 
     private var effectiveModel: String {
@@ -559,7 +561,7 @@ private struct PromptLLMModelEditor: View {
     }
 
     private var providerOverride: String? {
-        let trimmed = providerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = providerState.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.caseInsensitiveCompare(provider) != .orderedSame else { return nil }
         return trimmed.lowercased()
     }
@@ -569,30 +571,53 @@ private struct PromptLLMModelEditor: View {
     }
 
     private var quickOptions: [FavoriteLLMModel] {
+        let baseList: [FavoriteLLMModel]
         if !favorites.isEmpty {
-            return favorites
+            baseList = favorites
+        } else {
+            let suggestions: [String]
+            switch provider.lowercased() {
+            case "openrouter":
+                suggestions = ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o-mini"]
+            case "cerebras":
+                suggestions = [
+                    "llama-4-scout-17b-16e-instruct",
+                    "llama3.1-8b",
+                    "llama-3.3-70b",
+                    "gpt-oss-120b",
+                    "qwen-3-32b"
+                ]
+            default:
+                suggestions = [
+                    "moonshotai/kimi-k2-instruct",
+                    "moonshotai/kimi-k2-instruct-0905",
+                    "openai/gpt-oss-120b",
+                    "meta-llama/llama-4-scout-17b-16e-instruct"
+                ]
+            }
+            baseList = suggestions.map { FavoriteLLMModel(provider: provider.lowercased(), model: $0) }
         }
-        let suggestions: [String]
-        switch provider.lowercased() {
-        case "openrouter":
-            suggestions = ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o-mini"]
-        case "cerebras":
-            suggestions = [
-                "llama-4-scout-17b-16e-instruct",
-                "llama3.1-8b",
-                "llama-3.3-70b",
-                "gpt-oss-120b",
-                "qwen-3-32b"
-            ]
-        default:
-            suggestions = [
-                "moonshotai/kimi-k2-instruct",
-                "moonshotai/kimi-k2-instruct-0905",
-                "openai/gpt-oss-120b",
-                "meta-llama/llama-4-scout-17b-16e-instruct"
-            ]
+        var seen: Set<String> = []
+        var result: [FavoriteLLMModel] = []
+        for item in baseList {
+            let key = item.key
+            if !seen.contains(key) {
+                seen.insert(key)
+                result.append(FavoriteLLMModel(id: item.id, provider: item.provider.lowercased(), model: item.model))
+            }
         }
-        return suggestions.map { FavoriteLLMModel(provider: provider.lowercased(), model: $0) }
+        return result
+    }
+
+    private var groupedQuickOptions: [(provider: String, models: [FavoriteLLMModel])] {
+        var order: [String] = []
+        var groups: [String: [FavoriteLLMModel]] = [:]
+        for option in quickOptions {
+            let key = option.provider.lowercased()
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(option)
+        }
+        return order.map { ($0, groups[$0] ?? []) }
     }
 
     private var favoritesMenuTitle: String {
@@ -604,25 +629,26 @@ private struct PromptLLMModelEditor: View {
         let normalized = trimmed.isEmpty ? nil : trimmed
         let current = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentProvider = prompt.llmProviderOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newProvider = providerOverride
+        var newProvider = providerOverride
+        if let normalized, let match = favorites.first(where: { $0.model.caseInsensitiveCompare(normalized) == .orderedSame }) {
+            providerState = match.provider.lowercased()
+            newProvider = match.provider.lowercased() == provider.lowercased() ? nil : match.provider.lowercased()
+        }
         if normalized == (current?.isEmpty == true ? nil : current) && ((currentProvider?.isEmpty ?? true ? nil : currentProvider?.lowercased()) == newProvider?.lowercased()) {
             return
         }
         onUpdate(normalized, newProvider)
     }
 
-    private var providerOptions: [String] {
-        var options: [String] = ["groq", "openrouter", "cerebras"]
+    private var availableProviders: [String] {
+        var providers: [String] = [provider.lowercased()]
         for favorite in favorites {
-            let favProvider = favorite.provider.lowercased()
-            if !options.contains(where: { $0.caseInsensitiveCompare(favProvider) == .orderedSame }) {
-                options.append(favProvider)
+            let key = favorite.provider.lowercased()
+            if !providers.contains(where: { $0.caseInsensitiveCompare(key) == .orderedSame }) {
+                providers.append(key)
             }
         }
-        if !options.contains(where: { $0.caseInsensitiveCompare(provider) == .orderedSame }) {
-            options.insert(provider.lowercased(), at: 0)
-        }
-        return options
+        return providers
     }
 
     private func providerDisplayName(_ provider: String) -> String {

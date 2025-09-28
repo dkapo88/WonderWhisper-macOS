@@ -13,6 +13,10 @@ struct FavoriteLLMModel: Identifiable, Codable, Hashable {
         self.provider = provider
         self.model = model
     }
+
+    var normalizedProvider: String { provider.lowercased() }
+    var normalizedModel: String { model.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var key: String { "\(normalizedProvider)::\(normalizedModel.lowercased())" }
 }
 
 @MainActor
@@ -469,10 +473,11 @@ final class DictationViewModel: ObservableObject {
         let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedModel.isEmpty else { return }
         let normalizedProvider = (trimmedProvider.isEmpty ? llmProvider : trimmedProvider).lowercased()
-        if favoriteLLMModels.contains(where: { $0.provider.caseInsensitiveCompare(normalizedProvider) == .orderedSame && $0.model.caseInsensitiveCompare(trimmedModel) == .orderedSame }) {
+        let candidate = FavoriteLLMModel(provider: normalizedProvider, model: trimmedModel)
+        if favoriteLLMModels.contains(where: { $0.key == candidate.key }) {
             return
         }
-        favoriteLLMModels.append(FavoriteLLMModel(provider: normalizedProvider, model: trimmedModel))
+        favoriteLLMModels.append(candidate)
     }
 
     func removeFavoriteLLMModel(id: UUID) {
@@ -501,13 +506,15 @@ final class DictationViewModel: ObservableObject {
 
     private func persistFavoriteLLMModels() {
         var normalized: [FavoriteLLMModel] = []
+        var seen: Set<String> = []
         for item in favoriteLLMModels {
             let trimmedModel = item.model.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedProvider = item.provider.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedModel.isEmpty else { continue }
             let normalizedProvider = trimmedProvider.isEmpty ? llmProvider : trimmedProvider
             let normalizedEntry = FavoriteLLMModel(id: item.id, provider: normalizedProvider.lowercased(), model: trimmedModel)
-            if !normalized.contains(where: { $0.provider.caseInsensitiveCompare(normalizedEntry.provider) == .orderedSame && $0.model.caseInsensitiveCompare(normalizedEntry.model) == .orderedSame }) {
+            let key = normalizedEntry.key
+            if seen.insert(key).inserted {
                 normalized.append(normalizedEntry)
             }
         }
@@ -757,14 +764,29 @@ private extension DictationViewModel {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: favoritesDataKey),
            let decoded = try? JSONDecoder().decode([FavoriteLLMModel].self, from: data) {
-            return decoded.map { FavoriteLLMModel(id: $0.id, provider: $0.provider.lowercased(), model: $0.model) }
+            var seen: Set<String> = []
+            var result: [FavoriteLLMModel] = []
+            for item in decoded {
+                let normalized = FavoriteLLMModel(id: item.id, provider: item.provider.lowercased(), model: item.model)
+                if seen.insert(normalized.key).inserted {
+                    result.append(normalized)
+                }
+            }
+            return result
         }
         if let legacyArray = defaults.stringArray(forKey: favoritesLegacyKey) {
             let provider = (defaults.string(forKey: "llm.provider") ?? "groq").lowercased()
-            return legacyArray
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .map { FavoriteLLMModel(provider: provider, model: $0) }
+            var seen: Set<String> = []
+            var result: [FavoriteLLMModel] = []
+            for model in legacyArray {
+                let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let entry = FavoriteLLMModel(provider: provider, model: trimmed)
+                if seen.insert(entry.key).inserted {
+                    result.append(entry)
+                }
+            }
+            return result
         }
         return []
     }
