@@ -62,6 +62,11 @@ struct HistoryView: View {
                         .contextMenu {
                             Button("Copy Processed") { copy(entry.output.isEmpty ? entry.transcript : entry.output) }
                             Button("Copy Original") { copy(entry.transcript) }
+                            Button {
+                                triggerReprocess(for: entry)
+                            } label: {
+                                Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
+                            }
                             Button("Reveal in Finder") { history.revealInFinder(entry: entry) }
                             Divider()
                             Button(role: .destructive) { pendingDelete = entry } label: { Text("Delete") }
@@ -89,12 +94,26 @@ struct HistoryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let e = selectedEntry {
-                        HStack {
+                        HStack(alignment: .center, spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(e.appName ?? "Unknown App").bold()
                                 if let b = e.bundleID { Text(b).font(.caption).foregroundColor(.secondary) }
                             }
                             Spacer()
+                            Button {
+                                triggerReprocess(for: e)
+                            } label: {
+                                if isReprocessing {
+                                    HStack(spacing: 6) {
+                                        ProgressView().scaleEffect(0.8)
+                                        Text("Reprocessing…")
+                                    }
+                                } else {
+                                    Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
+                                }
+                            }
+                            .disabled(isReprocessing)
+
                             Button(action: { history.revealInFinder(entry: e) }) { Label("Reveal", systemImage: "folder") }
                         }
                         HStack(spacing: 12) {
@@ -155,20 +174,6 @@ struct HistoryView: View {
                                 autoSizingTextBox(sel, availableWidth: geo.size.width - 40, maxHeight: 200, font: .caption)
                             }
                         }
-                        HStack {
-                            Button {
-                                guard !isReprocessing, let sel = selectedEntry else { return }
-                                isReprocessing = true
-                                Task {
-                                    await vm.reprocessHistoryEntry(sel)
-                                    isReprocessing = false
-                                }
-                            } label: {
-                                if isReprocessing { ProgressView().scaleEffect(0.7) } else { Text("Reprocess") }
-                            }
-                            .disabled(isReprocessing)
-                            Spacer()
-                        }
                     } else {
                         ContentUnavailableView("Select an entry", systemImage: "doc.text")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -179,6 +184,16 @@ struct HistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func triggerReprocess(for entry: HistoryEntry) {
+        guard !isReprocessing else { return }
+        selectionID = entry.id
+        isReprocessing = true
+        Task {
+            await vm.reprocessHistoryEntry(entry)
+            await MainActor.run { isReprocessing = false }
+        }
     }
 
     private func copy(_ text: String) {

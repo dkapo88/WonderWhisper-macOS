@@ -642,11 +642,17 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateProviders() {
+        let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
+        let task = applyProviders(using: prompt)
+        providerUpdateTask = task
+    }
+
+    @discardableResult
+    private func applyProviders(using prompt: PromptConfiguration?) -> Task<Void, Never> {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         var provider: TranscriptionProvider? = nil
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-        let activePrompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
-        let modelForActivePrompt = resolvedLLMModel(for: activePrompt)
+        let modelForActivePrompt = resolvedLLMModel(for: prompt)
         if transcriptionModel == "apple-native" {
             if #available(macOS 26, *) {
                 provider = NativeAppleTranscriptionProvider()
@@ -677,7 +683,7 @@ final class DictationViewModel: ObservableObject {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
-        let providerForActivePrompt = resolvedLLMProvider(for: activePrompt)
+        let providerForActivePrompt = resolvedLLMProvider(for: prompt)
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
 
         // Choose LLM provider and endpoint
@@ -702,11 +708,11 @@ final class DictationViewModel: ObservableObject {
         let llmProviderToApply = llmProviderInstance
         let llmSettingsToApply = lSettings
         let isLLMEnabled = llmEnabled
-        let useScreenContext = resolvedScreenContext(for: activePrompt)
-        let useOrganizeScreenContent = resolvedOrganizeScreenContent(for: activePrompt)
+        let useScreenContext = resolvedScreenContext(for: prompt)
+        let useOrganizeScreenContent = resolvedOrganizeScreenContent(for: prompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
 
-        let task = Task {
+        return Task {
             if let providerToApply {
                 await controller.updateTranscriberProvider(providerToApply)
             }
@@ -718,7 +724,6 @@ final class DictationViewModel: ObservableObject {
             await controller.updateOrganizeScreenContentEnabled(useOrganizeScreenContent)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
-        providerUpdateTask = task
     }
 
     // Reprocess a saved history entry with current settings
@@ -761,6 +766,15 @@ final class DictationViewModel: ObservableObject {
             throw NSError(domain: "DictationViewModel", code: -2101, userInfo: [NSLocalizedDescriptionKey: "LLM processing is disabled in settings."])
         }
         await waitForLatestProviderUpdate()
+        let previousPrompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
+        let overrideTask = applyProviders(using: prompt)
+        providerUpdateTask = overrideTask
+        defer {
+            if previousPrompt?.id != prompt.id {
+                updateProviders()
+            }
+        }
+        await overrideTask.value
         let system = PromptBuilder.renderSystemPrompt(template: prompt.systemPrompt, customVocabulary: vocabCustom)
         let noteText = """
         <NOTE_CONTENT>
