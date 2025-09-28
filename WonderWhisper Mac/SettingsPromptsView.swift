@@ -14,24 +14,39 @@ struct SettingsPromptsView: View {
     // Track indices during an active drag, without committing reorder to the model.
     @State private var dragStartIndex: Int?
     @State private var dragCurrentIndex: Int?
+    @State private var expandedPromptIDs: Set<UUID> = []
 
     private let promptSpacing: CGFloat = 8
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    promptList
-                    promptEditor
-                }
-                VStack(spacing: 16) {
-                    promptList
-                    promptEditor
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 16) {
+                        promptList
+                        promptEditor
+                    }
+                    VStack(spacing: 16) {
+                        promptList
+                        promptEditor
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipped()
+        .onChange(of: vm.selectedPromptID) { newValue in
+            guard let id = newValue else { return }
+            expandedPromptIDs.insert(id)
+        }
+        .onAppear {
+            if expandedPromptIDs.isEmpty, let id = vm.selectedPromptID ?? vm.prompts.first?.id {
+                expandedPromptIDs.insert(id)
+            }
+        }
     }
 
     private var header: some View {
@@ -84,8 +99,19 @@ struct SettingsPromptsView: View {
     }
 
     private func promptRow(_ prompt: PromptConfiguration, isDragging _: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        let expanded = expandedPromptIDs.contains(prompt.id)
+        let summary = triggerSummary(for: prompt)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    toggleExpansion(for: prompt.id)
+                } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .foregroundColor(.secondary)
+                        .imageScale(.small)
+                }
+                .buttonStyle(.plain)
+
                 if renamingPromptID == prompt.id {
                     TextField("Prompt name", text: $nameDraft, onCommit: {
                         vm.renamePrompt(id: prompt.id, to: nameDraft)
@@ -96,9 +122,17 @@ struct SettingsPromptsView: View {
                 } else {
                     Text(prompt.name)
                         .fontWeight(vm.selectedPromptID == prompt.id ? .semibold : .regular)
-                        .onTapGesture { vm.selectPrompt(id: prompt.id) }
+                        .foregroundColor(vm.selectedPromptID == prompt.id ? .accentColor : .primary)
                 }
+
                 Spacer()
+
+                Text(summary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
                 if vm.prompts.count > 1 {
                     Button(role: .destructive) {
                         vm.deletePrompt(id: prompt.id)
@@ -107,6 +141,7 @@ struct SettingsPromptsView: View {
                     }
                     .buttonStyle(.borderless)
                 }
+
                 Button {
                     if renamingPromptID == prompt.id {
                         vm.renamePrompt(id: prompt.id, to: nameDraft)
@@ -117,43 +152,46 @@ struct SettingsPromptsView: View {
                     }
                 } label: {
                     Text(renamingPromptID == prompt.id ? "Done" : "Rename")
+                        .font(.caption)
                 }
                 .buttonStyle(.borderless)
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if renamingPromptID != prompt.id {
+                    vm.selectPrompt(id: prompt.id)
+                }
+            }
 
-            PromptTriggerEditor(
-                prompt: prompt,
-                capturingPromptID: $capturingPromptID,
-                onShortcutChange: { vm.updateShortcut(for: prompt.id, to: $0) },
-                onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) }
-            )
-            .padding(.top, 2)
-
-            PromptLLMModelEditor(
-                prompt: prompt,
-                defaultModel: vm.llmModel,
-                provider: vm.llmProvider,
-                favorites: vm.favoriteLLMModels,
-                onUpdate: { model, provider in vm.updateLLMOverride(for: prompt.id, model: model, provider: provider) }
-            )
-
-            PromptScreenContextEditor(
-                prompt: prompt,
-                defaultScreenContext: vm.screenContextEnabled,
-                defaultOrganize: vm.organizeScreenContentEnabled,
-                onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
-                onOrganizeUpdate: { vm.updateOrganizeScreenContextOverride(for: prompt.id, to: $0) }
-            )
-            
-            if vm.selectedPromptID == prompt.id {
-                Text("Active prompt")
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
-            } else {
-                Button("Select this prompt") { vm.selectPrompt(id: prompt.id) }
-                    .buttonStyle(.link)
+            if expanded {
+                PromptTriggerEditor(
+                    prompt: prompt,
+                    capturingPromptID: $capturingPromptID,
+                    onShortcutChange: { vm.updateShortcut(for: prompt.id, to: $0) },
+                    onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) }
+                )
+                .padding(.leading, 22)
+                .padding(.top, 2)
             }
         }
+    }
+
+    private func toggleExpansion(for id: UUID) {
+        if expandedPromptIDs.contains(id) {
+            expandedPromptIDs.remove(id)
+        } else {
+            expandedPromptIDs.insert(id)
+        }
+    }
+
+    private func triggerSummary(for prompt: PromptConfiguration) -> String {
+        if let selection = prompt.selection {
+            return "Key: \(selection.displayName)"
+        }
+        if let shortcut = prompt.shortcut {
+            return shortcutDescription(shortcut)
+        }
+        return "No trigger"
     }
 
     private func selectionBackground(for prompt: PromptConfiguration, isDragging: Bool) -> some View {
@@ -282,29 +320,55 @@ struct SettingsPromptsView: View {
     private var promptEditor: some View {
         GroupBox("Prompt editor") {
             if let prompt = vm.prompts.prompt(withID: vm.selectedPromptID) ?? vm.prompts.first {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("System Prompt")
-                        .font(.headline)
-                    TextEditor(text: $vm.systemPrompt)
-                        .frame(minHeight: 160)
-                        .border(Color.gray.opacity(0.2))
-                    Button("Reset to Default") {
-                        vm.systemPrompt = AppConfig.defaultSystemPromptTemplate
-                    }
-                    .disabled(vm.systemPrompt == AppConfig.defaultSystemPromptTemplate)
-                    .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Prompt Settings")
+                            .font(.headline)
 
-                    Text("User Prompt")
-                        .font(.headline)
-                    TextEditor(text: $vm.userPrompt)
-                        .frame(minHeight: 100)
-                        .border(Color.gray.opacity(0.2))
-                    HStack {
-                        Button("Clear") { vm.userPrompt = "" }
-                        Spacer()
-                        Text("Editing: \(prompt.name)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        PromptLLMModelEditor(
+                            prompt: prompt,
+                            defaultModel: vm.llmModel,
+                            provider: vm.llmProvider,
+                            favorites: vm.favoriteLLMModels,
+                            onUpdate: { model, provider in vm.updateLLMOverride(for: prompt.id, model: model, provider: provider) }
+                        )
+
+                        PromptScreenContextEditor(
+                            prompt: prompt,
+                            defaultScreenContext: vm.screenContextEnabled,
+                            defaultOrganize: vm.organizeScreenContentEnabled,
+                            onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
+                            onOrganizeUpdate: { vm.updateOrganizeScreenContextOverride(for: prompt.id, to: $0) }
+                        )
+                    }
+
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("System Prompt")
+                            .font(.headline)
+                        TextEditor(text: $vm.systemPrompt)
+                            .frame(minHeight: 160)
+                            .border(Color.gray.opacity(0.2))
+                        Button("Reset to Default") {
+                            vm.systemPrompt = AppConfig.defaultSystemPromptTemplate
+                        }
+                        .disabled(vm.systemPrompt == AppConfig.defaultSystemPromptTemplate)
+                        .padding(.bottom, 8)
+
+                        Text("User Prompt")
+                            .font(.headline)
+                        TextEditor(text: $vm.userPrompt)
+                            .frame(minHeight: 100)
+                            .border(Color.gray.opacity(0.2))
+                        HStack {
+                            Button("Clear") { vm.userPrompt = "" }
+                            Spacer()
+                            Text("Editing: \(prompt.name)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             } else {
