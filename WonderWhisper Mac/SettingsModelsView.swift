@@ -9,6 +9,13 @@ import FluidAudio
 struct SettingsModelsView: View {
     @ObservedObject var vm: DictationViewModel
     @State private var favoriteModelDraft: String = ""
+    @State private var favoriteProviderDraft: String
+
+    init(vm: DictationViewModel) {
+        _vm = ObservedObject(wrappedValue: vm)
+        _favoriteModelDraft = State(initialValue: "")
+        _favoriteProviderDraft = State(initialValue: vm.llmProvider.lowercased())
+    }
 
     var body: some View {
         Form {
@@ -178,6 +185,14 @@ struct SettingsModelsView: View {
 
                 GroupBox("Favorite LLM models") {
                     VStack(alignment: .leading, spacing: 8) {
+                        Picker("Provider", selection: $favoriteProviderDraft) {
+                            ForEach(providerOptions, id: \.self) { provider in
+                                Text(providerDisplayName(provider)).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 320)
+
                         HStack(spacing: 8) {
                             TextField("Add model identifier", text: $favoriteModelDraft)
                                 .textFieldStyle(.roundedBorder)
@@ -188,10 +203,10 @@ struct SettingsModelsView: View {
                         }
 
                         Button("Add current model (\(vm.llmModel))") {
-                            vm.addFavoriteLLMModel(vm.llmModel)
+                            vm.addFavoriteLLMModel(provider: vm.llmProvider.lowercased(), model: vm.llmModel)
                         }
                         .buttonStyle(.borderless)
-                        .disabled(vm.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFavorite(vm.llmModel))
+                        .disabled(vm.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFavorite(provider: vm.llmProvider, model: vm.llmModel))
 
                         if vm.favoriteLLMModels.isEmpty {
                             Text("No favorites yet. Add the identifiers of the models you use most often. These appear in the prompt library quick picker.")
@@ -199,12 +214,12 @@ struct SettingsModelsView: View {
                                 .foregroundColor(.secondary)
                         } else {
                             VStack(alignment: .leading, spacing: 6) {
-                                ForEach(vm.favoriteLLMModels, id: \.self) { model in
+                                ForEach(vm.favoriteLLMModels) { favorite in
                                     HStack {
-                                        Text(model)
+                                        Text("\(providerDisplayName(favorite.provider)) · \(favorite.model)")
                                             .font(.system(.body, design: .monospaced))
                                         Spacer()
-                                        Button("Remove") { vm.removeFavoriteLLMModel(model) }
+                                        Button("Remove") { vm.removeFavoriteLLMModel(id: favorite.id) }
                                             .buttonStyle(.borderless)
                                     }
                                     .padding(.vertical, 2)
@@ -218,6 +233,11 @@ struct SettingsModelsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onChange(of: vm.llmProvider) { newValue in
+            if providerOptions.contains(where: { $0.caseInsensitiveCompare(newValue) == .orderedSame }) {
+                favoriteProviderDraft = newValue.lowercased()
+            }
+        }
     }
 
     private var favoriteModelDraftTrimmed: String {
@@ -227,14 +247,41 @@ struct SettingsModelsView: View {
     private func addFavoriteDraft() {
         let trimmed = favoriteModelDraftTrimmed
         guard !trimmed.isEmpty else { return }
-        vm.addFavoriteLLMModel(trimmed)
+        vm.addFavoriteLLMModel(provider: favoriteProviderDraft.lowercased(), model: trimmed)
         favoriteModelDraft = ""
     }
 
-    private func isFavorite(_ model: String) -> Bool {
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return vm.favoriteLLMModels.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+    private func isFavorite(provider: String, model: String) -> Bool {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return false }
+        let normalizedProvider = (trimmedProvider.isEmpty ? vm.llmProvider : trimmedProvider).lowercased()
+        return vm.favoriteLLMModels.contains {
+            $0.model.caseInsensitiveCompare(trimmedModel) == .orderedSame &&
+            $0.provider.caseInsensitiveCompare(normalizedProvider) == .orderedSame
+        }
+    }
+
+    private func providerDisplayName(_ provider: String) -> String {
+        switch provider.lowercased() {
+        case "openrouter":
+            return "OpenRouter"
+        case "cerebras":
+            return "Cerebras"
+        default:
+            return "Groq"
+        }
+    }
+
+    private var providerOptions: [String] {
+        var options: [String] = ["groq", "openrouter", "cerebras"]
+        for favorite in vm.favoriteLLMModels {
+            let provider = favorite.provider.lowercased()
+            if !options.contains(where: { $0.caseInsensitiveCompare(provider) == .orderedSame }) {
+                options.append(provider)
+            }
+        }
+        return options
     }
 
     @MainActor

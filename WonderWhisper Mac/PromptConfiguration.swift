@@ -8,6 +8,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     var shortcut: HotkeyManager.Shortcut?
     var selection: HotkeyManager.Selection?
     var llmModelOverride: String?
+    var llmProviderOverride: String?
 
     init(id: UUID = UUID(),
          name: String,
@@ -15,7 +16,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
          userPrompt: String,
          shortcut: HotkeyManager.Shortcut? = nil,
          selection: HotkeyManager.Selection? = nil,
-         llmModelOverride: String? = nil) {
+         llmModelOverride: String? = nil,
+         llmProviderOverride: String? = nil) {
         self.id = id
         self.name = name
         self.systemPrompt = systemPrompt
@@ -23,6 +25,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
         self.shortcut = shortcut
         self.selection = selection
         self.llmModelOverride = llmModelOverride
+        self.llmProviderOverride = llmProviderOverride
     }
 }
 

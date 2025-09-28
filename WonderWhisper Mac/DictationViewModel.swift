@@ -3,6 +3,18 @@ import Combine
 import Carbon.HIToolbox
 import AppKit
 
+struct FavoriteLLMModel: Identifiable, Codable, Hashable {
+    var id: UUID
+    var provider: String
+    var model: String
+
+    init(id: UUID = UUID(), provider: String, model: String) {
+        self.id = id
+        self.provider = provider
+        self.model = model
+    }
+}
+
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
@@ -44,7 +56,7 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
-    @Published var favoriteLLMModels: [String] = UserDefaults.standard.stringArray(forKey: "llm.models.favorites") ?? [] {
+    @Published var favoriteLLMModels: [FavoriteLLMModel] = DictationViewModel.loadFavoriteLLMModels() {
         didSet { persistFavoriteLLMModels() }
     }
 
@@ -426,33 +438,45 @@ final class DictationViewModel: ObservableObject {
         prompts[idx] = updated
     }
 
-    func updateLLMModel(for id: UUID, to override: String?) {
+    func updateLLMOverride(for id: UUID, model overrideModel: String?, provider overrideProvider: String?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
-        let normalized = override?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (normalized?.isEmpty ?? true) ? nil : normalized
+        let normalizedModel = overrideModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedProvider = overrideProvider?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelValue = (normalizedModel?.isEmpty ?? true) ? nil : normalizedModel
+        let providerValue: String?
+        if let provider = normalizedProvider, !provider.isEmpty,
+           provider.caseInsensitiveCompare(llmProvider) != .orderedSame {
+            providerValue = provider.lowercased()
+        } else {
+            providerValue = nil
+        }
         var updated = prompts[idx]
-        if updated.llmModelOverride == value { return }
-        updated.llmModelOverride = value
+        let currentProviderValue = updated.llmProviderOverride?.lowercased() ?? ""
+        let newProviderValue = providerValue?.lowercased() ?? ""
+        if updated.llmModelOverride == modelValue && currentProviderValue == newProviderValue {
+            return
+        }
+        updated.llmModelOverride = modelValue
+        updated.llmProviderOverride = providerValue
         prompts[idx] = updated
         if updated.id == selectedPromptID {
             updateProviders()
         }
     }
 
-    func addFavoriteLLMModel(_ model: String) {
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        // Avoid duplicates (case-insensitive)
-        if favoriteLLMModels.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) { return }
-        favoriteLLMModels.append(trimmed)
+    func addFavoriteLLMModel(provider: String, model: String) {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return }
+        let normalizedProvider = (trimmedProvider.isEmpty ? llmProvider : trimmedProvider).lowercased()
+        if favoriteLLMModels.contains(where: { $0.provider.caseInsensitiveCompare(normalizedProvider) == .orderedSame && $0.model.caseInsensitiveCompare(trimmedModel) == .orderedSame }) {
+            return
+        }
+        favoriteLLMModels.append(FavoriteLLMModel(provider: normalizedProvider, model: trimmedModel))
     }
 
-    func removeFavoriteLLMModel(_ model: String) {
-        favoriteLLMModels.removeAll { $0.caseInsensitiveCompare(model) == .orderedSame }
-    }
-
-    func removeFavoriteLLMModel(at offsets: IndexSet) {
-        favoriteLLMModels.remove(atOffsets: offsets)
+    func removeFavoriteLLMModel(id: UUID) {
+        favoriteLLMModels.removeAll { $0.id == id }
     }
 
     func selectPrompt(id: UUID) {
@@ -476,12 +500,26 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistFavoriteLLMModels() {
-        let unique = Array(NSOrderedSet(array: favoriteLLMModels.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })) as? [String] ?? []
-        if unique != favoriteLLMModels {
-            favoriteLLMModels = unique
+        var normalized: [FavoriteLLMModel] = []
+        for item in favoriteLLMModels {
+            let trimmedModel = item.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedProvider = item.provider.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedModel.isEmpty else { continue }
+            let normalizedProvider = trimmedProvider.isEmpty ? llmProvider : trimmedProvider
+            let normalizedEntry = FavoriteLLMModel(id: item.id, provider: normalizedProvider.lowercased(), model: trimmedModel)
+            if !normalized.contains(where: { $0.provider.caseInsensitiveCompare(normalizedEntry.provider) == .orderedSame && $0.model.caseInsensitiveCompare(normalizedEntry.model) == .orderedSame }) {
+                normalized.append(normalizedEntry)
+            }
+        }
+        if normalized != favoriteLLMModels {
+            favoriteLLMModels = normalized
             return
         }
-        UserDefaults.standard.set(favoriteLLMModels, forKey: "llm.models.favorites")
+        let defaults = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(normalized) {
+            defaults.set(data, forKey: Self.favoritesDataKey)
+        }
+        defaults.removeObject(forKey: Self.favoritesLegacyKey)
     }
 
     private func persistPromptLibrary() {
@@ -603,11 +641,12 @@ final class DictationViewModel: ObservableObject {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
+        let providerForActivePrompt = resolvedLLMProvider(for: activePrompt)
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
 
         // Choose LLM provider and endpoint
         var llmProviderInstance: LLMProvider
-        switch llmProvider.lowercased() {
+        switch providerForActivePrompt.lowercased() {
         case "openrouter":
             lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
@@ -711,6 +750,25 @@ private struct PromptBootstrap {
 }
 
 private extension DictationViewModel {
+    static let favoritesDataKey = "llm.models.favorites.data"
+    static let favoritesLegacyKey = "llm.models.favorites"
+
+    static func loadFavoriteLLMModels() -> [FavoriteLLMModel] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: favoritesDataKey),
+           let decoded = try? JSONDecoder().decode([FavoriteLLMModel].self, from: data) {
+            return decoded.map { FavoriteLLMModel(id: $0.id, provider: $0.provider.lowercased(), model: $0.model) }
+        }
+        if let legacyArray = defaults.stringArray(forKey: favoritesLegacyKey) {
+            let provider = (defaults.string(forKey: "llm.provider") ?? "groq").lowercased()
+            return legacyArray
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { FavoriteLLMModel(provider: provider, model: $0) }
+        }
+        return []
+    }
+
     @MainActor
     func waitForLatestProviderUpdate() async {
         if let task = providerUpdateTask {
@@ -749,5 +807,13 @@ private extension DictationViewModel {
         }
         let fallback = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? AppConfig.defaultLLMModel : fallback
+    }
+
+    func resolvedLLMProvider(for prompt: PromptConfiguration?) -> String {
+        if let override = prompt?.llmProviderOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        let fallback = llmProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? "groq" : fallback
     }
 }
