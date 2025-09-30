@@ -10,7 +10,7 @@ final class WaveformOverlayController {
 
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
-        let size = NSSize(width: 140, height: 26)  // Slightly wider and taller for better proportions
+        let size = NSSize(width: 112, height: 26)  // 20% shorter (140 * 0.8 = 112)
         let rect = NSRect(origin: .zero, size: size)
         let w = NSPanel(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
         w.isOpaque = false
