@@ -285,6 +285,17 @@ final class DictationViewModel: ObservableObject {
         Task {
             await waitForLatestProviderUpdate()
             let prompt = await MainActor.run { self.userPrompt }
+
+            // Optimistically update UI immediately for snappy visual feedback
+            let currentState = await controller.currentState()
+            if case .idle = currentState {
+                await MainActor.run { self.isRecording = true }
+            } else if case .error = currentState {
+                await MainActor.run { self.isRecording = true }
+            } else if case .recording = currentState {
+                await MainActor.run { self.isRecording = false }
+            }
+
             await controller.toggle(userPrompt: prompt)
         }
     }
@@ -292,6 +303,9 @@ final class DictationViewModel: ObservableObject {
     func finish() {
         persistPromptLibrary()
         Task {
+            // Optimistically update UI immediately for snappy visual feedback
+            await MainActor.run { self.isRecording = false }
+
             await waitForLatestProviderUpdate()
             let prompt = await MainActor.run { self.userPrompt }
             await controller.finish(userPrompt: prompt)
@@ -299,7 +313,11 @@ final class DictationViewModel: ObservableObject {
     }
 
     func cancel() {
-        Task { await controller.cancel() }
+        Task {
+            // Optimistically update UI immediately for snappy visual feedback
+            await MainActor.run { self.isRecording = false }
+            await controller.cancel()
+        }
     }
 
     private func updateEscapeMonitor(isRecording: Bool) {
@@ -623,8 +641,12 @@ final class DictationViewModel: ObservableObject {
             let state = await controller.currentState()
             switch state {
             case .idle, .error:
+                // Optimistically update UI immediately for snappy visual feedback
+                await MainActor.run { self.isRecording = true }
                 await controller.toggle(userPrompt: promptText)
             case .recording:
+                // Optimistically update UI immediately for snappy visual feedback
+                await MainActor.run { self.isRecording = false }
                 await controller.finish(userPrompt: promptText)
             default:
                 break
@@ -635,6 +657,8 @@ final class DictationViewModel: ObservableObject {
             if duration >= promptPressThreshold {
                 let state = await controller.currentState()
                 if case .recording = state {
+                    // Optimistically update UI immediately for snappy visual feedback
+                    await MainActor.run { self.isRecording = false }
                     await controller.finish(userPrompt: promptText)
                 }
             }
