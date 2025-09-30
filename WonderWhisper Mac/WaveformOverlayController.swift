@@ -120,7 +120,7 @@ private final class WaveformView: NSView {
     private var noiseSeeds: [CGFloat] = []
     private var displayLevel: CGFloat = 0
     private var timer: Timer?
-    private let barCount = 16
+    private let barCount = 10  // Reduced from 16 for bolder, wider bars
     private var level: CGFloat = 0
 
     init(style: Style) {
@@ -203,7 +203,7 @@ private final class WaveformView: NSView {
         for _ in 0..<barCount {
             let bar = CALayer()
             bar.cornerCurve = .continuous
-            bar.cornerRadius = 1.8
+            bar.cornerRadius = 2.0  // Slightly more rounded for bolder look
             bar.backgroundColor = NSColor.systemRed.cgColor
             // Very subtle glow - reduced to prevent visual clutter
             bar.shadowColor = NSColor.systemRed.cgColor
@@ -226,19 +226,19 @@ private final class WaveformView: NSView {
         let insetY: CGFloat = 4  // Reduced for more vertical space
         let availableWidth = bounds.width - insetX * 2
         let availableHeight = bounds.height - insetY * 2
-        let spacing: CGFloat = 1.5
-        let barWidth = max(1.2, (availableWidth - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let spacing: CGFloat = 1.8  // Slightly more spacing for cleaner look with fewer bars
+        let barWidth = max(2.0, (availableWidth - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))  // Wider bars
         var x = insetX
         for (i, bar) in barLayers.enumerated() {
             let base: CGFloat
             if style == .centerMirror {
                 // subtle center emphasis
                 let t = abs(CGFloat(i) - CGFloat(barCount - 1)/2) / (CGFloat(barCount)/2)
-                base = (0.30 + 0.20 * (1 - t))  // Increased base heights
+                base = (0.32 + 0.22 * (1 - t))  // Slightly higher for bolder look
             } else {
-                base = 0.35  // Increased from 0.28 for more visible bars
+                base = 0.38  // Higher base for bolder bars
             }
-            let h = max(3, availableHeight * base)  // Minimum 3pt instead of 2pt
+            let h = max(3, availableHeight * base)  // Minimum 3pt
             bar.frame = NSRect(x: x, y: (bounds.height - h)/2, width: barWidth, height: h)
             x += barWidth + spacing
         }
