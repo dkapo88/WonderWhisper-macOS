@@ -10,7 +10,7 @@ final class WaveformOverlayController {
 
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
-        let size = NSSize(width: 120, height: 22)
+        let size = NSSize(width: 140, height: 26)  // Slightly wider and taller for better proportions
         let rect = NSRect(origin: .zero, size: size)
         let w = NSPanel(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
         w.isOpaque = false
@@ -40,9 +40,11 @@ final class WaveformOverlayController {
                     self.positionAtTopCenter()
                     self.animateIn()
                     self.waveformView.startAnimating()
+                    SoundFeedback.playStart()
                 } else {
                     self.waveformView.stopAnimating()
                     self.animateOut()
+                    SoundFeedback.playStop()
                 }
             }
             .store(in: &cancellables)
@@ -76,27 +78,26 @@ final class WaveformOverlayController {
     }
 
     private func animateIn() {
+        // Spring animation for more modern feel
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            var f = window.frame
-            f.origin.y -= 8
-            window.setFrame(f, display: false)
+            ctx.duration = 0.35
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1) // Spring ease
+            ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 1
-            // restore to final position
-            positionAtTopCenter()
+            // Scale effect via transform
+            waveformView.layer?.transform = CATransform3DIdentity
         }
         window.orderFrontRegardless()
     }
 
     private func animateOut() {
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
+            ctx.duration = 0.22
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            var f = window.frame
-            f.origin.y += 8
-            window.animator().setFrameOrigin(f.origin)
+            ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 0
+            // Subtle scale down
+            waveformView.layer?.transform = CATransform3DMakeScale(0.92, 0.92, 1)
         }
     }
 }
@@ -128,10 +129,14 @@ private final class WaveformView: NSView {
         wantsLayer = true
         layer = CALayer()
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.75).cgColor
-        layer?.cornerRadius = 11
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
-        layer?.borderWidth = 1
+        // Clean dark background
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.88).cgColor
+        layer?.cornerRadius = 13
+        // Subtle border
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
+        layer?.borderWidth = 0.5
+        // Remove shadow to prevent dark halo
+        layer?.shadowOpacity = 0
         isHidden = false
         switch style {
         case .pillBars, .centerMirror: buildBars()
@@ -153,9 +158,9 @@ private final class WaveformView: NSView {
         super.layout()
         layoutBars()
 
-        // Layout buttons
-        let btnSize: CGFloat = 18
-        let margin: CGFloat = 8
+        // Layout buttons - fit to edges with minimal margin
+        let btnSize: CGFloat = 20  // Slightly larger for better touch target
+        let margin: CGFloat = 3    // Minimal margin to fit to edge
         cancelButton.frame = NSRect(x: margin, y: (bounds.height - btnSize)/2, width: btnSize, height: btnSize)
         finishButton.frame = NSRect(x: bounds.width - margin - btnSize, y: (bounds.height - btnSize)/2, width: btnSize, height: btnSize)
     }
@@ -198,8 +203,13 @@ private final class WaveformView: NSView {
         for _ in 0..<barCount {
             let bar = CALayer()
             bar.cornerCurve = .continuous
-            bar.cornerRadius = 1.5
+            bar.cornerRadius = 1.8
             bar.backgroundColor = NSColor.systemRed.cgColor
+            // Very subtle glow - reduced to prevent visual clutter
+            bar.shadowColor = NSColor.systemRed.cgColor
+            bar.shadowOpacity = 0.25
+            bar.shadowOffset = .zero
+            bar.shadowRadius = 1.5
             root.addSublayer(bar)
             barLayers.append(bar)
         }
@@ -209,26 +219,26 @@ private final class WaveformView: NSView {
 
     private func layoutBars() {
         guard !barLayers.isEmpty else { return }
-        // Reserve space for left/right buttons
-        let btnSize: CGFloat = 18
-        let sideInset: CGFloat = 8 + btnSize + 6
+        // Reserve space for left/right buttons - buttons now fit to edge
+        let btnSize: CGFloat = 20
+        let sideInset: CGFloat = 3 + btnSize + 4  // Minimal spacing
         let insetX: CGFloat = sideInset
-        let insetY: CGFloat = 4
+        let insetY: CGFloat = 4  // Reduced for more vertical space
         let availableWidth = bounds.width - insetX * 2
         let availableHeight = bounds.height - insetY * 2
-        let spacing: CGFloat = 1.2
-        let barWidth = max(1.0, (availableWidth - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let spacing: CGFloat = 1.5
+        let barWidth = max(1.2, (availableWidth - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
         var x = insetX
         for (i, bar) in barLayers.enumerated() {
             let base: CGFloat
             if style == .centerMirror {
                 // subtle center emphasis
                 let t = abs(CGFloat(i) - CGFloat(barCount - 1)/2) / (CGFloat(barCount)/2)
-                base = (0.22 + 0.14 * (1 - t))
+                base = (0.30 + 0.20 * (1 - t))  // Increased base heights
             } else {
-                base = 0.28
+                base = 0.35  // Increased from 0.28 for more visible bars
             }
-            let h = max(2, availableHeight * base)
+            let h = max(3, availableHeight * base)  // Minimum 3pt instead of 2pt
             bar.frame = NSRect(x: x, y: (bounds.height - h)/2, width: barWidth, height: h)
             x += barWidth + spacing
         }
@@ -250,14 +260,15 @@ private final class WaveformView: NSView {
 
     private func tick() {
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.08)
-        let minH: CGFloat = 1
-        let maxH = bounds.height - 4
+        CATransaction.setAnimationDuration(0.1)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        let minH: CGFloat = 3
+        let maxH = bounds.height - 4  // More vertical range
         let now = CFAbsoluteTimeGetCurrent()
         let input = boost(level)
         // Fast attack, slower release for punchy response
-        let attack: CGFloat = 0.7
-        let release: CGFloat = 0.1
+        let attack: CGFloat = 0.8  // Faster response
+        let release: CGFloat = 0.15  // Slightly faster decay
         if input > displayLevel {
             displayLevel += (input - displayLevel) * attack
         } else {
@@ -274,10 +285,10 @@ private final class WaveformView: NSView {
                 let seed = noiseSeeds.indices.contains(i) ? noiseSeeds[i] : 0
                 let speed: CGFloat = 0.9 + CGFloat(i % 5) * 0.08 // varied per bar
                 let wobble = sin(now * Double(12 * speed) + Double(seed))
-                let baseGain: CGFloat = 0.85 + CGFloat((i % 7)) * 0.03
-                let noiseScale = 0.30 + 0.70 * displayLevel // ensure motion even when quiet
+                let baseGain: CGFloat = 0.95 + CGFloat((i % 7)) * 0.05  // Higher gain
+                let noiseScale = 0.40 + 0.80 * displayLevel // More motion
                 var amp = displayLevel * baseGain * shape + CGFloat(wobble) * noiseScale
-                amp = max(0, min(1, amp))
+                amp = max(0.15, min(1, amp))  // Higher minimum for more visible bars
                 if style == .centerMirror {
                     let falloff = 1 - min(1, abs(CGFloat(i) - center) / center)
                     amp = amp * (0.65 + 0.35 * falloff)
@@ -331,15 +342,22 @@ private final class CircleButton: NSView {
     enum Kind { case cancel, finish }
     let kind: Kind
     var onClick: (() -> Void)?
-    private var isPressed = false { didSet { needsDisplay = true } }
+    private var isPressed = false { didSet { updateAppearance() } }
+    private var isHovered = false { didSet { updateAppearance() } }
+    private var trackingArea: NSTrackingArea?
 
     init(kind: Kind) {
         self.kind = kind
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerCurve = .continuous
-        layer?.cornerRadius = 9
-        layer?.masksToBounds = true
+        layer?.cornerRadius = 10  // Match larger button size
+        layer?.masksToBounds = false  // Allow shadow
+        // Add subtle shadow
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.2
+        layer?.shadowOffset = NSSize(width: 0, height: 1)
+        layer?.shadowRadius = 2
         // Accessibility
         setAccessibilityRole(.button)
         setAccessibilityLabel(kind == .cancel ? "Cancel recording" : "Finish recording")
@@ -349,38 +367,77 @@ private final class CircleButton: NSView {
 
     override var isFlipped: Bool { true }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        trackingArea = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(trackingArea!)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    private func updateAppearance() {
+        needsDisplay = true
+        // Smooth scale animation on hover/press
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            let scale: CGFloat = isPressed ? 0.88 : (isHovered ? 1.08 : 1.0)
+            layer?.transform = CATransform3DMakeScale(scale, scale, 1)
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let ctx = NSGraphicsContext.current?.cgContext
         ctx?.saveGState()
+
+        // Background with hover state
         let bg: NSColor
         switch kind {
-        case .cancel: bg = NSColor.white.withAlphaComponent(isPressed ? 0.28 : 0.22)
-        case .finish: bg = NSColor.systemRed.withAlphaComponent(isPressed ? 0.95 : 0.9)
+        case .cancel:
+            let alpha: CGFloat = isPressed ? 0.35 : (isHovered ? 0.28 : 0.22)
+            bg = NSColor.white.withAlphaComponent(alpha)
+        case .finish:
+            let alpha: CGFloat = isPressed ? 1.0 : (isHovered ? 0.95 : 0.88)
+            bg = NSColor.systemRed.withAlphaComponent(alpha)
         }
         bg.setFill()
         let path = NSBezierPath(ovalIn: bounds)
         path.fill()
 
-        // Icon
+        // Icon with better contrast
         NSColor.white.setFill()
         NSColor.white.setStroke()
         switch kind {
         case .cancel:
-            let inset: CGFloat = 5
+            // Cleaner X icon
+            let inset: CGFloat = 6
+            let lineWidth: CGFloat = 2.0
             let p1 = NSBezierPath()
             p1.move(to: NSPoint(x: inset, y: inset))
             p1.line(to: NSPoint(x: bounds.width - inset, y: bounds.height - inset))
-            p1.lineWidth = 1.8
+            p1.lineWidth = lineWidth
+            p1.lineCapStyle = .round
             p1.stroke()
             let p2 = NSBezierPath()
             p2.move(to: NSPoint(x: bounds.width - inset, y: inset))
             p2.line(to: NSPoint(x: inset, y: bounds.height - inset))
-            p2.lineWidth = 1.8
+            p2.lineWidth = lineWidth
+            p2.lineCapStyle = .round
             p2.stroke()
         case .finish:
-            let s: CGFloat = 8
+            // Rounded square stop icon
+            let s: CGFloat = 9
             let r = NSRect(x: (bounds.width - s)/2, y: (bounds.height - s)/2, width: s, height: s)
-            let square = NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5)
+            let square = NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2)
             square.fill()
         }
         ctx?.restoreGState()

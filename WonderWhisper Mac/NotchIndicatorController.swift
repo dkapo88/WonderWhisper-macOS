@@ -136,20 +136,11 @@ final class NotchIndicatorController {
     }
 
     private func playStartSound() {
-        playSound(name: "Tink", volume: 0.18)
+        SoundFeedback.playStart()
     }
 
     private func playStopSound() {
-        playSound(name: "Tink", volume: 0.12)
-    }
-
-    private func playSound(name: String, volume: Float) {
-        if let base = NSSound(named: NSSound.Name(name)), let sound = base.copy() as? NSSound {
-            sound.volume = volume
-            sound.play()
-        } else {
-            // Fallback to system beep at low volume is not supported; just no-op
-        }
+        SoundFeedback.playStop()
     }
 }
 
