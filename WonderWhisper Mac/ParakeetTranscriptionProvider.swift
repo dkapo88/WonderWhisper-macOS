@@ -17,6 +17,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var loadTask: Task<Void, Error>?
     // Track which ASR model version is loaded to allow switching between v2 and v3
     private var loadedVersion: AsrModelVersion?
+    // Watchdog timeouts (seconds)
+    private let vadTimeout: TimeInterval = 6
+    private let asrTimeout: TimeInterval = 45
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -122,46 +125,54 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         try await ensureModelsLoaded(version: preferredVersion(for: settings))
         scheduleIdleUnload()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
-        // Optional smart preprocessing (shared with Groq path)
-        var inputURL = fileURL
-        var preprocessingEnabled = false
-        if AudioPreprocessor.isEnabled {
-            let processed = AudioPreprocessor.processIfEnabled(fileURL)
-            if processed != fileURL { preprocessingEnabled = true; inputURL = processed }
+
+        // Work on a private copy to avoid holding locks on the original recording
+        var cleanupURLs: [URL] = []
+        let workingURL: URL
+        if let copy = try? makeWorkingCopy(of: fileURL) {
+            workingURL = copy
+            cleanupURLs.append(copy)
+        } else {
+            workingURL = fileURL
         }
 
-        // Cache lookup (separate entries per model version and preprocessing state)
-        let modelIdForCache = "\(settings.model)-\(preferredVersion(for: settings) == .v2 ? "v2" : "v3")"
-        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "parakeet", model: modelIdForCache, language: nil, preprocessing: preprocessingEnabled),
-           let cached = TranscriptionCache.shared.lookup(key) {
-            return cached
+        // Optional smart preprocessing (shared with Groq path)
+        var inputURL = workingURL
+        var preprocessingApplied = false
+        if AudioPreprocessor.isEnabled {
+            let processed = AudioPreprocessor.processIfEnabled(workingURL)
+            if processed != workingURL {
+                inputURL = processed
+                preprocessingApplied = true
+                cleanupURLs.append(processed)
+            }
         }
-        var samples: [Float]
-        let ext = inputURL.pathExtension.lowercased()
-        if ["m4a","mp4","aac","alac","mov","m4b","m4p"].contains(ext),
-           let alt = try? Self.decodeWithAssetReader(url: inputURL) {
-            AppLog.dictation.log("[Parakeet] Preferred AVAssetReader path for compressed input: samples=\(alt.count)")
+
+        defer {
+            for url in cleanupURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        var samples: [Float] = []
+        // Prefer AVAssetReader universally (robust across formats), fallback to AVAudioFile path
+        if let alt = try? Self.decodeWithAssetReader(url: inputURL), !alt.isEmpty {
+            AppLog.dictation.log("[Parakeet] Decode (AssetReader): samples=\(alt.count)")
             samples = alt
         } else {
             do {
+                AppLog.dictation.log("[Parakeet] Decode (AVAudioFile) begin")
                 samples = try Self.decodeAudioToFloatMono16k(url: inputURL)
+                AppLog.dictation.log("[Parakeet] Decode (AVAudioFile) end: samples=\(samples.count)")
             } catch {
                 let ns = error as NSError
                 AppLog.dictation.error("[Parakeet] AVAudioFile decode failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
-                // Fallback: try AVAssetReader-based decode
-                if let alt = try? Self.decodeWithAssetReader(url: inputURL) {
-                    AppLog.dictation.log("[Parakeet] Fallback decode via AVAssetReader succeeded: samples=\(alt.count)")
-                    samples = alt
-                } else {
-                    AppLog.dictation.error("[Parakeet] Fallback decode via AVAssetReader failed")
-                    throw error
-                }
+                throw error
             }
         }
         // Front-end conditioning (configurable via UserDefaults)
         let defaults = UserDefaults.standard
         // If app-level preprocessing already applied, skip internal steps to avoid double-processing
-        if !preprocessingEnabled {
+        if !preprocessingApplied {
             let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
             if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
             let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
@@ -172,11 +183,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
-                if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
-                    samples = trimmed
+                AppLog.dictation.log("[Parakeet] VAD begin")
+                let trimmed: [Float]? = try await withTimeout(seconds: vadTimeout) { [self] in
+                    try await self.applyVADIfAvailable(samples)
                 }
+                if let trimmed, trimmed.count >= 16_000 { samples = trimmed }
+                AppLog.dictation.log("[Parakeet] VAD end")
             }
         } catch {
+            AppLog.dictation.error("[Parakeet] VAD failed: \(error.localizedDescription)")
             // Non-fatal: proceed without VAD
         }
         let stats = Self.stats(samples: samples)
@@ -194,24 +209,25 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
             throw err
         }
+        AppLog.dictation.log("[Parakeet] ASR begin")
         let result: ASRResult
         do {
             // Provide source hint per 0.6 API
-            result = try await mgr.transcribe(samples, source: .microphone)
+            result = try await withTimeout(seconds: asrTimeout) {
+                try await mgr.transcribe(samples, source: .microphone)
+            }
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
             AppLog.dictation.error("[Parakeet] transcribe error domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
             throw error
         }
+        AppLog.dictation.log("[Parakeet] ASR done")
         let preview = result.text.prefix(120)
         log.notice("[Parakeet] result length=\(result.text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
         AppLog.dictation.log("[Parakeet] result length=\(result.text.count) preview=\(String(preview))")
         // Keep models warm for subsequent transcriptions to avoid re-initialization errors
         let text = result.text
-        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "parakeet", model: modelIdForCache, language: nil, preprocessing: preprocessingEnabled) {
-            TranscriptionCache.shared.store(key, result: text)
-        }
         scheduleIdleUnload()
         return text
     }
@@ -249,10 +265,13 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         if samples.isEmpty { return nil }
         // Use 0.6 segmentation API for robust trimming
         var segCfg = VadSegmentationConfig.default
-        // Lightly-tuned defaults for single-speaker dictation
-        segCfg.minSpeechDuration = 0.25
-        segCfg.minSilenceDuration = 0.35
-        segCfg.speechPadding = 0.1
+        // Tunable parameters via UserDefaults with safe clamps
+        let minSpeech = max(0.05, min(1.0, UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25))
+        let minSilence = max(0.10, min(1.5, UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35))
+        let padding = max(0.0, min(0.8, UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10))
+        segCfg.minSpeechDuration = minSpeech
+        segCfg.minSilenceDuration = minSilence
+        segCfg.speechPadding = padding
         let segments = try await vad.segmentSpeech(samples, config: segCfg)
         guard let first = segments.first, let last = segments.last else { return nil }
         // Convert seconds to sample indices at 16kHz
@@ -421,6 +440,33 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return samples
     }
 }
+#if canImport(FluidAudio)
+extension ParakeetTranscriptionProvider {
+    // Simple async timeout wrapper
+    fileprivate func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask { @Sendable () throws -> T in
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw NSError(domain: "Parakeet", code: -2001, userInfo: [NSLocalizedDescriptionKey: "Operation timed out (\(Int(seconds))s)"])
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+}
+
+extension ParakeetTranscriptionProvider {
+    private func makeWorkingCopy(of url: URL) throws -> URL {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory
+        let copyURL = tempDir.appendingPathComponent("parakeet_work_\(UUID().uuidString).\(url.pathExtension.isEmpty ? "wav" : url.pathExtension)")
+        try fm.copyItem(at: url, to: copyURL)
+        return copyURL
+    }
+}
+#endif
 #else
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
     init(modelsDirectory: URL? = nil) {}
