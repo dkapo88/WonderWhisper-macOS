@@ -4,16 +4,30 @@ import OSLog
 
 /// GroqStreamingProvider implements chunked audio upload for faster transcription results.
 /// Since Groq doesn't support WebSocket streaming like Deepgram/AssemblyAI,
-/// this provider chunks audio into small segments and uploads them progressively.
+/// this provider chunks audio into multi‑second segments with overlap and uploads them progressively.
+///
+/// Key behavior (tunable via UserDefaults):
+/// - groq.stream.chunkSeconds (Double): default 6.0s, 2.0–15.0s
+/// - groq.stream.overlapSeconds (Double): default 1.2s, 0.5–4.0s
+/// - groq.stream.maxInflight (Int): default 1 (sequential uploads)
+/// - groq.stream.promptTrailChars (Int): default 200 (80–600)
+///
+/// Larger chunks + overlap dramatically improve boundary accuracy versus sub‑second micro‑chunks
+/// while keeping latency acceptable for dictation scenarios. Transcript merging performs
+/// punctuation‑insensitive overlap removal.
 final class GroqStreamingProvider: TranscriptionProvider {
     private let client: GroqHTTPClient
 
     // Chunking configuration
-    // Default to ~0.8s chunks for lower latency; configurable via UserDefaults("groq.stream.chunkSeconds")
-    private let chunkDurationSeconds: Double = {
+    // Use multi‑second chunks with overlap for accuracy; configurable via UserDefaults("groq.stream.chunkSeconds")
+    // Default 6.0s chunks with 1.2s overlap (tunable via UserDefaults).
+    private var chunkDurationSeconds: Double = {
         let d = UserDefaults.standard.double(forKey: "groq.stream.chunkSeconds")
-        // Clamp between 0.4s and 2.0s to avoid too-small or too-large requests
-        return d > 0 ? max(0.4, min(2.0, d)) : 0.8
+        return d > 0 ? max(2.0, min(15.0, d)) : 6.0
+    }()
+    private var overlapDurationSeconds: Double = {
+        let d = UserDefaults.standard.double(forKey: "groq.stream.overlapSeconds")
+        return d > 0 ? max(0.5, min(4.0, d)) : 1.2
     }()
     private let sampleRate: Double = 16_000.0       // 16kHz for optimal Groq performance
     private let bytesPerSecond: Int = 32_000        // 16kHz * 2 bytes per sample
@@ -27,14 +41,16 @@ final class GroqStreamingProvider: TranscriptionProvider {
     private let limiter: RateLimiter
 
     // Serialize audio buffering/chunking to avoid data races
-    private let chunker: Chunker
+    private var chunker: Chunker
 
     init(client: GroqHTTPClient) {
         self.client = client
-        self.chunker = Chunker(chunkSizeBytes: Int(chunkDurationSeconds * Double(bytesPerSecond)))
-        // Limit concurrent uploads to reduce network contention; configurable via UserDefaults("groq.stream.maxInflight")
+        let initialChunkBytes = Int(chunkDurationSeconds * Double(bytesPerSecond))
+        let initialOverlapBytes = Int(overlapDurationSeconds * Double(bytesPerSecond))
+        self.chunker = Chunker(chunkSizeBytes: initialChunkBytes, overlapBytes: initialOverlapBytes)
+        // Limit concurrent uploads to reduce prompt staleness; default sequential
         let maxInflight = UserDefaults.standard.integer(forKey: "groq.stream.maxInflight")
-        let bounded = max(1, min(4, maxInflight == 0 ? 3 : maxInflight))
+        let bounded = max(1, min(3, maxInflight == 0 ? 1 : maxInflight))
         self.limiter = RateLimiter(max: bounded)
     }
 
@@ -42,12 +58,26 @@ final class GroqStreamingProvider: TranscriptionProvider {
     private actor Chunker {
         private var buffer = Data()
         private var counter: Int = 0
-        private let chunkSize: Int
+        private var prevTail = Data()
+        private var chunkSize: Int
+        private var overlapSize: Int
 
-        init(chunkSizeBytes: Int) { self.chunkSize = max(1, chunkSizeBytes) }
+        init(chunkSizeBytes: Int, overlapBytes: Int) {
+            self.chunkSize = max(1, chunkSizeBytes)
+            self.overlapSize = max(0, min(chunkSizeBytes / 2, overlapBytes))
+        }
+
+        func reconfigure(chunkSizeBytes: Int, overlapBytes: Int) {
+            self.chunkSize = max(1, chunkSizeBytes)
+            self.overlapSize = max(0, min(chunkSizeBytes / 2, overlapBytes))
+            buffer.removeAll(keepingCapacity: false)
+            prevTail.removeAll(keepingCapacity: false)
+            counter = 0
+        }
 
         func reset() {
             buffer.removeAll(keepingCapacity: false)
+            prevTail.removeAll(keepingCapacity: false)
             counter = 0
         }
 
@@ -57,20 +87,28 @@ final class GroqStreamingProvider: TranscriptionProvider {
             buffer.append(data)
             var out: [(Int, Data)] = []
             while buffer.count >= chunkSize {
-                let payload = buffer.prefix(chunkSize)
+                let core = buffer.prefix(chunkSize)
                 buffer.removeFirst(chunkSize)
+                var payload = Data()
+                if !prevTail.isEmpty { payload.append(prevTail) }
+                payload.append(core)
+                prevTail = Data(core.suffix(overlapSize))
                 counter += 1
-                out.append((counter, Data(payload)))
+                out.append((counter, payload))
             }
             return out
         }
 
         // Return remaining buffer as a final chunk if it meets a minimal threshold
         func flushRemainder(minBytes: Int) -> (number: Int, payload: Data)? {
-            guard buffer.count > minBytes else { return nil }
-            counter += 1
-            let payload = buffer
+            let totalBytes = prevTail.count + buffer.count
+            guard totalBytes > minBytes else { return nil }
+            var payload = Data()
+            if !prevTail.isEmpty { payload.append(prevTail) }
+            payload.append(buffer)
             buffer = Data()
+            prevTail = Data()
+            counter += 1
             return (counter, payload)
         }
     }
@@ -109,6 +147,20 @@ final class GroqStreamingProvider: TranscriptionProvider {
         await chunker.reset()
         accumulator = nil
         // Don't reset currentSettings - they should have been set via updateSettings() before beginRealtime()
+
+        // Re-read runtime tunables and reconfigure chunker
+        self.chunkDurationSeconds = {
+            let d = UserDefaults.standard.double(forKey: "groq.stream.chunkSeconds")
+            return d > 0 ? max(2.0, min(15.0, d)) : 6.0
+        }()
+        self.overlapDurationSeconds = {
+            let d = UserDefaults.standard.double(forKey: "groq.stream.overlapSeconds")
+            return d > 0 ? max(0.5, min(4.0, d)) : 1.2
+        }()
+        await chunker.reconfigure(
+            chunkSizeBytes: Int(chunkDurationSeconds * Double(bytesPerSecond)),
+            overlapBytes: Int(overlapDurationSeconds * Double(bytesPerSecond))
+        )
 
         // Initialize new session
         isStreaming = true
@@ -190,7 +242,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
                     return ""
                 }
                 let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
-                let maxPromptChars = promptChars > 0 ? max(40, min(400, promptChars)) : 120
+                let maxPromptChars = promptChars > 0 ? max(80, min(600, promptChars)) : 200
                 let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
                 var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
                 transcript = stripGroqThankYouSuffix(transcript)
@@ -237,7 +289,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
 
             // Optional trailing prompt from previous text to improve boundary accuracy
             let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
-            let maxPromptChars = promptChars > 0 ? max(40, min(400, promptChars)) : 120
+            let maxPromptChars = promptChars > 0 ? max(80, min(600, promptChars)) : 200
             let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
 
             // Upload to Groq
@@ -292,7 +344,8 @@ final class GroqStreamingProvider: TranscriptionProvider {
         }
         // Only provide trailing context prompt to improve chunk boundary accuracy
         let tail = (prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let tailSafe = tail.isEmpty ? nil : String(tail.prefix(120))
+        // Allow a bit more trailing context for boundary accuracy
+        let tailSafe = tail.isEmpty ? nil : String(tail.prefix(200))
         if let tailSafe {
             fields["prompt"] = tailSafe
         }
@@ -430,28 +483,15 @@ private actor GroqTranscriptAccumulator {
             s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
         }
         for key in sorted {
-            guard var next = chunkResults[key] else { continue }
+            guard let nextRaw = chunkResults[key] else { continue }
             if combined.isEmpty {
-                combined = next
+                combined = nextRaw
                 prevTokens = tokens(combined)
                 continue
             }
-            let nextTokens = tokens(next)
-            var drop = 0
-            let maxK = min(8, prevTokens.count, nextTokens.count)
-            if maxK >= 3 {
-                for m in stride(from: maxK, through: 3, by: -1) {
-                    if Array(prevTokens.suffix(m)) == Array(nextTokens.prefix(m)) {
-                        drop = m
-                        break
-                    }
-                }
-            }
-            if drop > 0 {
-                let words = next.split(whereSeparator: { $0.isWhitespace })
-                next = words.count > drop ? words.dropFirst(drop).joined(separator: " ") : ""
-            }
-            combined = combined.isEmpty ? next : (next.isEmpty ? combined : combined + " " + next)
+            // Use helper to merge with overlap-aware dedupe
+            let merged = OverlapDeduper.merge(prev: combined, next: nextRaw, maxK: 24)
+            combined = merged.trimmingCharacters(in: .whitespacesAndNewlines)
             prevTokens = tokens(combined)
         }
         AppLog.dictation.log("GroqStreaming: Assembled transcript from \(sorted.count) chunks")
