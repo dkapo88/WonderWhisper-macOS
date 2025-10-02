@@ -26,7 +26,14 @@ final class DictationViewModel: ObservableObject {
     @Published var audioLevel: Float = 0
 
     // Prompts
-    @Published var prompts: [PromptConfiguration] = [] { didSet { persistPromptLibrary() } }
+    @Published var prompts: [PromptConfiguration] = [] {
+        didSet {
+            // Persist prompt library changes and refresh hotkeys only when the prompt list/assignments change.
+            // Avoid refreshing hotkeys on mere selection changes to prevent losing key-up events mid-press.
+            persistPromptLibrary()
+            refreshPromptHotkeys()
+        }
+    }
     @Published var selectedPromptID: UUID? { didSet { applySelection() } }
     // System prompt is sent as the system role content
     @Published var systemPrompt: String = "" { didSet { updateActivePrompt(systemText: systemPrompt) } }
@@ -587,7 +594,6 @@ final class DictationViewModel: ObservableObject {
         }
         defaults.set(systemPrompt, forKey: "llm.systemPrompt")
         defaults.set(userPrompt, forKey: "llm.userMessage")
-        refreshPromptHotkeys()
     }
 
     private func applySelection() {
