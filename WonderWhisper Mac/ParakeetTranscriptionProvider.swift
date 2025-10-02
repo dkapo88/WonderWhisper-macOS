@@ -15,6 +15,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private let idleSeconds: TimeInterval = 600 // 10 minutes
     // Coalesce model loading to avoid duplicate work/logs
     private var loadTask: Task<Void, Error>?
+    // Track which ASR model version is loaded to allow switching between v2 and v3
+    private var loadedVersion: AsrModelVersion?
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -28,7 +30,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // Public warm-up to preload models on recording start
     func warmUp() async {
         do {
-            try await ensureModelsLoaded()
+            try await ensureModelsLoaded(version: preferredVersion())
             scheduleIdleUnload()
         } catch {
             let ns = error as NSError
@@ -53,18 +55,26 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
     }
 
-    private func ensureModelsLoaded() async throws {
-        if asrManager != nil { return }
-        if let t = loadTask { try await t.value; return }
+    private func ensureModelsLoaded(version: AsrModelVersion) async throws {
+        if let mgr = asrManager, loadedVersion == version {
+            // Already loaded with the requested version
+            _ = mgr // silence
+            return
+        }
+        if let t = loadTask {
+            // If a load is in-flight, await it then re-check
+            try await t.value
+            if let mgr = asrManager, loadedVersion == version { return }
+        }
         loadTask = Task { [weak self] in
             guard let self else { return }
             defer { self.loadTask = nil }
-            try await self.performModelLoad()
+            try await self.performModelLoad(version: version)
         }
         try await loadTask?.value
     }
 
-    private func performModelLoad() async throws {
+    private func performModelLoad(version: AsrModelVersion) async throws {
         try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
         // If models exist in a different known location, prefer that
         let discovered = ParakeetManager.effectiveModelsDirectory
@@ -82,8 +92,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
             AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
         }
-        // Always use the current FluidAudio bundle (v3)
-        var models = try await AsrModels.downloadAndLoad()
+        // Use selected model version (v2 or v3)
+        var models = try await AsrModels.downloadAndLoad(version: version)
 
         #if canImport(FluidAudio)
         // Detect legacy preprocessor outputs and force a re-download once
@@ -96,6 +106,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         #endif
         let mgr = AsrManager(config: .default)
         try await mgr.initialize(models: models)
+        self.loadedVersion = version
         #if compiler(>=5.9)
         // Best-effort signal
         if let available = Mirror(reflecting: mgr).descendant("isAvailable") as? Bool {
@@ -108,29 +119,37 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        try await ensureModelsLoaded()
+        try await ensureModelsLoaded(version: preferredVersion(for: settings))
         scheduleIdleUnload()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
-        // Cache lookup
-        let preprocessingEnabled = false
-        if let key = TranscriptionCache.shared.key(for: fileURL, provider: "parakeet", model: settings.model, language: nil, preprocessing: preprocessingEnabled),
+        // Optional smart preprocessing (shared with Groq path)
+        var inputURL = fileURL
+        var preprocessingEnabled = false
+        if AudioPreprocessor.isEnabled {
+            let processed = AudioPreprocessor.processIfEnabled(fileURL)
+            if processed != fileURL { preprocessingEnabled = true; inputURL = processed }
+        }
+
+        // Cache lookup (separate entries per model version and preprocessing state)
+        let modelIdForCache = "\(settings.model)-\(preferredVersion(for: settings) == .v2 ? "v2" : "v3")"
+        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "parakeet", model: modelIdForCache, language: nil, preprocessing: preprocessingEnabled),
            let cached = TranscriptionCache.shared.lookup(key) {
             return cached
         }
         var samples: [Float]
-        let ext = fileURL.pathExtension.lowercased()
+        let ext = inputURL.pathExtension.lowercased()
         if ["m4a","mp4","aac","alac","mov","m4b","m4p"].contains(ext),
-           let alt = try? Self.decodeWithAssetReader(url: fileURL) {
+           let alt = try? Self.decodeWithAssetReader(url: inputURL) {
             AppLog.dictation.log("[Parakeet] Preferred AVAssetReader path for compressed input: samples=\(alt.count)")
             samples = alt
         } else {
             do {
-                samples = try Self.decodeAudioToFloatMono16k(url: fileURL)
+                samples = try Self.decodeAudioToFloatMono16k(url: inputURL)
             } catch {
                 let ns = error as NSError
                 AppLog.dictation.error("[Parakeet] AVAudioFile decode failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
                 // Fallback: try AVAssetReader-based decode
-                if let alt = try? Self.decodeWithAssetReader(url: fileURL) {
+                if let alt = try? Self.decodeWithAssetReader(url: inputURL) {
                     AppLog.dictation.log("[Parakeet] Fallback decode via AVAssetReader succeeded: samples=\(alt.count)")
                     samples = alt
                 } else {
@@ -141,12 +160,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         // Front-end conditioning (configurable via UserDefaults)
         let defaults = UserDefaults.standard
-        let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
-        if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
-        let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
-        if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
-        let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
-        samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
+        // If app-level preprocessing already applied, skip internal steps to avoid double-processing
+        if !preprocessingEnabled {
+            let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
+            if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
+            let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
+            if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
+            let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
+            samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
+        }
         // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
@@ -187,11 +209,21 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         AppLog.dictation.log("[Parakeet] result length=\(result.text.count) preview=\(String(preview))")
         // Keep models warm for subsequent transcriptions to avoid re-initialization errors
         let text = result.text
-        if let key = TranscriptionCache.shared.key(for: fileURL, provider: "parakeet", model: settings.model, language: nil, preprocessing: preprocessingEnabled) {
+        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "parakeet", model: modelIdForCache, language: nil, preprocessing: preprocessingEnabled) {
             TranscriptionCache.shared.store(key, result: text)
         }
         scheduleIdleUnload()
         return text
+    }
+
+    // Determine preferred ASR model version from settings or user defaults
+    private func preferredVersion(for settings: TranscriptionSettings? = nil) -> AsrModelVersion {
+        if let model = settings?.model.lowercased() {
+            if model.contains("v2") { return .v2 }
+            if model.contains("v3") { return .v3 }
+        }
+        let pref = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
+        return (pref == "v2") ? .v2 : .v3
     }
 
     // MARK: - VAD (Silero) integration

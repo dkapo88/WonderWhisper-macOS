@@ -8,6 +8,7 @@ import FluidAudio
 
 struct SettingsModelsView: View {
     @ObservedObject var vm: DictationViewModel
+    @AppStorage("parakeet.version") private var parakeetVersion: String = "v3"
     @State private var favoriteModelDraft: String = ""
     @State private var favoriteProviderDraft: String
 
@@ -99,13 +100,13 @@ struct SettingsModelsView: View {
                                     .foregroundColor(ParakeetManager.modelsPresent() ? .green : .red)
                             }
                             HStack(spacing: 12) {
-                                Button("Download/Update Models") { Task { await downloadParakeet() } }
+                                Button("Download/Update Both Models") { Task { await downloadParakeet() } }
                                     .disabled(!ParakeetManager.isLinked)
                                 Button("Show in Finder") { NSWorkspace.shared.selectFile(ParakeetManager.effectiveModelsDirectory.path, inFileViewerRootedAtPath: "") }
-                                Button("Remove Models") { try? FileManager.default.removeItem(at: ParakeetManager.effectiveModelsDirectory) }
+                                Button("Remove Models") { ParakeetManager.removeAllModels() }
                                     .disabled(!ParakeetManager.modelsPresent())
                             }
-                            Text("Path: \(ParakeetManager.effectiveModelsDirectory.path)")
+                            Text("Selected engine: \(parakeetVersion.uppercased())  •  Path: \(ParakeetManager.effectiveModelsDirectory.path)")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -304,7 +305,8 @@ struct SettingsModelsView: View {
     private func downloadParakeet() async {
         #if canImport(FluidAudio)
         do {
-            _ = try await AsrModels.downloadAndLoad()
+            _ = try await AsrModels.downloadAndLoad(version: .v2)
+            _ = try await AsrModels.downloadAndLoad(version: .v3)
         } catch {
             // ignore; UI shows present/missing
         }

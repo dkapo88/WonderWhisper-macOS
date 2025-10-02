@@ -4,7 +4,7 @@ enum ParakeetManager {
     // Preferred location to place/download models
     static var modelsDirectory: URL {
         let appSupport = try! FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        return appSupport.appendingPathComponent("ParakeetModels", isDirectory: true)
+        return appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
     }
 
     // Detect existing installs that may have landed in a different folder
@@ -29,8 +29,12 @@ enum ParakeetManager {
         let appSupport = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         // Candidates we know about
         var candidates: [URL] = []
+        // FluidAudio default cache path
+        if let appSupport { candidates.append(appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)) }
+        // Legacy paths supported previously
         if let appSupport { candidates.append(appSupport.appendingPathComponent("ParakeetModels", isDirectory: true)) }
         if let appSupport { candidates.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b-v3-coreml", isDirectory: true)) }
+        if let appSupport { candidates.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b-v2-coreml", isDirectory: true)) }
         if let appSupport { candidates.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b", isDirectory: true)) }
         // Any folder in Application Support that looks like a parakeet model root
         if let appSupport {
@@ -81,5 +85,23 @@ enum ParakeetManager {
         let vocabPresent = (inv.others.contains(where: { $0.lowercased().contains("vocab") }))
         if !vocabPresent { missing.append("vocabulary") }
         return (missing.isEmpty, missing)
+    }
+
+    // Remove all known model caches (new + legacy paths) for a clean reset
+    static func removeAllModels() {
+        let fm = FileManager.default
+        let appSupport = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        var targets: [URL] = []
+        if let appSupport { targets.append(appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)) }
+        if let appSupport { targets.append(appSupport.appendingPathComponent("ParakeetModels", isDirectory: true)) }
+        if let appSupport { targets.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b-v3-coreml", isDirectory: true)) }
+        if let appSupport { targets.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b-v2-coreml", isDirectory: true)) }
+        if let appSupport { targets.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b", isDirectory: true)) }
+        if let appSupport, let items = try? fm.contentsOfDirectory(at: appSupport, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            for url in items where url.lastPathComponent.lowercased().hasPrefix("parakeet-tdt") {
+                targets.append(url)
+            }
+        }
+        for t in targets { try? fm.removeItem(at: t) }
     }
 }

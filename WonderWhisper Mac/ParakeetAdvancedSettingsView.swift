@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ParakeetAdvancedSettingsView: View {
+    @AppStorage("parakeet.version") private var version: String = "v3" // "v2" or "v3"
     @AppStorage("parakeet.preemphasis") private var preEmphasisEnabled: Bool = true
     @AppStorage("parakeet.highpass.hz") private var highPassHz: Int = 60
     @AppStorage("parakeet.rms.target") private var targetRMS: Double = 0.06
@@ -11,6 +12,18 @@ struct ParakeetAdvancedSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Engine version")
+                Spacer()
+                Picker("Engine version", selection: $version) {
+                    Text("V2 (English)").tag("v2")
+                    Text("V3 (Multilingual)").tag("v3")
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
+                .help("Choose Parakeet TDT version. V2 is English-only with higher recall; V3 supports 25 languages.")
+            }
+            Divider()
             Toggle("Pre-emphasis (0.97)", isOn: $preEmphasisEnabled)
             HStack {
                 Text("High-pass cutoff")
