@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import Carbon.HIToolbox
 import AppKit
+import ApplicationServices
 
 struct FavoriteLLMModel: Identifiable, Codable, Hashable {
     var id: UUID
@@ -109,6 +110,8 @@ final class DictationViewModel: ObservableObject {
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
+    // Global Escape key interceptor using CGEventTap (can suppress the key)
+    private var escapeKeyInterceptor: EscapeKeyInterceptor?
 
     // Hotkey
     private let hotkeys = HotkeyManager()
@@ -273,6 +276,8 @@ final class DictationViewModel: ObservableObject {
         timer?.invalidate()
         if let m = escapeEventMonitor { NSEvent.removeMonitor(m) }
         escapeEventMonitor = nil
+        escapeKeyInterceptor?.stop()
+        escapeKeyInterceptor = nil
     }
 
     private func controllerState() async -> String {
@@ -328,15 +333,107 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateEscapeMonitor(isRecording: Bool) {
-        // Remove any existing monitor first
-        if let m = escapeEventMonitor { NSEvent.removeMonitor(m); escapeEventMonitor = nil }
+        // Remove any existing listeners first
+        if let m = escapeEventMonitor { NSEvent.removeMonitor(m) }
+        escapeEventMonitor = nil
+        escapeKeyInterceptor?.stop()
+        escapeKeyInterceptor = nil
+
         guard isRecording else { return }
-        // Register a global keyDown monitor for Escape (keyCode 53)
-        escapeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: NSEvent.EventTypeMask.keyDown) { [weak self] (event: NSEvent) in
+
+        // Prefer a CGEventTap so we can swallow Escape globally while recording
+        // Ensure we have Accessibility trust (required to intercept/modify events)
+        if requestAccessibilityTrustIfNeeded() {
+            let interceptor = EscapeKeyInterceptor()
+            interceptor.onEscape = { [weak self] in
+                Task { @MainActor in self?.cancel() }
+            }
+            if interceptor.start() {
+                escapeKeyInterceptor = interceptor
+                return
+            }
+        }
+
+        // Fallback: monitor (cannot suppress) if tap could not be installed
+        escapeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] (event: NSEvent) in
             guard let self = self else { return }
             if event.keyCode == 53 { // kVK_Escape
                 self.cancel()
             }
+        }
+    }
+
+    // Request Accessibility permission (AX) so we can install a non-listen-only event tap.
+    // Returns true if trusted (either already or after prompting), false otherwise.
+    private func requestAccessibilityTrustIfNeeded() -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeRetainedValue() as String
+        let opts: CFDictionary = [key: true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(opts)
+        return trusted
+    }
+
+    // MARK: - Global Escape interceptor (CGEventTap)
+    // Lives in the same file to avoid Xcode project changes.
+    private final class EscapeKeyInterceptor {
+        private var eventTap: CFMachPort?
+        private var runLoopSource: CFRunLoopSource?
+        var onEscape: (() -> Void)?
+
+        func start() -> Bool {
+            // Create an event tap at the head so we can intercept before delivery
+            let mask = (1 << CGEventType.keyDown.rawValue)
+            let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+                let me = Unmanaged<EscapeKeyInterceptor>.fromOpaque(refcon).takeUnretainedValue()
+
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = me.eventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
+                    return Unmanaged.passUnretained(event)
+                }
+
+                guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+                let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+                if keycode == 53 { // kVK_Escape
+                    me.onEscape?()
+                    // Swallow Escape so it doesn't reach the focused app
+                    return nil
+                }
+                return Unmanaged.passUnretained(event)
+            }
+
+            // Pass self via refcon so callback can reach our closure
+            let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+
+            guard let tap = CGEvent.tapCreate(
+                tap: .cghidEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: CGEventMask(mask),
+                callback: callback,
+                userInfo: refcon
+            ) else { return false }
+
+            eventTap = tap
+            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            guard let source = runLoopSource else { return false }
+
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            return true
+        }
+
+        func stop() {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: false)
+                CFMachPortInvalidate(tap)
+            }
+            eventTap = nil
+            if let source = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
+            }
+            runLoopSource = nil
         }
     }
 
