@@ -20,8 +20,12 @@ struct GroqHTTPClient {
                 let req2 = request
                 async let warm1: (Data, URLResponse) = session.data(for: req1)
                 async let warm2: (Data, URLResponse) = prioritySession.data(for: req2)
+                async let warm3: (Data, URLResponse)? = AppConfig.forceHTTP2ForUploads ? http2Session.data(for: req1) : nil
+                async let warm4: (Data, URLResponse)? = AppConfig.forceHTTP2ForUploads ? http2PrioritySession.data(for: req2) : nil
                 _ = try await warm1
                 _ = try await warm2
+                _ = try await warm3
+                _ = try await warm4
             } catch {
                 // Ignore pre-warming errors
             }
@@ -77,6 +81,44 @@ struct GroqHTTPClient {
         cfg.networkServiceType = .responsiveData
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
+
+    static let http2Session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 8
+        cfg.timeoutIntervalForRequest = 10
+        cfg.timeoutIntervalForResource = 30
+        cfg.allowsExpensiveNetworkAccess = true
+        cfg.allowsConstrainedNetworkAccess = true
+        cfg.networkServiceType = .responsiveData
+        cfg.httpShouldUsePipelining = true
+        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
+    }()
+
+    static let http2PrioritySession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 4
+        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForResource = 25
+        cfg.allowsExpensiveNetworkAccess = true
+        cfg.allowsConstrainedNetworkAccess = true
+        cfg.networkServiceType = .responsiveData
+        cfg.httpShouldUsePipelining = true
+        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
+    }()
+
+    static var http2DebugLoggingEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "network.http2.debug")
+    }
 
     private func authHeader() throws -> String {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw ProviderError.missingAPIKey }
@@ -258,24 +300,6 @@ struct GroqHTTPClient {
             }
         }
 
-        // If forcing HTTP/2 for uploads, use a curl-based multipart path to avoid HTTP/3/QUIC.
-        if AppConfig.forceHTTP2ForUploads {
-            AppLog.network.log("Using curl HTTP/2 path for multipart upload req=\(reqId)")
-            do {
-                return try await postMultipartViaCurl(
-                    url: url,
-                    fields: fields,
-                    files: files,
-                    timeout: timeout,
-                    context: context,
-                    reqId: reqId
-                )
-            } catch {
-                AppLog.network.error("HTTP/2 curl path failed; falling back to URLSession req=\(reqId) error=\((error as NSError).localizedDescription)")
-                // Continue to URLSession path below
-            }
-        }
-
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -285,6 +309,14 @@ struct GroqHTTPClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .voice
+
+        let preferHTTP2 = AppConfig.forceHTTP2ForUploads
+        if preferHTTP2 {
+            request.setValue("1", forHTTPHeaderField: "X-WW-Expect-H2")
+        }
+
+        let baseSession = preferHTTP2 ? Self.http2Session : Self.session
+        let prioritySession = preferHTTP2 ? Self.http2PrioritySession : Self.prioritySession
 
         // Set compression headers if body was compressed
         if shouldCompress {
@@ -305,7 +337,7 @@ struct GroqHTTPClient {
                         var priorityRequest = request
                         priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
                         priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
-                        let (data, response) = try await Self.prioritySession.data(for: priorityRequest)
+                        let (data, response) = try await prioritySession.data(for: priorityRequest)
                         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                             throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
                         }
@@ -314,25 +346,11 @@ struct GroqHTTPClient {
                     // Task 2: Standard URLSession as fallback
                     group.addTask {
                         try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
-                        let (data, response) = try await dataWithAttemptTimeout(for: request)
+                        let (data, response) = try await dataWithAttemptTimeout(for: request, session: baseSession)
                         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                             throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
                         }
                         return data
-                    }
-                    // Task 3: Curl HTTP/2 as final fallback (with delay)
-                    if AppConfig.forceHTTP2ForUploads {
-                        group.addTask {
-                            try await Task.sleep(nanoseconds: 200_000_000) // 0.2s delay
-                            return try await self.postMultipartViaCurl(
-                                url: url,
-                                fields: fields,
-                                files: files,
-                                timeout: timeout,
-                                context: context,
-                                reqId: reqId
-                            )
-                        }
                     }
                     guard let result = try await group.next() else {
                         throw ProviderError.notImplemented
@@ -364,6 +382,7 @@ struct GroqHTTPClient {
 }
 
 // MARK: - URLSession delegate + retry wrapper
+// MARK: - URLSession delegate + retry wrapper
 final class GroqURLSessionDelegate: NSObject, URLSessionTaskDelegate {
     static let shared = GroqURLSessionDelegate()
 
@@ -376,8 +395,14 @@ final class GroqURLSessionDelegate: NSObject, URLSessionTaskDelegate {
         let req = tx.request
         let reqId = req.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?"
         let ctx = req.value(forHTTPHeaderField: "X-WW-Context") ?? "-"
-        let ttfb = (tx.responseStartDate?.timeIntervalSince(tx.requestStartDate ?? tx.fetchStartDate ?? Date()))
-        let transfer = (tx.responseEndDate?.timeIntervalSince(tx.responseStartDate ?? tx.responseEndDate ?? Date()))
+        let ttfb = tx.responseStartDate?.timeIntervalSince(tx.requestStartDate ?? tx.fetchStartDate ?? Date())
+        let transfer = tx.responseEndDate?.timeIntervalSince(tx.responseStartDate ?? tx.responseEndDate ?? Date())
+        let expectH2 = req.value(forHTTPHeaderField: "X-WW-Expect-H2") == "1"
+        if expectH2 && proto.lowercased() != "h2" {
+            AppLog.network.error("HTTP/2 expected but negotiated \(proto) req=\(reqId) ctx=\(ctx)")
+        } else if expectH2 && GroqHTTPClient.http2DebugLoggingEnabled {
+            AppLog.network.log("HTTP/2 upload confirmed proto=\(proto) req=\(reqId)")
+        }
         AppLog.network.log("Metrics req=\(reqId) ctx=\(ctx) proto=\(proto) dns=\(dns ?? -1)s connect=\(connect ?? -1)s tls=\(tls ?? -1)s ttfb=\(ttfb ?? -1)s transfer=\(transfer ?? -1)s")
     }
 }
@@ -390,7 +415,7 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
         let spId = OSSignpostID(log: GroqHTTPClient.spLog)
         os_signpost(.begin, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId, "attempt=%ld ctx=%{public}@ path=%{public}@", attempt, context ?? "-", request.url?.lastPathComponent ?? "<url>")
         do {
-            let (data, response) = try await dataWithAttemptTimeout(for: request)
+            let (data, response) = try await dataWithAttemptTimeout(for: request, session: GroqHTTPClient.session)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 let status = http.statusCode
                 if status == 429 {
@@ -401,7 +426,6 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
                     AppLog.network.error("HTTP 429 for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) retrying in \(delay, format: .fixed(precision: 2))s")
                     os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    // continue loop (retry)
                     continue
                 }
                 AppLog.network.error("HTTP \(status) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
@@ -416,149 +440,35 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
             let code = nsErr.code
             let domain = nsErr.domain
             AppLog.network.error("Attempt \(attempt) failed req=\(request.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?") ctx=\(context ?? "-") error=\(nsErr.localizedDescription)")
-            // Retry only on timeout and a couple transient network errors; also retry 429 via header parsing earlier
             let shouldRetry = (domain == NSURLErrorDomain) && (code == NSURLErrorTimedOut || code == NSURLErrorNetworkConnectionLost || code == NSURLErrorCannotFindHost || code == NSURLErrorCannotConnectToHost)
             os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
             if attempt >= maxAttempts || !shouldRetry { break }
-            // Exponential backoff with jitter
             let base: Double = 0.6
             let backoff = pow(2.0, Double(attempt - 1)) * base
             let jitter = Double.random(in: 0...(base * 0.5))
             let delay = backoff + jitter
             AppLog.network.log("Retrying in \(String(format: "%.2f", delay))s (attempt \(attempt+1)/\(maxAttempts))")
-            try? await Task.sleep(nanoseconds: UInt64((delay) * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
     }
     throw lastError ?? ProviderError.notImplemented
 }
 
 // Enforce per-attempt wall-clock timeout regardless of CFNetwork internals.
-private func dataWithAttemptTimeout(for request: URLRequest) async throws -> (Data, URLResponse) {
+private func dataWithAttemptTimeout(for request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
     let timeout = max(1.0, request.timeoutInterval)
     return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-        // Network task
         group.addTask {
-            return try await GroqHTTPClient.session.data(for: request)
+            return try await session.data(for: request)
         }
-        // Timeout task
         group.addTask {
             try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
             throw NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: [NSLocalizedDescriptionKey: "Attempt timed out after \(Int(timeout))s"])
         }
-        // Return first to finish; cancel the other
         defer { group.cancelAll() }
         guard let result = try await group.next() else {
             throw NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown, userInfo: [NSLocalizedDescriptionKey: "No result"])
         }
         return result
-    }
-}
-
-// MARK: - Curl-based HTTP/2 multipart uploader (opt-in)
-extension GroqHTTPClient {
-    private func postMultipartViaCurl(url: URL, fields: [String: String], files: [MultipartFile], timeout: TimeInterval, context: String?, reqId: String, maxAttempts: Int = 3) async throws -> Data {
-        let start = Date()
-        let apiKey = try authHeader().replacingOccurrences(of: "Bearer ", with: "")
-        var attempt = 0
-        var lastError: Error?
-
-        while attempt < maxAttempts {
-            attempt += 1
-            do {
-                let (data, status) = try runCurlHTTP2Multipart(
-                    url: url,
-                    apiKey: apiKey,
-                    fields: fields,
-                    files: files,
-                    timeout: timeout,
-                    context: context,
-                    reqId: reqId
-                )
-                if !(200...299).contains(status) {
-                    AppLog.network.error("HTTP \(status) for \(url.absoluteString, privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                    throw ProviderError.http(status: status, body: String(data: data, encoding: .utf8) ?? "<no body>")
-                }
-                AppLog.network.log("OK \(status) for \(url.lastPathComponent, privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                return data
-            } catch {
-                lastError = error
-                let nsErr = error as NSError
-                AppLog.network.error("Attempt \(attempt) failed (curl h2) req=\(reqId) ctx=\(context ?? "-") error=\(nsErr.localizedDescription)")
-                if attempt >= maxAttempts { break }
-                // Exponential backoff with jitter (mirror performWithRetry)
-                let base: Double = 0.6
-                let backoff = pow(2.0, Double(attempt - 1)) * base
-                let jitter = Double.random(in: 0...(base * 0.5))
-                let delay = backoff + jitter
-                AppLog.network.log("Retrying in \(String(format: "%.2f", delay))s (attempt \(attempt+1)/\(maxAttempts))")
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-        }
-        throw lastError ?? ProviderError.notImplemented
-    }
-
-    private func runCurlHTTP2Multipart(url: URL, apiKey: String, fields: [String: String], files: [MultipartFile], timeout: TimeInterval, context: String?, reqId: String) throws -> (Data, Int) {
-        // Create temp files for any in-memory file data
-        var tempURLs: [URL] = []
-        defer {
-            // Best-effort cleanup
-            for u in tempURLs { try? FileManager.default.removeItem(at: u) }
-        }
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-
-        var args: [String] = []
-        args.append(contentsOf: ["--http2", "--silent", "--show-error"]) // force HTTP/2, quiet output with errors
-        // Timeouts: connect-timeout for handshake; max-time for total transfer
-        args.append(contentsOf: ["--connect-timeout", "30"]) // conservative connect timeout
-        args.append(contentsOf: ["--max-time", String(Int(ceil(timeout)))])
-        // Headers
-        args.append(contentsOf: ["-H", "Authorization: Bearer \(apiKey)"])
-        args.append(contentsOf: ["-H", "X-WW-Context: \(context ?? "-")"])
-        args.append(contentsOf: ["-H", "X-WW-Request-ID: \(reqId)"])
-        // Fields
-        for (k, v) in fields { args.append(contentsOf: ["-F", "\(k)=\(v)"]) }
-        // Files
-        for f in files {
-            // Write data to a temp file so curl can upload from disk
-            let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ww-\(UUID().uuidString)-\(f.filename)")
-            try f.data.write(to: tmp)
-            tempURLs.append(tmp)
-            let form = "\(f.fieldName)=@\(tmp.path);type=\(f.mimeType)"
-            args.append(contentsOf: ["-F", form])
-        }
-        // Instruct curl to print a trailer line with the HTTP status code so we can parse it
-        args.append(contentsOf: ["-w", "\n%{http_code}\n"]) // status on its own line
-        args.append(url.absoluteString)
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-
-        try proc.run()
-        proc.waitUntilExit()
-
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        if proc.terminationStatus != 0 {
-            let msg = String(data: errData, encoding: .utf8) ?? "curl failed with status \(proc.terminationStatus)"
-            throw ProviderError.http(status: Int(proc.terminationStatus), body: msg)
-        }
-
-        // Parse response: body followed by a line with the status code
-        guard var out = String(data: outData, encoding: .utf8) else {
-            throw ProviderError.decodingFailed
-        }
-        out = out.replacingOccurrences(of: "\r\n", with: "\n")
-        var lines = out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard let statusLine = lines.popLast(), let status = Int(statusLine.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            // If we can't parse status, return body and assume 200 (unlikely but safe fallback)
-            return (outData, 200)
-        }
-        let bodyString = lines.joined(separator: "\n")
-        let bodyData = bodyString.data(using: .utf8) ?? Data()
-        return (bodyData, status)
     }
 }
