@@ -17,6 +17,21 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var loadTask: Task<Void, Error>?
     // Track which ASR model version is loaded to allow switching between v2 and v3
     private var loadedVersion: AsrModelVersion?
+    // Track the loaded VAD threshold to allow dynamic updates for auto mode
+    private var loadedVadThreshold: Double?
+    // Ephemeral auto-adjust overrides for the current transcription
+    private var autoOverrides: AutoOverrides?
+
+    // Auto-adjust container
+    private struct AutoOverrides {
+        let highPassHz: Int
+        let targetRMS: Double
+        let vadThreshold: Double
+        let minSpeech: Double
+        let minSilence: Double
+        let padding: Double
+        let profile: String // "quiet", "balanced", or "noisy"
+    }
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -163,22 +178,36 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 throw error
             }
         }
-        // Front-end conditioning (configurable via UserDefaults)
+        // Front-end conditioning (configurable via UserDefaults) with optional auto-adjust
         let defaults = UserDefaults.standard
+        let autoEnabled = (defaults.object(forKey: "parakeet.auto.enabled") as? Bool) ?? false
+        // Compute auto overrides once using decoded samples
+        if autoEnabled {
+            if let overrides = Self.deriveAutoOverrides(from: samples) {
+                autoOverrides = overrides
+                UserDefaults.standard.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
+                AppLog.dictation.log("[Parakeet] Auto profile=\(overrides.profile) hp=\(overrides.highPassHz) threshold=\(String(format: "%.2f", overrides.vadThreshold))")
+            } else {
+                autoOverrides = nil
+            }
+        } else {
+            autoOverrides = nil
+        }
+
         // If app-level preprocessing already applied, skip internal steps to avoid double-processing
         if !preprocessingApplied {
-            let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
+            let hpHz = autoOverrides?.highPassHz ?? (defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60)
             if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
             let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
             if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
-            let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
+            let targetRMS = autoOverrides?.targetRMS ?? (defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06)
             samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
         }
         // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
                 AppLog.dictation.log("[Parakeet] VAD begin")
-                if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
+                if let trimmed = try await applyVADIfAvailable(samples, overrides: autoOverrides), trimmed.count >= 16_000 {
                     samples = trimmed
                 }
                 AppLog.dictation.log("[Parakeet] VAD end")
@@ -234,16 +263,21 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     // MARK: - VAD (Silero) integration
-    private func ensureVadManager() async throws -> VadManager? {
-        if let v = vadManager { return v }
+    private func ensureVadManager(preferredThreshold: Double? = nil) async throws -> VadManager? {
+        let desired = preferredThreshold ?? (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double ?? 0.5)
+        // If a manager exists and threshold hasn't changed materially, reuse it
+        if let v = vadManager, let loaded = loadedVadThreshold, abs(loaded - desired) < 0.01 {
+            return v
+        }
         do {
             let cfg = VadConfig(
-                threshold: Float(UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double ?? 0.5),
+                threshold: Float(desired),
                 debugMode: false,
                 computeUnits: .cpuAndNeuralEngine
             )
             let v = try await VadManager(config: cfg)
             vadManager = v
+            loadedVadThreshold = desired
             return v
         } catch {
             return nil
@@ -251,15 +285,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     // Returns trimmed samples if VAD finds speech; nil otherwise
-    private func applyVADIfAvailable(_ samples: [Float]) async throws -> [Float]? {
-        guard let vad = try await ensureVadManager() else { return nil }
+    private func applyVADIfAvailable(_ samples: [Float], overrides: AutoOverrides?) async throws -> [Float]? {
+        guard let vad = try await ensureVadManager(preferredThreshold: overrides?.vadThreshold) else { return nil }
         if samples.isEmpty { return nil }
         // Use 0.6 segmentation API for robust trimming
         var segCfg = VadSegmentationConfig.default
         // Tunable parameters via UserDefaults with safe clamps
-        let minSpeech = max(0.05, min(1.0, UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25))
-        let minSilence = max(0.10, min(1.5, UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35))
-        let padding = max(0.0, min(0.8, UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10))
+        let minSpeech = max(0.05, min(1.0, overrides?.minSpeech ?? (UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25)))
+        let minSilence = max(0.10, min(1.5, overrides?.minSilence ?? (UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35)))
+        let padding = max(0.0, min(0.8, overrides?.padding ?? (UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10)))
         segCfg.minSpeechDuration = minSpeech
         segCfg.minSilenceDuration = minSilence
         segCfg.speechPadding = padding
@@ -348,6 +382,91 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             xPrev = x
         }
         return out
+    }
+
+    // MARK: - Auto-adjust heuristics
+    private static func deriveAutoOverrides(from samples: [Float]) -> AutoOverrides? {
+        guard samples.count >= 16_000 else { return nil }
+        // Compute absolute amplitudes
+        var absVals = [Double]()
+        absVals.reserveCapacity(samples.count)
+        var peak: Double = 0
+        var sumAbs: Double = 0
+        for s in samples {
+            let a = abs(Double(s))
+            absVals.append(a)
+            sumAbs += a
+            if a > peak { peak = a }
+        }
+        let meanAbs = sumAbs / Double(absVals.count)
+        absVals.sort()
+        func percentile(_ p: Double) -> Double {
+            let idx = max(0, min(absVals.count - 1, Int(Double(absVals.count - 1) * p)))
+            return absVals[idx]
+        }
+        let p20 = percentile(0.20)
+        let p80 = percentile(0.80)
+        // Approximate SNR from amplitude distribution
+        let snrDb = 20.0 * log10(max(p80, 1e-6) / max(p20, 1e-6))
+        // Low-frequency rumble check via energy reduction after 120 Hz high-pass
+        let origRms = rms(samples)
+        let hp = highPass(samples, cutoffHz: 120.0, sampleRate: 16_000)
+        let hpRms = rms(hp)
+        let lfEnergyReduction = (origRms > 0) ? (origRms - hpRms) / origRms : 0
+
+        // Classify environment
+        let profile: String
+        if snrDb < 12.0 || lfEnergyReduction > 0.15 {
+            profile = "noisy"
+        } else if snrDb > 22.0 && lfEnergyReduction < 0.12 {
+            profile = "quiet"
+        } else {
+            profile = "balanced"
+        }
+
+        // Map to overrides (aligned with presets)
+        switch profile {
+        case "quiet":
+            return AutoOverrides(
+                highPassHz: 50,
+                targetRMS: 0.070,
+                vadThreshold: 0.35,
+                minSpeech: 0.20,
+                minSilence: 0.30,
+                padding: 0.10,
+                profile: profile
+            )
+        case "noisy":
+            return AutoOverrides(
+                highPassHz: lfEnergyReduction > 0.20 ? 80 : 60,
+                targetRMS: 0.060,
+                vadThreshold: 0.70,
+                minSpeech: 0.30,
+                minSilence: 0.50,
+                padding: 0.15,
+                profile: profile
+            )
+        default:
+            return AutoOverrides(
+                highPassHz: 60,
+                targetRMS: 0.065,
+                vadThreshold: 0.50,
+                minSpeech: 0.25,
+                minSilence: 0.35,
+                padding: 0.10,
+                profile: profile
+            )
+        }
+    }
+
+    private static func rms(_ input: [Float]) -> Double {
+        guard !input.isEmpty else { return 0 }
+        var sumSq: Double = 0
+        for s in input {
+            let d = Double(s)
+            sumSq += d * d
+        }
+        return sqrt(sumSq / Double(input.count))
     }
 
     // Simple pre-emphasis

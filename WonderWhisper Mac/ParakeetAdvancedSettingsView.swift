@@ -10,6 +10,8 @@ struct ParakeetAdvancedSettingsView: View {
     @AppStorage("parakeet.vad.minSpeech") private var vadMinSpeech: Double = 0.25
     @AppStorage("parakeet.vad.minSilence") private var vadMinSilence: Double = 0.35
     @AppStorage("parakeet.vad.padding") private var vadPadding: Double = 0.10
+    @AppStorage("parakeet.auto.enabled") private var autoEnabled: Bool = false
+    @AppStorage("parakeet.auto.lastProfile") private var autoLastProfile: String = ""
 
     private let hpOptions: [Int] = [0, 40, 50, 60, 80]
 
@@ -107,6 +109,15 @@ struct ParakeetAdvancedSettingsView: View {
                 Spacer()
             }
             .help("Quickly apply recommended settings for common environments.")
+
+            Toggle("Auto-adjust from environment", isOn: $autoEnabled)
+                .help("Analyze input audio and adjust high‑pass, target RMS and VAD settings automatically. Uses heuristics similar to the presets.")
+            if !autoLastProfile.isEmpty {
+                Text("Auto profile (last): \(autoLastProfile.capitalized)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Divider()
 
             HStack {
                 Text("Engine version")
