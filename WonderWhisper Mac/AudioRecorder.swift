@@ -118,6 +118,7 @@ final class AudioRecorder: NSObject {
 
     func stopRecording() -> URL? {
         guard isRecording, let recorder else { return nil }
+        let url = recorder.url
         recorder.stop()
         isRecording = false
         stopLevelUpdates()
@@ -128,7 +129,8 @@ final class AudioRecorder: NSObject {
                 previousDefaultInputUID = nil
             }
         }
-        return recorder.url
+        self.recorder = nil // release AudioQueue promptly to avoid device reconfig contention
+        return url
     }
 
     // Wait until AVAudioRecorder flushes and finishes writing before returning the URL
@@ -147,8 +149,10 @@ final class AudioRecorder: NSObject {
                     previousDefaultInputUID = nil
                 }
             }
+            // Release AudioQueue resources as early as possible
+            self.recorder = nil
             // In case the delegate doesn't fire (shouldn't happen), provide a safety timeout
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self = self else { return }
                 if let c = self.finishContinuation {
                     self.finishContinuation = nil

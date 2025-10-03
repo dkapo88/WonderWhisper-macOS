@@ -127,13 +127,18 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         var cleanupURLs: [URL] = []
         var inputURL = fileURL
         var preprocessingApplied = false
-        if AudioPreprocessor.isEnabled {
+        // For Parakeet, external file-based preprocessing can compete with CoreAudio file finalization.
+        // Keep it disabled by default; allow opt-in via UserDefaults key "parakeet.externalPreprocess".
+        let allowExternalPreprocess = (UserDefaults.standard.object(forKey: "parakeet.externalPreprocess") as? Bool) ?? false
+        if allowExternalPreprocess && AudioPreprocessor.isEnabled {
+            AppLog.dictation.log("[Parakeet] External preprocess begin")
             let processed = AudioPreprocessor.processIfEnabled(fileURL)
             if processed != fileURL {
                 inputURL = processed
                 preprocessingApplied = true
                 cleanupURLs.append(processed)
             }
+            AppLog.dictation.log("[Parakeet] External preprocess end -> \(inputURL.lastPathComponent)")
         }
 
         defer {
@@ -143,6 +148,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         var samples: [Float] = []
         // Prefer AVAssetReader universally (robust across formats), fallback to AVAudioFile path
+        AppLog.dictation.log("[Parakeet] Decode begin for \(inputURL.lastPathComponent)")
         if let alt = try? Self.decodeWithAssetReader(url: inputURL), !alt.isEmpty {
             AppLog.dictation.log("[Parakeet] Decode (AssetReader): samples=\(alt.count)")
             samples = alt
