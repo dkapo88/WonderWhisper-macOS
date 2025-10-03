@@ -405,7 +405,11 @@ actor DictationController {
                             let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
                             if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
                         } catch {
-                            AppLog.dictation.error("Screen organization LLM (reprocess) failed: \(error.localizedDescription)")
+                            if error is CancellationError {
+                                AppLog.dictation.log("Screen organization LLM (reprocess) cancelled")
+                            } else {
+                                AppLog.dictation.error("Screen organization LLM (reprocess) failed: \(error.localizedDescription)")
+                            }
                         }
                     }
                 }
@@ -419,7 +423,34 @@ actor DictationController {
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 let t1 = Date()
-                output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                do {
+                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                } catch {
+                    let ns = error as NSError
+                    let isTransient = (ns.domain == NSURLErrorDomain) && (ns.code == NSURLErrorTimedOut || ns.code == NSURLErrorNetworkConnectionLost || ns.code == NSURLErrorCannotConnectToHost || ns.code == NSURLErrorCannotFindHost || ns.code == NSURLErrorNotConnectedToInternet)
+                    if AppConfig.llmEnableProviderFallback && isTransient {
+                        AppLog.network.error("Primary LLM failed transiently; attempting provider fallback")
+                        // Build a temporary fallback provider instance (try OpenRouter, then Groq)
+                        let fallbackOrder: [(provider: String, endpoint: URL, factory: () -> LLMProvider)] = [
+                            ("openrouter", AppConfig.openrouterChatCompletions, { OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) })) }),
+                            ("groq", AppConfig.groqChatCompletions, { GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) })) })
+                        ]
+                        var success: String? = nil
+                        for cand in fallbackOrder {
+                            do {
+                                let s = LLMSettings(endpoint: cand.endpoint, model: llmSettings.model, systemPrompt: llmSettings.systemPrompt, timeout: max(30, llmSettings.timeout), streaming: llmSettings.streaming)
+                                success = try await cand.factory().process(text: userMsg, userPrompt: userPrompt, settings: s)
+                                AppLog.network.log("LLM provider fallback succeeded with \(cand.provider)")
+                                break
+                            } catch {
+                                AppLog.network.error("LLM provider fallback \(cand.provider) failed: \((error as NSError).localizedDescription)")
+                            }
+                        }
+                        if let ok = success { output = ok } else { throw error }
+                    } else {
+                        throw error
+                    }
+                }
                 llmDT = Date().timeIntervalSince(t1)
             }
             state = .idle
@@ -482,8 +513,13 @@ extension DictationController {
                     }
                     return trimmed
                 } catch {
-                    AppLog.dictation.error("Screen organization LLM failed: \(error.localizedDescription)")
-                    return ocrText
+                    if error is CancellationError {
+                        AppLog.dictation.log("Screen organization LLM cancelled")
+                        return ocrText
+                    } else {
+                        AppLog.dictation.error("Screen organization LLM failed: \(error.localizedDescription)")
+                        return ocrText
+                    }
                 }
             }
         }

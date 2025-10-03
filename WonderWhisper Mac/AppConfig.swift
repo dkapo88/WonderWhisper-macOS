@@ -70,6 +70,27 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
         UserDefaults.standard.bool(forKey: "network.force_http2_uploads")
     }
 
+    // Optional: Prefer HTTP/2 for chat/completions on flaky networks (e.g., carrier hotspots that interfere with QUIC/HTTP3)
+    // Enable via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_chat -bool YES
+    // Note: The client also auto-falls back to an HTTP/2-configured session on transient errors.
+    static var forceHTTP2ForChat: Bool {
+        // Default to true for hotspot resilience; can be disabled via defaults.
+        let defaultsKey = "network.force_http2_chat"
+        if UserDefaults.standard.object(forKey: defaultsKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+
+    // Optional: Fallback to an alternate LLM provider if the primary fails with transient errors
+    static var llmEnableProviderFallback: Bool {
+        let defaultsKey = "llm.enable_provider_fallback"
+        if UserDefaults.standard.object(forKey: defaultsKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+
     // Exact Android default dictation prompt (baseline for new users)
     static let defaultDictationPrompt: String = """
 You are an expert, non-sentient, speech-to-text processing engine named "FormatterAI". Your sole and exclusive purpose is to reformat the raw text provided within the `<TRANSCRIPT>` tags. You operate by following a strict, non-deviating workflow.
