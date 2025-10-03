@@ -57,7 +57,7 @@ actor DictationController {
 
                 // Always start file recording as backup for all providers
                 // For Apple's native Speech provider, switch to a high-quality capture profile.
-                if transcriber is NativeAppleTranscriptionProvider || transcriber is ParakeetTranscriptionProvider {
+                if transcriber is NativeAppleTranscriptionProvider {
                     // Capture at 48 kHz float for better front‑end fidelity, then resample for ASR
                     recorder.captureProfile = .appleNativeHighQuality
                 } else {

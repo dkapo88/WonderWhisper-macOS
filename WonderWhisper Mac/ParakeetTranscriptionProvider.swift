@@ -17,9 +17,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var loadTask: Task<Void, Error>?
     // Track which ASR model version is loaded to allow switching between v2 and v3
     private var loadedVersion: AsrModelVersion?
-    // Watchdog timeouts (seconds)
-    private let vadTimeout: TimeInterval = 6
-    private let asrTimeout: TimeInterval = 45
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -126,22 +123,13 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         scheduleIdleUnload()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
 
-        // Work on a private copy to avoid holding locks on the original recording
-        var cleanupURLs: [URL] = []
-        let workingURL: URL
-        if let copy = try? makeWorkingCopy(of: fileURL) {
-            workingURL = copy
-            cleanupURLs.append(copy)
-        } else {
-            workingURL = fileURL
-        }
-
         // Optional smart preprocessing (shared with Groq path)
-        var inputURL = workingURL
+        var cleanupURLs: [URL] = []
+        var inputURL = fileURL
         var preprocessingApplied = false
         if AudioPreprocessor.isEnabled {
-            let processed = AudioPreprocessor.processIfEnabled(workingURL)
-            if processed != workingURL {
+            let processed = AudioPreprocessor.processIfEnabled(fileURL)
+            if processed != fileURL {
                 inputURL = processed
                 preprocessingApplied = true
                 cleanupURLs.append(processed)
@@ -184,10 +172,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
                 AppLog.dictation.log("[Parakeet] VAD begin")
-                let trimmed: [Float]? = try await withTimeout(seconds: vadTimeout) { [self] in
-                    try await self.applyVADIfAvailable(samples)
+                if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
+                    samples = trimmed
                 }
-                if let trimmed, trimmed.count >= 16_000 { samples = trimmed }
                 AppLog.dictation.log("[Parakeet] VAD end")
             }
         } catch {
@@ -213,9 +200,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let result: ASRResult
         do {
             // Provide source hint per 0.6 API
-            result = try await withTimeout(seconds: asrTimeout) {
-                try await mgr.transcribe(samples, source: .microphone)
-            }
+            result = try await mgr.transcribe(samples, source: .microphone)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -440,33 +425,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return samples
     }
 }
-#if canImport(FluidAudio)
-extension ParakeetTranscriptionProvider {
-    // Simple async timeout wrapper
-    fileprivate func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask { @Sendable () throws -> T in
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw NSError(domain: "Parakeet", code: -2001, userInfo: [NSLocalizedDescriptionKey: "Operation timed out (\(Int(seconds))s)"])
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
-        }
-    }
-}
-
-extension ParakeetTranscriptionProvider {
-    private func makeWorkingCopy(of url: URL) throws -> URL {
-        let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory
-        let copyURL = tempDir.appendingPathComponent("parakeet_work_\(UUID().uuidString).\(url.pathExtension.isEmpty ? "wav" : url.pathExtension)")
-        try fm.copyItem(at: url, to: copyURL)
-        return copyURL
-    }
-}
-#endif
 #else
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
     init(modelsDirectory: URL? = nil) {}
