@@ -31,6 +31,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let minSilence: Double
         let padding: Double
         let profile: String // "quiet", "balanced", or "noisy"
+        let snrDb: Double
+        let lfReduction: Double
     }
 
     init(modelsDirectory: URL? = nil) {
@@ -185,8 +187,17 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         if autoEnabled {
             if let overrides = Self.deriveAutoOverrides(from: samples) {
                 autoOverrides = overrides
-                UserDefaults.standard.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
-                AppLog.dictation.log("[Parakeet] Auto profile=\(overrides.profile) hp=\(overrides.highPassHz) threshold=\(String(format: "%.2f", overrides.vadThreshold))")
+                let d = UserDefaults.standard
+                d.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
+                d.set(overrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
+                d.set(overrides.lfReduction, forKey: "parakeet.auto.lastLFR")
+                d.set(overrides.highPassHz, forKey: "parakeet.auto.lastHP")
+                d.set(overrides.targetRMS, forKey: "parakeet.auto.lastRMS")
+                d.set(overrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
+                d.set(overrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
+                d.set(overrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
+                d.set(overrides.padding, forKey: "parakeet.auto.lastPadding")
+                AppLog.dictation.log("[Parakeet] Auto profile=\(overrides.profile) snr=\(overrides.snrDb, format: .fixed(precision: 1))dB lfr=\(overrides.lfReduction, format: .fixed(precision: 3)) hp=\(overrides.highPassHz) thr=\(String(format: "%.2f", overrides.vadThreshold))")
             } else {
                 autoOverrides = nil
             }
@@ -410,15 +421,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let snrDb = 20.0 * log10(max(p80, 1e-6) / max(p20, 1e-6))
         // Low-frequency rumble check via energy reduction after 120 Hz high-pass
         let origRms = rms(samples)
-        let hp = highPass(samples, cutoffHz: 120.0, sampleRate: 16_000)
+        let hp = highPass(samples, cutoffHz: 80.0, sampleRate: 16_000) // 80 Hz is more speech-safe
         let hpRms = rms(hp)
         let lfEnergyReduction = (origRms > 0) ? (origRms - hpRms) / origRms : 0
 
         // Classify environment
         let profile: String
-        if snrDb < 12.0 || lfEnergyReduction > 0.15 {
+        if snrDb < 10.0 || lfEnergyReduction > 0.22 {
             profile = "noisy"
-        } else if snrDb > 22.0 && lfEnergyReduction < 0.12 {
+        } else if snrDb > 20.0 && lfEnergyReduction < 0.18 {
             profile = "quiet"
         } else {
             profile = "balanced"
@@ -434,7 +445,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 minSpeech: 0.20,
                 minSilence: 0.30,
                 padding: 0.10,
-                profile: profile
+                profile: profile,
+                snrDb: snrDb,
+                lfReduction: lfEnergyReduction
             )
         case "noisy":
             return AutoOverrides(
@@ -444,7 +457,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 minSpeech: 0.30,
                 minSilence: 0.50,
                 padding: 0.15,
-                profile: profile
+                profile: profile,
+                snrDb: snrDb,
+                lfReduction: lfEnergyReduction
             )
         default:
             return AutoOverrides(
@@ -454,7 +469,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 minSpeech: 0.25,
                 minSilence: 0.35,
                 padding: 0.10,
-                profile: profile
+                profile: profile,
+                snrDb: snrDb,
+                lfReduction: lfEnergyReduction
             )
         }
     }

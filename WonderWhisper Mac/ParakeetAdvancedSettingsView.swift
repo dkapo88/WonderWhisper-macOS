@@ -12,6 +12,14 @@ struct ParakeetAdvancedSettingsView: View {
     @AppStorage("parakeet.vad.padding") private var vadPadding: Double = 0.10
     @AppStorage("parakeet.auto.enabled") private var autoEnabled: Bool = false
     @AppStorage("parakeet.auto.lastProfile") private var autoLastProfile: String = ""
+    @AppStorage("parakeet.auto.lastSnrDb") private var autoLastSnrDb: Double = 0
+    @AppStorage("parakeet.auto.lastLFR") private var autoLastLFR: Double = 0
+    @AppStorage("parakeet.auto.lastHP") private var autoLastHP: Int = 0
+    @AppStorage("parakeet.auto.lastRMS") private var autoLastRMS: Double = 0
+    @AppStorage("parakeet.auto.lastVadT") private var autoLastVadT: Double = 0
+    @AppStorage("parakeet.auto.lastMinSpeech") private var autoLastMinSpeech: Double = 0
+    @AppStorage("parakeet.auto.lastMinSilence") private var autoLastMinSilence: Double = 0
+    @AppStorage("parakeet.auto.lastPadding") private var autoLastPadding: Double = 0
 
     private let hpOptions: [Int] = [0, 40, 50, 60, 80]
 
@@ -113,7 +121,10 @@ struct ParakeetAdvancedSettingsView: View {
             Toggle("Auto-adjust from environment", isOn: $autoEnabled)
                 .help("Analyze input audio and adjust high‑pass, target RMS and VAD settings automatically. Uses heuristics similar to the presets.")
             if !autoLastProfile.isEmpty {
-                Text("Auto profile (last): \(autoLastProfile.capitalized)")
+                Text("Auto (last): \(autoLastProfile.capitalized) • SNR \(String(format: "%.1f", autoLastSnrDb)) dB • Rumble \(String(format: "%.2f", autoLastLFR))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("Effective: HP \(autoLastHP) Hz • RMS \(String(format: "%.3f", autoLastRMS)) • VAD T \(String(format: "%.2f", autoLastVadT))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
