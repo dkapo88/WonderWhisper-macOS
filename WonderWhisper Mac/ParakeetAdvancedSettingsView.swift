@@ -13,8 +13,101 @@ struct ParakeetAdvancedSettingsView: View {
 
     private let hpOptions: [Int] = [0, 40, 50, 60, 80]
 
+    // MARK: - Presets
+    // These presets are informed by internal testing and the VoiceInk
+    // repository (see repomix-output.xml) where Silero VAD threshold ≈ 0.7
+    // proved robust in noisy environments. Target RMS of 0.06–0.07 with
+    // pre-emphasis and a 50–60 Hz high‑pass works well for general speech.
+    private struct Preset: Identifiable {
+        let id = UUID()
+        let name: String
+        let preEmphasis: Bool
+        let highPass: Int
+        let targetRMS: Double
+        let vadEnabled: Bool
+        let vadThreshold: Double
+        let minSpeech: Double
+        let minSilence: Double
+        let padding: Double
+    }
+
+    private var presets: [Preset] {
+        [
+            // Balanced default for most rooms and mics
+            Preset(
+                name: "Balanced",
+                preEmphasis: true,
+                highPass: 60,
+                targetRMS: 0.065,
+                vadEnabled: true,
+                vadThreshold: 0.50,
+                minSpeech: 0.25,
+                minSilence: 0.35,
+                padding: 0.10
+            ),
+            // Capture softer speech in quiet spaces; slightly lower VAD gate
+            Preset(
+                name: "Quiet room",
+                preEmphasis: true,
+                highPass: 50,
+                targetRMS: 0.070,
+                vadEnabled: true,
+                vadThreshold: 0.35,
+                minSpeech: 0.20,
+                minSilence: 0.30,
+                padding: 0.10
+            ),
+            // Suppress background chatter/keyboard; higher VAD gate
+            Preset(
+                name: "Noisy room",
+                preEmphasis: true,
+                highPass: 80,
+                targetRMS: 0.060,
+                vadEnabled: true,
+                vadThreshold: 0.70, // VoiceInk used ~0.7 for robustness
+                minSpeech: 0.30,
+                minSilence: 0.50,
+                padding: 0.15
+            ),
+            // Conservative segmentation for long-form uploads; fewer false starts
+            Preset(
+                name: "Long-form",
+                preEmphasis: true,
+                highPass: 60,
+                targetRMS: 0.060,
+                vadEnabled: true,
+                vadThreshold: 0.65,
+                minSpeech: 0.30,
+                minSilence: 0.75,
+                padding: 0.10
+            )
+        ]
+    }
+
+    private func apply(_ p: Preset) {
+        preEmphasisEnabled = p.preEmphasis
+        highPassHz = p.highPass
+        targetRMS = p.targetRMS
+        vadEnabled = p.vadEnabled
+        vadThreshold = p.vadThreshold
+        vadMinSpeech = p.minSpeech
+        vadMinSilence = p.minSilence
+        vadPadding = p.padding
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Preset buttons
+            HStack(spacing: 8) {
+                Text("Presets")
+                ForEach(presets) { p in
+                    Button(p.name) { apply(p) }
+                        .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            .help("Quickly apply recommended settings for common environments.")
+
             HStack {
                 Text("Engine version")
                 Spacer()
@@ -74,7 +167,7 @@ struct ParakeetAdvancedSettingsView: View {
                 Text(String(format: "%.2f", vadPadding)).monospacedDigit()
             }
             Slider(value: $vadPadding, in: 0.05...0.40, step: 0.05)
-            Text("Helps low-volume speech: enable pre-emphasis, use 50–60 Hz high-pass, RMS ≈ 0.06–0.07.")
+            Text("Tips: pre-emphasis + 50–60 Hz high‑pass + RMS ≈ 0.06–0.07. Increase VAD threshold in noise; lower it for quiet rooms.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
