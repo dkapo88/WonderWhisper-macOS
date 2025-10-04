@@ -18,6 +18,27 @@ struct CerebrasHTTPClient {
         let stream: Bool?
     }
 
+    // Build a URLSession configured for the given timeout and protocol preference.
+    private func makeSession(timeout: TimeInterval, http2: Bool) -> URLSession {
+        let cfg = URLSessionConfiguration.default
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 8
+        // Respect per-request timeout from settings to avoid hidden 10s caps
+        cfg.timeoutIntervalForRequest = max(1.0, timeout)
+        cfg.timeoutIntervalForResource = max(2.0, timeout * 2)
+        cfg.allowsExpensiveNetworkAccess = true
+        cfg.allowsConstrainedNetworkAccess = true
+        cfg.networkServiceType = .responsiveData
+        if http2 {
+            cfg.httpShouldUsePipelining = true
+            cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
+            cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        }
+        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
+    }
+
     // Non-streaming chat (with retry + HTTP/2 fallback for flaky networks)
     func postChat(to url: URL, body: ChatRequest, timeout: TimeInterval) async throws -> Data {
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
@@ -31,7 +52,9 @@ struct CerebrasHTTPClient {
         // Prefer HTTP/2 first if toggled via defaults (helps on hotspots that disrupt QUIC/UDP)
         // Strict HTTP/2 enforcement if enabled; alternate sessions across attempts to guarantee protocol change
         let preferHTTP2 = AppConfig.forceHTTP2ForChat
-        let orderedSessions: [URLSession] = preferHTTP2 ? [GroqHTTPClient.http2Session, GroqHTTPClient.session, GroqHTTPClient.http2Session] : [GroqHTTPClient.session, GroqHTTPClient.http2Session, GroqHTTPClient.session]
+        let orderedSessions: [URLSession] = preferHTTP2
+            ? [makeSession(timeout: timeout, http2: true), makeSession(timeout: timeout, http2: false), makeSession(timeout: timeout, http2: true)]
+            : [makeSession(timeout: timeout, http2: false), makeSession(timeout: timeout, http2: true), makeSession(timeout: timeout, http2: false)]
 
         var attempt = 0
         var lastError: Error?
@@ -80,7 +103,9 @@ struct CerebrasHTTPClient {
         req.httpBody = try enc.encode(body)
 
         let preferHTTP2 = AppConfig.forceHTTP2ForChat
-        let orderedSessions: [URLSession] = preferHTTP2 ? [GroqHTTPClient.http2Session, GroqHTTPClient.session, GroqHTTPClient.http2Session] : [GroqHTTPClient.session, GroqHTTPClient.http2Session, GroqHTTPClient.session]
+        let orderedSessions: [URLSession] = preferHTTP2
+            ? [makeSession(timeout: timeout, http2: true), makeSession(timeout: timeout, http2: false), makeSession(timeout: timeout, http2: true)]
+            : [makeSession(timeout: timeout, http2: false), makeSession(timeout: timeout, http2: true), makeSession(timeout: timeout, http2: false)]
 
         var attempt = 0
         var lastError: Error?

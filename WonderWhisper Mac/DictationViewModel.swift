@@ -811,21 +811,23 @@ final class DictationViewModel: ObservableObject {
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
-        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+        // Align LLM timeout with the user-configured timeout setting
+        let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
+        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
 
         // Choose LLM provider and endpoint
         var llmProviderInstance: LLMProvider
         switch providerForActivePrompt.lowercased() {
         case "openrouter":
-            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
             llmProviderInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
         case "cerebras":
-            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
             llmProviderInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
         default:
-            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: modelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
             llmProviderInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
