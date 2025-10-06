@@ -163,6 +163,21 @@ enum AudioPreprocessor {
         if samples.isEmpty { return url }
 
         applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
+        // Mains hum removal: narrow notch at 50/60 Hz (+ optional 2nd harmonic)
+        let defaultHum = 60
+        let humHz = {
+            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+            return v == 50 || v == 60 ? v : defaultHum
+        }()
+        let applySecondHarmonic = {
+            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+        }()
+        // Use a fairly narrow notch (Q ~ 8–10). Apply twice for deeper attenuation.
+        applyNotch(in: &samples, centerHz: Double(humHz),    Q: 10.0, sampleRate: sr, cascades: 2)
+        if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
+            applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
+        }
         applyPreEmphasis(in: &samples, coeff: 0.97)
         let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
 
@@ -190,6 +205,37 @@ enum AudioPreprocessor {
             samples[i] = y
             yPrev = y
             xPrev = x
+        }
+    }
+
+    // Apply a parametric biquad notch filter centered at centerHz
+    private static func applyNotch(in samples: inout [Float], centerHz: Double, Q: Double, sampleRate: Double, cascades: Int = 1) {
+        guard !samples.isEmpty, centerHz > 0, Q > 0, sampleRate > 0 else { return }
+        let omega = 2.0 * Double.pi * centerHz / sampleRate
+        let cosw = cos(omega)
+        let alpha = sin(omega) / (2.0 * Q)
+        // RBJ Audio EQ Cookbook: Notch (band-stop) filter
+        // b0 = 1, b1 = -2*cos(w0), b2 = 1, a0 = 1+alpha, a1 = -2*cos(w0), a2 = 1-alpha
+        var b0 = 1.0
+        var b1 = -2.0 * cosw
+        var b2 = 1.0
+        let a0 = 1.0 + alpha
+        var a1 = -2.0 * cosw
+        var a2 = 1.0 - alpha
+        // Normalize by a0
+        b0 /= a0; b1 /= a0; b2 /= a0
+        a1 /= a0; a2 /= a0
+        // Apply cascades for deeper notch
+        for _ in 0..<max(1, cascades) {
+            var x1: Float = 0, x2: Float = 0
+            var y1: Float = 0, y2: Float = 0
+            for i in 0..<samples.count {
+                let x0 = samples[i]
+                let y0 = Float(b0) * x0 + Float(b1) * x1 + Float(b2) * x2 - Float(a1) * y1 - Float(a2) * y2
+                x2 = x1; x1 = x0
+                y2 = y1; y1 = y0
+                samples[i] = y0
+            }
         }
     }
 

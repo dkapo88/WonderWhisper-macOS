@@ -47,6 +47,12 @@ struct SettingsGeneralView: View {
                         Text("Improves clarity in noisy or low‑volume recordings at a minor CPU cost.")
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                        Toggle("Voice processing (noise suppression + AGC)", isOn: $vm.voiceProcessingEnabled)
+                            .help("Uses a live EQ + dynamics chain, and avoids auto‑raising mic gain to reduce pumping and background noise. Intended for live streaming capture.")
+                        Text("Noise suppression and gentle AGC for live capture. Skips auto gain boosts to prevent fighting AGC.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         
                         // Audio recording format selection for better compression
                         LabeledContent {

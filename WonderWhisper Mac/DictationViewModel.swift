@@ -87,6 +87,9 @@ final class DictationViewModel: ObservableObject {
     @Published var audioEnhancementEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled") {
         didSet { UserDefaults.standard.set(audioEnhancementEnabled, forKey: "audio.preprocess.enabled") }
     }
+    @Published var voiceProcessingEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled") {
+        didSet { UserDefaults.standard.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
+    }
 
     // Screen Context / OCR
     @Published var accurateOCRForEditors: Bool = {

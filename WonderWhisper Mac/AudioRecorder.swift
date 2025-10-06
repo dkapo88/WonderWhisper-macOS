@@ -1,5 +1,7 @@
 import Foundation
 import AVFoundation
+import AVFAudio
+import AudioToolbox
 
 final class AudioRecorder: NSObject {
     enum CaptureProfile {
@@ -20,6 +22,10 @@ final class AudioRecorder: NSObject {
     private var isStreaming: Bool = false
     private let streamQueue = DispatchQueue(label: "audio.stream.queue", qos: .userInitiated)
     private var onPCM16Frame: ((Data) -> Void)?
+    // Streaming processing nodes
+    private var eqNode: AVAudioUnitEQ?
+    private var dynamicsNode: AVAudioUnitEffect?
+    private var tappedNode: AVAudioNode?
     
     // Memory recording removed due to unreliable output
     // Current capture profile (selected by controller based on active provider)
@@ -109,9 +115,12 @@ final class AudioRecorder: NSObject {
         recorder?.record()
         isRecording = true
         startLevelUpdates()
-        // Raise input gain asynchronously to avoid delaying recording start
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = AudioDeviceManager.raiseInputVolumeIfNeeded(for: AudioInputSelection.load())
+        // Raise input gain asynchronously unless voice processing (AGC) is enabled
+        let voiceProcessingEnabled = UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
+        if !voiceProcessingEnabled {
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = AudioDeviceManager.raiseInputVolumeIfNeeded(for: AudioInputSelection.load())
+            }
         }
         return url
     }
@@ -226,9 +235,8 @@ extension AudioRecorder {
             throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid input audio format"])
         }
 
-        // Connect input to main mixer with volume muted to drive the engine without monitoring
+        // Prepare main mixer muted to avoid monitoring
         engine.mainMixerNode.outputVolume = 0
-        engine.connect(input, to: engine.mainMixerNode, format: inputFormat)
 
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -239,7 +247,67 @@ extension AudioRecorder {
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create target audio format"])
         }
 
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+        // Build processing chain: input -> EQ -> Dynamics -> mainMixer
+        // Configure EQ (HPF + hum notch + optional 2nd harmonic)
+        let humHz: Float = {
+            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+            return (v == 50 || v == 60) ? Float(v) : 60.0
+        }()
+        let applySecondHarmonic: Bool = {
+            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+        }()
+        let eq = AVAudioUnitEQ(numberOfBands: applySecondHarmonic ? 3 : 2)
+        if let band = eq.bands[safe: 0] {
+            band.filterType = .highPass
+            band.frequency = 85
+            band.bypass = false
+        }
+        if let band = eq.bands[safe: 1] {
+            band.filterType = .parametric
+            band.frequency = humHz
+            band.gain = -18 // dB notch
+            band.bandwidth = 0.12 // octaves ~ Q 8–10
+            band.bypass = false
+        }
+        if applySecondHarmonic, let band = eq.bands[safe: 2] {
+            let second = min(humHz * 2.0, Float(inputFormat.sampleRate * 0.49))
+            band.filterType = .parametric
+            band.frequency = second
+            band.gain = -9 // dB notch at 2nd harmonic
+            band.bandwidth = 0.10
+            band.bypass = false
+        }
+        // Dynamics processor (compressor + light downward expansion) via Audio Unit description
+        let dynDesc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_DynamicsProcessor,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        let dyn = AVAudioUnitEffect(audioComponentDescription: dynDesc)
+        // Configure parameters via AUParameterTree when available
+        if let tree = dyn.auAudioUnit.parameterTree {
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_Threshold))?.value = -22
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_HeadRoom))?.value = 5
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_AttackTime))?.value = 0.007
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ReleaseTime))?.value = 0.12
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionRatio))?.value = 1.3
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionThreshold))?.value = -50
+            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_OverallGain))?.value = 0
+        }
+
+        engine.attach(eq)
+        engine.attach(dyn)
+        engine.connect(input, to: eq, format: inputFormat)
+        engine.connect(eq, to: dyn, format: inputFormat)
+        engine.connect(dyn, to: engine.mainMixerNode, format: inputFormat)
+
+        let tapNode: AVAudioNode = dyn
+        let tapFormat = tapNode.outputFormat(forBus: 0)
+
+        guard let converter = AVAudioConverter(from: tapFormat, to: targetFormat) else {
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create audio converter"])
         }
         self.converter = converter
@@ -253,7 +321,7 @@ extension AudioRecorder {
 
         do {
             engine.prepare()
-            input.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
+            tapNode.installTap(onBus: 0, bufferSize: 512, format: tapFormat) { [weak self] buffer, _ in
                 guard let self = self, let converter = self.converter, self.isStreaming else { return }
                 // Prepare output buffer with a reasonable capacity
                 guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(1600)) else { return }
@@ -283,6 +351,9 @@ extension AudioRecorder {
             }
             
             try engine.start()
+            self.eqNode = eq
+            self.dynamicsNode = dyn
+            self.tappedNode = tapNode
             AppLog.dictation.log("AudioRecorder: engine.start OK; input sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount)")
         } catch {
             // Log OSStatus if available for diagnostics (-10877 etc.)
@@ -291,9 +362,12 @@ extension AudioRecorder {
             // Clean up on failure
             isStreaming = false
             self.engine?.stop()
-            if let input = self.engine?.inputNode { input.removeTap(onBus: 0) }
+            self.tappedNode?.removeTap(onBus: 0)
             self.engine = nil
             self.converter = nil
+            self.eqNode = nil
+            self.dynamicsNode = nil
+            self.tappedNode = nil
             throw error
         }
     }
@@ -303,9 +377,7 @@ extension AudioRecorder {
         isStreaming = false
 
         // Remove tap first to avoid callbacks during engine teardown
-        if let input = self.engine?.inputNode {
-            input.removeTap(onBus: 0)
-        }
+        self.tappedNode?.removeTap(onBus: 0)
 
         // Then stop the engine
         self.engine?.stop()
@@ -315,5 +387,15 @@ extension AudioRecorder {
         converter = nil
         pcmAccumulator.removeAll()
         onPCM16Frame = nil
+        eqNode = nil
+        dynamicsNode = nil
+        tappedNode = nil
+    }
+}
+
+// Safe index helper for EQ band access
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
     }
 }
