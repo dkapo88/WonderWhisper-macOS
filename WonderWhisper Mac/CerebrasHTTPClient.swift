@@ -16,6 +16,7 @@ struct CerebrasHTTPClient {
         let messages: [Message]
         let temperature: Double
         let stream: Bool?
+        let reasoning_effort: String?
     }
 
     // Build a URLSession configured for the given timeout and protocol preference.

@@ -31,7 +31,8 @@ final class CerebrasLLMProvider: LLMProvider {
             model: settings.model,
             messages: messages,
             temperature: 0.2,
-            stream: settings.streaming ? true : nil
+            stream: settings.streaming ? true : nil,
+            reasoning_effort: settings.model.contains("gpt-oss") ? "low" : nil
         )
 
         if settings.streaming {
@@ -47,7 +48,8 @@ final class CerebrasLLMProvider: LLMProvider {
                         model: req.model,
                         messages: req.messages,
                         temperature: req.temperature,
-                        stream: nil
+                        stream: nil,
+                        reasoning_effort: req.reasoning_effort
                     )
                     let data = try await client.postChat(to: settings.endpoint, body: nonStreamReq, timeout: max(30, settings.timeout))
                     if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: data), let content = decoded.choices.first?.message.content {
