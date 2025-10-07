@@ -17,6 +17,25 @@ actor ClipboardContextMonitor {
         monitorTask?.cancel()
     }
 
+    func refreshSnapshot() async {
+        let changeCount = await readChangeCount()
+        guard changeCount != lastChangeCount else { return }
+        lastChangeCount = changeCount
+        guard let raw = await readClipboardText() else {
+            lastCapturedText = nil
+            lastCaptureDate = nil
+            return
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            lastCapturedText = nil
+            lastCaptureDate = nil
+            return
+        }
+        lastCapturedText = trimmed
+        lastCaptureDate = Date()
+    }
+
     func consumeClipboardIfRecent(referenceDate: Date, window: TimeInterval) async -> String? {
         guard let captureDate = lastCaptureDate,
               referenceDate.timeIntervalSince(captureDate) <= window,

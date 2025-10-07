@@ -105,6 +105,7 @@ actor DictationController {
                     Task { await self.preCaptureScreenContext() }
                 }
                 if clipboardContextEnabled {
+                    await clipboardMonitor.refreshSnapshot()
                     clipboardSnapshotForSession = await clipboardMonitor.consumeClipboardIfRecent(referenceDate: recordingStart, window: clipboardWindowSeconds)
                 }
             } catch {
