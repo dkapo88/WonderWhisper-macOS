@@ -53,6 +53,7 @@ final class DictationViewModel: ObservableObject {
 
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? false { didSet { persistAndUpdate() } }
     @Published var screenContextPreprocessingMode: ScreenContextPreprocessingMode = {
         if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
            let mode = ScreenContextPreprocessingMode(rawValue: raw) {
@@ -158,6 +159,7 @@ final class DictationViewModel: ObservableObject {
         let persistedTranscriptionModel = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel
         let persistedLLMEnabled = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true
         let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
+        let persistedClipboardContextEnabled = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? false
         let persistedOrganizePrompt = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt
 
         let persistedPreprocessMode: ScreenContextPreprocessingMode = {
@@ -253,10 +255,12 @@ final class DictationViewModel: ObservableObject {
         }
         // Apply initial LLM/screen-context flags
         screenContextPreprocessingMode = persistedPreprocessMode
+        clipboardContextEnabled = persistedClipboardContextEnabled
 
         Task {
             await controller.updateLLMEnabled(persistedLLMEnabled)
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
+            await controller.updateClipboardContextEnabled(persistedClipboardContextEnabled)
             await controller.updateScreenContextPreprocessingMode(persistedPreprocessMode)
             await controller.updateScreenOrganizePrompt(persistedOrganizePrompt)
         }
@@ -648,6 +652,19 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func updateClipboardContextOverride(for id: UUID, to override: Bool?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        if updated.clipboardContextOverride == override {
+            return
+        }
+        updated.clipboardContextOverride = override
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
     func updateScreenContextPreprocessingOverride(for id: UUID, to override: ScreenContextPreprocessingMode?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
@@ -670,6 +687,7 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
+        UserDefaults.standard.set(clipboardContextEnabled, forKey: "clipboardContext.enabled")
         UserDefaults.standard.set(screenContextPreprocessingMode.rawValue, forKey: "screenContext.preprocessMode")
         UserDefaults.standard.set(screenContextPreprocessingMode == .llm, forKey: "screenContext.organize")
 
@@ -865,6 +883,7 @@ final class DictationViewModel: ObservableObject {
         let llmSettingsToApply = lSettings
         let isLLMEnabled = llmEnabled
         let useScreenContext = resolvedScreenContext(for: prompt)
+        let useClipboardContext = resolvedClipboardContext(for: prompt)
         let preprocessingMode = resolvedScreenContextPreprocessingMode(for: prompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
 
@@ -877,6 +896,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMSettings(llmSettingsToApply)
             await controller.updateLLMEnabled(isLLMEnabled)
             await controller.updateScreenContextEnabled(useScreenContext)
+            await controller.updateClipboardContextEnabled(useClipboardContext)
             await controller.updateScreenContextPreprocessingMode(preprocessingMode)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
@@ -1036,6 +1056,14 @@ private extension DictationViewModel {
         }
         let fallback = llmProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? "groq" : fallback
+    }
+
+    func resolvedClipboardContext(for prompt: PromptConfiguration?) -> Bool {
+        if !clipboardContextEnabled { return false }
+        if let override = prompt?.clipboardContextOverride {
+            return clipboardContextEnabled && override
+        }
+        return clipboardContextEnabled
     }
 
     func resolvedScreenContext(for prompt: PromptConfiguration?) -> Bool {

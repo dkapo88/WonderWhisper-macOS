@@ -10,6 +10,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var llmModelOverride: String?
   var llmProviderOverride: String?
   var screenContextOverride: Bool?
+  var clipboardContextOverride: Bool?
   var screenContextPreprocessingOverride: ScreenContextPreprocessingMode?
 
   init(id: UUID = UUID(),
@@ -21,6 +22,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        llmModelOverride: String? = nil,
        llmProviderOverride: String? = nil,
        screenContextOverride: Bool? = nil,
+       clipboardContextOverride: Bool? = nil,
        screenContextPreprocessingOverride: ScreenContextPreprocessingMode? = nil) {
     self.id = id
     self.name = name
@@ -31,6 +33,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.llmModelOverride = llmModelOverride
     self.llmProviderOverride = llmProviderOverride
     self.screenContextOverride = screenContextOverride
+    self.clipboardContextOverride = clipboardContextOverride
     self.screenContextPreprocessingOverride = screenContextPreprocessingOverride
   }
 
@@ -44,6 +47,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case llmModelOverride
     case llmProviderOverride
     case screenContextOverride
+    case clipboardContextOverride
     case screenContextPreprocessingOverride
     case legacyOrganizeOverride = "organizeScreenContextOverride"
   }
@@ -59,6 +63,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     llmModelOverride = try container.decodeIfPresent(String.self, forKey: .llmModelOverride)
     llmProviderOverride = try container.decodeIfPresent(String.self, forKey: .llmProviderOverride)
     screenContextOverride = try container.decodeIfPresent(Bool.self, forKey: .screenContextOverride)
+    clipboardContextOverride = try container.decodeIfPresent(Bool.self, forKey: .clipboardContextOverride)
 
     if let mode = try container.decodeIfPresent(ScreenContextPreprocessingMode.self, forKey: .screenContextPreprocessingOverride) {
       screenContextPreprocessingOverride = mode
@@ -80,6 +85,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(llmModelOverride, forKey: .llmModelOverride)
     try container.encodeIfPresent(llmProviderOverride, forKey: .llmProviderOverride)
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)
+    try container.encodeIfPresent(clipboardContextOverride, forKey: .clipboardContextOverride)
     try container.encodeIfPresent(screenContextPreprocessingOverride, forKey: .screenContextPreprocessingOverride)
   }
 }

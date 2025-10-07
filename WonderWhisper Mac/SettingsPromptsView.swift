@@ -340,6 +340,12 @@ struct SettingsPromptsView: View {
                             onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
                             onPreprocessUpdate: { vm.updateScreenContextPreprocessingOverride(for: prompt.id, to: $0) }
                         )
+
+                        PromptClipboardContextEditor(
+                            prompt: prompt,
+                            defaultClipboard: vm.clipboardContextEnabled,
+                            onUpdate: { vm.updateClipboardContextOverride(for: prompt.id, to: $0) }
+                        )
                     }
 
                     Divider()
@@ -807,6 +813,49 @@ private enum PromptPreprocessingChoice: String, CaseIterable, Identifiable {
     case .llm: return .llm
     }
   }
+}
+
+private struct PromptClipboardContextEditor: View {
+    let prompt: PromptConfiguration
+    let defaultClipboard: Bool
+    let onUpdate: (Bool?) -> Void
+
+    @State private var clipboardChoice: PromptOverrideChoice
+
+    init(prompt: PromptConfiguration,
+         defaultClipboard: Bool,
+         onUpdate: @escaping (Bool?) -> Void) {
+        self.prompt = prompt
+        self.defaultClipboard = defaultClipboard
+        self.onUpdate = onUpdate
+        _clipboardChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.clipboardContextOverride))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Clipboard context")
+                    .font(.subheadline).bold()
+                Spacer()
+                Text(defaultClipboard ? "Default: On" : "Default: Off")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Picker("Clipboard context", selection: $clipboardChoice) {
+                ForEach(PromptOverrideChoice.allCases) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: clipboardChoice) { newValue in
+                onUpdate(newValue.boolValue)
+            }
+        }
+        .padding(.top, 6)
+        .onChange(of: prompt.clipboardContextOverride) { newValue in
+            clipboardChoice = PromptOverrideChoice.choice(for: newValue)
+        }
+    }
 }
 
 private struct PromptScreenContextEditor: View {

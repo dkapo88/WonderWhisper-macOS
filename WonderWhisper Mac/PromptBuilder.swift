@@ -44,7 +44,8 @@ struct PromptBuilder {
                                  selectedText: String?,
                                  appName: String?,
                                  screenContents: String?,
-                                 customVocabulary: String?) -> String {
+                                 customVocabulary: String?,
+                                 clipboardText: String? = nil) -> String {
         var out = ""
         out += "<TRANSCRIPT>\n"
         out += transcription
@@ -61,6 +62,12 @@ struct PromptBuilder {
         out += "<SELECTED_TEXT>\n"
         out += (selectedText ?? "")
         out += "\n</SELECTED_TEXT>\n\n"
+
+        if let clipboardText, !clipboardText.isEmpty {
+            out += "<CLIPBOARD>\n"
+            out += clipboardText
+            out += "\n</CLIPBOARD>\n\n"
+        }
 
         // Include vocabulary here (moved from system message)
         out += "<VOCABULARY>\n"

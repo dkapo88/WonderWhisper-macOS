@@ -77,6 +77,8 @@ struct SettingsView: View {
                     Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
                     Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
                         .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
+                    Toggle("Include clipboard context (last 10 seconds)", isOn: $vm.clipboardContextEnabled)
+                        .help("Send clipboard text copied within 10 seconds before recording inside <CLIPBOARD> tags.")
 
                     Picker("LLM model", selection: $vm.llmModel) {
                         Text("moonshotai/kimi-k2-instruct").tag("moonshotai/kimi-k2-instruct")

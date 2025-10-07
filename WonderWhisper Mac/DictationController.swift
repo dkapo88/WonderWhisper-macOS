@@ -19,11 +19,15 @@ actor DictationController {
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
     private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
+    private var clipboardContextEnabled: Bool = false
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
     private var screenPreprocessingTask: Task<String?, Never>?
     private var preCapturedSelectedText: String?
+    private var clipboardSnapshotForSession: String?
+    private let clipboardMonitor = ClipboardContextMonitor()
+    private let clipboardWindowSeconds: TimeInterval = 10
 
 
 
@@ -65,6 +69,7 @@ actor DictationController {
                     recorder.captureProfile = .standard16k
                 }
                 let url = try recorder.startRecording()
+                let recordingStart = Date()
                 currentRecordingURL = url
 
                 // If Parakeet is active, preload models in the background to hide cold-start latency
@@ -94,9 +99,13 @@ actor DictationController {
                 // Pre-capture screen context early (AX first, OCR fallback)
                 preCapturedScreenText = nil
                 preCapturedSelectedText = nil
+                clipboardSnapshotForSession = nil
 
                 if llmEnabled && screenContextEnabled {
                     Task { await self.preCaptureScreenContext() }
+                }
+                if clipboardContextEnabled {
+                    clipboardSnapshotForSession = await clipboardMonitor.consumeClipboardIfRecent(referenceDate: recordingStart, window: clipboardWindowSeconds)
                 }
             } catch {
                 AppLog.dictation.error("Recording start failed: \(error.localizedDescription)")
@@ -200,7 +209,8 @@ actor DictationController {
                     selectedText: selected,
                     appName: appNameForPrompt,
                     screenContents: screenText,
-                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
+                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
+                    clipboardText: clipboardSnapshotForSession
                 )
                 // Capture full user message for history
                 userMsgForHistory = userMsg
@@ -295,6 +305,7 @@ actor DictationController {
         preCapturedScreenMethod = nil
         if let task = screenPreprocessingTask { task.cancel() }
         screenPreprocessingTask = nil
+        clipboardSnapshotForSession = nil
         // Restore capture profile to default for subsequent runs
         recorder.captureProfile = .standard16k
         os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
@@ -307,6 +318,13 @@ actor DictationController {
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
     func updateScreenContextPreprocessingMode(_ mode: ScreenContextPreprocessingMode) { self.screenContextPreprocessingMode = mode }
+    func updateClipboardContextEnabled(_ enabled: Bool) {
+        clipboardContextEnabled = enabled
+        if !enabled {
+            clipboardSnapshotForSession = nil
+            Task { await clipboardMonitor.clear() }
+        }
+    }
     func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
@@ -338,6 +356,8 @@ actor DictationController {
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
         screenPreprocessingTask = nil
+        clipboardSnapshotForSession = nil
+        Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
     }
