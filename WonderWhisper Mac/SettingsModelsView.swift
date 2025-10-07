@@ -122,9 +122,16 @@ struct SettingsModelsView: View {
                 Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
                     .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
 
-                // Organize OCR screen content before main LLM step
-                Toggle("Organize Screen Content", isOn: $vm.organizeScreenContentEnabled)
-                    .help("Preprocesses OCR text with a quick LLM pass to group related content and extract key names/terms before the main prompt.")
+                Picker("Screen content preprocessing", selection: $vm.screenContextPreprocessingMode) {
+                    ForEach(ScreenContextPreprocessingMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .help("Choose how to preprocess OCR screen captures before the main LLM prompt: off, on-device keyword extraction, or an LLM organization pass.")
+                Text("On-device mode extracts key terms locally; LLM mode sends a quick organizing prompt before the main request.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Organization prompt")
                         .font(.caption)
@@ -132,7 +139,7 @@ struct SettingsModelsView: View {
                     TextEditor(text: $vm.screenOrganizePrompt)
                         .font(.body)
                         .frame(minHeight: 60, maxHeight: 120)
-                        .disabled(!vm.organizeScreenContentEnabled)
+                        .disabled(vm.screenContextPreprocessingMode != .llm)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.secondary.opacity(0.2))

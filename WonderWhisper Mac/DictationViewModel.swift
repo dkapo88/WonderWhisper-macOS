@@ -53,7 +53,17 @@ final class DictationViewModel: ObservableObject {
 
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
-    @Published var organizeScreenContentEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false { didSet { persistAndUpdate() } }
+    @Published var screenContextPreprocessingMode: ScreenContextPreprocessingMode = {
+        if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
+           let mode = ScreenContextPreprocessingMode(rawValue: raw) {
+            return mode
+        }
+        if UserDefaults.standard.object(forKey: "screenContext.organize") != nil {
+            let legacy = UserDefaults.standard.bool(forKey: "screenContext.organize")
+            return ScreenContextPreprocessingMode.fromLegacyOrganizeFlag(legacy)
+        }
+        return .off
+    }() { didSet { persistAndUpdate() } }
 
     @Published var screenOrganizePrompt: String = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt { didSet { persistAndUpdate() } }
 
@@ -150,7 +160,18 @@ final class DictationViewModel: ObservableObject {
         let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
         let persistedOrganizePrompt = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt
 
-        let persistedOrganizeScreenContentEnabled = UserDefaults.standard.object(forKey: "screenContext.organize") as? Bool ?? false
+        let persistedPreprocessMode: ScreenContextPreprocessingMode = {
+            if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
+               let mode = ScreenContextPreprocessingMode(rawValue: raw) {
+                return mode
+            }
+            let hasLegacy = UserDefaults.standard.object(forKey: "screenContext.organize") != nil
+            if hasLegacy {
+                let legacy = UserDefaults.standard.bool(forKey: "screenContext.organize")
+                return ScreenContextPreprocessingMode.fromLegacyOrganizeFlag(legacy)
+            }
+            return .off
+        }()
 
         let persistedLLMModel = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel
         let persistedLLMProvider = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq"
@@ -231,10 +252,12 @@ final class DictationViewModel: ObservableObject {
             Task { @MainActor in self.audioLevel = level }
         }
         // Apply initial LLM/screen-context flags
+        screenContextPreprocessingMode = persistedPreprocessMode
+
         Task {
             await controller.updateLLMEnabled(persistedLLMEnabled)
             await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
-            await controller.updateOrganizeScreenContentEnabled(persistedOrganizeScreenContentEnabled)
+            await controller.updateScreenContextPreprocessingMode(persistedPreprocessMode)
             await controller.updateScreenOrganizePrompt(persistedOrganizePrompt)
         }
 
@@ -617,7 +640,7 @@ final class DictationViewModel: ObservableObject {
         }
         updated.screenContextOverride = override
         if override == false {
-            updated.organizeScreenContextOverride = nil
+            updated.screenContextPreprocessingOverride = nil
         }
         prompts[idx] = updated
         if updated.id == selectedPromptID {
@@ -625,13 +648,13 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    func updateOrganizeScreenContextOverride(for id: UUID, to override: Bool?) {
+    func updateScreenContextPreprocessingOverride(for id: UUID, to override: ScreenContextPreprocessingMode?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
-        if updated.organizeScreenContextOverride == override {
+        if updated.screenContextPreprocessingOverride == override {
             return
         }
-        updated.organizeScreenContextOverride = override
+        updated.screenContextPreprocessingOverride = override
         prompts[idx] = updated
         if updated.id == selectedPromptID {
             updateProviders()
@@ -647,7 +670,8 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
-        UserDefaults.standard.set(organizeScreenContentEnabled, forKey: "screenContext.organize")
+        UserDefaults.standard.set(screenContextPreprocessingMode.rawValue, forKey: "screenContext.preprocessMode")
+        UserDefaults.standard.set(screenContextPreprocessingMode == .llm, forKey: "screenContext.organize")
 
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(llmProvider, forKey: "llm.provider")
@@ -841,7 +865,7 @@ final class DictationViewModel: ObservableObject {
         let llmSettingsToApply = lSettings
         let isLLMEnabled = llmEnabled
         let useScreenContext = resolvedScreenContext(for: prompt)
-        let useOrganizeScreenContent = resolvedOrganizeScreenContent(for: prompt)
+        let preprocessingMode = resolvedScreenContextPreprocessingMode(for: prompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
 
         return Task {
@@ -853,7 +877,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMSettings(llmSettingsToApply)
             await controller.updateLLMEnabled(isLLMEnabled)
             await controller.updateScreenContextEnabled(useScreenContext)
-            await controller.updateOrganizeScreenContentEnabled(useOrganizeScreenContent)
+            await controller.updateScreenContextPreprocessingMode(preprocessingMode)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
     }
@@ -1022,11 +1046,11 @@ private extension DictationViewModel {
         return screenContextEnabled
     }
 
-    func resolvedOrganizeScreenContent(for prompt: PromptConfiguration?) -> Bool {
-        guard resolvedScreenContext(for: prompt) else { return false }
-        if let override = prompt?.organizeScreenContextOverride {
+    func resolvedScreenContextPreprocessingMode(for prompt: PromptConfiguration?) -> ScreenContextPreprocessingMode {
+        guard resolvedScreenContext(for: prompt) else { return .off }
+        if let override = prompt?.screenContextPreprocessingOverride {
             return override
         }
-        return organizeScreenContentEnabled
+        return screenContextPreprocessingMode
     }
 }

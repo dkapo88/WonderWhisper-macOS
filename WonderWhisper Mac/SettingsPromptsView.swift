@@ -336,9 +336,9 @@ struct SettingsPromptsView: View {
                         PromptScreenContextEditor(
                             prompt: prompt,
                             defaultScreenContext: vm.screenContextEnabled,
-                            defaultOrganize: vm.organizeScreenContentEnabled,
+                            defaultPreprocess: vm.screenContextPreprocessingMode,
                             onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
-                            onOrganizeUpdate: { vm.updateOrganizeScreenContextOverride(for: prompt.id, to: $0) }
+                            onPreprocessUpdate: { vm.updateScreenContextPreprocessingOverride(for: prompt.id, to: $0) }
                         )
                     }
 
@@ -769,28 +769,68 @@ private enum PromptOverrideChoice: String, CaseIterable, Identifiable {
     }
 }
 
+private enum PromptPreprocessingChoice: String, CaseIterable, Identifiable {
+  case inherit
+  case off
+  case onDevice
+  case llm
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .inherit: return "Default"
+    case .off: return "Off"
+    case .onDevice: return "On-device"
+    case .llm: return "LLM"
+    }
+  }
+
+  var modeValue: ScreenContextPreprocessingMode? {
+    switch self {
+    case .inherit: return nil
+    case .off: return .off
+    case .onDevice: return .onDevice
+    case .llm: return .llm
+    }
+  }
+
+  func resolved(defaultValue: ScreenContextPreprocessingMode) -> ScreenContextPreprocessingMode {
+    modeValue ?? defaultValue
+  }
+
+  static func choice(for override: ScreenContextPreprocessingMode?) -> PromptPreprocessingChoice {
+    guard let override else { return .inherit }
+    switch override {
+    case .off: return .off
+    case .onDevice: return .onDevice
+    case .llm: return .llm
+    }
+  }
+}
+
 private struct PromptScreenContextEditor: View {
     let prompt: PromptConfiguration
     let defaultScreenContext: Bool
-    let defaultOrganize: Bool
+    let defaultPreprocess: ScreenContextPreprocessingMode
     let onScreenUpdate: (Bool?) -> Void
-    let onOrganizeUpdate: (Bool?) -> Void
+    let onPreprocessUpdate: (ScreenContextPreprocessingMode?) -> Void
 
     @State private var screenChoice: PromptOverrideChoice
-    @State private var organizeChoice: PromptOverrideChoice
+    @State private var preprocessChoice: PromptPreprocessingChoice
 
     init(prompt: PromptConfiguration,
          defaultScreenContext: Bool,
-         defaultOrganize: Bool,
+         defaultPreprocess: ScreenContextPreprocessingMode,
          onScreenUpdate: @escaping (Bool?) -> Void,
-         onOrganizeUpdate: @escaping (Bool?) -> Void) {
+         onPreprocessUpdate: @escaping (ScreenContextPreprocessingMode?) -> Void) {
         self.prompt = prompt
         self.defaultScreenContext = defaultScreenContext
-        self.defaultOrganize = defaultOrganize
+        self.defaultPreprocess = defaultPreprocess
         self.onScreenUpdate = onScreenUpdate
-        self.onOrganizeUpdate = onOrganizeUpdate
+        self.onPreprocessUpdate = onPreprocessUpdate
         _screenChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.screenContextOverride))
-        _organizeChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.organizeScreenContextOverride))
+        _preprocessChoice = State(initialValue: PromptPreprocessingChoice.choice(for: prompt.screenContextPreprocessingOverride))
     }
 
     var body: some View {
@@ -812,42 +852,42 @@ private struct PromptScreenContextEditor: View {
                 .pickerStyle(.segmented)
                 .onChange(of: screenChoice) { newValue in
                     onScreenUpdate(newValue.boolValue)
-                    if !newValue.resolved(defaultValue: defaultScreenContext) {
-                        organizeChoice = .disabled
-                        onOrganizeUpdate(nil)
-                    } else if organizeChoice == .inherit {
-                        onOrganizeUpdate(nil)
+                    let resolved = newValue.resolved(defaultValue: defaultScreenContext)
+                    if !resolved {
+                        preprocessChoice = .inherit
+                        onPreprocessUpdate(nil)
                     }
                 }
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                let inheritedOrganize = defaultOrganize && defaultScreenContext
+                let resolvedDefault = defaultPreprocess
                 let screenResolved = screenChoice.resolved(defaultValue: defaultScreenContext)
                 HStack {
-                    Text("Organize screen content")
+                    Text("Screen preprocessing")
                         .font(.subheadline).bold()
                     Spacer()
-                    Text(inheritedOrganize ? "Default: On" : "Default: Off")
+                    Text("Default: \(resolvedDefault.title)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                Picker("Organize screen content", selection: $organizeChoice) {
-                    ForEach(PromptOverrideChoice.allCases) { choice in
+                Picker("Screen preprocessing", selection: $preprocessChoice) {
+                    ForEach(PromptPreprocessingChoice.allCases) { choice in
                         Text(choice.title).tag(choice)
                     }
                 }
                 .pickerStyle(.segmented)
                 .disabled(!screenResolved || !defaultScreenContext)
-                .onChange(of: organizeChoice) { newValue in
-                    onOrganizeUpdate(newValue.boolValue)
+                .onChange(of: preprocessChoice) { newValue in
+                    onPreprocessUpdate(newValue.modeValue)
                 }
                 .onChange(of: screenChoice) { newValue in
                     let resolved = newValue.resolved(defaultValue: defaultScreenContext)
                     if !resolved {
-                        organizeChoice = .disabled
-                    } else if organizeChoice == .disabled && (prompt.organizeScreenContextOverride ?? defaultOrganize) {
-                        organizeChoice = PromptOverrideChoice.choice(for: prompt.organizeScreenContextOverride)
+                        preprocessChoice = .inherit
+                    } else if preprocessChoice == .inherit,
+                              let override = prompt.screenContextPreprocessingOverride {
+                        preprocessChoice = PromptPreprocessingChoice.choice(for: override)
                     }
                 }
             }
@@ -856,8 +896,8 @@ private struct PromptScreenContextEditor: View {
         .onChange(of: prompt.screenContextOverride) { newValue in
             screenChoice = PromptOverrideChoice.choice(for: newValue)
         }
-        .onChange(of: prompt.organizeScreenContextOverride) { newValue in
-            organizeChoice = PromptOverrideChoice.choice(for: newValue)
+        .onChange(of: prompt.screenContextPreprocessingOverride) { newValue in
+            preprocessChoice = PromptPreprocessingChoice.choice(for: newValue)
         }
     }
 }

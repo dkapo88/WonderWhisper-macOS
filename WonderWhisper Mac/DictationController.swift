@@ -18,16 +18,17 @@ actor DictationController {
 
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
-    private var organizeScreenContentEnabled: Bool = false
+    private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
-    private var screenOrganizationTask: Task<String?, Never>?
+    private var screenPreprocessingTask: Task<String?, Never>?
     private var preCapturedSelectedText: String?
 
 
 
     private var screenOrganizePrompt: String = AppConfig.defaultScreenOrganizePrompt
+    private let keywordExtractor = ScreenContentKeywordExtractor()
 
     // Removed memory recording feature due to unreliable output
 
@@ -160,8 +161,8 @@ actor DictationController {
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             // Cancel any in-flight screen organization to avoid post-stop work
-            if let t = screenOrganizationTask { t.cancel() }
-            screenOrganizationTask = nil
+            if let t = screenPreprocessingTask { t.cancel() }
+            screenPreprocessingTask = nil
 
             os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
 
@@ -185,6 +186,13 @@ actor DictationController {
                     } else {
                         screenText = nil
                         screenMethod = nil
+                    }
+                    if screenContextPreprocessingMode == .onDevice,
+                       screenMethod == "OCR",
+                       let raw = screenText,
+                       let result = await performScreenPreprocessing(on: raw, context: "pipeline") {
+                        screenText = result.0
+                        screenMethod = result.1
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
@@ -285,7 +293,8 @@ actor DictationController {
         // Reset pre-captured context for the next run
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
-        screenOrganizationTask = nil
+        if let task = screenPreprocessingTask { task.cancel() }
+        screenPreprocessingTask = nil
         // Restore capture profile to default for subsequent runs
         recorder.captureProfile = .standard16k
         os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
@@ -297,7 +306,7 @@ actor DictationController {
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
-    func updateOrganizeScreenContentEnabled(_ enabled: Bool) { self.organizeScreenContentEnabled = enabled }
+    func updateScreenContextPreprocessingMode(_ mode: ScreenContextPreprocessingMode) { self.screenContextPreprocessingMode = mode }
     func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
@@ -328,7 +337,7 @@ actor DictationController {
         // Reset any pre-captured context
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
-        screenOrganizationTask = nil
+        screenPreprocessingTask = nil
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
     }
@@ -397,20 +406,12 @@ actor DictationController {
                         screenText = await screenContext.captureActiveWindowText()
                         screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
                     }
-                    // Apply organization for OCR in reprocess flow if enabled
-                    if organizeScreenContentEnabled, screenMethod == "OCR", let raw = screenText, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-                        let instruction = screenOrganizePrompt
-                        do {
-                            let organized = try await llm.process(text: raw, userPrompt: instruction, settings: orgSettings)
-                            if !organized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { screenText = organized }
-                        } catch {
-                            if error is CancellationError {
-                                AppLog.dictation.log("Screen organization LLM (reprocess) cancelled")
-                            } else {
-                                AppLog.dictation.error("Screen organization LLM (reprocess) failed: \(error.localizedDescription)")
-                            }
-                        }
+                    if screenContextPreprocessingMode != .off,
+                       screenMethod == "OCR",
+                       let raw = screenText,
+                       let result = await performScreenPreprocessing(on: raw, context: "reprocess") {
+                        screenText = result.0
+                        screenMethod = result.1
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
@@ -500,33 +501,56 @@ extension DictationController {
         let ocr = await screenContext.captureActiveWindowText()
         self.preCapturedScreenText = ocr
         self.preCapturedScreenMethod = (ocr?.isEmpty ?? true) ? nil : "OCR"
-        // Kick off LLM organization in parallel if enabled and we have OCR text
-        if organizeScreenContentEnabled, let ocrText = ocr, !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint, model: llmSettings.model, systemPrompt: nil, timeout: llmSettings.timeout, streaming: false)
-            let instruction = screenOrganizePrompt
-            self.screenOrganizationTask = Task { [ocrText, weak self] in
-                do {
-                    let organized = try await llm.process(text: ocrText, userPrompt: instruction, settings: orgSettings)
-                    let trimmed = organized.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        await self?.setOrganizedScreenText(trimmed)
-                    }
-                    return trimmed
-                } catch {
-                    if error is CancellationError {
-                        AppLog.dictation.log("Screen organization LLM cancelled")
-                        return ocrText
-                    } else {
-                        AppLog.dictation.error("Screen organization LLM failed: \(error.localizedDescription)")
-                        return ocrText
-                    }
-                }
+
+        guard let ocrText = ocr,
+              !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              screenContextPreprocessingMode != .off else {
+            return
+        }
+
+        screenPreprocessingTask = Task { [ocrText, weak self] in
+            guard let self else { return ocrText }
+            if let (processed, method) = await self.performScreenPreprocessing(on: ocrText, context: "pre-capture") {
+                await self.setPreprocessedScreenText(processed, method: method)
+                return processed
             }
+            return ocrText
         }
     }
 
-    private func setOrganizedScreenText(_ text: String) {
+    private func setPreprocessedScreenText(_ text: String, method: String) {
         self.preCapturedScreenText = text
-        self.preCapturedScreenMethod = "OCR-Organized"
+        self.preCapturedScreenMethod = method
+    }
+
+    private func performScreenPreprocessing(on text: String, context: String) async -> (String, String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        switch screenContextPreprocessingMode {
+        case .off:
+            return nil
+        case .onDevice:
+            guard let formatted = keywordExtractor.formattedKeywords(from: trimmed) else { return nil }
+            return (formatted, "OCR-Keywords")
+        case .llm:
+            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint,
+                                          model: llmSettings.model,
+                                          systemPrompt: nil,
+                                          timeout: llmSettings.timeout,
+                                          streaming: false)
+            do {
+                let organized = try await llm.process(text: trimmed, userPrompt: screenOrganizePrompt, settings: orgSettings)
+                let output = organized.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !output.isEmpty else { return nil }
+                return (output, "OCR-Organized")
+            } catch {
+                if error is CancellationError {
+                    AppLog.dictation.log("Screen preprocessing (\(context)) cancelled")
+                } else {
+                    AppLog.dictation.error("Screen preprocessing (\(context)) failed: \(error.localizedDescription)")
+                }
+                return nil
+            }
+        }
     }
 }
