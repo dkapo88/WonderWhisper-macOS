@@ -168,7 +168,8 @@ struct SettingsPromptsView: View {
                     prompt: prompt,
                     capturingPromptID: $capturingPromptID,
                     onShortcutChange: { vm.updateShortcut(for: prompt.id, to: $0) },
-                    onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) }
+                    onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) },
+                    onTriggerOnSelectedTextChange: { vm.updateTriggerOnSelectedText(for: prompt.id, to: $0) }
                 )
                 .padding(.leading, 22)
                 .padding(.top, 2)
@@ -185,13 +186,21 @@ struct SettingsPromptsView: View {
     }
 
     private func triggerSummary(for prompt: PromptConfiguration) -> String {
+        var parts: [String] = []
+        
         if let selection = prompt.selection {
-            return "Key: \(selection.displayName)"
+            parts.append("Key: \(selection.displayName)")
+        } else if let shortcut = prompt.shortcut {
+            parts.append(shortcutDescription(shortcut))
+        } else {
+            parts.append("No trigger")
         }
-        if let shortcut = prompt.shortcut {
-            return shortcutDescription(shortcut)
+        
+        if prompt.triggerOnSelectedText {
+            parts.append("📝 Selected Text")
         }
-        return "No trigger"
+        
+        return parts.joined(separator: " • ")
     }
 
     private func selectionBackground(for prompt: PromptConfiguration, isDragging: Bool) -> some View {
@@ -406,6 +415,7 @@ private struct PromptTriggerEditor: View {
     @Binding var capturingPromptID: UUID?
     let onShortcutChange: (HotkeyManager.Shortcut?) -> Void
     let onSelectionChange: (HotkeyManager.Selection?) -> Void
+    let onTriggerOnSelectedTextChange: (Bool) -> Void
 
     @State private var mode: TriggerMode
     @State private var selectionValue: HotkeyManager.Selection?
@@ -415,11 +425,13 @@ private struct PromptTriggerEditor: View {
     init(prompt: PromptConfiguration,
          capturingPromptID: Binding<UUID?>,
          onShortcutChange: @escaping (HotkeyManager.Shortcut?) -> Void,
-         onSelectionChange: @escaping (HotkeyManager.Selection?) -> Void) {
+         onSelectionChange: @escaping (HotkeyManager.Selection?) -> Void,
+         onTriggerOnSelectedTextChange: @escaping (Bool) -> Void) {
         self.prompt = prompt
         self._capturingPromptID = capturingPromptID
         self.onShortcutChange = onShortcutChange
         self.onSelectionChange = onSelectionChange
+        self.onTriggerOnSelectedTextChange = onTriggerOnSelectedTextChange
         // Default to Single Key when nothing configured; preserve existing choices otherwise
         let initialMode: TriggerMode = (prompt.selection != nil || (prompt.selection == nil && prompt.shortcut == nil)) ? .selection : .shortcut
         self._mode = State(initialValue: initialMode)
@@ -428,6 +440,16 @@ private struct PromptTriggerEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Trigger on Selected Text checkbox
+            HStack {
+                Toggle("Use when text is selected", isOn: Binding(
+                    get: { prompt.triggerOnSelectedText },
+                    set: { onTriggerOnSelectedTextChange($0) }
+                ))
+                Spacer()
+            }
+            .padding(.bottom, 4)
+            
             Picker("Trigger type", selection: $mode) {
                 ForEach(TriggerMode.allCases) { mode in
                     Text(mode.label).tag(mode)

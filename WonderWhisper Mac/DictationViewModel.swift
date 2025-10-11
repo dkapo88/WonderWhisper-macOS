@@ -121,6 +121,7 @@ final class DictationViewModel: ObservableObject {
     private let promptHotkeyManager = PromptHotkeyManager()
     private var isApplyingPromptFromSelection = false
     private var providerUpdateTask: Task<Void, Never>?
+    private var selectedTextPromptOverride: PromptConfiguration?
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -326,6 +327,10 @@ final class DictationViewModel: ObservableObject {
         persistPromptLibrary()
         Task {
             await waitForLatestProviderUpdate()
+            
+            // Check if text is currently selected and switch to designated prompt if available
+            await checkAndApplySelectedTextPrompt()
+            
             let prompt = await MainActor.run { self.userPrompt }
 
             // Optimistically update UI immediately for snappy visual feedback
@@ -351,6 +356,9 @@ final class DictationViewModel: ObservableObject {
             await waitForLatestProviderUpdate()
             let prompt = await MainActor.run { self.userPrompt }
             await controller.finish(userPrompt: prompt)
+            
+            // Restore original prompt if we had a selected text override
+            await restoreOriginalPromptIfNeeded()
         }
     }
 
@@ -359,6 +367,9 @@ final class DictationViewModel: ObservableObject {
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { self.isRecording = false }
             await controller.cancel()
+            
+            // Restore original prompt if we had a selected text override
+            await restoreOriginalPromptIfNeeded()
         }
     }
 
@@ -705,6 +716,79 @@ final class DictationViewModel: ObservableObject {
         selectedPromptID = id
     }
 
+    func getSelectedTextPrompt() -> PromptConfiguration? {
+        return prompts.first(where: { $0.triggerOnSelectedText })
+    }
+
+    func updateTriggerOnSelectedText(for id: UUID, to enabled: Bool) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        
+        var newPrompts = prompts
+        
+        if enabled {
+            // First, clear the flag from all other prompts to maintain exclusivity
+            for i in newPrompts.indices {
+                newPrompts[i].triggerOnSelectedText = false
+            }
+        }
+        
+        // Set the flag for the target prompt
+        newPrompts[idx].triggerOnSelectedText = enabled
+        
+        prompts = newPrompts
+    }
+    
+    private func shouldUseSelectedTextPrompt() async -> Bool {
+        let screenContext = ScreenContextService()
+        let selectedText = screenContext.selectedText()
+        let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        
+        // Only override if we have both selected text and a designated prompt for it
+        return hasSelectedText && getSelectedTextPrompt() != nil
+    }
+    
+    private func checkAndApplySelectedTextPrompt() async {
+        // Import ScreenContextService to check for selected text
+        let screenContext = ScreenContextService()
+        
+        // Check if there's text currently selected
+        let selectedText = screenContext.selectedText()
+        let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        
+        if hasSelectedText {
+            // Check if there's a prompt designated for selected text
+            if let selectedTextPrompt = getSelectedTextPrompt() {
+                // Temporarily switch to this prompt for this dictation session
+                selectedTextPromptOverride = selectedTextPrompt
+                isApplyingPromptFromSelection = true
+                systemPrompt = selectedTextPrompt.systemPrompt
+                userPrompt = selectedTextPrompt.userPrompt
+                isApplyingPromptFromSelection = false
+                updateProviders()
+            }
+        } else {
+            // Clear any override if no text is selected
+            selectedTextPromptOverride = nil
+        }
+    }
+    
+    private func restoreOriginalPromptIfNeeded() async {
+        if selectedTextPromptOverride != nil {
+            selectedTextPromptOverride = nil
+            
+            // Restore the originally selected prompt
+            await MainActor.run {
+                if let originalPrompt = self.prompts.prompt(withID: self.selectedPromptID) ?? self.prompts.first {
+                    self.isApplyingPromptFromSelection = true
+                    self.systemPrompt = originalPrompt.systemPrompt
+                    self.userPrompt = originalPrompt.userPrompt
+                    self.isApplyingPromptFromSelection = false
+                }
+            }
+            updateProviders()
+        }
+    }
+
     private func persistAndUpdate() {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
@@ -798,11 +882,20 @@ final class DictationViewModel: ObservableObject {
     private let promptPressThreshold: TimeInterval = 0.8
 
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
+        // Check if selected text should override the hotkey prompt
+        let shouldOverrideWithSelectedText = await shouldUseSelectedTextPrompt()
+        
         await MainActor.run {
-            if self.selectedPromptID != id {
+            if !shouldOverrideWithSelectedText && self.selectedPromptID != id {
                 self.selectedPromptID = id
             }
         }
+        
+        // If we have selected text, apply the selected text prompt override instead of the hotkey prompt
+        if shouldOverrideWithSelectedText {
+            await checkAndApplySelectedTextPrompt()
+        }
+        
         await waitForLatestProviderUpdate()
         let promptText = await MainActor.run { self.userPrompt }
         switch phase {
@@ -818,6 +911,8 @@ final class DictationViewModel: ObservableObject {
                 // Optimistically update UI immediately for snappy visual feedback
                 await MainActor.run { self.isRecording = false }
                 await controller.finish(userPrompt: promptText)
+                // Restore original prompt if we had a selected text override
+                await restoreOriginalPromptIfNeeded()
             default:
                 break
             }
@@ -830,6 +925,8 @@ final class DictationViewModel: ObservableObject {
                     // Optimistically update UI immediately for snappy visual feedback
                     await MainActor.run { self.isRecording = false }
                     await controller.finish(userPrompt: promptText)
+                    // Restore original prompt if we had a selected text override
+                    await restoreOriginalPromptIfNeeded()
                 }
             }
         }
