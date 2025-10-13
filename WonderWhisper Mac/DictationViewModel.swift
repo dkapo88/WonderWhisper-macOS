@@ -359,7 +359,22 @@ final class DictationViewModel: ObservableObject {
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { self.isRecording = false }
 
-            await waitForLatestProviderUpdate()
+            // If we have a selected text prompt override, ensure providers are updated before LLM processing
+            if selectedTextPromptOverride != nil {
+                await MainActor.run {
+                    // Temporarily apply the selected text prompt to ensure providers use it
+                    if let override = self.selectedTextPromptOverride {
+                        self.isApplyingPromptFromSelection = true
+                        self.systemPrompt = override.systemPrompt
+                        self.userPrompt = override.userPrompt
+                        self.isApplyingPromptFromSelection = false
+                    }
+                }
+                await updateProvidersWithSelectedTextOverride()
+            } else {
+                await waitForLatestProviderUpdate()
+            }
+
             let prompt = await MainActor.run { self.userPrompt }
             await controller.finish(userPrompt: prompt)
             
@@ -848,6 +863,12 @@ final class DictationViewModel: ObservableObject {
                     return
                 }
                 
+                // Don't override if we already have a selected text prompt override from fast detection
+                guard await self.selectedTextPromptOverride == nil else {
+                    await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
                 guard let selectedTextPrompt = await self.getSelectedTextPrompt() else {
                     await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
                     return
@@ -984,6 +1005,23 @@ final class DictationViewModel: ObservableObject {
                 
             case .recording:
                 await MainActor.run { self.isRecording = false }
+                
+                // If we have a selected text prompt override, ensure providers are updated before LLM processing
+                if selectedTextPromptOverride != nil {
+                    await MainActor.run {
+                        // Temporarily apply the selected text prompt to ensure providers use it
+                        if let override = self.selectedTextPromptOverride {
+                            self.isApplyingPromptFromSelection = true
+                            self.systemPrompt = override.systemPrompt
+                            self.userPrompt = override.userPrompt
+                            self.isApplyingPromptFromSelection = false
+                        }
+                    }
+                    await updateProvidersWithSelectedTextOverride()
+                } else {
+                    await waitForLatestProviderUpdate()
+                }
+                
                 let promptText = await MainActor.run { self.userPrompt }
                 await controller.finish(userPrompt: promptText)
                 await restoreOriginalPromptIfNeeded()
@@ -999,6 +1037,23 @@ final class DictationViewModel: ObservableObject {
                 let state = await controller.currentState()
                 if case .recording = state {
                     await MainActor.run { self.isRecording = false }
+                    
+                    // If we have a selected text prompt override, ensure providers are updated before LLM processing
+                    if selectedTextPromptOverride != nil {
+                        await MainActor.run {
+                            // Temporarily apply the selected text prompt to ensure providers use it
+                            if let override = self.selectedTextPromptOverride {
+                                self.isApplyingPromptFromSelection = true
+                                self.systemPrompt = override.systemPrompt
+                                self.userPrompt = override.userPrompt
+                                self.isApplyingPromptFromSelection = false
+                            }
+                        }
+                        await updateProvidersWithSelectedTextOverride()
+                    } else {
+                        await waitForLatestProviderUpdate()
+                    }
+                    
                     let promptText = await MainActor.run { self.userPrompt }
                     await controller.finish(userPrompt: promptText)
                     await restoreOriginalPromptIfNeeded()
@@ -1011,6 +1066,13 @@ final class DictationViewModel: ObservableObject {
         let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
         let task = applyProviders(using: prompt)
         providerUpdateTask = task
+    }
+    
+    private func updateProvidersWithSelectedTextOverride() async {
+        // Use the selected text prompt override for provider updates
+        let task = applyProviders(using: selectedTextPromptOverride)
+        providerUpdateTask = task
+        await task.value
     }
 
     @discardableResult
