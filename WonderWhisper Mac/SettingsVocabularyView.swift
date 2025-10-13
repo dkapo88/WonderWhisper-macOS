@@ -81,7 +81,7 @@ struct SettingsVocabularyView: View {
               }
             }
           }
-          .frame(minHeight: 220, maxHeight: 260)
+          .frame(minHeight: 220, maxHeight: .infinity)
         }
       }
       .padding(.top, 4)
@@ -145,7 +145,7 @@ struct SettingsVocabularyView: View {
               }
             }
           }
-          .frame(minHeight: 220, maxHeight: 260)
+          .frame(minHeight: 220, maxHeight: .infinity)
         }
 
         Text("Tip: rules are case-insensitive and applied before LLM post-processing.")
