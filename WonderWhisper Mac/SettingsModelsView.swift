@@ -32,6 +32,7 @@ struct SettingsModelsView: View {
                     Text("Parakeet (local)").tag("parakeet-local")
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
+                    Text("Soniox (Streaming)").tag("soniox-streaming")
                 }
 
                 // Groq Whisper options (language + prompt), shown for Groq Whisper models and streaming
@@ -85,6 +86,24 @@ struct SettingsModelsView: View {
                             Text("• Results appear within seconds instead of waiting for full recording")
                             Text("• Ideal for longer recordings and real-time feedback")
                             Text("• Uses whisper-large-v3-turbo for optimal speed/accuracy balance")
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    }
+                } else if vm.transcriptionModel == "soniox-streaming" {
+                    GroupBox("Soniox Streaming") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "waveform.path")
+                                    .foregroundColor(.blue)
+                                Text("Ultra-low latency WebSocket with token-level accuracy")
+                                    .font(.subheadline)
+                            }
+                            Text("• Streams 16 kHz PCM directly to Soniox for consistent first/last words")
+                            Text("• Built-in endpoint detection finalizes phrases without long tails")
+                            Text("• Auto keepalive guards against disconnects during silence/VAD gaps")
+                            Text("• Ideal when you need stable turn boundaries and fast confirmations")
                         }
                         .font(.caption)
                         .foregroundColor(.secondary)

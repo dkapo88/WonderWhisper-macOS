@@ -60,6 +60,16 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
     // Keychain alias for the Deepgram API key
     static let deepgramAPIKeyAlias = "DEEPGRAM_API_KEY"
 
+    // Soniox realtime streaming endpoint + aliases
+    static let sonioxRealtime: URL = {
+        guard let url = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket") else {
+            fatalError("Invalid Soniox realtime URL")
+        }
+        return url
+    }()
+    static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
+    static let defaultSonioxModel = "stt-rt-preview-v2"
+
     // OpenRouter header defaults
     static let openrouterTitle = "WonderWhisper Mac"
     static let openrouterReferer = "https://wonderwhisper.app"

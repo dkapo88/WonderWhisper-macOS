@@ -86,6 +86,7 @@ final class DictationViewModel: ObservableObject {
     // API Key inputs (not persisted directly; saved via Keychain on action)
     @Published var assemblyAIKeyInput: String = ""
     @Published var deepgramKeyInput: String = ""
+    @Published var sonioxKeyInput: String = ""
 
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
@@ -203,6 +204,12 @@ final class DictationViewModel: ObservableObject {
             transcriber = AssemblyAIStreamingProvider(apiKey: key)
             // Endpoint not used by streaming provider but keep required contract
             transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: persistedTranscriptionModel, timeout: 180)
+        } else if persistedTranscriptionModel == "soniox-streaming" {
+            let provider = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
+            transcriber = provider
+            let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
+            let timeout = max(5, min(180, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
+            transcriberSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: timeout)
         }
 
         // Choose initial LLM provider/endpoints based on persisted settings
@@ -547,6 +554,18 @@ final class DictationViewModel: ObservableObject {
             #endif
         }
         if transcriptionModel == "deepgram-streaming" {
+            updateProviders()
+        }
+    }
+
+    func saveSonioxKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.sonioxAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+        if transcriptionModel == "soniox-streaming" {
             updateProviders()
         }
     }
@@ -1102,6 +1121,11 @@ final class DictationViewModel: ObservableObject {
             let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
             provider = DeepgramStreamingProvider(apiKey: key)
             tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
+        } else if transcriptionModel == "soniox-streaming" {
+            let providerInstance = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
+            provider = providerInstance
+            let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
+            tSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else if transcriptionModel == "groq-streaming" {
             provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
             // Use the actual Whisper model for the underlying transcription, but keep the groq-streaming identifier for the UI

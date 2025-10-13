@@ -98,6 +98,11 @@ actor DictationController {
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await groq.feedPCM16(data) }
                     }
+                } else if let soniox = transcriber as? SonioxStreamingProvider {
+                    try await soniox.beginRealtime(settings: transcriberSettings)
+                    try? recorder.startStreamingPCM16 { data in
+                        Task { try? await soniox.feedPCM16(data) }
+                    }
                 }
                 
                 // Pre-capture screen context early (AX first, OCR fallback)
@@ -129,6 +134,7 @@ actor DictationController {
         if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is GroqStreamingProvider { recorder.stopStreamingPCM16() }
+        if transcriber is SonioxStreamingProvider { recorder.stopStreamingPCM16() }
 
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
 
@@ -162,6 +168,12 @@ actor DictationController {
             } else if let groq = transcriber as? GroqStreamingProvider {
                 // Prefer Groq chunked streaming transcript for speed
                 transcript = try await groq.endRealtime()
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Streaming fallback to file transcription")
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else if let soniox = transcriber as? SonioxStreamingProvider {
+                transcript = try await soniox.endRealtime()
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
                     AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
@@ -352,6 +364,8 @@ actor DictationController {
             await dg.abort()
         } else if let groq = transcriber as? GroqStreamingProvider {
             await groq.abort()
+        } else if let soniox = transcriber as? SonioxStreamingProvider {
+            await soniox.abort()
         }
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()
