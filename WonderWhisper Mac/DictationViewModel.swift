@@ -122,6 +122,7 @@ final class DictationViewModel: ObservableObject {
     private var isApplyingPromptFromSelection = false
     private var providerUpdateTask: Task<Void, Never>?
     private var selectedTextPromptOverride: PromptConfiguration?
+    private var selectedTextFallbackTaskID: UUID?
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -794,6 +795,20 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    private func applySelectedTextPromptOverride(_ prompt: PromptConfiguration) {
+        selectedTextPromptOverride = prompt
+        isApplyingPromptFromSelection = true
+        systemPrompt = prompt.systemPrompt
+        userPrompt = prompt.userPrompt
+        isApplyingPromptFromSelection = false
+    }
+
+    private func clearSelectedTextFallbackTask(id: UUID) {
+        if selectedTextFallbackTaskID == id {
+            selectedTextFallbackTaskID = nil
+        }
+    }
+
     private func checkAndStoreSelectedTextPromptFast() async {
         let screenContext = ScreenContextService()
         
@@ -803,15 +818,49 @@ final class DictationViewModel: ObservableObject {
         
         if hasSelectedText, let selectedTextPrompt = getSelectedTextPrompt() {
             // Store override WITHOUT calling updateProviders() to avoid restart
-            selectedTextPromptOverride = selectedTextPrompt
-            await MainActor.run {
-                isApplyingPromptFromSelection = true
-                systemPrompt = selectedTextPrompt.systemPrompt
-                userPrompt = selectedTextPrompt.userPrompt
-                isApplyingPromptFromSelection = false
-            }
+            applySelectedTextPromptOverride(selectedTextPrompt)
+            selectedTextFallbackTaskID = nil
         } else {
             selectedTextPromptOverride = nil
+            
+            // Kick off slower fallback without delaying recording start
+            let taskID = UUID()
+            selectedTextFallbackTaskID = taskID
+            
+            Task.detached(priority: .utility) { [weak self] in
+                let screenContext = ScreenContextService()
+                let fallbackText = screenContext.selectedText()
+                let trimmed = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                
+                guard !trimmed.isEmpty else {
+                    await MainActor.run { self?.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
+                guard let self else {
+                    await MainActor.run { self?.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
+                // Ensure this result is still relevant for the latest request
+                guard await self.selectedTextFallbackTaskID == taskID else {
+                    await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
+                guard let selectedTextPrompt = await self.getSelectedTextPrompt() else {
+                    await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
+                guard await self.isRecording else {
+                    await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
+                    return
+                }
+                
+                await self.applySelectedTextPromptOverride(selectedTextPrompt)
+                await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
+            }
         }
     }
 
