@@ -68,7 +68,11 @@ actor DictationController {
                 } else {
                     recorder.captureProfile = .standard16k
                 }
+                
+                // Update state IMMEDIATELY after starting recording for instant UI feedback
                 let url = try recorder.startRecording()
+                state = .recording
+                
                 let recordingStart = Date()
                 currentRecordingURL = url
 
@@ -95,7 +99,7 @@ actor DictationController {
                         Task { try? await groq.feedPCM16(data) }
                     }
                 }
-                state = .recording
+                
                 // Pre-capture screen context early (AX first, OCR fallback)
                 preCapturedScreenText = nil
                 preCapturedSelectedText = nil

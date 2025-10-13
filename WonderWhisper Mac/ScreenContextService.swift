@@ -54,6 +54,35 @@ final class ScreenContextService {
         return copySelectedTextNonDestructively()
     }
 
+    func selectedTextFast() -> String? {
+        // Fast path: AX only, no 600ms pasteboard fallback
+        // Used during recording start for minimal latency
+        let sys = AXUIElementCreateSystemWide()
+        var focused: AnyObject?
+        let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
+        if err == .success, let element = focused {
+            var sel: AnyObject?
+            guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+            let axElement = element as! AXUIElement
+            let res = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextAttribute as CFString, &sel)
+            if res == .success, let s = sel as? String, !s.isEmpty { return s }
+            
+            var rangeValue: AnyObject?
+            let res2 = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
+            if res2 == .success, let axRange = rangeValue {
+                var strForRange: AnyObject?
+                let paramRes = AXUIElementCopyParameterizedAttributeValue(
+                    axElement,
+                    kAXStringForRangeParameterizedAttribute as CFString,
+                    axRange,
+                    &strForRange
+                )
+                if paramRes == .success, let s = strForRange as? String, !s.isEmpty { return s }
+            }
+        }
+        return nil
+    }
+
     func captureActiveWindowText() async -> String? {
         let svc = ScreenCaptureService()
         return await svc.captureActiveWindowText()

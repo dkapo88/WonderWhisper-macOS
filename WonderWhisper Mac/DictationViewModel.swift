@@ -328,22 +328,27 @@ final class DictationViewModel: ObservableObject {
         Task {
             await waitForLatestProviderUpdate()
             
-            // Check if text is currently selected and switch to designated prompt if available
-            await checkAndApplySelectedTextPrompt()
-            
-            let prompt = await MainActor.run { self.userPrompt }
-
-            // Optimistically update UI immediately for snappy visual feedback
             let currentState = await controller.currentState()
-            if case .idle = currentState {
+            
+            switch currentState {
+            case .idle, .error:
+                // Fast check for selected text (AX only, ~5ms, no pasteboard fallback)
+                await checkAndStoreSelectedTextPromptFast()
+                
+                // Update UI IMMEDIATELY
                 await MainActor.run { self.isRecording = true }
-            } else if case .error = currentState {
-                await MainActor.run { self.isRecording = true }
-            } else if case .recording = currentState {
+                
+                let prompt = await MainActor.run { self.userPrompt }
+                await controller.toggle(userPrompt: prompt)
+                
+            case .recording:
                 await MainActor.run { self.isRecording = false }
+                let prompt = await MainActor.run { self.userPrompt }
+                await controller.toggle(userPrompt: prompt)
+                
+            default:
+                break
             }
-
-            await controller.toggle(userPrompt: prompt)
         }
     }
 
@@ -789,6 +794,27 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    private func checkAndStoreSelectedTextPromptFast() async {
+        let screenContext = ScreenContextService()
+        
+        // Fast AX-only check (no 600ms pasteboard fallback)
+        let selectedText = screenContext.selectedTextFast()
+        let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        
+        if hasSelectedText, let selectedTextPrompt = getSelectedTextPrompt() {
+            // Store override WITHOUT calling updateProviders() to avoid restart
+            selectedTextPromptOverride = selectedTextPrompt
+            await MainActor.run {
+                isApplyingPromptFromSelection = true
+                systemPrompt = selectedTextPrompt.systemPrompt
+                userPrompt = selectedTextPrompt.userPrompt
+                isApplyingPromptFromSelection = false
+            }
+        } else {
+            selectedTextPromptOverride = nil
+        }
+    }
+
     private func persistAndUpdate() {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
@@ -882,50 +908,50 @@ final class DictationViewModel: ObservableObject {
     private let promptPressThreshold: TimeInterval = 0.8
 
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
-        // Check if selected text should override the hotkey prompt
-        let shouldOverrideWithSelectedText = await shouldUseSelectedTextPrompt()
-        
-        await MainActor.run {
-            if !shouldOverrideWithSelectedText && self.selectedPromptID != id {
-                self.selectedPromptID = id
-            }
-        }
-        
-        // If we have selected text, apply the selected text prompt override instead of the hotkey prompt
-        if shouldOverrideWithSelectedText {
-            await checkAndApplySelectedTextPrompt()
-        }
-        
         await waitForLatestProviderUpdate()
-        let promptText = await MainActor.run { self.userPrompt }
+        
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
             let state = await controller.currentState()
+            
             switch state {
             case .idle, .error:
-                // Optimistically update UI immediately for snappy visual feedback
+                // Select the prompt for this hotkey
+                await MainActor.run {
+                    if self.selectedPromptID != id {
+                        self.selectedPromptID = id
+                    }
+                }
+                
+                // Fast check for selected text (AX only, ~5ms)
+                await checkAndStoreSelectedTextPromptFast()
+                
+                // Update UI IMMEDIATELY
                 await MainActor.run { self.isRecording = true }
+                
+                let promptText = await MainActor.run { self.userPrompt }
                 await controller.toggle(userPrompt: promptText)
+                
             case .recording:
-                // Optimistically update UI immediately for snappy visual feedback
                 await MainActor.run { self.isRecording = false }
+                let promptText = await MainActor.run { self.userPrompt }
                 await controller.finish(userPrompt: promptText)
-                // Restore original prompt if we had a selected text override
                 await restoreOriginalPromptIfNeeded()
+                
             default:
                 break
             }
+            
         case .up:
             guard let start = promptPressTimes.removeValue(forKey: id) else { return }
             let duration = Date().timeIntervalSince(start)
             if duration >= promptPressThreshold {
                 let state = await controller.currentState()
                 if case .recording = state {
-                    // Optimistically update UI immediately for snappy visual feedback
                     await MainActor.run { self.isRecording = false }
+                    let promptText = await MainActor.run { self.userPrompt }
                     await controller.finish(userPrompt: promptText)
-                    // Restore original prompt if we had a selected text override
                     await restoreOriginalPromptIfNeeded()
                 }
             }
