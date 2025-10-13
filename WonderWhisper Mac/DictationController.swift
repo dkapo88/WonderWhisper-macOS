@@ -414,31 +414,14 @@ actor DictationController {
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
 
-            let selected = screenContextEnabled ? screenContext.selectedText() : nil
-            var screenText: String? = nil
-            var screenMethod: String? = nil
+            // Use original context from history entry instead of fetching new context
+            let selected = entry.selectedText
+            let screenText = entry.screenContext
+            let screenMethod = entry.screenContextMethod
+            let appNameForPrompt = entry.appName
+            
             if llmEnabled {
                 state = .processing
-                var appNameForPrompt: String? = nil
-                let (name, _) = screenContext.frontmostAppNameAndBundle()
-                appNameForPrompt = name
-                if screenContextEnabled {
-                    // Prefer AX over OCR when no selection is present
-                    if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
-                        screenText = focused
-                        screenMethod = "AX"
-                    } else {
-                        screenText = await screenContext.captureActiveWindowText()
-                        screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
-                    }
-                    if screenContextPreprocessingMode != .off,
-                       screenMethod == "OCR",
-                       let raw = screenText,
-                       let result = await performScreenPreprocessing(on: raw, context: "reprocess") {
-                        screenText = result.0
-                        screenMethod = result.1
-                    }
-                }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
@@ -491,9 +474,8 @@ actor DictationController {
             updated.date = Date()
             updated.transcript = transcript
             updated.output = output
-            updated.screenContext = screenText
-            updated.selectedText = selected
-            updated.screenContextMethod = screenMethod
+            // Keep original context (screenContext, selectedText, screenContextMethod, appName, bundleID)
+            // Only update the processing results and metadata
             updated.llmSystemMessage = systemForHistory
             updated.llmUserMessage = userMsgForHistory
             updated.transcriptionModel = transcriberSettings.model
