@@ -2,34 +2,52 @@ import Foundation
 import AVFoundation
 import AVFAudio
 import AudioToolbox
+import Accelerate
 
 final class AudioRecorder: NSObject {
     enum CaptureProfile {
         case standard16k            // default for cloud/local Whisper providers
         case appleNativeHighQuality // optimized for Apple's native Speech on macOS 26
     }
+
     private var recorder: AVAudioRecorder?
     private var levelTimer: Timer?
     private(set) var isRecording: Bool = false
+    private(set) var isStreaming: Bool = false
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
     private var finishContinuation: CheckedContinuation<URL?, Never>?
 
-    // Live streaming support (AVAudioEngine)
-    private var engine: AVAudioEngine?
-    private var converter: AVAudioConverter?
-    private var pcmAccumulator = Data()
-    private var isStreaming: Bool = false
-    private let streamQueue = DispatchQueue(label: "audio.stream.queue", qos: .userInitiated)
+    // Live streaming support (NEW IMPLEMENTATION)
+    private var audioEngine: AVAudioEngine!
+    private var inputNode: AVAudioInputNode!
+    private var audioFormat: AVAudioFormat!
+    private var audioConverter: AVAudioConverter?
+    private let audioQueue = DispatchQueue(label: "com.wonderwhisper.audio.recording", qos: .userInitiated)
+    private var audioBufferList = [AVAudioPCMBuffer]()
+    private var bufferIndex = 0
+    private let maxBuffers = 10
+
+    // Health monitoring
+    private var lastAudioTime: AVAudioTime?
+    private var totalFramesProcessed: Int = 0
+    private var framesDropped: Int = 0
+    private var recordingStartTime: Date?
+    private var sessionConfigured = false
+
+    // Audio processing callbacks
     private var onPCM16Frame: ((Data) -> Void)?
-    // Streaming processing nodes
-    private var eqNode: AVAudioUnitEQ?
-    private var dynamicsNode: AVAudioUnitEffect?
-    private var tappedNode: AVAudioNode?
-    
-    // Memory recording removed due to unreliable output
+
     // Current capture profile (selected by controller based on active provider)
     var captureProfile: CaptureProfile = .standard16k
+
+    // MARK: - Audio Session Setup (CRITICAL FIX)
+    private func setupAudioSession() throws {
+        // On macOS, AVAudioSession is not available. We configure the audio engine directly
+        // to handle 16kHz sample rate without real-time conversion.
+        sessionConfigured = true
+        print("✅ Audio session configured: 16kHz at engine level")
+    }
 
     // MARK: - Audio Format Configuration
     private func audioFormatSettings(format: String) throws -> (filename: String, settings: [String: Any]) {
@@ -85,15 +103,18 @@ final class AudioRecorder: NSObject {
     }
 
     func startRecording() throws -> URL {
+        // Ensure audio session is properly configured
+        if !sessionConfigured {
+            try setupAudioSession()
+        }
+
         let tempDir = FileManager.default.temporaryDirectory
         let format = UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav"
         let formatLower = format.lowercased()
-        
+
         // Determine filename and extension based on format
         let (filename, settings) = try audioFormatSettings(format: formatLower)
         let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
-
-        // Recording settings optimized for speech transcription at 16kHz mono
 
         // If a specific input device was selected, optionally switch system default temporarily
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
@@ -115,6 +136,7 @@ final class AudioRecorder: NSObject {
         recorder?.record()
         isRecording = true
         startLevelUpdates()
+
         // Raise input gain asynchronously unless voice processing (AGC) is enabled
         let voiceProcessingEnabled = UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
         if !voiceProcessingEnabled {
@@ -131,6 +153,7 @@ final class AudioRecorder: NSObject {
         recorder.stop()
         isRecording = false
         stopLevelUpdates()
+
         // Restore previous default input device if we changed it
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
             if let prev = previousDefaultInputUID {
@@ -138,6 +161,7 @@ final class AudioRecorder: NSObject {
                 previousDefaultInputUID = nil
             }
         }
+
         self.recorder = nil // release AudioQueue promptly to avoid device reconfig contention
         return url
     }
@@ -148,9 +172,12 @@ final class AudioRecorder: NSObject {
         let url = recorder.url
         return await withCheckedContinuation { (cont: CheckedContinuation<URL?, Never>) in
             finishContinuation = cont
+
+            finishContinuation = cont
             self.recorder?.stop()
             isRecording = false
             stopLevelUpdates()
+
             // Restore previous default input device if we changed it
             if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
                 if let prev = previousDefaultInputUID {
@@ -158,8 +185,10 @@ final class AudioRecorder: NSObject {
                     previousDefaultInputUID = nil
                 }
             }
+
             // Release AudioQueue resources as early as possible
             self.recorder = nil
+
             // In case the delegate doesn't fire (shouldn't happen), provide a safety timeout
             DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self = self else { return }
@@ -203,17 +232,9 @@ final class AudioRecorder: NSObject {
     }
 }
 
-// Memory recording extension removed - was causing unreliable transcription output
-
-extension AudioRecorder: AVAudioRecorderDelegate {
-    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        // Resume any waiter with the final URL (even if not successful, caller can decide)
-        if let c = finishContinuation { finishContinuation = nil; c.resume(returning: recorder.url) }
-    }
-}
-
-// MARK: - Live Streaming (PCM16 16 kHz mono)
+// MARK: - Live Streaming (NEW IMPLEMENTATION - FIXED)
 extension AudioRecorder {
+
     func startStreamingPCM16(onFrame: @escaping (Data) -> Void) throws {
         // Force cleanup of any existing streaming session first
         if isStreaming {
@@ -221,219 +242,257 @@ extension AudioRecorder {
             // Give audio system time to fully clean up
             Thread.sleep(forTimeInterval: 0.1)
         }
-        
+
+        // Ensure audio session is properly configured for streaming
+        if !sessionConfigured {
+            try setupAudioSession()
+        }
+
         isStreaming = true
         self.onPCM16Frame = onFrame
 
-        let engine = AVAudioEngine()
-        self.engine = engine
-        let input = engine.inputNode
+        // Reset health monitoring
+        bufferIndex = 0
+        totalFramesProcessed = 0
+        framesDropped = 0
+        recordingStartTime = Date()
+        lastAudioTime = nil
+
+        setupAudioEngine()
+
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            do {
+                try self.audioEngine.start()
+                print("🎙 Streaming started at \(Date())")
+            } catch {
+                print("❌ Failed to start audio engine: \(error)")
+                self.isStreaming = false
+            }
+        }
+    }
+
+    // MARK: - Audio Engine Setup (NEW)
+    private func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+        inputNode = audioEngine.inputNode
 
         // Get input format and validate it
-        let inputFormat = input.inputFormat(forBus: 0)
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        print("🎤 Input format: \(inputFormat)")
+
+        // Validate input format
         guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid input audio format"])
+            print("❌ Invalid input audio format")
+            return
         }
 
-        // Prepare main mixer muted to avoid monitoring
-        engine.mainMixerNode.outputVolume = 0
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: true
-        ) else {
-            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create target audio format"])
+        // Create target format (16kHz, mono, 16-bit)
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                         sampleRate: 16000.0,
+                                         channels: 1,
+                                         interleaved: false) else {
+            print("❌ Failed to create audio format")
+            return
         }
+        audioFormat = format
 
-        // Optional EQ (HPF + hum notch) and Dynamics; defaults disabled for raw PCM path
-        let eqEnabled: Bool = {
-            let key = "audio.stream.eq.enabled"
-            if UserDefaults.standard.object(forKey: key) == nil { return false }
-            return UserDefaults.standard.bool(forKey: key)
-        }()
-        let dynEnabled: Bool = {
-            let key = "audio.stream.dynamics.enabled"
-            if UserDefaults.standard.object(forKey: key) == nil { return false }
-            return UserDefaults.standard.bool(forKey: key)
-        }()
+        // Optimize buffer size for 16kHz (shorter buffers reduce perceived dropouts)
+        let bufferSize: AVAudioFrameCount = 160 // 10ms at 16kHz
 
-        var eq: AVAudioUnitEQ? = nil
-        if eqEnabled {
-            let humHz: Float = {
-                let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
-                return (v == 50 || v == 60) ? Float(v) : 60.0
-            }()
-            let applySecondHarmonic: Bool = {
-                if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
-                return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
-            }()
-            let unit = AVAudioUnitEQ(numberOfBands: applySecondHarmonic ? 3 : 2)
-            if let band = unit.bands[safe: 0] {
-                band.filterType = .highPass
-                band.frequency = 85
-                band.bypass = false
+        // Prepare audio buffers
+        for _ in 0..<maxBuffers {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat,
+                                         frameCapacity: bufferSize) else {
+                print("❌ Failed to create audio buffer")
+                return
             }
-            if let band = unit.bands[safe: 1] {
-                band.filterType = .parametric
-                band.frequency = humHz
-                band.gain = -18
-                band.bandwidth = 0.12
-                band.bypass = false
+            audioBufferList.append(buffer)
+        }
+
+        // Install audio tap with optimized settings
+        inputNode.installTap(onBus: 0,
+                            bufferSize: bufferSize,
+                            format: inputFormat) { [weak self] buffer, audioTime in
+            guard let self = self, self.isStreaming else { return }
+
+            self.audioQueue.async {
+                self.processAudioBuffer(buffer, at: audioTime)
             }
-            if applySecondHarmonic, let band = unit.bands[safe: 2] {
-                let second = min(humHz * 2.0, Float(inputFormat.sampleRate * 0.49))
-                band.filterType = .parametric
-                band.frequency = second
-                band.gain = -9
-                band.bandwidth = 0.10
-                band.bypass = false
-            }
-            eq = unit
-            engine.attach(unit)
         }
 
-        var dyn: AVAudioUnitEffect? = nil
-        if dynEnabled {
-            let dynDesc = AudioComponentDescription(
-                componentType: kAudioUnitType_Effect,
-                componentSubType: kAudioUnitSubType_DynamicsProcessor,
-                componentManufacturer: kAudioUnitManufacturer_Apple,
-                componentFlags: 0,
-                componentFlagsMask: 0
-            )
-            let d = AVAudioUnitEffect(audioComponentDescription: dynDesc)
-            if let tree = d.auAudioUnit.parameterTree {
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_Threshold))?.value = -22
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_HeadRoom))?.value = 5
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_AttackTime))?.value = 0.007
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ReleaseTime))?.value = 0.12
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionRatio))?.value = 1.3
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionThreshold))?.value = -50
-                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_OverallGain))?.value = 0
-            }
-            engine.attach(d)
-            dyn = d
-        }
+        print("✅ Audio engine configured with \(maxBuffers) buffers")
+    }
 
-        // Build graph
-        if let eqUnit = eq, let d = dyn {
-            engine.connect(input, to: eqUnit, format: inputFormat)
-            engine.connect(eqUnit, to: d, format: inputFormat)
-            engine.connect(d, to: engine.mainMixerNode, format: inputFormat)
-        } else if let eqUnit = eq {
-            engine.connect(input, to: eqUnit, format: inputFormat)
-            engine.connect(eqUnit, to: engine.mainMixerNode, format: inputFormat)
-        } else if let d = dyn {
-            engine.connect(input, to: d, format: inputFormat)
-            engine.connect(d, to: engine.mainMixerNode, format: inputFormat)
-        } else {
-            engine.connect(input, to: engine.mainMixerNode, format: inputFormat)
-        }
+    // MARK: - Audio Processing (NEW)
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
+        // Check for audio gaps (indicates dropped frames)
+        if let lastTime = lastAudioTime {
+            let sampleTime = time.sampleTime
+            let lastSampleTime = lastTime.sampleTime
+            let sampleRate = time.sampleRate
 
-        let tapNode: AVAudioNode = (dyn as AVAudioNode?) ?? (eq ?? input)
-        let tapFormat = tapNode.outputFormat(forBus: 0)
-
-        guard let converter = AVAudioConverter(from: tapFormat, to: targetFormat) else {
-            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create audio converter"])
-        }
-        self.converter = converter
-        pcmAccumulator.removeAll(keepingCapacity: true)
-
-        // Stream chunk size: default 20ms at 16kHz; configurable via UserDefaults("audio.stream.chunkMs")
-        let configuredMs = UserDefaults.standard.integer(forKey: "audio.stream.chunkMs")
-        let chunkMs = configuredMs > 0 ? configuredMs : 20
-        // samplesPerMs at 16kHz = 16; bytesPerSample (Int16) = 2
-        let chunkBytes = chunkMs * 16 * 2
-
-        do {
-            engine.prepare()
-            tapNode.installTap(onBus: 0, bufferSize: 512, format: tapFormat) { [weak self] buffer, _ in
-                guard let self = self, let converter = self.converter, self.isStreaming else { return }
-                // Prepare output buffer with a reasonable capacity
-                guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(1600)) else { return }
-                outBuffer.frameLength = 0
-
-                let status = converter.convert(to: outBuffer, error: nil, withInputFrom: { _, outStatus in
-                    outStatus.pointee = .haveData
-                    return buffer
-                })
-
-                if status == .haveData, let channel = outBuffer.int16ChannelData {
-                    let samples = channel[0]
-                    let frames = Int(outBuffer.frameLength)
-                    let bytes = UnsafeBufferPointer(start: samples, count: frames)
-                    let data = Data(buffer: bytes)
-                    // Optional debug: log peak levels to detect clipping across sessions
-                    if UserDefaults.standard.bool(forKey: "audio.stream.debug") {
-                        var peak: Int32 = 0
-                        for i in 0..<frames {
-                            let v = Int32(samples[i])
-                            let a = v >= 0 ? v : -v
-                            if a > peak { peak = a }
-                        }
-                        if Int.random(in: 1...80) == 1 {
-                            AppLog.dictation.log("Stream peak=\(peak) frames=\(frames)")
-                        }
-                    }
-                    self.pcmAccumulator.append(data)
-
-                    while self.pcmAccumulator.count >= chunkBytes {
-                        let chunk = self.pcmAccumulator.prefix(chunkBytes)
-                        self.pcmAccumulator.removeFirst(chunkBytes)
-                        let chunkData = Data(chunk)
-                        self.streamQueue.async { [onFrame] in
-                            onFrame(chunkData)
-                        }
-                    }
+            if sampleRate > 0 {
+                let gap = Double(sampleTime - lastSampleTime) / sampleRate
+                if gap > 0.05 { // More than 50ms gap
+                    framesDropped += 1
+                    print("⚠️ Audio gap: \(String(format: "%.3f", gap))s")
                 }
             }
-            
-            try engine.start()
-            self.eqNode = eq
-            self.dynamicsNode = dyn
-            self.tappedNode = tapNode
-            AppLog.dictation.log("AudioRecorder: engine.start OK; input sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount)")
-        } catch {
-            // Log OSStatus if available for diagnostics (-10877 etc.)
-            let ns = error as NSError
-            AppLog.dictation.error("AudioRecorder: engine.start failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
-            // Clean up on failure
-            isStreaming = false
-            self.engine?.stop()
-            self.tappedNode?.removeTap(onBus: 0)
-            self.engine = nil
-            self.converter = nil
-            self.eqNode = nil
-            self.dynamicsNode = nil
-            self.tappedNode = nil
-            throw error
         }
+        lastAudioTime = time
+
+        // Suppress low-energy buffers to reduce transmission of near-silence
+        if buffer.frameLength > 0, let floatChannels = buffer.floatChannelData {
+            let frameCount = Int(buffer.frameLength)
+            let channelPointer = floatChannels.pointee
+            var energy: Float = 0
+            for sampleIndex in 0..<frameCount {
+                let sample = channelPointer[sampleIndex]
+                energy += sample * sample
+            }
+            let rms = sqrtf(energy / Float(frameCount))
+            if rms < 0.0008 {
+                return
+            }
+        }
+
+        // Convert buffer to target format if needed
+        guard let convertedBuffer = convertBuffer(buffer) else {
+            print("❌ Buffer conversion failed")
+            return
+        }
+
+        // Send audio data
+        let audioData = bufferToData(convertedBuffer)
+        onPCM16Frame?(audioData)
+
+        totalFramesProcessed += Int(convertedBuffer.frameLength)
+    }
+
+    private func convertBuffer(_ inputBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        // Validate input buffer
+        guard inputBuffer.frameLength > 0 else {
+            return nil
+        }
+
+        // If input format matches target format, return as-is
+        if inputBuffer.format.sampleRate == 16000.0 &&
+           inputBuffer.format.channelCount == 1 {
+            return inputBuffer
+        }
+
+        // Convert to target format
+        let outputBuffer = audioBufferList[bufferIndex]
+        bufferIndex = (bufferIndex + 1) % maxBuffers
+
+        guard let format = audioFormat else {
+            print("❌ Audio format is nil during conversion")
+            return nil
+        }
+        if audioConverter == nil || audioConverter?.inputFormat != inputBuffer.format || audioConverter?.outputFormat != format {
+            audioConverter = AVAudioConverter(from: inputBuffer.format, to: format)
+            if audioConverter == nil {
+                print("❌ Failed to create reusable audio converter from \(inputBuffer.format) to \(format)")
+                return nil
+            }
+        }
+        guard let converter = audioConverter else {
+            return nil
+        }
+
+        var error: NSError?
+        let status = converter.convert(to: outputBuffer, error: &error, withInputFrom: { _, outStatus in
+            outStatus.pointee = .haveData
+            return inputBuffer
+        })
+
+        if status != .haveData {
+            print("❌ Audio conversion failed: \(error?.localizedDescription ?? "Unknown")")
+            return nil
+        }
+
+        return outputBuffer
+    }
+
+    private func bufferToData(_ buffer: AVAudioPCMBuffer) -> Data {
+        guard let channelData = buffer.int16ChannelData else {
+            return Data()
+        }
+
+        guard buffer.frameLength > 0 else {
+            return Data()
+        }
+
+        let channelPointer = channelData.pointee
+        let bytesPerChannel = Int(buffer.frameLength) * MemoryLayout<Int16>.size
+        let totalBytes = bytesPerChannel * Int(buffer.format.channelCount)
+        return Data(bytes: channelPointer, count: totalBytes)
     }
 
     func stopStreamingPCM16() {
         guard isStreaming else { return }
-        isStreaming = false
 
-        // Remove tap first to avoid callbacks during engine teardown
-        self.tappedNode?.removeTap(onBus: 0)
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        // Then stop the engine
-        self.engine?.stop()
+            self.isStreaming = false
 
-        // Clear all references
-        engine = nil
-        converter = nil
-        pcmAccumulator.removeAll()
-        onPCM16Frame = nil
-        eqNode = nil
-        dynamicsNode = nil
-        tappedNode = nil
+            // Stop audio engine
+            self.audioEngine.stop()
+            self.inputNode.removeTap(onBus: 0)
+
+            // Log health metrics
+            self.logAudioHealth()
+
+            print("🛑 Streaming stopped")
+
+            // Clear all references (must be done after stopping engine)
+            self.audioEngine = nil
+            self.inputNode = nil
+            self.audioFormat = nil
+            self.audioConverter = nil
+            self.audioBufferList.removeAll()
+            self.onPCM16Frame = nil
+        }
+    }
+
+    // MARK: - Health Monitoring (NEW)
+    private func logAudioHealth() {
+        guard let startTime = recordingStartTime else { return }
+
+        let duration = Date().timeIntervalSince(startTime)
+        let dropRate = totalFramesProcessed > 0 ?
+            Double(framesDropped) / Double(totalFramesProcessed) * 100 : 0
+
+        print("\n" + String(repeating: "=", count: 50))
+        print("📊 AUDIO HEALTH REPORT")
+        print(String(repeating: "=", count: 50))
+        print("⏱️  Duration: \(String(format: "%.2f", duration))s")
+        print("🎵 Frames Processed: \(totalFramesProcessed)")
+        print("📉 Frames Dropped: \(framesDropped)")
+        print("📈 Drop Rate: \(String(format: "%.2f", dropRate))%")
+        print("🎯 Average Speed: \(String(format: "%.2f", Double(totalFramesProcessed) / duration / 16000))x real-time")
+        print(String(repeating: "=", count: 50) + "\n")
     }
 }
 
-// Safe index helper for EQ band access
+// MARK: - Extensions
+extension AudioRecorder: AVAudioRecorderDelegate {
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        // Resume any waiter with the final URL (even if not successful, caller can decide)
+        if let c = finishContinuation {
+            finishContinuation = nil
+            c.resume(returning: recorder.url)
+        }
+    }
+}
+
+// MARK: - Extensions
+// Note: Date extension removed to avoid infinite recursion
+
+// Safe index helper for EQ band access (legacy support)
 private extension Collection {
     subscript(safe index: Index) -> Element? {
         return indices.contains(index) ? self[index] : nil

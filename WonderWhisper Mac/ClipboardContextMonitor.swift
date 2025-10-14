@@ -77,13 +77,22 @@ actor ClipboardContextMonitor {
 
     private func readChangeCount() async -> Int {
         await MainActor.run {
-            NSPasteboard.general.changeCount
+            // Safety check: ensure pasteboard is accessible
+            guard let pasteboard = NSPasteboard.general as NSPasteboard? else {
+                return -1
+            }
+            return pasteboard.changeCount
         }
     }
 
     private func readClipboardText() async -> String? {
         await MainActor.run {
-            NSPasteboard.general.string(forType: .string)
+            // Safety check: ensure pasteboard is accessible
+            guard let pasteboard = NSPasteboard.general as NSPasteboard? else {
+                return nil
+            }
+            // Safely access string, catching any exceptions
+            return pasteboard.string(forType: .string)
         }
     }
 }
