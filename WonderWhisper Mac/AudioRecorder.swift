@@ -247,64 +247,92 @@ extension AudioRecorder {
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create target audio format"])
         }
 
-        // Build processing chain: input -> EQ -> Dynamics -> mainMixer
-        // Configure EQ (HPF + hum notch + optional 2nd harmonic)
-        let humHz: Float = {
-            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
-            return (v == 50 || v == 60) ? Float(v) : 60.0
+        // Optional EQ (HPF + hum notch) and Dynamics; defaults disabled for raw PCM path
+        let eqEnabled: Bool = {
+            let key = "audio.stream.eq.enabled"
+            if UserDefaults.standard.object(forKey: key) == nil { return false }
+            return UserDefaults.standard.bool(forKey: key)
         }()
-        let applySecondHarmonic: Bool = {
-            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
-            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+        let dynEnabled: Bool = {
+            let key = "audio.stream.dynamics.enabled"
+            if UserDefaults.standard.object(forKey: key) == nil { return false }
+            return UserDefaults.standard.bool(forKey: key)
         }()
-        let eq = AVAudioUnitEQ(numberOfBands: applySecondHarmonic ? 3 : 2)
-        if let band = eq.bands[safe: 0] {
-            band.filterType = .highPass
-            band.frequency = 85
-            band.bypass = false
-        }
-        if let band = eq.bands[safe: 1] {
-            band.filterType = .parametric
-            band.frequency = humHz
-            band.gain = -18 // dB notch
-            band.bandwidth = 0.12 // octaves ~ Q 8–10
-            band.bypass = false
-        }
-        if applySecondHarmonic, let band = eq.bands[safe: 2] {
-            let second = min(humHz * 2.0, Float(inputFormat.sampleRate * 0.49))
-            band.filterType = .parametric
-            band.frequency = second
-            band.gain = -9 // dB notch at 2nd harmonic
-            band.bandwidth = 0.10
-            band.bypass = false
-        }
-        // Dynamics processor (compressor + light downward expansion) via Audio Unit description
-        let dynDesc = AudioComponentDescription(
-            componentType: kAudioUnitType_Effect,
-            componentSubType: kAudioUnitSubType_DynamicsProcessor,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0,
-            componentFlagsMask: 0
-        )
-        let dyn = AVAudioUnitEffect(audioComponentDescription: dynDesc)
-        // Configure parameters via AUParameterTree when available
-        if let tree = dyn.auAudioUnit.parameterTree {
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_Threshold))?.value = -22
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_HeadRoom))?.value = 5
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_AttackTime))?.value = 0.007
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ReleaseTime))?.value = 0.12
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionRatio))?.value = 1.3
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionThreshold))?.value = -50
-            tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_OverallGain))?.value = 0
+
+        var eq: AVAudioUnitEQ? = nil
+        if eqEnabled {
+            let humHz: Float = {
+                let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+                return (v == 50 || v == 60) ? Float(v) : 60.0
+            }()
+            let applySecondHarmonic: Bool = {
+                if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+                return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+            }()
+            let unit = AVAudioUnitEQ(numberOfBands: applySecondHarmonic ? 3 : 2)
+            if let band = unit.bands[safe: 0] {
+                band.filterType = .highPass
+                band.frequency = 85
+                band.bypass = false
+            }
+            if let band = unit.bands[safe: 1] {
+                band.filterType = .parametric
+                band.frequency = humHz
+                band.gain = -18
+                band.bandwidth = 0.12
+                band.bypass = false
+            }
+            if applySecondHarmonic, let band = unit.bands[safe: 2] {
+                let second = min(humHz * 2.0, Float(inputFormat.sampleRate * 0.49))
+                band.filterType = .parametric
+                band.frequency = second
+                band.gain = -9
+                band.bandwidth = 0.10
+                band.bypass = false
+            }
+            eq = unit
+            engine.attach(unit)
         }
 
-        engine.attach(eq)
-        engine.attach(dyn)
-        engine.connect(input, to: eq, format: inputFormat)
-        engine.connect(eq, to: dyn, format: inputFormat)
-        engine.connect(dyn, to: engine.mainMixerNode, format: inputFormat)
+        var dyn: AVAudioUnitEffect? = nil
+        if dynEnabled {
+            let dynDesc = AudioComponentDescription(
+                componentType: kAudioUnitType_Effect,
+                componentSubType: kAudioUnitSubType_DynamicsProcessor,
+                componentManufacturer: kAudioUnitManufacturer_Apple,
+                componentFlags: 0,
+                componentFlagsMask: 0
+            )
+            let d = AVAudioUnitEffect(audioComponentDescription: dynDesc)
+            if let tree = d.auAudioUnit.parameterTree {
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_Threshold))?.value = -22
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_HeadRoom))?.value = 5
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_AttackTime))?.value = 0.007
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ReleaseTime))?.value = 0.12
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionRatio))?.value = 1.3
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_ExpansionThreshold))?.value = -50
+                tree.parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_OverallGain))?.value = 0
+            }
+            engine.attach(d)
+            dyn = d
+        }
 
-        let tapNode: AVAudioNode = dyn
+        // Build graph
+        if let eqUnit = eq, let d = dyn {
+            engine.connect(input, to: eqUnit, format: inputFormat)
+            engine.connect(eqUnit, to: d, format: inputFormat)
+            engine.connect(d, to: engine.mainMixerNode, format: inputFormat)
+        } else if let eqUnit = eq {
+            engine.connect(input, to: eqUnit, format: inputFormat)
+            engine.connect(eqUnit, to: engine.mainMixerNode, format: inputFormat)
+        } else if let d = dyn {
+            engine.connect(input, to: d, format: inputFormat)
+            engine.connect(d, to: engine.mainMixerNode, format: inputFormat)
+        } else {
+            engine.connect(input, to: engine.mainMixerNode, format: inputFormat)
+        }
+
+        let tapNode: AVAudioNode = (dyn as AVAudioNode?) ?? (eq ?? input)
         let tapFormat = tapNode.outputFormat(forBus: 0)
 
         guard let converter = AVAudioConverter(from: tapFormat, to: targetFormat) else {
@@ -313,9 +341,9 @@ extension AudioRecorder {
         self.converter = converter
         pcmAccumulator.removeAll(keepingCapacity: true)
 
-        // Stream chunk size: default 30ms at 16kHz; configurable via UserDefaults("audio.stream.chunkMs")
+        // Stream chunk size: default 20ms at 16kHz; configurable via UserDefaults("audio.stream.chunkMs")
         let configuredMs = UserDefaults.standard.integer(forKey: "audio.stream.chunkMs")
-        let chunkMs = configuredMs > 0 ? configuredMs : 30
+        let chunkMs = configuredMs > 0 ? configuredMs : 20
         // samplesPerMs at 16kHz = 16; bytesPerSample (Int16) = 2
         let chunkBytes = chunkMs * 16 * 2
 
@@ -337,6 +365,18 @@ extension AudioRecorder {
                     let frames = Int(outBuffer.frameLength)
                     let bytes = UnsafeBufferPointer(start: samples, count: frames)
                     let data = Data(buffer: bytes)
+                    // Optional debug: log peak levels to detect clipping across sessions
+                    if UserDefaults.standard.bool(forKey: "audio.stream.debug") {
+                        var peak: Int32 = 0
+                        for i in 0..<frames {
+                            let v = Int32(samples[i])
+                            let a = v >= 0 ? v : -v
+                            if a > peak { peak = a }
+                        }
+                        if Int.random(in: 1...80) == 1 {
+                            AppLog.dictation.log("Stream peak=\(peak) frames=\(frames)")
+                        }
+                    }
                     self.pcmAccumulator.append(data)
 
                     while self.pcmAccumulator.count >= chunkBytes {

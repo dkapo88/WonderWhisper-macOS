@@ -26,20 +26,23 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
     let languageHints = Self.resolveLanguageHints()
     let endpointDetection = Self.endpointDetectionEnabled()
-    let trailingSilenceMs = Self.trailingSilenceMs()
+    let langID = Self.languageIdentificationEnabled()
+    let diarization = Self.speakerDiarizationEnabled()
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
       settings: settings,
       languageHints: languageHints,
       enableEndpointDetection: endpointDetection,
+      enableLanguageIdentification: langID,
+      enableSpeakerDiarization: diarization,
       context: settings.context,
-      defaultTrailingSilenceMs: trailingSilenceMs
+      keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
     try await streamFile(at: fileURL, into: live)
     let timeout = Self.finalizationTimeout(for: settings.timeout)
-    let text = try await live.finish(trailingSilenceMs: trailingSilenceMs, timeout: timeout)
+    let text = try await live.finish(timeout: timeout)
     await live.close()
     return text
   }
@@ -53,15 +56,18 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     }
     let languageHints = Self.resolveLanguageHints()
     let endpointDetection = Self.endpointDetectionEnabled()
-    let trailingSilenceMs = Self.trailingSilenceMs()
+    let langID = Self.languageIdentificationEnabled()
+    let diarization = Self.speakerDiarizationEnabled()
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
       settings: settings,
       languageHints: languageHints,
       enableEndpointDetection: endpointDetection,
+      enableLanguageIdentification: langID,
+      enableSpeakerDiarization: diarization,
       context: settings.context,
-      defaultTrailingSilenceMs: trailingSilenceMs
+      keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
     liveSession = live
@@ -77,11 +83,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     await liveSession.markShuttingDown()
     let sessionTimeout = await liveSession.currentTimeout()
     let timeout = Self.finalizationTimeout(for: sessionTimeout)
-    let targetSilence = trailingSilenceMs ?? Self.trailingSilenceMs()
-    let text = try await liveSession.finish(
-      trailingSilenceMs: targetSilence,
-      timeout: timeout
-    )
+    let text = try await liveSession.finish(timeout: timeout)
     await liveSession.close()
     self.liveSession = nil
     return text
@@ -143,7 +145,6 @@ final class SonioxStreamingProvider: TranscriptionProvider {
           let byteCount = frameCount * MemoryLayout<Int16>.size
           let data = Data(bytes: pointer, count: byteCount)
           try await session.enqueueAudio(data)
-          try await Task.sleep(nanoseconds: 10_000_000) // 10 ms pacing
         }
       case .endOfStream:
         reachedEOF = true
@@ -165,18 +166,28 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   private static func endpointDetectionEnabled() -> Bool {
     let defaults = UserDefaults.standard
     if defaults.object(forKey: "soniox.endpointDetection") == nil {
-      return true
+      // Default off to avoid premature cutoffs; match compare implementation defaults
+      return false
     }
     return defaults.bool(forKey: "soniox.endpointDetection")
   }
 
-  private static func trailingSilenceMs() -> Int {
-    let defaults = UserDefaults.standard
-    let stored = defaults.integer(forKey: "soniox.trailingSilenceMs")
-    if stored == 0 {
-      return 220
-    }
-    return max(60, min(600, stored))
+  private static func languageIdentificationEnabled() -> Bool {
+    let key = "soniox.languageIdentification.enabled"
+    if UserDefaults.standard.object(forKey: key) == nil { return false }
+    return UserDefaults.standard.bool(forKey: key)
+  }
+
+  private static func speakerDiarizationEnabled() -> Bool {
+    let key = "soniox.speakerDiarization.enabled"
+    if UserDefaults.standard.object(forKey: key) == nil { return false }
+    return UserDefaults.standard.bool(forKey: key)
+  }
+
+  private static func keepAliveEnabled() -> Bool {
+    let key = "soniox.keepalive.enabled"
+    if UserDefaults.standard.object(forKey: key) == nil { return false }
+    return UserDefaults.standard.bool(forKey: key)
   }
 
   private static func finalizationTimeout(for configured: TimeInterval) -> TimeInterval {
@@ -193,8 +204,10 @@ private actor SonioxLiveSession {
   private let settings: TranscriptionSettings
   private let languageHints: [String]
   private let enableEndpointDetection: Bool
+  private let enableLanguageIdentification: Bool
+  private let enableSpeakerDiarization: Bool
   private let context: String?
-  private let defaultTrailingSilenceMs: Int
+  private let keepAliveEnabled: Bool
   private let logger = AppLog.dictation
 
   private var webSocket: URLSessionWebSocketTask?
@@ -218,16 +231,20 @@ private actor SonioxLiveSession {
     settings: TranscriptionSettings,
     languageHints: [String],
     enableEndpointDetection: Bool,
+    enableLanguageIdentification: Bool,
+    enableSpeakerDiarization: Bool,
     context: String?,
-    defaultTrailingSilenceMs: Int
+    keepAliveEnabled: Bool
   ) {
     self.apiKeyProvider = apiKeyProvider
     self.urlSession = urlSession
     self.settings = settings
     self.languageHints = languageHints
     self.enableEndpointDetection = enableEndpointDetection
+    self.enableLanguageIdentification = enableLanguageIdentification
+    self.enableSpeakerDiarization = enableSpeakerDiarization
     self.context = context
-    self.defaultTrailingSilenceMs = defaultTrailingSilenceMs
+    self.keepAliveEnabled = keepAliveEnabled
     self.timeoutSeconds = settings.timeout
   }
 
@@ -253,6 +270,8 @@ private actor SonioxLiveSession {
       languageHints: languageHints.isEmpty ? nil : languageHints,
       context: context,
       enableEndpointDetection: enableEndpointDetection,
+      enableLanguageIdentification: enableLanguageIdentification ? true : nil,
+      enableSpeakerDiarization: enableSpeakerDiarization ? true : nil,
       clientReferenceId: UUID().uuidString
     )
     let encoder = JSONEncoder()
@@ -273,7 +292,9 @@ private actor SonioxLiveSession {
       try await flushBufferedAudio()
     }
     receiveTask = Task { await self.receiveLoop() }
-    keepAliveTask = Task { await self.keepAliveLoop() }
+    if keepAliveEnabled {
+      keepAliveTask = Task { await self.keepAliveLoop() }
+    }
   }
 
   func enqueueAudio(_ data: Data) async throws {
@@ -308,11 +329,9 @@ private actor SonioxLiveSession {
     timeoutSeconds
   }
 
-  func finish(trailingSilenceMs: Int, timeout: TimeInterval) async throws -> String {
+  func finish(timeout: TimeInterval) async throws -> String {
     try await flushBufferedAudio()
-    let silenceMs = max(60, max(trailingSilenceMs, defaultTrailingSilenceMs))
-    try await sendTrailingSilence(milliseconds: silenceMs)
-    try await sendFinalize(trailingSilenceMs: silenceMs)
+    try await sendEnd()
     return try await waitForFinalTranscript(timeout: timeout)
   }
 
@@ -347,22 +366,8 @@ private actor SonioxLiveSession {
     bufferedBytes = 0
   }
 
-  private func sendTrailingSilence(milliseconds: Int) async throws {
-    guard let task = webSocket, milliseconds > 0 else { return }
-    let bytesPerMs = 32 // 16 kHz mono * 2 bytes
-    let byteCount = milliseconds * bytesPerMs
-    let silence = Data(count: byteCount)
-    try await task.send(.data(silence))
-  }
-
-  private func sendFinalize(trailingSilenceMs: Int) async throws {
+  private func sendEnd() async throws {
     guard let task = webSocket else { return }
-    let message = SonioxControlMessage(type: "finalize", trailingSilenceMs: trailingSilenceMs)
-    let encoder = JSONEncoder()
-    encoder.keyEncodingStrategy = .convertToSnakeCase
-    let payload = try encoder.encode(message)
-    guard let jsonString = String(data: payload, encoding: .utf8) else { return }
-    try await task.send(.string(jsonString))
     try await task.send(.string(""))
     readyForAudio = false
   }
@@ -443,12 +448,17 @@ private actor SonioxLiveSession {
           continue
         }
       } catch {
+        // If server closed after EOS, prefer returning accumulated transcript
+        if await accumulator.hasFinished() {
+          await completeSession()
+          return
+        }
         pendingError = error
         if let continuation = finishContinuation {
           finishContinuation = nil
           continuation.resume(throwing: error)
         }
-        logger.error("Soniox: receive loop terminating \(error.localizedDescription, privacy: .public)")
+        logger.error("Soniox: receive loop terminating \(error.localizedDescription)")
         await close()
         return
       }
@@ -466,22 +476,16 @@ private actor SonioxLiveSession {
   }
 
   private func keepAliveLoop() async {
+    // Disabled by default; retained for optional debugging
     while !Task.isCancelled {
       try? await Task.sleep(nanoseconds: 10_000_000_000)
-      guard !Task.isCancelled, let task = webSocket else { break }
+      guard !Task.isCancelled, let task = webSocket, keepAliveEnabled else { break }
       let elapsed = Date().timeIntervalSince(lastAudioSent)
       if elapsed >= 9 {
-        let message = SonioxControlMessage(type: "keepalive", trailingSilenceMs: nil)
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        if let payload = try? encoder.encode(message),
-           let jsonString = String(data: payload, encoding: .utf8) {
-          do {
-            try await task.send(.string(jsonString))
-            logger.log("Soniox: sent keepalive after \(elapsed, privacy: .public)s idle")
-          } catch {
-            logger.error("Soniox: keepalive send failed \(error.localizedDescription, privacy: .public)")
-          }
+        do {
+          try await task.send(.string("keepalive"))
+        } catch {
+          // no-op
         }
       }
     }
@@ -499,12 +503,9 @@ private struct SonioxHandshake: Encodable {
   let languageHints: [String]?
   let context: String?
   let enableEndpointDetection: Bool
+  let enableLanguageIdentification: Bool?
+  let enableSpeakerDiarization: Bool?
   let clientReferenceId: String
-}
-
-private struct SonioxControlMessage: Encodable {
-  let type: String
-  let trailingSilenceMs: Int?
 }
 
 private struct SonioxResponse: Decodable {

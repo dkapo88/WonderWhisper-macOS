@@ -88,6 +88,33 @@ final class DictationViewModel: ObservableObject {
     @Published var deepgramKeyInput: String = ""
     @Published var sonioxKeyInput: String = ""
 
+    // Soniox + streaming audio options
+    @Published var sonioxEndpointDetection: Bool = {
+        if UserDefaults.standard.object(forKey: "soniox.endpointDetection") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "soniox.endpointDetection")
+    }() { didSet { UserDefaults.standard.set(sonioxEndpointDetection, forKey: "soniox.endpointDetection") } }
+    @Published var sonioxLanguageIdentification: Bool = {
+        if UserDefaults.standard.object(forKey: "soniox.languageIdentification.enabled") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "soniox.languageIdentification.enabled")
+    }() { didSet { UserDefaults.standard.set(sonioxLanguageIdentification, forKey: "soniox.languageIdentification.enabled") } }
+    @Published var sonioxSpeakerDiarization: Bool = {
+        if UserDefaults.standard.object(forKey: "soniox.speakerDiarization.enabled") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "soniox.speakerDiarization.enabled")
+    }() { didSet { UserDefaults.standard.set(sonioxSpeakerDiarization, forKey: "soniox.speakerDiarization.enabled") } }
+
+    @Published var audioStreamEQEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "audio.stream.eq.enabled")
+    }() { didSet { UserDefaults.standard.set(audioStreamEQEnabled, forKey: "audio.stream.eq.enabled") } }
+    @Published var audioStreamDynamicsEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "audio.stream.dynamics.enabled") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "audio.stream.dynamics.enabled")
+    }() { didSet { UserDefaults.standard.set(audioStreamDynamicsEnabled, forKey: "audio.stream.dynamics.enabled") } }
+    @Published var audioStreamChunkMs: Int = {
+        let v = UserDefaults.standard.integer(forKey: "audio.stream.chunkMs")
+        return v > 0 ? v : 20
+    }() { didSet { UserDefaults.standard.set(audioStreamChunkMs, forKey: "audio.stream.chunkMs") } }
+
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
         let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
@@ -99,7 +126,10 @@ final class DictationViewModel: ObservableObject {
     @Published var audioEnhancementEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled") {
         didSet { UserDefaults.standard.set(audioEnhancementEnabled, forKey: "audio.preprocess.enabled") }
     }
-    @Published var voiceProcessingEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled") {
+    @Published var voiceProcessingEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "audio.voiceProcessing.enabled") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
+    }() {
         didSet { UserDefaults.standard.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
     }
 

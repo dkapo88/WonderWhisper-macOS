@@ -94,19 +94,21 @@ struct SettingsModelsView: View {
                 } else if vm.transcriptionModel == "soniox-streaming" {
                     GroupBox("Soniox Streaming") {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "waveform.path")
-                                    .foregroundColor(.blue)
-                                Text("Ultra-low latency WebSocket with token-level accuracy")
-                                    .font(.subheadline)
+                            Toggle("Enable endpoint detection", isOn: $vm.sonioxEndpointDetection)
+                                .help("Server-side end-of-speech detection. Recommended OFF; finalize on end-of-stream for accuracy.")
+                            Toggle("Enable language identification", isOn: $vm.sonioxLanguageIdentification)
+                            Toggle("Enable speaker diarization", isOn: $vm.sonioxSpeakerDiarization)
+                            Divider().padding(.vertical, 2)
+                            Toggle("Enable mic EQ (HPF + hum notch)", isOn: $vm.audioStreamEQEnabled)
+                            Toggle("Enable dynamics (compress/expand)", isOn: $vm.audioStreamDynamicsEnabled)
+                            HStack {
+                                Stepper("Chunk size: \(vm.audioStreamChunkMs) ms", value: $vm.audioStreamChunkMs, in: 5...60, step: 5)
+                                Spacer()
                             }
-                            Text("• Streams 16 kHz PCM directly to Soniox for consistent first/last words")
-                            Text("• Built-in endpoint detection finalizes phrases without long tails")
-                            Text("• Auto keepalive guards against disconnects during silence/VAD gaps")
-                            Text("• Ideal when you need stable turn boundaries and fast confirmations")
+                            Text("Use 10–20 ms for smoother, low-latency streaming.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                         .padding(.top, 4)
                     }
                 } else if vm.transcriptionModel.lowercased().contains("parakeet") || vm.transcriptionModel.lowercased().contains("local") {
