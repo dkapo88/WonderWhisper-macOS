@@ -98,16 +98,113 @@ struct SettingsModelsView: View {
                                 .help("Server-side end-of-speech detection. Recommended OFF; finalize on end-of-stream for accuracy.")
                             Toggle("Enable language identification", isOn: $vm.sonioxLanguageIdentification)
                             Toggle("Enable speaker diarization", isOn: $vm.sonioxSpeakerDiarization)
-                            Divider().padding(.vertical, 2)
-                            Toggle("Enable mic EQ (HPF + hum notch)", isOn: $vm.audioStreamEQEnabled)
-                            Toggle("Enable dynamics (compress/expand)", isOn: $vm.audioStreamDynamicsEnabled)
-                            HStack {
-                                Stepper("Chunk size: \(vm.audioStreamChunkMs) ms", value: $vm.audioStreamChunkMs, in: 5...60, step: 5)
-                                Spacer()
+
+                            // Accuracy Presets
+                            GroupBox("Accuracy Presets") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Quick setup for common use cases:")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+
+                                    HStack {
+                                        Button("Medical") {
+                                            vm.applySonioxPreset(.medical)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+
+                                        Button("Legal") {
+                                            vm.applySonioxPreset(.legal)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+
+                                        Button("Technical") {
+                                            vm.applySonioxPreset(.technical)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+
+                                        Button("General") {
+                                            vm.applySonioxPreset(.general)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
+
+                                    Text("Presets configure context and vocabulary for maximum accuracy in specific domains.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                             }
-                            Text("Use 10–20 ms for smoother, low-latency streaming.")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+
+                            Divider().padding(.vertical, 2)
+
+                            // Context Configuration for Maximum Accuracy
+                            GroupBox("Context & Vocabulary (Critical for Accuracy)") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Keywords & Names")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    TextField(
+                                        "Enter keywords, names, technical terms (comma-separated)",
+                                        text: $vm.sonioxContextKeywords,
+                                        axis: .vertical
+                                    )
+                                    .lineLimit(2...4)
+                                    .textFieldStyle(.roundedBorder)
+                                    Text("Example: Celebrex, Zyrtec, Xanax, API endpoint, PostgreSQL")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                    Divider().padding(.vertical, 2)
+
+                                    Text("Domain Context")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    TextField(
+                                        "Describe your domain or topic for better accuracy",
+                                        text: $vm.sonioxContextParagraph,
+                                        axis: .vertical
+                                    )
+                                    .lineLimit(2...6)
+                                    .textFieldStyle(.roundedBorder)
+                                    Text("Example: Medical consultation discussing patient medications and treatment options.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            // Language Hints Configuration
+                            GroupBox("Language Hints") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    TextField(
+                                        "Expected languages (comma-separated, e.g., en, es, fr)",
+                                        text: $vm.sonioxLanguageHints
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                    Text("Helps the model recognize specific languages more accurately.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            Divider().padding(.vertical, 2)
+
+                            // Audio Processing Options
+                            GroupBox("Audio Processing") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Toggle("Enable mic EQ (HPF + hum notch)", isOn: $vm.audioStreamEQEnabled)
+                                    Toggle("Enable dynamics (compress/expand)", isOn: $vm.audioStreamDynamicsEnabled)
+                                    HStack {
+                                        Stepper("Chunk size: \(vm.audioStreamChunkMs) ms", value: $vm.audioStreamChunkMs, in: 5...60, step: 5)
+                                        Spacer()
+                                    }
+                                    Text("Use 10–20 ms for smoother, low-latency streaming.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                         }
                         .padding(.top, 4)
                     }

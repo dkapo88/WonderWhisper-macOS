@@ -102,6 +102,23 @@ final class DictationViewModel: ObservableObject {
         return UserDefaults.standard.bool(forKey: "soniox.speakerDiarization.enabled")
     }() { didSet { UserDefaults.standard.set(sonioxSpeakerDiarization, forKey: "soniox.speakerDiarization.enabled") } }
 
+    // Soniox context configuration for maximum accuracy
+    @Published var sonioxContextKeywords: String = {
+        UserDefaults.standard.string(forKey: "soniox.context.keywords") ?? ""
+    }() { didSet { UserDefaults.standard.set(sonioxContextKeywords, forKey: "soniox.context.keywords") } }
+    @Published var sonioxContextParagraph: String = {
+        UserDefaults.standard.string(forKey: "soniox.context.paragraph") ?? ""
+    }() { didSet { UserDefaults.standard.set(sonioxContextParagraph, forKey: "soniox.context.paragraph") } }
+    @Published var sonioxLanguageHints: String = {
+        UserDefaults.standard.string(forKey: "soniox.languageHints") ?? ""
+    }() { didSet { UserDefaults.standard.set(sonioxLanguageHints, forKey: "soniox.languageHints") } }
+
+    // Soniox debug mode for troubleshooting
+    @Published var sonioxDebugMode: Bool = {
+        if UserDefaults.standard.object(forKey: "soniox.debug.enabled") == nil { return false }
+        return UserDefaults.standard.bool(forKey: "soniox.debug.enabled")
+    }() { didSet { UserDefaults.standard.set(sonioxDebugMode, forKey: "soniox.debug.enabled") } }
+
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
         return UserDefaults.standard.bool(forKey: "audio.stream.eq.enabled")
@@ -365,25 +382,25 @@ final class DictationViewModel: ObservableObject {
         persistPromptLibrary()
         Task {
             await waitForLatestProviderUpdate()
-            
+
             let currentState = await controller.currentState()
-            
+
             switch currentState {
             case .idle, .error:
                 // Fast check for selected text (AX only, ~5ms, no pasteboard fallback)
                 await checkAndStoreSelectedTextPromptFast()
-                
+
                 // Update UI IMMEDIATELY
                 await MainActor.run { self.isRecording = true }
-                
+
                 let prompt = await MainActor.run { self.userPrompt }
                 await controller.toggle(userPrompt: prompt)
-                
+
             case .recording:
                 await MainActor.run { self.isRecording = false }
                 let prompt = await MainActor.run { self.userPrompt }
                 await controller.toggle(userPrompt: prompt)
-                
+
             default:
                 break
             }
@@ -414,7 +431,7 @@ final class DictationViewModel: ObservableObject {
 
             let prompt = await MainActor.run { self.userPrompt }
             await controller.finish(userPrompt: prompt)
-            
+
             // Restore original prompt if we had a selected text override
             await restoreOriginalPromptIfNeeded()
         }
@@ -425,7 +442,7 @@ final class DictationViewModel: ObservableObject {
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { self.isRecording = false }
             await controller.cancel()
-            
+
             // Restore original prompt if we had a selected text override
             await restoreOriginalPromptIfNeeded()
         }
@@ -792,39 +809,39 @@ final class DictationViewModel: ObservableObject {
 
     func updateTriggerOnSelectedText(for id: UUID, to enabled: Bool) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
-        
+
         var newPrompts = prompts
-        
+
         if enabled {
             // First, clear the flag from all other prompts to maintain exclusivity
             for i in newPrompts.indices {
                 newPrompts[i].triggerOnSelectedText = false
             }
         }
-        
+
         // Set the flag for the target prompt
         newPrompts[idx].triggerOnSelectedText = enabled
-        
+
         prompts = newPrompts
     }
-    
+
     private func shouldUseSelectedTextPrompt() async -> Bool {
         let screenContext = ScreenContextService()
         let selectedText = screenContext.selectedText()
         let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        
+
         // Only override if we have both selected text and a designated prompt for it
         return hasSelectedText && getSelectedTextPrompt() != nil
     }
-    
+
     private func checkAndApplySelectedTextPrompt() async {
         // Import ScreenContextService to check for selected text
         let screenContext = ScreenContextService()
-        
+
         // Check if there's text currently selected
         let selectedText = screenContext.selectedText()
         let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        
+
         if hasSelectedText {
             // Check if there's a prompt designated for selected text
             if let selectedTextPrompt = getSelectedTextPrompt() {
@@ -841,11 +858,11 @@ final class DictationViewModel: ObservableObject {
             selectedTextPromptOverride = nil
         }
     }
-    
+
     private func restoreOriginalPromptIfNeeded() async {
         if selectedTextPromptOverride != nil {
             selectedTextPromptOverride = nil
-            
+
             // Restore the originally selected prompt
             await MainActor.run {
                 if let originalPrompt = self.prompts.prompt(withID: self.selectedPromptID) ?? self.prompts.first {
@@ -875,59 +892,59 @@ final class DictationViewModel: ObservableObject {
 
     private func checkAndStoreSelectedTextPromptFast() async {
         let screenContext = ScreenContextService()
-        
+
         // Fast AX-only check (no 600ms pasteboard fallback)
         let selectedText = screenContext.selectedTextFast()
         let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        
+
         if hasSelectedText, let selectedTextPrompt = getSelectedTextPrompt() {
             // Store override WITHOUT calling updateProviders() to avoid restart
             applySelectedTextPromptOverride(selectedTextPrompt)
             selectedTextFallbackTaskID = nil
         } else {
             selectedTextPromptOverride = nil
-            
+
             // Kick off slower fallback without delaying recording start
             let taskID = UUID()
             selectedTextFallbackTaskID = taskID
-            
+
             Task.detached(priority: .utility) { [weak self] in
                 let screenContext = ScreenContextService()
                 let fallbackText = screenContext.selectedText()
                 let trimmed = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                
+
                 guard !trimmed.isEmpty else {
                     await MainActor.run { self?.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 guard let self else {
                     await MainActor.run { self?.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 // Ensure this result is still relevant for the latest request
                 guard await self.selectedTextFallbackTaskID == taskID else {
                     await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 // Don't override if we already have a selected text prompt override from fast detection
                 guard await self.selectedTextPromptOverride == nil else {
                     await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 guard let selectedTextPrompt = await self.getSelectedTextPrompt() else {
                     await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 guard await self.isRecording else {
                     await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
                     return
                 }
-                
+
                 await self.applySelectedTextPromptOverride(selectedTextPrompt)
                 await MainActor.run { self.clearSelectedTextFallbackTask(id: taskID) }
             }
@@ -1028,12 +1045,12 @@ final class DictationViewModel: ObservableObject {
 
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
         await waitForLatestProviderUpdate()
-        
+
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
             let state = await controller.currentState()
-            
+
             switch state {
             case .idle, .error:
                 // Select the prompt for this hotkey
@@ -1042,19 +1059,19 @@ final class DictationViewModel: ObservableObject {
                         self.selectedPromptID = id
                     }
                 }
-                
+
                 // Fast check for selected text (AX only, ~5ms)
                 await checkAndStoreSelectedTextPromptFast()
-                
+
                 // Update UI IMMEDIATELY
                 await MainActor.run { self.isRecording = true }
-                
+
                 let promptText = await MainActor.run { self.userPrompt }
                 await controller.toggle(userPrompt: promptText)
-                
+
             case .recording:
                 await MainActor.run { self.isRecording = false }
-                
+
                 // If we have a selected text prompt override, ensure providers are updated before LLM processing
                 if selectedTextPromptOverride != nil {
                     await MainActor.run {
@@ -1070,15 +1087,15 @@ final class DictationViewModel: ObservableObject {
                 } else {
                     await waitForLatestProviderUpdate()
                 }
-                
+
                 let promptText = await MainActor.run { self.userPrompt }
                 await controller.finish(userPrompt: promptText)
                 await restoreOriginalPromptIfNeeded()
-                
+
             default:
                 break
             }
-            
+
         case .up:
             guard let start = promptPressTimes.removeValue(forKey: id) else { return }
             let duration = Date().timeIntervalSince(start)
@@ -1086,7 +1103,7 @@ final class DictationViewModel: ObservableObject {
                 let state = await controller.currentState()
                 if case .recording = state {
                     await MainActor.run { self.isRecording = false }
-                    
+
                     // If we have a selected text prompt override, ensure providers are updated before LLM processing
                     if selectedTextPromptOverride != nil {
                         await MainActor.run {
@@ -1102,7 +1119,7 @@ final class DictationViewModel: ObservableObject {
                     } else {
                         await waitForLatestProviderUpdate()
                     }
-                    
+
                     let promptText = await MainActor.run { self.userPrompt }
                     await controller.finish(userPrompt: promptText)
                     await restoreOriginalPromptIfNeeded()
@@ -1116,12 +1133,76 @@ final class DictationViewModel: ObservableObject {
         let task = applyProviders(using: prompt)
         providerUpdateTask = task
     }
-    
+
     private func updateProvidersWithSelectedTextOverride() async {
         // Use the selected text prompt override for provider updates
         let task = applyProviders(using: selectedTextPromptOverride)
         providerUpdateTask = task
-        await task.value
+    }
+
+    // MARK: - Soniox Context Optimization
+
+    func buildSonioxContext() -> String {
+        var contextParts: [String] = []
+
+        // Add keyword context (highest priority for accuracy)
+        if !sonioxContextKeywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            contextParts.append(sonioxContextKeywords.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        // Add paragraph context (domain-specific information)
+        if !sonioxContextParagraph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            contextParts.append(sonioxContextParagraph.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return contextParts.joined(separator: "\n")
+    }
+
+    func buildSonioxLanguageHints() -> [String] {
+        let hints = sonioxLanguageHints.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hints.isEmpty {
+            // Fallback to single language from settings
+            let lang = UserDefaults.standard.string(forKey: "transcription.language") ?? "en"
+            return [lang]
+        }
+
+        // Parse comma-separated language hints
+        return hints.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    // MARK: - Soniox Accuracy Presets
+
+    enum SonioxPreset {
+        case medical
+        case legal
+        case technical
+        case general
+    }
+
+    func applySonioxPreset(_ preset: SonioxPreset) {
+        switch preset {
+        case .medical:
+            sonioxContextKeywords = "Celebrex, Zyrtec, Xanax, Prilosec, Amoxicillin, Clavulanate, Potassium, patient, diagnosis, treatment, medication, prescription, dosage, symptoms, examination, clinical, therapy, regimen, adverse, reaction, contraindication, pharmacology, therapeutic, efficacy, prognosis"
+            sonioxContextParagraph = "Medical consultation discussing patient symptoms, diagnosis, treatment options, medications, dosages, and clinical observations. Includes discussion of drug interactions, side effects, and patient care plans."
+            sonioxLanguageHints = "en"
+
+        case .legal:
+            sonioxContextKeywords = "plaintiff, defendant, jurisdiction, statute, regulation, contract, agreement, liability, negligence, tort, claim, settlement, judgment, appeal, precedent, testimony, evidence, deposition, affidavit, motion, hearing, verdict, damages, injunction"
+            sonioxContextParagraph = "Legal proceedings discussing case law, statutes, regulations, contracts, and legal arguments. Includes references to court filings, testimony, evidence, and judicial decisions."
+            sonioxLanguageHints = "en"
+
+        case .technical:
+            sonioxContextKeywords = "API, endpoint, database, PostgreSQL, MySQL, Redis, cache, authentication, authorization, token, JWT, OAuth, REST, GraphQL, microservices, container, Docker, Kubernetes, deployment, CI/CD, pipeline, repository, commit, merge, branch, frontend, backend, fullstack"
+            sonioxContextParagraph = "Technical discussion about software development, system architecture, APIs, databases, deployment pipelines, and engineering practices. Includes discussion of programming concepts, infrastructure, and development workflows."
+            sonioxLanguageHints = "en"
+
+        case .general:
+            sonioxContextKeywords = ""
+            sonioxContextParagraph = ""
+            sonioxLanguageHints = "en"
+        }
     }
 
     @discardableResult

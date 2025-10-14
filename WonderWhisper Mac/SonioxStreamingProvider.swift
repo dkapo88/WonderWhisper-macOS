@@ -12,11 +12,15 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   init(apiKeyProvider: @escaping () -> String?) {
     self.apiKeyProvider = apiKeyProvider
     let config = URLSessionConfiguration.default
-    config.timeoutIntervalForRequest = 8
-    config.timeoutIntervalForResource = 180
-    config.waitsForConnectivity = false
+    config.timeoutIntervalForRequest = 30 // Increased for better reliability
+    config.timeoutIntervalForResource = 300 // Increased for longer sessions
+    config.waitsForConnectivity = true // Wait for connectivity
+    config.httpMaximumConnectionsPerHost = 5 // Allow multiple connections
+    // config.httpShouldUsePipelining = false // Deprecated in macOS 15.4
     config.httpAdditionalHeaders = [
-      "User-Agent": "WonderWhisper-Mac/soniox"
+      "User-Agent": "WonderWhisper-Mac/soniox",
+      "Connection": "Upgrade",
+      "Upgrade": "websocket"
     ]
     self.session = URLSession(configuration: config)
   }
@@ -28,6 +32,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let endpointDetection = Self.endpointDetectionEnabled()
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
+    let enhancedContext = Self.buildEnhancedContext(baseContext: settings.context)
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -36,7 +41,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: settings.context,
+      context: enhancedContext,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
@@ -58,6 +63,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let endpointDetection = Self.endpointDetectionEnabled()
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
+    let enhancedContext = Self.buildEnhancedContext(baseContext: settings.context)
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -66,7 +72,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: settings.context,
+      context: enhancedContext,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
@@ -81,6 +87,14 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   func endRealtime(trailingSilenceMs: Int? = nil) async throws -> String {
     guard let liveSession else { return "" }
     await liveSession.markShuttingDown()
+
+    // Add trailing silence for better finalization accuracy
+    // This helps Soniox properly finalize the transcription without cutting off
+    let silenceMs = trailingSilenceMs ?? 500 // Default 500ms of silence
+    if silenceMs > 0 {
+      try await liveSession.addTrailingSilence(ms: silenceMs)
+    }
+
     let sessionTimeout = await liveSession.currentTimeout()
     let timeout = Self.finalizationTimeout(for: sessionTimeout)
     let text = try await liveSession.finish(timeout: timeout)
@@ -156,6 +170,13 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
   private static func resolveLanguageHints() -> [String] {
     let defaults = UserDefaults.standard
+    // First check for enhanced language hints from the new UI
+    if let enhancedHints = defaults.string(forKey: "soniox.languageHints"), !enhancedHints.isEmpty {
+      return enhancedHints.split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    }
+    // Fallback to legacy language override
     if let custom = defaults.string(forKey: "soniox.languageOverride"), !custom.isEmpty {
       return custom.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
@@ -194,6 +215,30 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let clamped = max(3, min(20, configured))
     return clamped
   }
+
+  private static func buildEnhancedContext(baseContext: String?) -> String? {
+    var contextParts: [String] = []
+
+    // Add base context from transcription settings
+    if let base = baseContext, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      contextParts.append(base.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // Add keywords from the enhanced context system
+    let defaults = UserDefaults.standard
+    if let keywords = defaults.string(forKey: "soniox.context.keywords"),
+       !keywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      contextParts.append(keywords.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // Add paragraph context from the enhanced context system
+    if let paragraph = defaults.string(forKey: "soniox.context.paragraph"),
+       !paragraph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      contextParts.append(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    return contextParts.isEmpty ? nil : contextParts.joined(separator: "\n")
+  }
 }
 
 // MARK: - Live session actor
@@ -216,12 +261,15 @@ private actor SonioxLiveSession {
   private var accumulator = SonioxTranscriptAccumulator()
   private var bufferedAudio: [Data] = []
   private var bufferedBytes: Int = 0
-  private let maxBufferedBytes = 1_024_000
+  private let maxBufferedBytes = 2_048_000 // Increased buffer for better reliability
   private var readyForAudio: Bool = false
   private var shuttingDown: Bool = false
   private var finishContinuation: CheckedContinuation<String, Error>?
   private var lastAudioSent: Date = Date()
   private var pendingError: Error?
+  private var retryCount: Int = 0
+  private let maxRetries: Int = 3
+  private var connectionStartTime: Date = Date()
 
   let timeoutSeconds: TimeInterval
 
@@ -252,14 +300,26 @@ private actor SonioxLiveSession {
     guard let apiKey = apiKeyProvider()?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
       throw ProviderError.missingAPIKey
     }
+
+    // Validate API key format (Soniox keys are typically 32+ characters)
+    if apiKey.count < 20 {
+      logger.error("Soniox: API key appears too short (\(apiKey.count) characters)")
+      throw ProviderError.missingAPIKey
+    }
+
     let endpoint = settings.endpoint
+    logger.log("Soniox: connecting to endpoint: \(endpoint.absoluteString)")
+
     var request = URLRequest(url: endpoint)
-    request.timeoutInterval = 8
-    request.setValue("https://wonderwhisper.app", forHTTPHeaderField: "Origin")
+    request.timeoutInterval = 30 // Increased timeout for better reliability
+    // Remove custom Origin header that might cause connection issues
     let task = urlSession.webSocketTask(with: request)
     webSocket = task
     logger.log("Soniox: starting realtime session")
     task.resume()
+
+    // Wait for WebSocket connection to be established before sending handshake
+    try await waitForWebSocketConnection()
 
     let handshake = SonioxHandshake(
       apiKey: apiKey,
@@ -280,11 +340,31 @@ private actor SonioxLiveSession {
     guard let jsonString = String(data: payload, encoding: .utf8) else {
       throw ProviderError.networkError("Failed to encode Soniox handshake")
     }
+    // Verify WebSocket is still connected before sending handshake
+    guard let webSocket = webSocket, webSocket.state == .running else {
+      throw ProviderError.networkError("WebSocket connection not established")
+    }
+
     do {
-      try await task.send(.string(jsonString))
-      logger.log("Soniox: handshake sent (model: \(self.settings.model), endpoint detection: \(self.enableEndpointDetection))")
+      // Log the handshake for debugging
+      logger.log("Soniox: sending handshake: \(jsonString, privacy: .public)")
+      try await webSocket.send(.string(jsonString))
+      connectionStartTime = Date()
+      retryCount = 0 // Reset retry count on successful handshake
+      logger.log("Soniox: handshake sent successfully (model: \(self.settings.model), endpoint detection: \(self.enableEndpointDetection))")
+
+      // Wait a moment for handshake to be processed
+      try await Task.sleep(nanoseconds: 500_000_000) // 500ms
+      logger.log("Soniox: handshake processing delay completed")
     } catch {
       logger.error("Soniox: handshake send failed \(error.localizedDescription, privacy: .public)")
+      if retryCount < maxRetries && self.shouldRetry(error: error) {
+        retryCount += 1
+        logger.log("Soniox: retrying handshake (attempt \(self.retryCount)/\(self.maxRetries))")
+        try? await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(self.retryCount)) * 1_000_000_000)) // Exponential backoff
+        try await self.start()
+        return
+      }
       throw error
     }
     readyForAudio = true
@@ -302,20 +382,37 @@ private actor SonioxLiveSession {
     if shuttingDown {
       return
     }
-    guard let task = webSocket, readyForAudio else {
+
+    // Validate WebSocket state before attempting to send
+    guard let task = webSocket, task.state == .running, readyForAudio else {
       bufferedAudio.append(data)
       bufferedBytes += data.count
       trimBufferIfNeeded()
       if bufferedBytes == data.count {
-        logger.log("Soniox: buffering audio while awaiting handshake")
+        logger.log("Soniox: buffering audio while awaiting handshake (state: \(self.webSocket?.state.rawValue ?? -1))")
       }
       return
     }
+
     do {
       try await task.send(.data(data))
       lastAudioSent = Date()
     } catch {
       logger.error("Soniox: failed to send audio chunk (\(data.count) bytes) \(error.localizedDescription, privacy: .public)")
+
+      // Check if this is a recoverable error and we should retry
+      if retryCount < maxRetries && self.shouldRetry(error: error) {
+        logger.log("Soniox: audio send failed, attempting recovery")
+        pendingError = error
+
+        // Buffer the audio for retry
+        bufferedAudio.append(data)
+        bufferedBytes += data.count
+        trimBufferIfNeeded()
+
+        return // Don't throw, allow recovery
+      }
+
       pendingError = error
       throw error
     }
@@ -335,7 +432,25 @@ private actor SonioxLiveSession {
     return try await waitForFinalTranscript(timeout: timeout)
   }
 
+  func addTrailingSilence(ms: Int) async throws {
+    guard let task = webSocket, readyForAudio else { return }
+
+    // Generate silence PCM data (16-bit signed, 16kHz, mono)
+    let silenceDuration = Double(ms) / 1000.0
+    let sampleRate = 16000.0
+    let frameCount = Int(silenceDuration * sampleRate)
+    let silenceData = Data(count: frameCount * 2) // 2 bytes per 16-bit sample
+
+    do {
+      try await task.send(.data(silenceData))
+      logger.log("Soniox: added \(ms)ms of trailing silence for better finalization")
+    } catch {
+      logger.error("Soniox: failed to send trailing silence \(error.localizedDescription, privacy: .public)")
+    }
+  }
+
   func close() async {
+    logger.log("Soniox: closing session")
     receiveTask?.cancel()
     keepAliveTask?.cancel()
     webSocket?.cancel(with: .goingAway, reason: nil)
@@ -346,6 +461,7 @@ private actor SonioxLiveSession {
     webSocket = nil
     receiveTask = nil
     keepAliveTask = nil
+    logger.log("Soniox: session closed")
   }
 
   func abort(immediate: Bool) async {
@@ -396,6 +512,8 @@ private actor SonioxLiveSession {
         throw error
       }
     }
+
+
   }
 
   private func awaitFinalTranscript() async throws -> String {
@@ -416,16 +534,28 @@ private actor SonioxLiveSession {
     guard let task = webSocket else { return }
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .convertFromSnakeCase
-    while !Task.isCancelled {
+
+    logger.log("Soniox: receive loop started")
+
+    while !Task.isCancelled && task.state == .running {
       do {
         let message = try await task.receive()
         switch message {
         case .string(let text):
           guard let data = text.data(using: .utf8) else { continue }
+
+          // Log all responses for debugging connection issues
+          logger.log("Soniox: received response: \(text, privacy: .public)")
+
           let response = try decoder.decode(SonioxResponse.self, from: data)
           if let errorCode = response.errorCode {
             let message = response.errorMessage ?? "unknown"
             logger.error("Soniox: server error code \(errorCode) message \(message, privacy: .public)")
+          }
+
+          // Log successful responses
+          if let tokens = response.tokens, !tokens.isEmpty {
+            logger.log("Soniox: received \(tokens.count) tokens, finished: \(response.finished ?? false)")
           }
           if let signal = await accumulator.ingest(response: response) {
             switch signal {
@@ -448,17 +578,37 @@ private actor SonioxLiveSession {
           continue
         }
       } catch {
+        // Check if this is a WebSocket connection error
+        let isConnectionError = error.localizedDescription.contains("Socket is not connected") ||
+                               error.localizedDescription.contains("connection") ||
+                               error.localizedDescription.contains("network")
+
         // If server closed after EOS, prefer returning accumulated transcript
         if await accumulator.hasFinished() {
           await completeSession()
           return
         }
+
+        // Enhanced error handling with retry logic
+        if isConnectionError && retryCount < maxRetries && self.shouldRetry(error: error) {
+          retryCount += 1
+          logger.log("Soniox: connection error, attempting recovery (attempt \(self.retryCount)/\(self.maxRetries))")
+
+          // Attempt to reconnect
+          do {
+            try await self.reconnect()
+            return
+          } catch {
+            logger.error("Soniox: reconnection failed \(error.localizedDescription)")
+          }
+        }
+
         pendingError = error
         if let continuation = finishContinuation {
           finishContinuation = nil
           continuation.resume(throwing: error)
         }
-        logger.error("Soniox: receive loop terminating \(error.localizedDescription)")
+        logger.error("Soniox: receive loop terminating \(error.localizedDescription, privacy: .public)")
         await close()
         return
       }
@@ -489,6 +639,109 @@ private actor SonioxLiveSession {
         }
       }
     }
+  }
+
+  // MARK: - Enhanced Error Handling
+
+  func shouldRetry(error: Error) -> Bool {
+    // Don't retry if we're shutting down
+    if self.shuttingDown { return false }
+
+    // Don't retry authentication errors
+    if error.localizedDescription.contains("401") || error.localizedDescription.contains("authentication") {
+      return false
+    }
+
+    // Retry network-related errors
+    if error.localizedDescription.contains("network") ||
+       error.localizedDescription.contains("connection") ||
+       error.localizedDescription.contains("timeout") {
+      return true
+    }
+
+    // Retry WebSocket errors
+    if let urlError = error as? URLError {
+      switch urlError.code {
+      case .networkConnectionLost, .notConnectedToInternet, .timedOut:
+        return true
+      default:
+        return false
+      }
+    }
+
+    return false
+  }
+
+  func reconnect() async throws {
+    logger.log("Soniox: attempting to reconnect...")
+
+    // Close existing connection
+    webSocket?.cancel(with: .goingAway, reason: nil)
+    webSocket = nil
+    readyForAudio = false
+
+    // Brief delay before reconnection
+    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+
+    // Restart the session
+    try await start()
+
+    // Flush any buffered audio after reconnection
+    if !bufferedAudio.isEmpty {
+      try await flushBufferedAudio()
+    }
+
+    logger.log("Soniox: reconnection successful")
+  }
+
+  // MARK: - Connection Health Monitoring
+
+  func getConnectionHealth() -> (isHealthy: Bool, uptime: TimeInterval, bufferedAudioSize: Int) {
+    let uptime = connectionStartTime.timeIntervalSinceNow * -1
+    let isHealthy = webSocket?.state == .running && !shuttingDown && pendingError == nil
+    return (isHealthy, uptime, bufferedBytes)
+  }
+
+  // MARK: - Connection Management
+
+  private func waitForWebSocketConnection() async throws {
+    guard let webSocket = webSocket else {
+      throw ProviderError.networkError("WebSocket not initialized")
+    }
+
+    // Wait up to 15 seconds for connection to establish
+    let timeout = 15.0
+    let startTime = Date()
+    var lastState: URLSessionWebSocketTask.State = .suspended
+
+    while Date().timeIntervalSince(startTime) < timeout {
+      let currentState = webSocket.state
+
+      // Log state changes for debugging
+      if currentState != lastState {
+        logger.log("Soniox: WebSocket state changed from \(String(describing: lastState)) to \(String(describing: currentState))")
+        lastState = currentState
+      }
+
+      switch currentState {
+      case .running:
+        logger.log("Soniox: WebSocket connection established successfully")
+        return
+      case .completed:
+        throw ProviderError.networkError("WebSocket connection failed immediately")
+      case .suspended:
+        // Connection not ready yet, continue waiting
+        break
+      case .canceling:
+        throw ProviderError.networkError("WebSocket connection was cancelled")
+      @unknown default:
+        throw ProviderError.networkError("Unknown WebSocket state: \(String(describing: currentState))")
+      }
+
+      try await Task.sleep(nanoseconds: 200_000_000) // 200ms for less frequent polling
+    }
+
+    throw ProviderError.networkError("WebSocket connection timeout after \(timeout) seconds")
   }
 }
 
