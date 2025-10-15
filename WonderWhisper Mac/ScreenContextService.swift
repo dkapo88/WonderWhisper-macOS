@@ -87,6 +87,12 @@ final class ScreenContextService {
         return await svc.captureActiveWindowImage()
     }
 
+    func captureActiveWindowText(preferAccurate: Bool) async -> String? {
+        let svc = ScreenCaptureService()
+        guard let snapshot = await svc.captureActiveWindowImage() else { return nil }
+        return await svc.recognizeText(from: snapshot, preferAccurate: preferAccurate)
+    }
+
 }
 
 private extension ScreenContextService {

@@ -237,14 +237,61 @@ struct SettingsModelsView: View {
             }
             Section("LLM") {
                 Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
-                Toggle("Include screen context (image + selection)", isOn: $vm.screenContextEnabled)
-                    .help("When off, no screenshot, selection, or app context is collected or used by the LLM. Tags remain empty.")
+                Toggle("Include screen context", isOn: $vm.screenContextEnabled)
+                    .help("When off, no screenshot, selection, OCR text, or app context is collected or used by the LLM. Tags remain empty.")
                 Toggle("Include clipboard context (last 10 seconds)", isOn: $vm.clipboardContextEnabled)
                     .help("Send clipboard text copied within 10 seconds before recording inside <CLIPBOARD> tags.")
 
-                Text("Screen images are sent directly to the LLM. Additional screen-content preprocessing options are disabled for image capture.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Screen capture mode")
+                        .font(.subheadline)
+                        .bold()
+                    Picker("Capture mode", selection: $vm.screenContextCaptureMode) {
+                        ForEach(ScreenContextCaptureMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(!vm.screenContextEnabled)
+                    Text("Text extracts visible words using OCR. Image attaches a screenshot for multimodal models.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 6)
+
+                if vm.screenContextEnabled && vm.screenContextCaptureMode == .text {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Screen preprocessing")
+                            .font(.subheadline)
+                            .bold()
+                        Picker("Preprocessing", selection: $vm.screenContextPreprocessingMode) {
+                            ForEach(ScreenContextPreprocessingMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("On-device extracts key terms locally. LLM runs a quick organization prompt before the main request.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if vm.screenContextPreprocessingMode == .llm {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("LLM organization prompt")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                TextEditor(text: $vm.screenOrganizePrompt)
+                                    .font(.body)
+                                    .frame(minHeight: 80, maxHeight: 140)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.secondary.opacity(0.2))
+                                    )
+                                    .help("Customize the instruction sent to the quick LLM pass that organizes OCR'd screen content before your main prompt.")
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
 
 
                 Picker("LLM Provider", selection: $vm.llmProvider) {

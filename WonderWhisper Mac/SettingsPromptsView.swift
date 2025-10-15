@@ -345,8 +345,10 @@ struct SettingsPromptsView: View {
                         PromptScreenContextEditor(
                             prompt: prompt,
                             defaultScreenContext: vm.screenContextEnabled,
+                            defaultCaptureMode: vm.screenContextCaptureMode,
                             defaultPreprocess: vm.screenContextPreprocessingMode,
                             onScreenUpdate: { vm.updateScreenContextOverride(for: prompt.id, to: $0) },
+                            onCaptureUpdate: { vm.updateScreenContextCaptureOverride(for: prompt.id, to: $0) },
                             onPreprocessUpdate: { vm.updateScreenContextPreprocessingOverride(for: prompt.id, to: $0) }
                         )
 
@@ -837,6 +839,42 @@ private enum PromptPreprocessingChoice: String, CaseIterable, Identifiable {
   }
 }
 
+private enum PromptCaptureChoice: String, CaseIterable, Identifiable {
+  case inherit
+  case text
+  case image
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .inherit: return "Default"
+    case .text: return "Text"
+    case .image: return "Image"
+    }
+  }
+
+  var modeValue: ScreenContextCaptureMode? {
+    switch self {
+    case .inherit: return nil
+    case .text: return .text
+    case .image: return .image
+    }
+  }
+
+  func resolved(defaultValue: ScreenContextCaptureMode) -> ScreenContextCaptureMode {
+    modeValue ?? defaultValue
+  }
+
+  static func choice(for override: ScreenContextCaptureMode?) -> PromptCaptureChoice {
+    guard let override else { return .inherit }
+    switch override {
+    case .text: return .text
+    case .image: return .image
+    }
+  }
+}
+
 private struct PromptClipboardContextEditor: View {
     let prompt: PromptConfiguration
     let defaultClipboard: Bool
@@ -883,24 +921,32 @@ private struct PromptClipboardContextEditor: View {
 private struct PromptScreenContextEditor: View {
     let prompt: PromptConfiguration
     let defaultScreenContext: Bool
+    let defaultCaptureMode: ScreenContextCaptureMode
     let defaultPreprocess: ScreenContextPreprocessingMode
     let onScreenUpdate: (Bool?) -> Void
+    let onCaptureUpdate: (ScreenContextCaptureMode?) -> Void
     let onPreprocessUpdate: (ScreenContextPreprocessingMode?) -> Void
 
     @State private var screenChoice: PromptOverrideChoice
+    @State private var captureChoice: PromptCaptureChoice
     @State private var preprocessChoice: PromptPreprocessingChoice
 
     init(prompt: PromptConfiguration,
          defaultScreenContext: Bool,
+         defaultCaptureMode: ScreenContextCaptureMode,
          defaultPreprocess: ScreenContextPreprocessingMode,
          onScreenUpdate: @escaping (Bool?) -> Void,
+         onCaptureUpdate: @escaping (ScreenContextCaptureMode?) -> Void,
          onPreprocessUpdate: @escaping (ScreenContextPreprocessingMode?) -> Void) {
         self.prompt = prompt
         self.defaultScreenContext = defaultScreenContext
+        self.defaultCaptureMode = defaultCaptureMode
         self.defaultPreprocess = defaultPreprocess
         self.onScreenUpdate = onScreenUpdate
+        self.onCaptureUpdate = onCaptureUpdate
         self.onPreprocessUpdate = onPreprocessUpdate
         _screenChoice = State(initialValue: PromptOverrideChoice.choice(for: prompt.screenContextOverride))
+        _captureChoice = State(initialValue: PromptCaptureChoice.choice(for: prompt.screenContextCaptureOverride))
         _preprocessChoice = State(initialValue: PromptPreprocessingChoice.choice(for: prompt.screenContextPreprocessingOverride))
     }
 
@@ -932,8 +978,42 @@ private struct PromptScreenContextEditor: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
+                let screenResolved = screenChoice.resolved(defaultValue: defaultScreenContext)
+                HStack {
+                    Text("Capture type")
+                        .font(.subheadline).bold()
+                    Spacer()
+                    Text("Default: \(defaultCaptureMode.title)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Picker("Capture type", selection: $captureChoice) {
+                    ForEach(PromptCaptureChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(!screenResolved)
+                .onChange(of: captureChoice) { newValue in
+                    onCaptureUpdate(newValue.modeValue)
+                    let resolvedMode = newValue.resolved(defaultValue: defaultCaptureMode)
+                    if resolvedMode != .text {
+                        preprocessChoice = .inherit
+                        onPreprocessUpdate(nil)
+                    }
+                }
+                .onChange(of: screenChoice) { newValue in
+                    let resolved = newValue.resolved(defaultValue: defaultScreenContext)
+                    if !resolved {
+                        captureChoice = .inherit
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
                 let resolvedDefault = defaultPreprocess
                 let screenResolved = screenChoice.resolved(defaultValue: defaultScreenContext)
+                let captureResolved = captureChoice.resolved(defaultValue: defaultCaptureMode)
                 HStack {
                     Text("Screen preprocessing")
                         .font(.subheadline).bold()
@@ -948,7 +1028,7 @@ private struct PromptScreenContextEditor: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .disabled(!screenResolved || !defaultScreenContext)
+                .disabled(!screenResolved || captureResolved != .text)
                 .onChange(of: preprocessChoice) { newValue in
                     onPreprocessUpdate(newValue.modeValue)
                 }
@@ -966,6 +1046,9 @@ private struct PromptScreenContextEditor: View {
         .padding(.top, 6)
         .onChange(of: prompt.screenContextOverride) { newValue in
             screenChoice = PromptOverrideChoice.choice(for: newValue)
+        }
+        .onChange(of: prompt.screenContextCaptureOverride) { newValue in
+            captureChoice = PromptCaptureChoice.choice(for: newValue)
         }
         .onChange(of: prompt.screenContextPreprocessingOverride) { newValue in
             preprocessChoice = PromptPreprocessingChoice.choice(for: newValue)

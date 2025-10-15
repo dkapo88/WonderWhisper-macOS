@@ -112,7 +112,7 @@ struct SettingsGeneralView: View {
 
                 GroupBox("Screen Context") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("WonderWhisper now captures the active window (or the full screen when no window is focused) and sends that image to the LLM for context.")
+                        Text("Screen context can send either OCR text or a screenshot (configure under Settings · Models). Use the options below only when debugging capture issues.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 

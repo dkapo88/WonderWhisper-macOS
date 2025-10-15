@@ -6,6 +6,7 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 import CoreMedia
+import Vision
 
 struct ScreenCaptureSnapshot {
   enum Method: String, Codable {
@@ -262,6 +263,38 @@ private extension ScreenCaptureService {
       return screen.backingScaleFactor
     }
     return NSScreen.main?.backingScaleFactor ?? 2.0
+  }
+
+}
+
+extension ScreenCaptureService {
+  func recognizeText(from snapshot: ScreenCaptureSnapshot, preferAccurate: Bool) async -> String? {
+    await Task.detached(priority: .userInitiated) {
+      guard let source = CGImageSourceCreateWithData(snapshot.data as CFData, nil),
+            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        AppLog.screen.error("Failed to decode snapshot for text recognition")
+        return nil
+      }
+
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = preferAccurate ? .accurate : .fast
+      request.usesLanguageCorrection = true
+      if #available(macOS 13.0, *) {
+        request.revision = VNRecognizeTextRequestRevision3
+      }
+
+      let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+      do {
+        try handler.perform([request])
+        let observations = request.results ?? []
+        let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+        let joined = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
+      } catch {
+        AppLog.screen.error("Text recognition failed: \(error.localizedDescription)")
+        return nil
+      }
+    }.value
   }
 }
 
