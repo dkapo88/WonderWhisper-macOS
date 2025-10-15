@@ -73,6 +73,9 @@ struct SettingsView: View {
                         Text("whisper-large-v3-turbo").tag("whisper-large-v3-turbo")
                         Text("whisper-large-v3").tag("whisper-large-v3")
                         Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
+                        Text("OpenAI · gpt-4o-mini-transcribe").tag("gpt-4o-mini-transcribe")
+                        Text("OpenAI · gpt-4o-transcribe").tag("gpt-4o-transcribe")
+                        Text("OpenAI · whisper-1").tag("whisper-1")
                     }
                     Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
                     Toggle("Include screen context", isOn: $vm.screenContextEnabled)

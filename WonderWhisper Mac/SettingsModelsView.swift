@@ -12,6 +12,14 @@ struct SettingsModelsView: View {
     @State private var favoriteModelDraft: String = ""
     @State private var favoriteProviderDraft: String
 
+    private let openAIModelOptions: [(label: String, value: String)] = [
+        ("OpenAI · gpt-4o-mini-transcribe", "gpt-4o-mini-transcribe"),
+        ("OpenAI · gpt-4o-transcribe", "gpt-4o-transcribe"),
+        ("OpenAI · whisper-1", "whisper-1")
+    ]
+    private let openAIModelSet: Set<String> = ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"]
+    private let groqWhisperModels: Set<String> = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en", "groq-streaming"]
+
     init(vm: DictationViewModel) {
         _vm = ObservedObject(wrappedValue: vm)
         _favoriteModelDraft = State(initialValue: "")
@@ -33,11 +41,14 @@ struct SettingsModelsView: View {
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
                     Text("Soniox (Streaming)").tag("soniox-streaming")
+                    ForEach(openAIModelOptions, id: \.value) { option in
+                        Text(option.label).tag(option.value)
+                    }
                 }
 
-                // Groq Whisper options (language + prompt), shown for Groq Whisper models and streaming
-                if ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en", "groq-streaming"].contains(vm.transcriptionModel) {
-                    GroupBox("Groq Whisper options") {
+                // Language options shared by Groq Whisper and OpenAI transcription models
+                if groqWhisperModels.contains(vm.transcriptionModel) || openAIModelSet.contains(vm.transcriptionModel) {
+                    GroupBox("Transcription language") {
                         VStack(alignment: .leading, spacing: 10) {
                             // Language picker (common codes)
                             HStack {
@@ -66,7 +77,7 @@ struct SettingsModelsView: View {
                                 }
                                 .labelsHidden()
                                 .frame(maxWidth: 220)
-                                .help("BCP-47 language code sent to Groq (default: English)")
+                                .help("BCP-47 language code sent to the transcription provider (default: English)")
                             }
                         }
                         .padding(.top, 4)
@@ -86,6 +97,24 @@ struct SettingsModelsView: View {
                             Text("• Results appear within seconds instead of waiting for full recording")
                             Text("• Ideal for longer recordings and real-time feedback")
                             Text("• Uses whisper-large-v3-turbo for optimal speed/accuracy balance")
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    }
+                } else if openAIModelSet.contains(vm.transcriptionModel) {
+                    GroupBox("OpenAI Audio API") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "waveform")
+                                    .foregroundColor(.blue)
+                                Text("High-accuracy OpenAI transcription snapshots")
+                                    .font(.subheadline)
+                            }
+                            Text("• Supports gpt-4o-mini-transcribe, gpt-4o-transcribe, and whisper-1.")
+                            Text("• Upload limit: 25 MB per request; long recordings may be truncated.")
+                            Text("• Responses are plain text or JSON; timestamps require whisper-1.")
+                            Text("• Language hint improves accuracy for multilingual audio.")
                         }
                         .font(.caption)
                         .foregroundColor(.secondary)

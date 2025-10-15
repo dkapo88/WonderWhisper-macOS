@@ -12,6 +12,16 @@ struct AppConfig {
     static let groqAudioTranscriptions = groqBase.appendingPathComponent("audio/transcriptions")
     static let groqChatCompletions = groqBase.appendingPathComponent("chat/completions")
 
+    // OpenAI base and endpoints
+    private static let openAIBaseString = "https://api.openai.com/v1"
+    static let openAIBase: URL = {
+        guard let url = URL(string: openAIBaseString) else {
+            fatalError("Invalid OpenAI base URL")
+        }
+        return url
+    }()
+    static let openAIAudioTranscriptions = openAIBase.appendingPathComponent("audio/transcriptions")
+
     // OpenRouter base and endpoints (OpenAI-compatible)
     private static let openrouterBaseString = "https://openrouter.ai/api/v1"
     static let openrouterBase: URL = {
@@ -49,6 +59,8 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
 
     // Keychain alias for the Groq API key
     static let groqAPIKeyAlias = "GROQ_API_KEY"
+    // Keychain alias for the OpenAI API key
+    static let openaiAPIKeyAlias = "OPENAI_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
     // Keychain alias for the Cerebras API key

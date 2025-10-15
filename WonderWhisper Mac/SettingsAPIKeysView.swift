@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsAPIKeysView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var groqKeyInput = ""
+  @State private var openaiKeyInput = ""
   @State private var assemblyAIKeyInput = ""
   @State private var deepgramKeyInput = ""
   @State private var sonioxKeyInput = ""
@@ -11,6 +12,7 @@ struct SettingsAPIKeysView: View {
 
   private let keychain = KeychainService()
   private var hasGroq: Bool { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) != nil }
+  private var hasOpenAI: Bool { keychain.getSecret(forKey: AppConfig.openaiAPIKeyAlias) != nil }
   private var hasAssemblyAI: Bool { keychain.getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) != nil }
   private var hasDeepgram: Bool { keychain.getSecret(forKey: AppConfig.deepgramAPIKeyAlias) != nil }
   private var hasSoniox: Bool { keychain.getSecret(forKey: AppConfig.sonioxAPIKeyAlias) != nil }
@@ -19,6 +21,16 @@ struct SettingsAPIKeysView: View {
 
   var body: some View {
     Form {
+      Section(header: keyHeader("OpenAI", hasKey: hasOpenAI)) {
+        apiKeyField(
+          title: "OpenAI API Key",
+          binding: $openaiKeyInput,
+          saveTitle: "Save OpenAI Key",
+          hint: AppConfig.openaiAPIKeyAlias,
+          action: { vm.saveOpenAIKey(openaiKeyInput); openaiKeyInput = "" }
+        )
+      }
+
       Section(header: keyHeader("Groq", hasKey: hasGroq)) {
         apiKeyField(
           title: "Groq API Key",
