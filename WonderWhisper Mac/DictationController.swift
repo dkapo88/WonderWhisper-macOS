@@ -201,11 +201,6 @@ actor DictationController {
             var output = transcript
             var llmDT: TimeInterval = 0
             let selected = screenContextEnabled ? preCapturedSelectedText : nil
-            let captureModeForSession: ScreenContextCaptureMode = {
-                if preCapturedScreenSnapshot != nil { return .image }
-                if preCapturedScreenText != nil { return .text }
-                return screenContextCaptureMode
-            }()
             var screenContentsForPrompt: String? = nil
             var screenMethod: String? = nil
             var screenAttachment: LLMImageAttachment? = nil
