@@ -116,14 +116,27 @@ final class AudioRecorder: NSObject {
         let (filename, settings) = try audioFormatSettings(format: formatLower)
         let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
 
-        // If a specific input device was selected, optionally switch system default temporarily
+        // If a specific input device was selected, optionally switch system default temporarily.
+        // Avoid unnecessary reconfigs and wait until the system reports the new default to prevent IO thrash.
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
             switch AudioInputSelection.load() {
             case .systemDefault:
                 break
             case .deviceUID(let uid):
-                previousDefaultInputUID = AudioDeviceManager.currentDefaultInputUID()
-                _ = AudioDeviceManager.setSystemDefaultInput(toUID: uid)
+                let current = AudioDeviceManager.currentDefaultInputUID()
+                previousDefaultInputUID = current
+                if current != uid {
+                    if AudioDeviceManager.setSystemDefaultInput(toUID: uid) {
+                        // Wait up to ~800ms for HAL to apply the change to avoid "reconfig pending" dropouts
+                        let ok = AudioDeviceManager.waitForDefaultInputSwitch(toUID: uid, timeout: 0.8)
+                        if !ok {
+                            AppLog.dictation.error("AudioRecorder: timed out waiting for default input switch to \(uid)")
+                        } else {
+                            // Give CoreAudio a brief moment to settle routing before starting capture
+                            usleep(50_000) // 50ms
+                        }
+                    }
+                }
             }
         }
 
@@ -157,7 +170,11 @@ final class AudioRecorder: NSObject {
         // Restore previous default input device if we changed it
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
             if let prev = previousDefaultInputUID {
-                _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+                if AudioDeviceManager.setSystemDefaultInput(toUID: prev) {
+                    _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 0.6)
+                    // Allow a short settle delay to avoid impacting subsequent starts
+                    usleep(30_000)
+                }
                 previousDefaultInputUID = nil
             }
         }
@@ -181,7 +198,10 @@ final class AudioRecorder: NSObject {
             // Restore previous default input device if we changed it
             if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
                 if let prev = previousDefaultInputUID {
-                    _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+                    if AudioDeviceManager.setSystemDefaultInput(toUID: prev) {
+                        _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 0.6)
+                        usleep(30_000)
+                    }
                     previousDefaultInputUID = nil
                 }
             }

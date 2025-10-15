@@ -68,6 +68,7 @@ final class HotkeyManager {
     // Push-to-talk timing
     private var hotkeyPressStart: Date?
     private let briefPressThreshold: TimeInterval = 0.8
+    private var lastPasteTrigger: Date?
 
     // Settings (single source of truth)
     var selection: Selection? { didSet { applySelection() } }
@@ -289,6 +290,10 @@ final class HotkeyManager {
 
     private func handlePasteUp() {
         // Fire on key up with a slight delay to let user release modifiers
+        // Debounce in case we receive spurious duplicate key-up events
+        let now = Date()
+        if let last = lastPasteTrigger, now.timeIntervalSince(last) < 0.25 { return }
+        lastPasteTrigger = now
         let app = NSWorkspace.shared.frontmostApplication
         let name = app?.localizedName ?? "?"
         let bundle = app?.bundleIdentifier ?? "?"

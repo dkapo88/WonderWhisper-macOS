@@ -39,21 +39,20 @@ final class InsertionService {
         pb.writeObjects([item])
 
         let ourChange = pb.changeCount
-        // Paste strategy selection order:
-        // 1) Try AX menu Paste
-        // 2) If not available, prefer AppleScript for known-problematic apps (Slack/Electron/Chromium)
-        // 3) Otherwise synthesize Command+V via CGEvent
-        if axPressPasteInFrontApp() {
-            // AX menu Paste succeeded
+        // Paste strategy selection:
+        // - Prefer AppleScript for known-problematic apps (Slack/Electron/Chromium/UpNote)
+        // - Otherwise try AX menu Paste first
+        // - Always fall back to synthesized Command+V if the chosen method fails
+        let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+        let preferAppleScript = shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste")
+        if preferAppleScript {
+            if !pasteUsingAppleScript() {
+                // Try AX paste, then CGEvent as last resort
+                if !axPressPasteInFrontApp() { synthesizeCmdV() }
+            }
         } else {
-            let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
-            if shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste") {
-                if !pasteUsingAppleScript() {
-                    // AppleScript failed (permission or other); fall back
-                    synthesizeCmdV()
-                }
-            } else {
-                synthesizeCmdV()
+            if !axPressPasteInFrontApp() {
+                if !pasteUsingAppleScript() { synthesizeCmdV() }
             }
         }
         let fast = UserDefaults.standard.bool(forKey: "insertion.fastMode")
@@ -70,7 +69,8 @@ final class InsertionService {
             "com.google.Chrome",             // Chrome
             "com.brave.Browser",             // Brave
             "com.microsoft.edgemac",         // Edge
-            "org.mozilla.firefox"            // Firefox
+            "org.mozilla.firefox",           // Firefox
+            "com.getupnote.desktop"          // UpNote (Electron)
         ]
         if prefer.contains(bundleID) { return true }
         // Heuristic: Electron-based apps often have bundle IDs containing "electron"

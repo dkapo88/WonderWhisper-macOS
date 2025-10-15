@@ -243,7 +243,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             throw err
         }
         AppLog.dictation.log("[Parakeet] ASR begin")
-        let result: ASRResult
+        var result: ASRResult
         do {
             // Provide source hint per 0.6 API
             result = try await mgr.transcribe(samples, source: .microphone)
@@ -252,6 +252,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
             AppLog.dictation.error("[Parakeet] transcribe error domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
             throw error
+        }
+        // Defensive retry: if ASR returns an empty string despite non-silent audio, retry once
+        if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AppLog.dictation.error("[Parakeet] Empty ASR result; retrying once")
+            do {
+                result = try await mgr.transcribe(samples, source: .microphone)
+            } catch {
+                // Keep original empty result if retry also fails
+            }
         }
         AppLog.dictation.log("[Parakeet] ASR done")
         let preview = result.text.prefix(120)

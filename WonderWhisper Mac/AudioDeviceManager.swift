@@ -195,4 +195,16 @@ enum AudioDeviceManager {
         let status = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, UInt32(MemoryLayout<AudioObjectID>.size), &newDev)
         return status == noErr
     }
+
+    /// Polls for the default input device to switch to the given UID, up to a timeout in seconds.
+    /// Returns true if the switch is observed; false on timeout or error.
+    static func waitForDefaultInputSwitch(toUID uid: String, timeout: TimeInterval = 1.0) -> Bool {
+        let deadline = Date().addingTimeInterval(max(0.1, timeout))
+        while Date() < deadline {
+            if currentDefaultInputUID() == uid { return true }
+            // Small sleep to avoid busy loop; HAL notifications are not used here to keep things simple
+            usleep(20_000) // 20ms
+        }
+        return currentDefaultInputUID() == uid
+    }
 }
