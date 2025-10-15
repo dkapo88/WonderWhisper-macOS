@@ -331,6 +331,7 @@ struct SettingsModelsView: View {
                         Text("moonshotai/kimi-k2-instruct-0905").tag("moonshotai/kimi-k2-instruct-0905")
                         Text("openai/gpt-oss-120b").tag("openai/gpt-oss-120b")
                         Text("meta-llama/llama-4-scout-17b-16e-instruct").tag("meta-llama/llama-4-scout-17b-16e-instruct")
+                        Text("meta-llama/llama-4-maverick-17b-128e-instruct").tag("meta-llama/llama-4-maverick-17b-128e-instruct")
                     }
                 }
                 Toggle("Streaming (SSE)", isOn: $vm.llmStreaming)
