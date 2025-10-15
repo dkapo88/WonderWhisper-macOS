@@ -18,14 +18,14 @@ final class OpenRouterLLMProvider: LLMProvider {
         let choices: [Choice]
     }
 
-    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String {
+    func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String {
         var typed: [OpenRouterHTTPClient.ChatRequest.Message] = []
         if let system = settings.systemPrompt, !system.isEmpty {
-            typed.append(.init(role: "system", content: system))
+            typed.append(.init(role: "system", text: system, attachment: nil))
         }
-        typed.append(.init(role: "user", content: text))
+        typed.append(.init(role: "user", text: text, attachment: imageAttachment))
         if !userPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            typed.append(.init(role: "user", content: userPrompt))
+            typed.append(.init(role: "user", text: userPrompt, attachment: nil))
         }
 
         // Apply routing preference via provider.sort per OpenRouter docs (latency|throughput|price)
@@ -64,4 +64,3 @@ final class OpenRouterLLMProvider: LLMProvider {
         return response
     }
 }
-

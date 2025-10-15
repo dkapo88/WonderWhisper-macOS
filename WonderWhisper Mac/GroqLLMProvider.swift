@@ -8,7 +8,48 @@ final class GroqLLMProvider: LLMProvider {
     }
 
     struct ChatRequest: Encodable {
-        struct Message: Encodable { let role: String; let content: String }
+        struct Message: Encodable {
+            struct ContentBlock: Encodable {
+                struct ImageURL: Encodable { let url: String; let detail: String? }
+                let type: String
+                let text: String?
+                let image_url: ImageURL?
+            }
+
+            enum Content: Encodable {
+                case text(String)
+                case blocks([ContentBlock])
+
+                func encode(to encoder: Encoder) throws {
+                    var container = encoder.singleValueContainer()
+                    switch self {
+                    case .text(let text):
+                        try container.encode(text)
+                    case .blocks(let blocks):
+                        try container.encode(blocks)
+                    }
+                }
+            }
+
+            let role: String
+            let content: Content
+
+            init(role: String, text: String, attachment: LLMImageAttachment?) {
+                self.role = role
+                if let attachment {
+                    var items: [ContentBlock] = []
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        items.append(.init(type: "text", text: text, image_url: nil))
+                    }
+                    let base64 = attachment.data.base64EncodedString()
+                    let url = "data:\(attachment.mimeType);base64,\(base64)"
+                    items.append(.init(type: "image_url", text: nil, image_url: .init(url: url, detail: attachment.detail.rawValue)))
+                    self.content = .blocks(items)
+                } else {
+                    self.content = .text(text)
+                }
+            }
+        }
         let model: String
         let messages: [Message]
         let temperature: Double
@@ -27,16 +68,16 @@ final class GroqLLMProvider: LLMProvider {
         let choices: [Choice]
     }
 
-    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String {
+    func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String {
         var typedMessages: [ChatRequest.Message] = []
         if let system = settings.systemPrompt, !system.isEmpty {
-            typedMessages.append(.init(role: "system", content: system))
+            typedMessages.append(.init(role: "system", text: system, attachment: nil))
         }
         // The 'text' here is the structured context message (<TRANSCRIPT>... etc.)
-        typedMessages.append(.init(role: "user", content: text))
+        typedMessages.append(.init(role: "user", text: text, attachment: imageAttachment))
         // Optional user addendum
         if !userPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            typedMessages.append(.init(role: "user", content: userPrompt))
+            typedMessages.append(.init(role: "user", text: userPrompt, attachment: nil))
         }
 
         let isGptOss = settings.model.contains("gpt-oss")

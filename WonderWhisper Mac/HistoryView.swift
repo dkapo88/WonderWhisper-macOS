@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct HistoryView: View {
     @ObservedObject var vm: DictationViewModel
@@ -123,8 +124,8 @@ struct HistoryView: View {
                             if let lm = e.llmModel {
                                 Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
                             }
-                            if let m = e.screenContextMethod, !m.isEmpty {
-                                Label("Context: \(m)", systemImage: "eye").font(.caption)
+                            if let descriptor = contextDescriptor(for: e) {
+                                Label("Context: \(descriptor)", systemImage: "eye").font(.caption)
                             }
                         }
                         HStack(spacing: 12) {
@@ -169,6 +170,20 @@ struct HistoryView: View {
                                 }.padding(6)
                             }
                         }
+                        if let imageURL = history.imageURL(for: e),
+                           let nsImage = NSImage(contentsOf: imageURL) {
+                            GroupBox("Screen Image") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Image(nsImage: nsImage)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxHeight: 220)
+                                        .cornerRadius(6)
+                                    HStack { Button("Open Screenshot") { NSWorkspace.shared.open(imageURL) } }
+                                }
+                                .padding(6)
+                            }
+                        }
                         if let sel = e.selectedText, !sel.isEmpty {
                             GroupBox("Selected Text") {
                                 autoSizingTextBox(sel, availableWidth: geo.size.width - 40, maxHeight: 200, font: .caption)
@@ -199,6 +214,14 @@ struct HistoryView: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func contextDescriptor(for entry: HistoryEntry) -> String? {
+        guard let method = entry.screenContextMethod, !method.isEmpty else { return nil }
+        if let w = entry.screenImageWidth, let h = entry.screenImageHeight {
+            return "\(method) (\(w)x\(h))"
+        }
+        return method
     }
 
     private var filtered: [HistoryEntry] {

@@ -33,7 +33,49 @@ struct OpenRouterHTTPClient {
     }
 
     struct ChatRequest: Encodable {
-        struct Message: Encodable { let role: String; let content: String }
+        struct Message: Encodable {
+            struct ContentBlock: Encodable {
+                struct ImageURL: Encodable { let url: String; let detail: String? }
+                let type: String
+                let text: String?
+                let image_url: ImageURL?
+            }
+
+            enum Content: Encodable {
+                case text(String)
+                case blocks([ContentBlock])
+
+                func encode(to encoder: Encoder) throws {
+                    var container = encoder.singleValueContainer()
+                    switch self {
+                    case .text(let value):
+                        try container.encode(value)
+                    case .blocks(let parts):
+                        try container.encode(parts)
+                    }
+                }
+            }
+
+            let role: String
+            let content: Content
+
+            init(role: String, text: String, attachment: LLMImageAttachment?) {
+                self.role = role
+                if let attachment {
+                    var blocks: [ContentBlock] = []
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        blocks.append(.init(type: "text", text: text, image_url: nil))
+                    }
+                    let base64 = attachment.data.base64EncodedString()
+                    let url = "data:\(attachment.mimeType);base64,\(base64)"
+                    let imageURL = ContentBlock.ImageURL(url: url, detail: attachment.detail.rawValue)
+                    blocks.append(.init(type: "image_url", text: nil, image_url: imageURL))
+                    self.content = .blocks(blocks)
+                } else {
+                    self.content = .text(text)
+                }
+            }
+        }
         struct ProviderOptions: Encodable { let sort: String }
         let model: String
         let messages: [Message]
@@ -114,4 +156,3 @@ struct OpenRouterHTTPClient {
         }
     }
 }
-

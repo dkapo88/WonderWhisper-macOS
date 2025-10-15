@@ -2,7 +2,6 @@ import Foundation
 import ApplicationServices
 import AppKit
 import Carbon.HIToolbox
-import Vision
 
 final class ScreenContextService {
     func frontmostAppNameAndBundle() -> (name: String?, bundleId: String?) {
@@ -83,9 +82,9 @@ final class ScreenContextService {
         return nil
     }
 
-    func captureActiveWindowText() async -> String? {
+    func captureActiveWindowImage() async -> ScreenCaptureSnapshot? {
         let svc = ScreenCaptureService()
-        return await svc.captureActiveWindowText()
+        return await svc.captureActiveWindowImage()
     }
 
 }

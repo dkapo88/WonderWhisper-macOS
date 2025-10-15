@@ -21,9 +21,8 @@ actor DictationController {
     private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
     private var clipboardContextEnabled: Bool = false
     private var currentRecordingURL: URL?
-    private var preCapturedScreenText: String?
+    private var preCapturedScreenSnapshot: ScreenCaptureSnapshot?
     private var preCapturedScreenMethod: String?
-    private var screenPreprocessingTask: Task<String?, Never>?
     private var preCapturedSelectedText: String?
     private var clipboardSnapshotForSession: String?
     private let clipboardMonitor = ClipboardContextMonitor()
@@ -32,7 +31,6 @@ actor DictationController {
 
 
     private var screenOrganizePrompt: String = AppConfig.defaultScreenOrganizePrompt
-    private let keywordExtractor = ScreenContentKeywordExtractor()
 
     // Removed memory recording feature due to unreliable output
 
@@ -105,8 +103,9 @@ actor DictationController {
                     }
                 }
                 
-                // Pre-capture screen context early (AX first, OCR fallback)
-                preCapturedScreenText = nil
+                // Pre-capture screen visuals early so they are ready once recording stops
+                preCapturedScreenSnapshot = nil
+                preCapturedScreenMethod = nil
                 preCapturedSelectedText = nil
                 clipboardSnapshotForSession = nil
 
@@ -186,17 +185,14 @@ actor DictationController {
             }
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
-            // Cancel any in-flight screen organization to avoid post-stop work
-            if let t = screenPreprocessingTask { t.cancel() }
-            screenPreprocessingTask = nil
-
             os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
 
             var output = transcript
             var llmDT: TimeInterval = 0
             let selected = screenContextEnabled ? preCapturedSelectedText : nil
-            var screenText: String? = nil
+            var screenInstruction: String? = nil
             var screenMethod: String? = nil
+            var screenAttachment: LLMImageAttachment? = nil
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
             if llmEnabled {
@@ -205,27 +201,17 @@ actor DictationController {
                 let (name, _) = screenContext.frontmostAppNameAndBundle()
                 appNameForPrompt = name
                 if screenContextEnabled {
-                    // Use only pre-captured context; do not attempt any new gathering after stop
-                    if let pre = preCapturedScreenText, !pre.isEmpty {
-                        screenText = pre
-                        screenMethod = preCapturedScreenMethod
-                    } else {
-                        screenText = nil
-                        screenMethod = nil
-                    }
-                    if screenContextPreprocessingMode == .onDevice,
-                       screenMethod == "OCR",
-                       let raw = screenText,
-                       let result = await performScreenPreprocessing(on: raw, context: "pipeline") {
-                        screenText = result.0
-                        screenMethod = result.1
+                    if let snapshot = preCapturedScreenSnapshot {
+                        screenAttachment = snapshot.asAttachment()
+                        screenMethod = snapshot.method.rawValue
+                        screenInstruction = makeScreenInstruction(from: snapshot, appName: appNameForPrompt)
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
                     appName: appNameForPrompt,
-                    screenContents: screenText,
+                    screenContents: screenInstruction,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
                     clipboardText: clipboardSnapshotForSession
                 )
@@ -235,7 +221,7 @@ actor DictationController {
                 os_signpost(.begin, log: spLog, name: "WW.llm.process", signpostID: pipeId)
                 let t1 = Date()
                 do {
-                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
                     llmDT = Date().timeIntervalSince(t1)
                     AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
                     os_signpost(.end, log: spLog, name: "WW.llm.process", signpostID: pipeId)
@@ -277,8 +263,9 @@ actor DictationController {
                 bundleID: bundleIDHist,
                 transcript: transcript,
                 output: output,
-                screenContext: screenText,
+                screenContext: screenInstruction,
                 screenContextMethod: screenMethod,
+                screenImage: preCapturedScreenSnapshot,
                 selectedText: selected,
                 llmSystemMessage: systemForHistory,
                 llmUserMessage: userMsgForHistory,
@@ -306,6 +293,7 @@ actor DictationController {
                 output: "",
                 screenContext: nil,
                 screenContextMethod: nil,
+                screenImage: preCapturedScreenSnapshot,
                 selectedText: screenContextEnabled ? screenContext.selectedText() : nil,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
@@ -318,10 +306,8 @@ actor DictationController {
             state = .error(error.localizedDescription)
         }
         // Reset pre-captured context for the next run
-        preCapturedScreenText = nil
+        preCapturedScreenSnapshot = nil
         preCapturedScreenMethod = nil
-        if let task = screenPreprocessingTask { task.cancel() }
-        screenPreprocessingTask = nil
         clipboardSnapshotForSession = nil
         // Restore capture profile to default for subsequent runs
         recorder.captureProfile = .standard16k
@@ -372,9 +358,8 @@ actor DictationController {
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
         // Reset any pre-captured context
-        preCapturedScreenText = nil
+        preCapturedScreenSnapshot = nil
         preCapturedScreenMethod = nil
-        screenPreprocessingTask = nil
         clipboardSnapshotForSession = nil
         Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
@@ -430,9 +415,15 @@ actor DictationController {
 
             // Use original context from history entry instead of fetching new context
             let selected = entry.selectedText
-            let screenText = entry.screenContext
+            let screenInstruction = entry.screenContext
             let screenMethod = entry.screenContextMethod
             let appNameForPrompt = entry.appName
+            var screenAttachment: LLMImageAttachment? = nil
+            if let imageURL = await history.imageURL(for: entry),
+               let data = try? Data(contentsOf: imageURL) {
+                let inferredMime = entry.screenImageMimeType ?? HistoryStore.mimeType(forExtension: imageURL.pathExtension)
+                screenAttachment = LLMImageAttachment(data: data, mimeType: inferredMime, detail: .high, filename: imageURL.lastPathComponent)
+            }
             
             if llmEnabled {
                 state = .processing
@@ -440,14 +431,14 @@ actor DictationController {
                     transcription: transcript,
                     selectedText: selected,
                     appName: appNameForPrompt,
-                    screenContents: screenText,
+                    screenContents: screenInstruction,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
                 )
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 let t1 = Date()
                 do {
-                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
                 } catch {
                     let ns = error as NSError
                     let isTransient = (ns.domain == NSURLErrorDomain) && (ns.code == NSURLErrorTimedOut || ns.code == NSURLErrorNetworkConnectionLost || ns.code == NSURLErrorCannotConnectToHost || ns.code == NSURLErrorCannotFindHost || ns.code == NSURLErrorNotConnectedToInternet)
@@ -462,7 +453,7 @@ actor DictationController {
                         for cand in fallbackOrder {
                             do {
                                 let s = LLMSettings(endpoint: cand.endpoint, model: llmSettings.model, systemPrompt: llmSettings.systemPrompt, timeout: max(30, llmSettings.timeout), streaming: llmSettings.streaming)
-                                success = try await cand.factory().process(text: userMsg, userPrompt: userPrompt, settings: s)
+                                success = try await cand.factory().process(text: userMsg, userPrompt: userPrompt, settings: s, imageAttachment: screenAttachment)
                                 AppLog.network.log("LLM provider fallback succeeded with \(cand.provider)")
                                 break
                             } catch {
@@ -508,70 +499,32 @@ actor DictationController {
 extension DictationController {
     private func preCaptureScreenContext() async {
         if !screenContextEnabled { return }
-        // Try AX first as it's near-instant; fallback to OCR if needed
-        // Capture selected text early (may wait briefly but happens during recording)
+
         if let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.preCapturedSelectedText = sel
         }
 
-        if let focused = screenContext.focusedText(), !focused.isEmpty {
-            self.preCapturedScreenText = focused
-            self.preCapturedScreenMethod = "AX"
-            return
-        }
-        let ocr = await screenContext.captureActiveWindowText()
-        self.preCapturedScreenText = ocr
-        self.preCapturedScreenMethod = (ocr?.isEmpty ?? true) ? nil : "OCR"
-
-        guard let ocrText = ocr,
-              !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              screenContextPreprocessingMode != .off else {
-            return
-        }
-
-        screenPreprocessingTask = Task { [ocrText, weak self] in
-            guard let self else { return ocrText }
-            if let (processed, method) = await self.performScreenPreprocessing(on: ocrText, context: "pre-capture") {
-                await self.setPreprocessedScreenText(processed, method: method)
-                return processed
-            }
-            return ocrText
-        }
+        let snapshot = await screenContext.captureActiveWindowImage()
+        self.preCapturedScreenSnapshot = snapshot
+        self.preCapturedScreenMethod = snapshot?.method.rawValue
     }
 
-    private func setPreprocessedScreenText(_ text: String, method: String) {
-        self.preCapturedScreenText = text
-        self.preCapturedScreenMethod = method
-    }
-
-    private func performScreenPreprocessing(on text: String, context: String) async -> (String, String)? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        switch screenContextPreprocessingMode {
-        case .off:
-            return nil
-        case .onDevice:
-            guard let formatted = keywordExtractor.formattedKeywords(from: trimmed) else { return nil }
-            return (formatted, "OCR-Keywords")
-        case .llm:
-            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint,
-                                          model: llmSettings.model,
-                                          systemPrompt: nil,
-                                          timeout: llmSettings.timeout,
-                                          streaming: false)
-            do {
-                let organized = try await llm.process(text: trimmed, userPrompt: screenOrganizePrompt, settings: orgSettings)
-                let output = organized.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !output.isEmpty else { return nil }
-                return (output, "OCR-Organized")
-            } catch {
-                if error is CancellationError {
-                    AppLog.dictation.log("Screen preprocessing (\(context)) cancelled")
-                } else {
-                    AppLog.dictation.error("Screen preprocessing (\(context)) failed: \(error.localizedDescription)")
-                }
-                return nil
-            }
+    private func makeScreenInstruction(from snapshot: ScreenCaptureSnapshot, appName: String?) -> String {
+        var intro = "Attached image captures the "
+        switch snapshot.method {
+        case .window:
+            intro += "active window"
+        case .display:
+            intro += "current screen"
         }
+        if let appName, !appName.isEmpty {
+            intro += " in \(appName)."
+        } else {
+            intro += "."
+        }
+
+        let guidance = "Use it to match layout, correct names, and interpret on-screen context."
+        let resolution = "Resolution: \(snapshot.width)x\(snapshot.height) pixels."
+        return "\(intro) \(guidance) \(resolution)"
     }
 }

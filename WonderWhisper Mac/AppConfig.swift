@@ -38,8 +38,8 @@ struct AppConfig {
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
     static let defaultLLMModel = "moonshotai/kimi-k2-instruct"          // Kimi K2 Instruct (per Android config)
 
-    // Default prompt for organizing OCR screen content before main LLM step
-    static let defaultScreenOrganizePrompt: String = "Organize this screen content from OCR screen capture. Provide a full contextual summary and a dictionary of names and key terms. Do not include any explanations or preamble."
+    // Legacy prompt previously used for OCR screen content organization
+    static let defaultScreenOrganizePrompt: String = "Organize the captured screen context into a concise summary and list of key terms."
 
     static let scratchpadTitleSystemPrompt: String = """
 You are an assistant that creates concise, human-friendly titles for notes. Output must never include quotation marks or trailing punctuation. Keep the title within 6 words and use Title Case.

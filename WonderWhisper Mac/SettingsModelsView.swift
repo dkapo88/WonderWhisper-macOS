@@ -237,36 +237,14 @@ struct SettingsModelsView: View {
             }
             Section("LLM") {
                 Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
-                Toggle("Include screen context (selection/OCR)", isOn: $vm.screenContextEnabled)
-                    .help("When off, no selection/AX/OCR or app context is collected or used by the LLM. Tags remain empty.")
+                Toggle("Include screen context (image + selection)", isOn: $vm.screenContextEnabled)
+                    .help("When off, no screenshot, selection, or app context is collected or used by the LLM. Tags remain empty.")
                 Toggle("Include clipboard context (last 10 seconds)", isOn: $vm.clipboardContextEnabled)
                     .help("Send clipboard text copied within 10 seconds before recording inside <CLIPBOARD> tags.")
 
-                Picker("Screen content preprocessing", selection: $vm.screenContextPreprocessingMode) {
-                    ForEach(ScreenContextPreprocessingMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .help("Choose how to preprocess OCR screen captures before the main LLM prompt: off, on-device keyword extraction, or an LLM organization pass.")
-                Text("On-device mode extracts key terms locally; LLM mode sends a quick organizing prompt before the main request.")
+                Text("Screen images are sent directly to the LLM. Additional screen-content preprocessing options are disabled for image capture.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Organization prompt")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    TextEditor(text: $vm.screenOrganizePrompt)
-                        .font(.body)
-                        .frame(minHeight: 60, maxHeight: 120)
-                        .disabled(vm.screenContextPreprocessingMode != .llm)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.2))
-                        )
-                        .help("Customize the instruction sent to the quick LLM pass that organizes OCR'd screen content before your main prompt.")
-                }
-                .padding(.top, 4)
 
 
                 Picker("LLM Provider", selection: $vm.llmProvider) {

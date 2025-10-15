@@ -53,7 +53,33 @@ public struct LLMSettings {
     }
 }
 
-public protocol LLMProvider {
-    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String
+public struct LLMImageAttachment {
+    public enum Detail: String {
+        case auto
+        case low
+        case medium
+        case high
+    }
+
+    public let data: Data
+    public let mimeType: String
+    public let detail: Detail
+    public let filename: String?
+
+    public init(data: Data, mimeType: String, detail: Detail = .high, filename: String? = nil) {
+        self.data = data
+        self.mimeType = mimeType
+        self.detail = detail
+        self.filename = filename
+    }
 }
 
+public protocol LLMProvider {
+    func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String
+}
+
+public extension LLMProvider {
+    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String {
+        try await process(text: text, userPrompt: userPrompt, settings: settings, imageAttachment: nil)
+    }
+}

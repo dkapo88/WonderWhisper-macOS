@@ -112,42 +112,16 @@ struct SettingsGeneralView: View {
 
                 GroupBox("Screen Context") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Accurate OCR for code editors", isOn: $vm.accurateOCRForEditors)
-                            .help("Improves text capture in editors like Cursor/VS Code/Xcode at the cost of a small latency increase (~0.2–0.6s). Turn off to prioritize speed.")
-                        Text("Improves capture fidelity in IDEs like Cursor, VS Code, and Xcode with a small latency trade‑off.")
+                        Text("WonderWhisper now captures the active window (or the full screen when no window is focused) and sends that image to the LLM for context.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 
                         #if DEBUG
-                        Divider()
-
-                        Text("OCR Debugging (Debug Build Only)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        Toggle("Enable OCR debug logging", isOn: Binding(
-                            get: { UserDefaults.standard.bool(forKey: "ocr.debug") },
-                            set: { UserDefaults.standard.set($0, forKey: "ocr.debug") }
+                        Toggle("Save captured screenshots to Desktop", isOn: Binding(
+                            get: { UserDefaults.standard.bool(forKey: "screenCapture.saveImages") },
+                            set: { UserDefaults.standard.set($0, forKey: "screenCapture.saveImages") }
                         ))
-                        .help("Logs detailed OCR processing information to help diagnose capture issues.")
-
-                        Toggle("Save captured images to Desktop", isOn: Binding(
-                            get: { UserDefaults.standard.bool(forKey: "ocr.saveImages") },
-                            set: { UserDefaults.standard.set($0, forKey: "ocr.saveImages") }
-                        ))
-                        .help("Saves screenshots used for OCR to Desktop for analysis. Use sparingly as this creates many files.")
-
-                        Toggle("Force accurate OCR for all apps", isOn: Binding(
-                            get: { UserDefaults.standard.bool(forKey: "ocr.forceAccurate") },
-                            set: { UserDefaults.standard.set($0, forKey: "ocr.forceAccurate") }
-                        ))
-                        .help("Always use the most accurate (but slower) OCR mode regardless of app type.")
-
-                        Toggle("Extended OCR timeout", isOn: Binding(
-                            get: { UserDefaults.standard.bool(forKey: "ocr.extendedTimeout") },
-                            set: { UserDefaults.standard.set($0, forKey: "ocr.extendedTimeout") }
-                        ))
-                        .help("Use longer timeouts for OCR processing. May help with complex content but increases latency.")
+                        .help("Copies every captured image to your Desktop for debugging. Disable when not actively inspecting captures.")
                         #endif
                     }
                 }

@@ -11,7 +11,49 @@ struct CerebrasHTTPClient {
     }
 
     struct ChatRequest: Encodable {
-        struct Message: Encodable { let role: String; let content: String }
+        struct Message: Encodable {
+            struct ContentBlock: Encodable {
+                struct ImageURL: Encodable { let url: String; let detail: String? }
+                let type: String
+                let text: String?
+                let image_url: ImageURL?
+            }
+
+            enum Content: Encodable {
+                case text(String)
+                case blocks([ContentBlock])
+
+                func encode(to encoder: Encoder) throws {
+                    var container = encoder.singleValueContainer()
+                    switch self {
+                    case .text(let text):
+                        try container.encode(text)
+                    case .blocks(let blocks):
+                        try container.encode(blocks)
+                    }
+                }
+            }
+
+            let role: String
+            let content: Content
+
+            init(role: String, text: String, attachment: LLMImageAttachment?) {
+                self.role = role
+                if let attachment {
+                    var parts: [ContentBlock] = []
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        parts.append(.init(type: "text", text: text, image_url: nil))
+                    }
+                    let base64 = attachment.data.base64EncodedString()
+                    let url = "data:\(attachment.mimeType);base64,\(base64)"
+                    let imageURL = ContentBlock.ImageURL(url: url, detail: attachment.detail.rawValue)
+                    parts.append(.init(type: "image_url", text: nil, image_url: imageURL))
+                    self.content = .blocks(parts)
+                } else {
+                    self.content = .text(text)
+                }
+            }
+        }
         let model: String
         let messages: [Message]
         let temperature: Double

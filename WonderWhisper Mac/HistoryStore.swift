@@ -16,6 +16,7 @@ final class HistoryStore: ObservableObject {
     private let baseDir: URL
     private let entriesDir: URL
     private let audioDir: URL
+    private let imageDir: URL
     private let decoder = JSONDecoder()
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -39,8 +40,10 @@ final class HistoryStore: ObservableObject {
        self.baseDir = base
        self.entriesDir = base.appendingPathComponent("entries", isDirectory: true)
        self.audioDir = base.appendingPathComponent("audio", isDirectory: true)
+       self.imageDir = base.appendingPathComponent("images", isDirectory: true)
        try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
        try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
+       try? fm.createDirectory(at: self.imageDir, withIntermediateDirectories: true)
        let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
        self.maxEntries = persisted ?? 50
        load()
@@ -68,7 +71,22 @@ final class HistoryStore: ObservableObject {
         self.entries = loaded
     }
 
-    func append(fileURL: URL?, appName: String?, bundleID: String?, transcript: String, output: String, screenContext: String?, screenContextMethod: String?, selectedText: String?, llmSystemMessage: String? = nil, llmUserMessage: String? = nil, transcriptionModel: String?, llmModel: String?, transcriptionSeconds: Double?, llmSeconds: Double?, totalSeconds: Double?) async {
+    func append(fileURL: URL?,
+                appName: String?,
+                bundleID: String?,
+                transcript: String,
+                output: String,
+                screenContext: String?,
+                screenContextMethod: String?,
+                screenImage: ScreenCaptureSnapshot?,
+                selectedText: String?,
+                llmSystemMessage: String? = nil,
+                llmUserMessage: String? = nil,
+                transcriptionModel: String?,
+                llmModel: String?,
+                transcriptionSeconds: Double?,
+                llmSeconds: Double?,
+                totalSeconds: Double?) async {
         let id = UUID()
         let date = Date()
         var audioFilename: String? = nil
@@ -93,6 +111,25 @@ final class HistoryStore: ObservableObject {
             }
         }
 
+        var screenImageFilename: String? = nil
+        var screenImageMimeType: String? = nil
+        var screenImageWidth: Int? = nil
+        var screenImageHeight: Int? = nil
+
+        if let snapshot = screenImage {
+            let ext = Self.fileExtension(forMimeType: snapshot.mimeType)
+            let dest = imageDir.appendingPathComponent("\(id).\(ext)")
+            do {
+                try snapshot.data.write(to: dest, options: .atomic)
+                screenImageFilename = dest.lastPathComponent
+                screenImageMimeType = snapshot.mimeType
+                screenImageWidth = snapshot.width
+                screenImageHeight = snapshot.height
+            } catch {
+                AppLog.dictation.error("Failed to persist screen image: \(error.localizedDescription)")
+            }
+        }
+
         let entry = HistoryEntry(
             id: id,
             date: date,
@@ -103,6 +140,10 @@ final class HistoryStore: ObservableObject {
             audioFilename: audioFilename,
             screenContext: screenContext,
             screenContextMethod: screenContextMethod,
+            screenImageFilename: screenImageFilename,
+            screenImageMimeType: screenImageMimeType,
+            screenImageWidth: screenImageWidth,
+            screenImageHeight: screenImageHeight,
             selectedText: selectedText,
             llmSystemMessage: llmSystemMessage,
             llmUserMessage: llmUserMessage,
@@ -145,9 +186,16 @@ final class HistoryStore: ObservableObject {
         return audioDir.appendingPathComponent(name)
     }
 
+    func imageURL(for entry: HistoryEntry) -> URL? {
+        guard let name = entry.screenImageFilename else { return nil }
+        return imageDir.appendingPathComponent(name)
+    }
+
     func revealInFinder(entry: HistoryEntry) {
         if let url = audioURL(for: entry) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else if let image = imageURL(for: entry) {
+            NSWorkspace.shared.activateFileViewerSelecting([image])
         } else {
             NSWorkspace.shared.open(entriesDir)
         }
@@ -162,6 +210,10 @@ final class HistoryStore: ObservableObject {
         if let name = entry.audioFilename {
             let aURL = audioDir.appendingPathComponent(name)
             if fm.fileExists(atPath: aURL.path) { try? fm.removeItem(at: aURL) }
+        }
+        if let imageName = entry.screenImageFilename {
+            let imgURL = imageDir.appendingPathComponent(imageName)
+            if fm.fileExists(atPath: imgURL.path) { try? fm.removeItem(at: imgURL) }
         }
         // Update in-memory list
         entries.removeAll { $0.id == entry.id }
@@ -189,8 +241,32 @@ private extension HistoryStore {
                 let aURL = audioDir.appendingPathComponent(name)
                 if fm.fileExists(atPath: aURL.path) { try? fm.removeItem(at: aURL) }
             }
+            // Image
+            if let imageName = e.screenImageFilename {
+                let imgURL = imageDir.appendingPathComponent(imageName)
+                if fm.fileExists(atPath: imgURL.path) { try? fm.removeItem(at: imgURL) }
+            }
         }
         // Trim in memory
         entries = Array(entries.prefix(maxEntries))
+    }
+
+}
+
+extension HistoryStore {
+    nonisolated static func fileExtension(forMimeType mimeType: String) -> String {
+        switch mimeType.lowercased() {
+        case "image/png": return "png"
+        case "image/jpeg", "image/jpg": return "jpg"
+        default: return "bin"
+        }
+    }
+
+    nonisolated static func mimeType(forExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        default: return "application/octet-stream"
+        }
     }
 }

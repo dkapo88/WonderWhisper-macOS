@@ -150,14 +150,6 @@ final class DictationViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
     }
 
-    // Screen Context / OCR
-    @Published var accurateOCRForEditors: Bool = {
-        if let v = UserDefaults.standard.object(forKey: "ocr.accurateForEditors") as? Bool { return v }
-        return true
-    }() {
-        didSet { UserDefaults.standard.set(accurateOCRForEditors, forKey: "ocr.accurateForEditors") }
-    }
-
     // Vocabulary
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
