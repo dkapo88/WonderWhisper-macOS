@@ -257,6 +257,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
         let finalTranscript = await acc.getFinalTranscript()
 
         // Clean up
+        await acc.clearChunkResults()  // Explicitly clear accumulated data
         accumulator = nil
         await chunker.reset()
 
@@ -269,6 +270,9 @@ final class GroqStreamingProvider: TranscriptionProvider {
         isStreaming = false
         await uploads.cancelAll()
         await chunker.reset()
+        if let acc = accumulator {
+            await acc.clearChunkResults()  // Explicitly clear accumulated data
+        }
         accumulator = nil
     }
 
@@ -496,6 +500,12 @@ private actor GroqTranscriptAccumulator {
         }
         AppLog.dictation.log("GroqStreaming: Assembled transcript from \(sorted.count) chunks")
         return combined.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    /// Clear chunk results to free memory after session ends
+    func clearChunkResults() {
+        chunkResults.removeAll(keepingCapacity: false)
+        finalChunkNumber = nil
     }
 }
 

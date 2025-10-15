@@ -132,6 +132,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     self.liveReceiveTask = nil
     let text = await accumulator.finalTranscript()
     self.liveAccumulator = nil
+    pendingBinaryChunks.removeAll(keepingCapacity: false)  // Clean up pending chunks
     return text
   }
 
@@ -182,7 +183,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     liveTask = nil
     liveReceiveTask = nil
     liveAccumulator = nil
-    pendingBinaryChunks.removeAll()
+    pendingBinaryChunks.removeAll(keepingCapacity: false)  // Release capacity to free memory
   }
 
   // MARK: - Audio streaming

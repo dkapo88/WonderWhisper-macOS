@@ -482,7 +482,7 @@ private actor SonioxLiveSession {
     sessionTimeoutTimer?.invalidate()
     sessionTimeoutTimer = nil
     webSocket?.cancel(with: .goingAway, reason: nil)
-    bufferedAudio.removeAll()
+    bufferedAudio.removeAll(keepingCapacity: false)  // Release capacity to free memory
     bufferedBytes = 0
     readyForAudio = false
     shuttingDown = false
@@ -492,6 +492,8 @@ private actor SonioxLiveSession {
     webSocket = nil
     receiveTask = nil
     keepAliveTask = nil
+    pendingError = nil  // Clear pending error state
+    retryCount = 0  // Reset retry count
     logger.log("Soniox: session closed")
   }
 

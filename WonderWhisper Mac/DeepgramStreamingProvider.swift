@@ -282,6 +282,10 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
     recvTask = nil
     keepAliveTask = nil
     
+    // Reset connection state
+    connectionStartTime = nil
+    reconnectAttempts = 0
+    
     // Brief delay to allow cleanup to complete
     try? await Task.sleep(nanoseconds: 50_000_000) // Reduced from 100ms to 50ms
   }

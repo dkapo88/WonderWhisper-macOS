@@ -17,6 +17,10 @@ final class AudioRecorder: NSObject {
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
     private var finishContinuation: CheckedContinuation<URL?, Never>?
+    
+    // Temporary file cleanup
+    private static var lastCleanupTime: Date?
+    private static let cleanupInterval: TimeInterval = 300  // 5 minutes
 
     // Live streaming support (NEW IMPLEMENTATION)
     private var audioEngine: AVAudioEngine!
@@ -107,6 +111,9 @@ final class AudioRecorder: NSObject {
         if !sessionConfigured {
             try setupAudioSession()
         }
+        
+        // Periodically clean up old temporary recording files to prevent accumulation
+        Self.cleanupOldTemporaryFilesIfNeeded()
 
         let tempDir = FileManager.default.temporaryDirectory
         let format = UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav"
@@ -473,8 +480,14 @@ extension AudioRecorder {
             self.inputNode = nil
             self.audioFormat = nil
             self.audioConverter = nil
-            self.audioBufferList.removeAll()
+            self.audioBufferList.removeAll(keepingCapacity: false)  // Release capacity to free memory
             self.onPCM16Frame = nil
+            
+            // Reset health monitoring state
+            self.lastAudioTime = nil
+            self.totalFramesProcessed = 0
+            self.framesDropped = 0
+            self.recordingStartTime = nil
         }
     }
 
@@ -511,6 +524,77 @@ extension AudioRecorder: AVAudioRecorderDelegate {
 
 // MARK: - Extensions
 // Note: Date extension removed to avoid infinite recursion
+
+// MARK: - Temporary File Cleanup
+extension AudioRecorder {
+    /// Clean up old temporary recording files to prevent disk accumulation
+    /// Only runs if cleanup interval has elapsed since last cleanup
+    private static func cleanupOldTemporaryFilesIfNeeded() {
+        // Check if cleanup is needed based on interval
+        let now = Date()
+        if let lastCleanup = lastCleanupTime,
+           now.timeIntervalSince(lastCleanup) < cleanupInterval {
+            return
+        }
+        
+        lastCleanupTime = now
+        
+        // Perform cleanup in background to avoid blocking recording start
+        DispatchQueue.global(qos: .utility).async {
+            cleanupOldTemporaryFiles()
+        }
+    }
+    
+    /// Remove temporary recording files older than 1 hour
+    private static func cleanupOldTemporaryFiles() {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory
+        
+        // Look for files matching our naming pattern
+        let oneHourAgo = Date().addingTimeInterval(-3600)
+        
+        guard let enumerator = fm.enumerator(
+            at: tempDir,
+            includingPropertiesForKeys: [.creationDateKey, .nameKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { return }
+        
+        var deletedCount = 0
+        var deletedBytes: Int64 = 0
+        
+        for case let fileURL as URL in enumerator {
+            let filename = fileURL.lastPathComponent
+            
+            // Only process our temporary recording files and Groq streaming chunks
+            guard filename.hasPrefix("dictation_") || 
+                  filename.hasPrefix("chunk_") || 
+                  filename.hasPrefix("final_chunk_") ||
+                  filename.hasPrefix("warmup_") else {
+                continue
+            }
+            
+            // Check creation date
+            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.creationDateKey, .fileSizeKey]),
+                  let creationDate = resourceValues.creationDate else {
+                continue
+            }
+            
+            // Delete files older than 1 hour
+            if creationDate < oneHourAgo {
+                let fileSize = resourceValues.fileSize ?? 0
+                if (try? fm.removeItem(at: fileURL)) != nil {
+                    deletedCount += 1
+                    deletedBytes += Int64(fileSize)
+                }
+            }
+        }
+        
+        if deletedCount > 0 {
+            let mbDeleted = Double(deletedBytes) / 1_048_576.0
+            print("🧹 Cleaned up \(deletedCount) old temporary recording files (\(String(format: "%.2f", mbDeleted)) MB)")
+        }
+    }
+}
 
 // Safe index helper for EQ band access (legacy support)
 private extension Collection {

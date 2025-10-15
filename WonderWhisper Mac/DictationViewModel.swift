@@ -371,6 +371,8 @@ final class DictationViewModel: ObservableObject {
         escapeEventMonitor = nil
         escapeKeyInterceptor?.stop()
         escapeKeyInterceptor = nil
+        providerUpdateTask?.cancel()  // Cancel any pending provider update
+        providerUpdateTask = nil
     }
 
     private func controllerState() async -> String {
@@ -1166,12 +1168,18 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateProviders() {
+        // Cancel any existing provider update task to prevent accumulation
+        providerUpdateTask?.cancel()
+        
         let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
         let task = applyProviders(using: prompt)
         providerUpdateTask = task
     }
 
     private func updateProvidersWithSelectedTextOverride() async {
+        // Cancel any existing provider update task to prevent accumulation
+        providerUpdateTask?.cancel()
+        
         // Use the selected text prompt override for provider updates
         let task = applyProviders(using: selectedTextPromptOverride)
         providerUpdateTask = task
