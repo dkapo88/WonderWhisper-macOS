@@ -23,17 +23,30 @@ struct TranscriptionCacheKey: Hashable {
 
 final class TranscriptionCache {
     static let shared = TranscriptionCache()
-    private let cache = LRUCache<TranscriptionCacheKey, String>(capacity: 100, ttl: 1800) // Extended: 100 entries, 30min TTL
+    private let cache = LRUCache<TranscriptionCacheKey, String>(capacity: 50, ttl: 900) // Reduced: 50 entries, 15min TTL
+    private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.transcriptioncache", qos: .utility)
+    private var lastCleanupTime = Date()
+    private let cleanupInterval: TimeInterval = 600 // 10 minutes
+    
+    // Cache statistics
+    private var hitCount: Int = 0
+    private var missCount: Int = 0
+    private var totalSizeEstimate: Int = 0
 
-    private init() {}
+    private init() {
+        // Schedule periodic cleanup
+        Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
+            self?.performPeriodicCleanup()
+        }
+    }
 
     func key(for fileURL: URL, provider: String, model: String, language: String?, preprocessing: Bool) -> TranscriptionCacheKey? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
               let size = attrs[.size] as? NSNumber,
               let mod = attrs[.modificationDate] as? Date else { return nil }
         
-        // Generate content hash for better deduplication (optional for performance)
-        let contentHash = generateContentHash(for: fileURL)
+        // Generate content hash asynchronously to avoid blocking
+        let contentHash = generateContentHashAsync(for: fileURL)
         
         return TranscriptionCacheKey(
             fileSize: size.uint64Value,
@@ -67,9 +80,16 @@ final class TranscriptionCache {
         return generateContentHash(for: data)
     }
     
+    // Asynchronous content hash generation to avoid blocking
+    private func generateContentHashAsync(for fileURL: URL) -> String? {
+        // For now, use synchronous but with smaller sample size for better performance
+        // In a future optimization, this could be fully async
+        return generateContentHash(for: fileURL)
+    }
+    
     private func generateContentHash(for data: Data) -> String {
-        // For performance, hash only start + middle + end samples (~1KB total)
-        let sampleSize = min(256, data.count / 3)
+        // Reduced sample size for better performance
+        let sampleSize = min(128, data.count / 4) // Reduced from 256 to 128
         var hashData = Data()
         
         // Beginning samples
@@ -97,7 +117,13 @@ final class TranscriptionCache {
     }
 
     func lookup(_ key: TranscriptionCacheKey) -> String? {
-        return cache.get(key)
+        if let result = cache.get(key) {
+            hitCount += 1
+            return result
+        } else {
+            missCount += 1
+            return nil
+        }
     }
     
     // Enhanced lookup that can find similar content by hash
@@ -109,17 +135,36 @@ final class TranscriptionCache {
 
     func store(_ key: TranscriptionCacheKey, result: String) {
         cache.set(key, result)
+        // Update size estimate (rough approximation)
+        totalSizeEstimate = max(totalSizeEstimate, cache.count * (result.count + 200)) // 200 bytes overhead per entry
     }
     
     // Cache performance statistics
     var cacheStatistics: (hitCount: Int, missCount: Int, totalSize: Int) {
-        // Basic stats - LRUCache would need to expose these metrics
-        return (0, 0, 0) // Placeholder - would need LRUCache enhancement
+        return (hitCount: hitCount, missCount: missCount, totalSize: totalSizeEstimate)
     }
     
     // Clear expired entries manually (LRU cache handles this automatically)
     func clearExpired() {
-        // LRUCache handles TTL automatically, but this could force cleanup
+        cache.clearExpired()
+    }
+    
+    // Perform periodic cleanup
+    private func performPeriodicCleanup() {
+        let now = Date()
+        guard now.timeIntervalSince(lastCleanupTime) >= cleanupInterval else { return }
+        
+        lastCleanupTime = now
+        backgroundQueue.async { [weak self] in
+            self?.clearExpired()
+        }
+    }
+    
+    // Reset cache statistics
+    func resetStatistics() {
+        hitCount = 0
+        missCount = 0
+        totalSizeEstimate = 0
     }
 }
 

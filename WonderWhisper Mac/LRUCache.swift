@@ -17,6 +17,12 @@ final class LRUCache<Key: Hashable, Value> {
         self.capacity = max(1, capacity)
         self.ttl = max(0, ttl)
     }
+    
+    // Get the current number of entries in the cache
+    var count: Int {
+        lock.lock(); defer { lock.unlock() }
+        return dict.count
+    }
 
     func get(_ key: Key) -> Value? {
         lock.lock(); defer { lock.unlock() }
@@ -45,6 +51,34 @@ final class LRUCache<Key: Hashable, Value> {
         if dict.count > capacity, let tail = list.popBack() {
             dict[tail.key] = nil
         }
+    }
+    
+    // Remove expired entries from the cache
+    func clearExpired() {
+        lock.lock(); defer { lock.unlock() }
+        guard ttl > 0 else { return }
+        
+        var nodesToRemove: [LinkedList<Entry>.Node] = []
+        var currentNode = list.head
+        
+        while let node = currentNode {
+            if Date().timeIntervalSince(node.value.timestamp) > ttl {
+                nodesToRemove.append(node)
+            }
+            currentNode = node.next
+        }
+        
+        for node in nodesToRemove {
+            dict[node.value.key] = nil
+            list.remove(node)
+        }
+    }
+    
+    // Clear all entries from the cache
+    func removeAll() {
+        lock.lock(); defer { lock.unlock() }
+        dict.removeAll(keepingCapacity: false)
+        list = LinkedList<Entry>()
     }
 }
 

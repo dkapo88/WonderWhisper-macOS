@@ -176,6 +176,14 @@ final class DictationViewModel: ObservableObject {
     private var providerUpdateTask: Task<Void, Never>?
     private var selectedTextPromptOverride: PromptConfiguration?
     private var selectedTextFallbackTaskID: UUID?
+    
+    // Debouncing for provider updates
+    private var providerUpdateTimer: Timer?
+    private let providerUpdateDebounceInterval: TimeInterval = 0.5 // 500ms debounce
+    
+    // Provider cache to avoid unnecessary recreation
+    private var transcriptionProviderCache: [String: TranscriptionProvider] = [:]
+    private var llmProviderCache: [String: LLMProvider] = [:]
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -373,6 +381,9 @@ final class DictationViewModel: ObservableObject {
         escapeKeyInterceptor = nil
         providerUpdateTask?.cancel()  // Cancel any pending provider update
         providerUpdateTask = nil
+        providerUpdateTimer?.invalidate()  // Clean up debounce timer
+        providerUpdateTimer = nil
+        // Provider cache will be cleaned up automatically when object is deallocated
     }
 
     private func controllerState() async -> String {
@@ -390,6 +401,8 @@ final class DictationViewModel: ObservableObject {
     func toggle() {
         persistPromptLibrary()
         Task {
+            // Use immediate provider update for critical operations
+            await MainActor.run { self.updateProvidersImmediately() }
             await waitForLatestProviderUpdate()
 
             let currentState = await controller.currentState()
@@ -419,6 +432,9 @@ final class DictationViewModel: ObservableObject {
     func finish() {
         persistPromptLibrary()
         Task {
+            // Use immediate provider update for critical operations
+            await MainActor.run { self.updateProvidersImmediately() }
+            
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { self.isRecording = false }
 
@@ -1168,20 +1184,30 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateProviders() {
-        // Cancel any existing provider update task to prevent accumulation
+        // Cancel any existing timer and task
+        providerUpdateTimer?.invalidate()
+        providerUpdateTimer = nil
+        providerUpdateTask?.cancel()
+        
+        // Debounce provider updates to avoid excessive reinitialization
+        providerUpdateTimer = Timer.scheduledTimer(withTimeInterval: providerUpdateDebounceInterval, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            
+            let prompt = self.prompts.prompt(withID: self.selectedPromptID) ?? self.prompts.first
+            let task = self.applyProviders(using: prompt)
+            self.providerUpdateTask = task
+        }
+    }
+    
+    // Immediately apply provider updates without debouncing (for critical operations)
+    private func updateProvidersImmediately() {
+        // Cancel any existing timer and task
+        providerUpdateTimer?.invalidate()
+        providerUpdateTimer = nil
         providerUpdateTask?.cancel()
         
         let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
         let task = applyProviders(using: prompt)
-        providerUpdateTask = task
-    }
-
-    private func updateProvidersWithSelectedTextOverride() async {
-        // Cancel any existing provider update task to prevent accumulation
-        providerUpdateTask?.cancel()
-        
-        // Use the selected text prompt override for provider updates
-        let task = applyProviders(using: selectedTextPromptOverride)
         providerUpdateTask = task
     }
 
@@ -1253,73 +1279,61 @@ final class DictationViewModel: ObservableObject {
     @discardableResult
     private func applyProviders(using prompt: PromptConfiguration?) -> Task<Void, Never> {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
-        var provider: TranscriptionProvider? = nil
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
         let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt, provider: providerForActivePrompt)
+        
+        // Get cached transcription provider
+        let provider = getCachedTranscriptionProvider(for: transcriptionModel)
+        
+        // Configure settings based on provider type
         if transcriptionModel == "apple-native" {
             if #available(macOS 26, *) {
-                provider = NativeAppleTranscriptionProvider()
                 tSettings = TranscriptionSettings(endpoint: URL(string: "https://apple-native.local")!, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
             } else {
-                AppLog.dictation.error("Apple native transcription requires macOS 26 or later; falling back to Groq.")
-                provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
                 tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: AppConfig.defaultTranscriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
             }
         } else if openAITranscriptionModels.contains(transcriptionModel) {
-            provider = OpenAITranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openaiAPIKeyAlias) }))
             tSettings = TranscriptionSettings(endpoint: AppConfig.openAIAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         } else if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
-            provider = ParakeetTranscriptionProvider()
             tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)
         } else if transcriptionModel == "assemblyai-streaming" {
-            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
-            provider = AssemblyAIStreamingProvider(apiKey: key)
             // Endpoint not used by streaming provider, but keep for logging
             tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else if transcriptionModel == "deepgram-streaming" {
-            let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
-            provider = DeepgramStreamingProvider(apiKey: key)
             tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else if transcriptionModel == "soniox-streaming" {
-            let providerInstance = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
-            provider = providerInstance
             let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
             tSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else if transcriptionModel == "groq-streaming" {
-            provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
             // Use the actual Whisper model for the underlying transcription, but keep the groq-streaming identifier for the UI
             let actualModel = "whisper-large-v3-turbo" // Default to the fastest model for streaming
             tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-        } else {
-            provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
+        
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
 
-        // Choose LLM provider and endpoint
-        var llmProviderInstance: LLMProvider
+        // Get cached LLM provider
+        let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt)
+        
+        // Configure LLM settings based on provider
         switch providerForActivePrompt.lowercased() {
         case "openrouter":
             lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-            llmProviderInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
         case "cerebras":
             lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
-            llmProviderInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
         default:
             lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
-            llmProviderInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
 
-        let providerToApply = provider
         let transcriberSettings = tSettings
-        let llmProviderToApply = llmProviderInstance
         let llmSettingsToApply = lSettings
         let isLLMEnabled = llmEnabled
         let useScreenContext = resolvedScreenContext(for: prompt)
@@ -1329,11 +1343,13 @@ final class DictationViewModel: ObservableObject {
         let screenOrganizePromptToApply = screenOrganizePrompt
 
         return Task {
-            if let providerToApply {
+            if let providerToApply = provider {
                 await controller.updateTranscriberProvider(providerToApply)
             }
             await controller.updateTranscriberSettings(transcriberSettings)
-            await controller.updateLLMProvider(llmProviderToApply)
+            if let llmProvider = llmProviderToApply {
+                await controller.updateLLMProvider(llmProvider)
+            }
             await controller.updateLLMSettings(llmSettingsToApply)
             await controller.updateLLMEnabled(isLLMEnabled)
             await controller.updateScreenContextEnabled(useScreenContext)
@@ -1408,6 +1424,89 @@ final class DictationViewModel: ObservableObject {
         )
         return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private func updateProvidersWithSelectedTextOverride() async {
+        // Cancel any existing timer and task
+        providerUpdateTimer?.invalidate()
+        providerUpdateTimer = nil
+        providerUpdateTask?.cancel()
+        
+        // Use the selected text prompt override for provider updates
+        let task = applyProviders(using: selectedTextPromptOverride)
+        providerUpdateTask = task
+    }
+
+    // MARK: - Provider Cache Management
+    
+    private func getCachedTranscriptionProvider(for model: String) -> TranscriptionProvider? {
+        // Check cache first
+        if let cached = transcriptionProviderCache[model] {
+            return cached
+        }
+        
+        // Create new provider and cache it
+        let provider: TranscriptionProvider?
+        
+        if model == "apple-native" {
+            if #available(macOS 26, *) {
+                provider = NativeAppleTranscriptionProvider()
+            } else {
+                AppLog.dictation.error("Apple native transcription requires macOS 26 or later; falling back to Groq.")
+                provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+            }
+        } else if openAITranscriptionModels.contains(model) {
+            provider = OpenAITranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openaiAPIKeyAlias) }))
+        } else if model.lowercased().contains("parakeet") || model.lowercased().contains("local") {
+            provider = ParakeetTranscriptionProvider()
+        } else if model == "assemblyai-streaming" {
+            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
+            provider = AssemblyAIStreamingProvider(apiKey: key)
+        } else if model == "deepgram-streaming" {
+            let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
+            provider = DeepgramStreamingProvider(apiKey: key)
+        } else if model == "soniox-streaming" {
+            provider = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
+        } else if model == "groq-streaming" {
+            provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        } else {
+            provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        }
+        
+        if let p = provider {
+            transcriptionProviderCache[model] = p
+        }
+        
+        return provider
+    }
+    
+    private func getCachedLLMProvider(for provider: String, model: String) -> LLMProvider? {
+        let cacheKey = "\(provider)::\(model)"
+        
+        // Check cache first
+        if let cached = llmProviderCache[cacheKey] {
+            return cached
+        }
+        
+        // Create new provider and cache it
+        let providerInstance: LLMProvider
+        let canonicalModel = Self.canonicalLLMModel(for: model, provider: provider)
+        
+        switch provider.lowercased() {
+        case "openrouter":
+            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
+            providerInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+        case "cerebras":
+            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
+            providerInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
+        default:
+            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
+            providerInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        }
+        
+        llmProviderCache[cacheKey] = providerInstance
+        return providerInstance
+    }
+    
 }
 
 private struct PromptBootstrap {

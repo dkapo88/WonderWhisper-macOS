@@ -5,6 +5,8 @@ import OSLog
 @MainActor
 final class HistoryStore: ObservableObject {
     @Published private(set) var entries: [HistoryEntry] = []
+    @Published private(set) var hasMoreEntries: Bool = false
+    @Published var isLoadingMore: Bool = false
     @Published var maxEntries: Int {
         didSet {
             if maxEntries < 1 { maxEntries = 1 }
@@ -23,6 +25,12 @@ final class HistoryStore: ObservableObject {
         e.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         return e
     }()
+    
+    // Pagination support
+    private let pageSize = 20 // Number of entries to load at once
+    private var allEntryFiles: [URL] = []
+    private var currentIndex = 0
+    private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.history", qos: .utility)
 
     init() {
        let fm = FileManager.default
@@ -46,29 +54,78 @@ final class HistoryStore: ObservableObject {
        try? fm.createDirectory(at: self.imageDir, withIntermediateDirectories: true)
        let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
        self.maxEntries = persisted ?? 50
-       load()
-       enforceMaxEntries()
-   }
+       
+       // Load initial page of entries
+       loadInitialEntries()
+    }
 
-    func load() {
+    func loadInitialEntries() {
+        backgroundQueue.async { [weak self] in
+            self?.loadEntryFiles()
+            
+            DispatchQueue.main.async {
+                self?.loadNextPage()
+            }
+        }
+    }
+    
+    private func loadEntryFiles() {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
         guard let files = try? fm.contentsOfDirectory(at: entriesDir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
+        
         // Consider only JSON files and sort by most recent file date (modification or creation)
         let jsonFiles = files.filter { $0.pathExtension == "json" }
         func fileDate(_ url: URL) -> Date {
             let values = try? url.resourceValues(forKeys: Set(keys))
             return values?.contentModificationDate ?? values?.creationDate ?? .distantPast
         }
-        let sorted = jsonFiles.sorted { fileDate($0) > fileDate($1) }
-        let limited = sorted.prefix(maxEntries)
-        var loaded: [HistoryEntry] = []
-        for f in limited {
-            if let data = try? Data(contentsOf: f, options: .mappedIfSafe), let entry = try? decoder.decode(HistoryEntry.self, from: data) {
-                loaded.append(entry)
+        
+        allEntryFiles = jsonFiles.sorted { fileDate($0) > fileDate($1) }
+        currentIndex = 0
+    }
+    
+    func loadNextPage() {
+        guard !isLoadingMore else { return }
+        
+        isLoadingMore = true
+        
+        backgroundQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let endIndex = min(self.currentIndex + self.pageSize, self.allEntryFiles.count)
+            let filesToLoad = Array(self.allEntryFiles[self.currentIndex..<endIndex])
+            
+            var newEntries: [HistoryEntry] = []
+            for f in filesToLoad {
+                if let data = try? Data(contentsOf: f, options: .mappedIfSafe),
+                   let entry = try? self.decoder.decode(HistoryEntry.self, from: data) {
+                    newEntries.append(entry)
+                }
+            }
+            
+            DispatchQueue.main.async {
+                self.entries.append(contentsOf: newEntries)
+                self.currentIndex = endIndex
+                self.hasMoreEntries = endIndex < self.allEntryFiles.count
+                self.isLoadingMore = false
+                
+                // Enforce max entries after loading
+                self.enforceMaxEntries()
             }
         }
-        self.entries = loaded
+    }
+    
+    func refresh() {
+        entries.removeAll()
+        currentIndex = 0
+        hasMoreEntries = false
+        loadInitialEntries()
+    }
+
+    func load() {
+        // Legacy method - now just refreshes
+        refresh()
     }
 
     func append(fileURL: URL?,
@@ -153,15 +210,25 @@ final class HistoryStore: ObservableObject {
             llmSeconds: llmSeconds,
             totalSeconds: totalSeconds
         )
+        
+        // Save to disk in background
         let path = entriesDir.appendingPathComponent("\(id).json")
-        do {
-            let data = try encoder.encode(entry)
-            try data.write(to: path, options: .atomic)
-        } catch {
-            // ignore persistence failure for now
+        backgroundQueue.async { [weak self] in
+            do {
+                let data = try self?.encoder.encode(entry)
+                try data?.write(to: path, options: .atomic)
+                
+                // Update in-memory state on main thread
+                DispatchQueue.main.async {
+                    self?.entries.insert(entry, at: 0)
+                    self?.allEntryFiles.insert(path, at: 0)
+                    self?.currentIndex += 1
+                    self?.enforceMaxEntries()
+                }
+            } catch {
+                AppLog.dictation.error("Failed to save history entry: \(error.localizedDescription)")
+            }
         }
-        entries.insert(entry, at: 0)
-        enforceMaxEntries()
     }
 
     func replace(id: UUID, with updated: HistoryEntry) async {
@@ -226,31 +293,51 @@ private extension HistoryStore {
 
     func enforceMaxEntries() {
         guard entries.count > maxEntries else { return }
-        let fm = FileManager.default
-        // Entries are newest-first; remove oldest beyond maxEntries
-        let overflow = entries.count - maxEntries
-        guard overflow > 0 else { return }
-        let toRemove = Array(entries.suffix(overflow))
-        // Remove files from disk
-        for e in toRemove {
-            // JSON
-            let jsonURL = entriesDir.appendingPathComponent("\(e.id).json")
-            if fm.fileExists(atPath: jsonURL.path) { try? fm.removeItem(at: jsonURL) }
-            // Audio
-            if let name = e.audioFilename {
-                let aURL = audioDir.appendingPathComponent(name)
-                if fm.fileExists(atPath: aURL.path) { try? fm.removeItem(at: aURL) }
-            }
-            // Image
-            if let imageName = e.screenImageFilename {
-                let imgURL = imageDir.appendingPathComponent(imageName)
-                if fm.fileExists(atPath: imgURL.path) { try? fm.removeItem(at: imgURL) }
+        
+        // Remove excess entries from memory
+        let excessCount = entries.count - maxEntries
+        let entriesToRemove = Array(entries.suffix(excessCount))
+        
+        // Update in-memory state
+        entries = Array(entries.prefix(maxEntries))
+        
+        // Clean up files in background
+        backgroundQueue.async { [weak self] in
+            guard let self = self else { return }
+            let fm = FileManager.default
+            
+            for entry in entriesToRemove {
+                // Remove JSON
+                let jsonURL = self.entriesDir.appendingPathComponent("\(entry.id).json")
+                if fm.fileExists(atPath: jsonURL.path) { 
+                    try? fm.removeItem(at: jsonURL)
+                    // Also remove from allEntryFiles if present
+                    if let index = self.allEntryFiles.firstIndex(of: jsonURL) {
+                        self.allEntryFiles.remove(at: index)
+                        if self.currentIndex > index {
+                            self.currentIndex -= 1
+                        }
+                    }
+                }
+                
+                // Remove audio
+                if let name = entry.audioFilename {
+                    let aURL = self.audioDir.appendingPathComponent(name)
+                    if fm.fileExists(atPath: aURL.path) { 
+                        try? fm.removeItem(at: aURL) 
+                    }
+                }
+                
+                // Remove image
+                if let imageName = entry.screenImageFilename {
+                    let imgURL = self.imageDir.appendingPathComponent(imageName)
+                    if fm.fileExists(atPath: imgURL.path) { 
+                        try? fm.removeItem(at: imgURL) 
+                    }
+                }
             }
         }
-        // Trim in memory
-        entries = Array(entries.prefix(maxEntries))
     }
-
 }
 
 extension HistoryStore {
