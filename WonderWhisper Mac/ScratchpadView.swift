@@ -46,6 +46,8 @@ private struct ScratchpadMainView: View {
             .font(.body)
             .focused($inputFocused)
             .frame(minHeight: 120)
+            .padding(.top, 12)
+            .padding(.leading, 8)
             .overlay(
               RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2))
@@ -188,6 +190,8 @@ private struct ScratchpadNoteEditorView: View {
           ))
           .font(.body)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .padding(.top, 12)
+          .padding(.leading, 4)
           if note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Text("Start writing or dictate to capture the full note…")
               .foregroundColor(.secondary)
