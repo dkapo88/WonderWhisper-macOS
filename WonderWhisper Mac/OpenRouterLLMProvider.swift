@@ -38,7 +38,7 @@ final class OpenRouterLLMProvider: LLMProvider {
         }
         let provider = OpenRouterHTTPClient.ChatRequest.ProviderOptions(sort: sort)
 
-        let req = OpenRouterHTTPClient.ChatRequest(model: settings.model, messages: typed, temperature: 0.2, stream: settings.streaming ? true : nil, provider: provider)
+        let req = OpenRouterHTTPClient.ChatRequest(model: settings.model, messages: typed, temperature: settings.temperature, stream: settings.streaming ? true : nil, provider: provider)
         if settings.streaming {
             let aggregated = try await client.postChatStream(to: settings.endpoint, body: req, timeout: settings.timeout)
             return Self.extractFormattedText(from: aggregated)

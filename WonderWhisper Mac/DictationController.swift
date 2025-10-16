@@ -428,7 +428,8 @@ actor DictationController {
             model: modelOverride ?? llmSettings.model,
             systemPrompt: systemPromptOverride ?? llmSettings.systemPrompt,
             timeout: llmSettings.timeout,
-            streaming: streamingOverride ?? llmSettings.streaming
+            streaming: streamingOverride ?? llmSettings.streaming,
+            temperature: llmSettings.temperature
         )
         return try await llm.process(text: text, userPrompt: userPrompt, settings: settings)
     }
@@ -475,7 +476,9 @@ actor DictationController {
                 } catch {
                     let ns = error as NSError
                     let isTransient = (ns.domain == NSURLErrorDomain) && (ns.code == NSURLErrorTimedOut || ns.code == NSURLErrorNetworkConnectionLost || ns.code == NSURLErrorCannotConnectToHost || ns.code == NSURLErrorCannotFindHost || ns.code == NSURLErrorNotConnectedToInternet)
-                    if AppConfig.llmEnableProviderFallback && isTransient {
+                    // Skip fallback for Ollama since model names won't work with other providers
+                    let isOllama = llmSettings.endpoint.absoluteString.contains("localhost:11434")
+                    if AppConfig.llmEnableProviderFallback && isTransient && !isOllama {
                         AppLog.network.error("Primary LLM failed transiently; attempting provider fallback")
                         // Build a temporary fallback provider instance (try OpenRouter, then Groq)
                         let fallbackOrder: [(provider: String, endpoint: URL, factory: () -> LLMProvider)] = [
@@ -485,7 +488,14 @@ actor DictationController {
                         var success: String? = nil
                         for cand in fallbackOrder {
                             do {
-                                let s = LLMSettings(endpoint: cand.endpoint, model: llmSettings.model, systemPrompt: llmSettings.systemPrompt, timeout: max(30, llmSettings.timeout), streaming: llmSettings.streaming)
+                                let s = LLMSettings(
+                                    endpoint: cand.endpoint,
+                                    model: llmSettings.model,
+                                    systemPrompt: llmSettings.systemPrompt,
+                                    timeout: max(30, llmSettings.timeout),
+                                    streaming: llmSettings.streaming,
+                                    temperature: llmSettings.temperature
+                                )
                                 success = try await cand.factory().process(text: userMsg, userPrompt: userPrompt, settings: s, imageAttachment: screenAttachment)
                                 AppLog.network.log("LLM provider fallback succeeded with \(cand.provider)")
                                 break
@@ -612,11 +622,14 @@ extension DictationController {
             guard let formatted = keywordExtractor.formattedKeywords(from: trimmed) else { return nil }
             return (formatted, "OCR-Keywords")
         case .llm:
-            let orgSettings = LLMSettings(endpoint: llmSettings.endpoint,
-                                          model: llmSettings.model,
-                                          systemPrompt: nil,
-                                          timeout: llmSettings.timeout,
-                                          streaming: false)
+            let orgSettings = LLMSettings(
+                endpoint: llmSettings.endpoint,
+                model: llmSettings.model,
+                systemPrompt: nil,
+                timeout: llmSettings.timeout,
+                streaming: false,
+                temperature: llmSettings.temperature
+            )
             do {
                 let organized = try await llm.process(text: trimmed, userPrompt: screenOrganizePrompt, settings: orgSettings)
                 let output = organized.trimmingCharacters(in: .whitespacesAndNewlines)

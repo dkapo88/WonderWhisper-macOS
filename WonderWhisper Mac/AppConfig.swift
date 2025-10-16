@@ -43,6 +43,16 @@ struct AppConfig {
     }()
     static let cerebrasChatCompletions = cerebrasBase.appendingPathComponent("chat/completions")
 
+    // Ollama local base and endpoints
+    private static let ollamaBaseString = "http://localhost:11434/api"
+    static let ollamaBase: URL = {
+        guard let url = URL(string: ollamaBaseString) else {
+            fatalError("Invalid Ollama base URL")
+        }
+        return url
+    }()
+    static let ollamaChatCompletions = ollamaBase.appendingPathComponent("chat")
+
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo

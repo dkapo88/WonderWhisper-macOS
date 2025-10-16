@@ -44,12 +44,14 @@ public struct LLMSettings {
     public let systemPrompt: String?
     public let timeout: TimeInterval
     public let streaming: Bool
-    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, streaming: Bool = false) {
+    public let temperature: Double
+    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, streaming: Bool = false, temperature: Double = 0.2) {
         self.endpoint = endpoint
         self.model = model
         self.systemPrompt = systemPrompt
         self.timeout = timeout
         self.streaming = streaming
+        self.temperature = temperature
     }
 }
 

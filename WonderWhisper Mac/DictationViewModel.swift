@@ -86,6 +86,12 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
+    @Published var llmTemperature: Double = UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2 {
+        didSet {
+            UserDefaults.standard.set(llmTemperature, forKey: "llm.temperature")
+            updateProviders()
+        }
+    }
     @Published var favoriteLLMModels: [FavoriteLLMModel] = DictationViewModel.loadFavoriteLLMModels() {
         didSet { persistFavoriteLLMModels() }
     }
@@ -285,17 +291,17 @@ final class DictationViewModel: ObservableObject {
         switch persistedLLMProvider.lowercased() {
         case "openrouter":
             llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
-            llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
         case "cerebras":
             llm = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
-            llmSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            llmSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
         default:
             // Groq as default
             let httpClient = http
             llm = GroqLLMProvider(client: httpClient)
-            llmSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false)
+            llmSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
         }
 
@@ -1315,7 +1321,7 @@ final class DictationViewModel: ObservableObject {
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
-        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
+        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
 
         // Get cached LLM provider
         let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt)
@@ -1323,13 +1329,18 @@ final class DictationViewModel: ObservableObject {
         // Configure LLM settings based on provider
         switch providerForActivePrompt.lowercased() {
         case "openrouter":
-            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
         case "cerebras":
-            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
+        case "ollama":
+            // Use longer timeout for Ollama since local models can be slow on first load
+            let ollamaTimeout = max(180, llmTimeout)
+            lSettings = LLMSettings(endpoint: AppConfig.ollamaChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: ollamaTimeout, streaming: llmStreaming, temperature: llmTemperature)
+            // Ollama runs locally, no pre-warming needed
         default:
-            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming)
+            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
         }
 
@@ -1498,6 +1509,9 @@ final class DictationViewModel: ObservableObject {
         case "cerebras":
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
             providerInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
+        case "ollama":
+            // Ollama runs locally, no API key needed, no pre-warming needed
+            providerInstance = OllamaLLMProvider(client: OllamaHTTPClient())
         default:
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
             providerInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))

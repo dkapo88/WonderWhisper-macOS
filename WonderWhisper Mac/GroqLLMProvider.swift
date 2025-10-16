@@ -84,7 +84,7 @@ final class GroqLLMProvider: LLMProvider {
         let req = ChatRequest(
             model: settings.model,
             messages: typedMessages,
-            temperature: 0.2,
+            temperature: settings.temperature,
             stream: settings.streaming ? true : nil,
             reasoning_effort: isGptOss ? "low" : nil,
             include_reasoning: isGptOss ? false : nil

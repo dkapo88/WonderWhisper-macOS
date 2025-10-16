@@ -30,7 +30,7 @@ final class CerebrasLLMProvider: LLMProvider {
         let req = CerebrasHTTPClient.ChatRequest(
             model: settings.model,
             messages: messages,
-            temperature: 0.2,
+            temperature: settings.temperature,
             stream: settings.streaming ? true : nil,
             reasoning_effort: settings.model.contains("gpt-oss") ? "low" : nil
         )

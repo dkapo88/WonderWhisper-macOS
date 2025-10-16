@@ -327,6 +327,7 @@ struct SettingsModelsView: View {
                     Text("Groq").tag("groq")
                     Text("OpenRouter").tag("openrouter")
                     Text("Cerebras").tag("cerebras")
+                    Text("Ollama (Local)").tag("ollama")
                 }
                 if vm.llmProvider == "openrouter" {
 
@@ -353,6 +354,9 @@ struct SettingsModelsView: View {
                         Text("[Preview] qwen-3-235b-a22b-thinking-2507").tag("qwen-3-235b-a22b-thinking-2507")
                         Text("[Preview] qwen-3-coder-480b").tag("qwen-3-coder-480b")
                     }
+                } else if vm.llmProvider == "ollama" {
+                    // Auto-detected local Ollama models
+                    OllamaModelSelector(selectedModel: $vm.llmModel)
                 } else {
                     // Existing static picker for Groq-backed models
                     Picker("LLM model", selection: $vm.llmModel) {
@@ -365,6 +369,27 @@ struct SettingsModelsView: View {
                 }
                 Toggle("Streaming (SSE)", isOn: $vm.llmStreaming)
                     .help("Enable streaming responses for faster time-to-first-token. Uses the same prompt and output format.")
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Temperature")
+                        Spacer()
+                        Text(String(format: "%.2f", vm.llmTemperature))
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $vm.llmTemperature, in: 0.0...2.0, step: 0.05)
+                    HStack {
+                        Text("More Focused")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("More Creative")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .help("Lower values (0.0-0.3) make output more focused and deterministic. Higher values (0.7-2.0) make output more creative and varied.")
 
                 GroupBox("Favorite LLM models") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -456,13 +481,15 @@ struct SettingsModelsView: View {
             return "OpenRouter"
         case "cerebras":
             return "Cerebras"
+        case "ollama":
+            return "Ollama"
         default:
             return "Groq"
         }
     }
 
     private var providerOptions: [String] {
-        var options: [String] = ["groq", "openrouter", "cerebras"]
+        var options: [String] = ["groq", "openrouter", "cerebras", "ollama"]
         for favorite in vm.favoriteLLMModels {
             let provider = favorite.provider.lowercased()
             if !options.contains(where: { $0.caseInsensitiveCompare(provider) == .orderedSame }) {
@@ -575,4 +602,104 @@ fileprivate struct OpenRouterModelSelector: View {
 
 fileprivate extension Array where Element: Hashable {
     func uniqued() -> [Element] { Array(Set(self)).sorted { String(describing: $0) < String(describing: $1) } }
+}
+
+// MARK: - Ollama model selector view
+fileprivate struct OllamaModelSelector: View {
+    @Binding var selectedModel: String
+    @State private var models: [String] = []
+    @State private var isLoading: Bool = false
+    @State private var errorMessage: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Local Ollama Models")
+                    .font(.headline)
+                Spacer()
+                Button(isLoading ? "Refreshing…" : "Refresh") { Task { await loadModels() } }
+                    .disabled(isLoading)
+            }
+            
+            if let err = errorMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(err)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            if isLoading {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading models…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if models.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No Ollama models found")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Download models with: ollama pull <model-name>")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("Examples: llama3.2, mistral, phi3")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            } else {
+                Picker("LLM model", selection: $selectedModel) {
+                    ForEach(models, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                
+                Text("\(models.count) model\(models.count == 1 ? "" : "s") installed")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .onAppear { Task { await loadModels() } }
+    }
+
+    @MainActor
+    private func loadModels() async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        
+        do {
+            let client = OllamaHTTPClient()
+            let fetchedModels = try await client.fetchLocalModels()
+            self.models = fetchedModels.sorted()
+            
+            // Auto-select first model if none selected
+            if !fetchedModels.isEmpty && (selectedModel.isEmpty || !fetchedModels.contains(selectedModel)) {
+                selectedModel = fetchedModels.sorted().first ?? ""
+            }
+        } catch {
+            if let providerError = error as? ProviderError {
+                switch providerError {
+                case .http(let status, _):
+                    if status == 404 || status >= 500 {
+                        errorMessage = "Ollama not running. Start with: ollama serve"
+                    } else {
+                        errorMessage = "HTTP error \(status)"
+                    }
+                case .networkError:
+                    errorMessage = "Can't connect to Ollama. Is it running?"
+                default:
+                    errorMessage = "Failed to load models"
+                }
+            } else {
+                errorMessage = "Ollama not responding. Start with: ollama serve"
+            }
+        }
+    }
 }
