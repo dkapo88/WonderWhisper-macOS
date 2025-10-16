@@ -202,10 +202,11 @@ final class GroqStreamingProvider: TranscriptionProvider {
         let ready = await chunker.append(data)
         for (number, payload) in ready {
             AppLog.dictation.log("GroqStreaming: Queuing chunk \(number) with \(payload.count) bytes")
-            let uploadTask = Task { [weak self, weak acc] in
-                await self?.limiter.acquire()
-                defer { Task { await self?.limiter.release() } }
-                await self?.uploadChunk(payload, chunkNumber: number, accumulator: acc)
+            let uploadTask = Task { [weak self] in
+                guard let self = self else { return }
+                await self.limiter.acquire()
+                defer { Task { await self.limiter.release() } }
+                await self.uploadChunk(payload, chunkNumber: number, accumulator: acc)
                 return ()
             }
             await uploads.add(uploadTask)
@@ -513,10 +514,14 @@ private actor GroqTranscriptAccumulator {
 private actor UploadTaskBag {
     private var tasks: Set<Task<Void, Never>> = []
     func add(_ task: Task<Void, Never>) { tasks.insert(task) }
-    func compact() { tasks = tasks.filter { !$0.isCancelled } }
+    func compact() { 
+        tasks = tasks.filter { !$0.isCancelled }
+        // Also remove completed tasks to prevent memory accumulation
+        tasks.removeAll(keepingCapacity: false)
+    }
     func cancelAll() {
         for t in tasks { t.cancel() }
-        tasks.removeAll()
+        tasks.removeAll(keepingCapacity: false)
     }
 }
 

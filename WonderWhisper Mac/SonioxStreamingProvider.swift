@@ -561,6 +561,12 @@ private actor SonioxLiveSession {
       let removed = bufferedAudio.removeFirst()
       bufferedBytes -= removed.count
     }
+    // If buffer is still too large after trimming, clear it entirely to prevent crash
+    if bufferedBytes > maxBufferedBytes * 2 {
+      logger.warning("Soniox: buffer overflow detected, clearing buffer to prevent crash")
+      bufferedAudio.removeAll(keepingCapacity: false)
+      bufferedBytes = 0
+    }
   }
 
   private func receiveLoop() async {
@@ -741,8 +747,10 @@ private actor SonioxLiveSession {
 
     sessionTimeoutTimer?.invalidate()
     sessionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+      guard let self = self else { return }
       Task { [weak self] in
-        await self?.checkSessionTimeout()
+        guard let self = self else { return }
+        await self.checkSessionTimeout()
       }
     }
   }

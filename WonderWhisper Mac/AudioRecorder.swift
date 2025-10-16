@@ -31,6 +31,7 @@ final class AudioRecorder: NSObject {
     private var audioBufferList = [AVAudioPCMBuffer]()
     private var bufferIndex = 0
     private let maxBuffers = 10
+    private let bufferLock = NSLock()  // Synchronize buffer access
 
     // Health monitoring
     private var lastAudioTime: AVAudioTime?
@@ -408,7 +409,12 @@ extension AudioRecorder {
             return inputBuffer
         }
 
-        // Convert to target format
+        // Convert to target format (thread-safe buffer access)
+        bufferLock.lock()
+        defer { bufferLock.unlock() }
+        guard bufferIndex < audioBufferList.count else {
+            return nil
+        }
         let outputBuffer = audioBufferList[bufferIndex]
         bufferIndex = (bufferIndex + 1) % maxBuffers
 

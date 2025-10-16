@@ -134,11 +134,17 @@ actor DictationController {
 
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
-        // Stop live streaming if active
-        if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
-        if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
-        if transcriber is GroqStreamingProvider { recorder.stopStreamingPCM16() }
-        if transcriber is SonioxStreamingProvider { recorder.stopStreamingPCM16() }
+        // Stop live streaming if active and abort any pending operations
+        recorder.stopStreamingPCM16()
+        if let aai = transcriber as? AssemblyAIStreamingProvider {
+            await aai.abortRealtimeSession()
+        } else if let dg = transcriber as? DeepgramStreamingProvider {
+            await dg.abort()
+        } else if let groq = transcriber as? GroqStreamingProvider {
+            await groq.abort()
+        } else if let soniox = transcriber as? SonioxStreamingProvider {
+            await soniox.abort()
+        }
 
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
 
