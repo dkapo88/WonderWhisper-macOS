@@ -26,7 +26,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             return cached
         }
 
-        let fileData = try Data(contentsOf: inputURL, options: .mappedIfSafe)
+        // Prefer heap-backed Data to avoid mmapped file lifetime quirks during fresh recordings
+        let fileData = try Data(contentsOf: inputURL)
         let mime = mimeType(for: ext)
         let cacheKey = TranscriptionCache.shared.key(for: inputURL, provider: "openai", model: settings.model, language: nil, preprocessing: applyPreprocessing)
 

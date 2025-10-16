@@ -191,6 +191,9 @@ actor DictationController {
             } else {
                 // Standard file-based transcription for non-streaming providers
                 guard let fileURL = recordingFileURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
+                // Ensure the recorded file is fully finalized before reading to avoid rare
+                // issues on some systems where the file appears complete but is still being flushed.
+                await Self.waitUntilFileIsStable(fileURL)
                 AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber))) file=\(fileURL.lastPathComponent)")
                 transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
             }
@@ -626,6 +629,41 @@ extension DictationController {
                     AppLog.dictation.error("Screen preprocessing (\(context)) failed: \(error.localizedDescription)")
                 }
                 return nil
+            }
+        }
+    }
+}
+
+// MARK: - File Finalization Helper
+extension DictationController {
+    /// Waits until the file's size has remained unchanged for a short window,
+    /// or until a timeout elapses. This helps avoid racing with AVAudioRecorder's
+    /// final flush on some systems.
+    static func waitUntilFileIsStable(_ url: URL, minStableMillis: Int = 200, timeoutSeconds: Double = 3.0) async {
+        let fm = FileManager.default
+        let pollInterval: useconds_t = 50_000 // 50 ms
+        let minStable: useconds_t = useconds_t(minStableMillis) * 1000
+        var lastSize: UInt64 = 0
+        var stableFor: useconds_t = 0
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+
+        func currentSize() -> UInt64 {
+            if let attrs = try? fm.attributesOfItem(atPath: url.path), let n = attrs[.size] as? NSNumber {
+                return n.uint64Value
+            }
+            return 0
+        }
+
+        lastSize = currentSize()
+        while Date() < deadline {
+            usleep(pollInterval)
+            let s = currentSize()
+            if s == lastSize {
+                stableFor += pollInterval
+                if stableFor >= minStable { break }
+            } else {
+                stableFor = 0
+                lastSize = s
             }
         }
     }

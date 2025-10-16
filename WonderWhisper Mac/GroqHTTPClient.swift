@@ -246,7 +246,8 @@ struct GroqHTTPClient {
             self.fieldName = fieldName
             self.filename = filename
             self.mimeType = mimeType
-            self.data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+            // Avoid mmapped Data here as well for stability when files are freshly written.
+            self.data = try Data(contentsOf: fileURL)
         }
     }
 

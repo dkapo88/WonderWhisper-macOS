@@ -338,55 +338,81 @@ enum AudioPreprocessor {
     }
 
     private static func writeInt16Mono16kWav(samples: [Float], to url: URL) throws {
-        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: false)!
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        let chunk = 16_000 * 2 // 2 seconds per write
-        var scale: Float = Float(Int16.max)
-        var clipped = [Float](repeating: 0, count: chunk)
-        var scaled = [Float](repeating: 0, count: chunk)
-        var int16Data = [Int16](repeating: 0, count: chunk)
-        var writeError: Error?
-        samples.withUnsafeBufferPointer { srcBuf in
-            guard let srcBase = srcBuf.baseAddress else { return }
-            var offset = 0
-            while offset < samples.count {
-                let n = min(chunk, samples.count - offset)
-                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n)) else { break }
-                buffer.frameLength = AVAudioFrameCount(n)
-                clipped.withUnsafeMutableBufferPointer { dst in
-                    guard let dstBase = dst.baseAddress else { return }
-                    var minVal: Float = -1
-                    var maxVal: Float = 1
-                    vDSP_vclip(srcBase + offset, 1, &minVal, &maxVal, dstBase, 1, vDSP_Length(n))
-                }
-                scaled.withUnsafeMutableBufferPointer { dst in
-                    guard let dstBase = dst.baseAddress else { return }
-                    clipped.withUnsafeBufferPointer { src in
-                        guard let clipBase = src.baseAddress else { return }
-                        vDSP_vsmul(clipBase, 1, &scale, dstBase, 1, vDSP_Length(n))
-                    }
-                }
-                int16Data.withUnsafeMutableBufferPointer { dst in
-                    guard let dstBase = dst.baseAddress else { return }
-                    scaled.withUnsafeBufferPointer { src in
-                        guard let scaleBase = src.baseAddress else { return }
-                        vDSP_vfix16(scaleBase, 1, dstBase, 1, vDSP_Length(n))
-                    }
-                }
-                int16Data.withUnsafeBufferPointer { ints in
-                    if let dst = buffer.int16ChannelData?[0] {
-                        dst.update(from: ints.baseAddress!, count: n)
-                    }
-                }
-                do {
-                    try file.write(from: buffer)
-                } catch {
-                    writeError = error
-                    break
-                }
-                offset += n
+        let sampleCount = samples.count
+        var clipped = samples
+
+        if sampleCount > 0 {
+            var minVal: Float = -1
+            var maxVal: Float = 1
+            clipped.withUnsafeMutableBufferPointer { buf in
+                guard let base = buf.baseAddress else { return }
+                vDSP_vclip(base, 1, &minVal, &maxVal, base, 1, vDSP_Length(sampleCount))
+                var scale: Float = Float(Int16.max)
+                vDSP_vsmul(base, 1, &scale, base, 1, vDSP_Length(sampleCount))
             }
         }
-        if let error = writeError { throw error }
+
+        var int16Data = [Int16](repeating: 0, count: sampleCount)
+        if sampleCount > 0 {
+            clipped.withUnsafeBufferPointer { src in
+                int16Data.withUnsafeMutableBufferPointer { dst in
+                    guard let s = src.baseAddress, let d = dst.baseAddress else { return }
+                    vDSP_vfix16(s, 1, d, 1, vDSP_Length(sampleCount))
+                }
+            }
+        }
+
+        let bytesPerSample = MemoryLayout<Int16>.size
+        let subchunk2Size = sampleCount * bytesPerSample
+        let chunkSize = 36 + subchunk2Size
+        let byteRate = 16_000 * bytesPerSample
+        let blockAlign = UInt16(bytesPerSample)
+
+        var data = Data(capacity: 44 + subchunk2Size)
+        func appendUInt32(_ value: UInt32) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        func appendUInt16(_ value: UInt16) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+
+        data.append(contentsOf: "RIFF".utf8)
+        appendUInt32(UInt32(chunkSize))
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        appendUInt32(16) // PCM header size
+        appendUInt16(1)  // audio format PCM
+        appendUInt16(1)  // mono
+        appendUInt32(16_000) // sample rate
+        appendUInt32(UInt32(byteRate))
+        appendUInt16(blockAlign)
+        appendUInt16(16) // bits per sample
+        data.append(contentsOf: "data".utf8)
+        appendUInt32(UInt32(subchunk2Size))
+
+        if debugLoggingEnabled {
+            let minSample = int16Data.min() ?? 0
+            let maxSample = int16Data.max() ?? 0
+            var rms: Float = 0
+            clipped.withUnsafeBufferPointer { buf in
+                guard let base = buf.baseAddress else { return }
+                vDSP_rmsqv(base, 1, &rms, vDSP_Length(sampleCount))
+            }
+            AppLog.dictation.log("AudioPreprocessor: frames=\(sampleCount) min=\(minSample) max=\(maxSample) rms=\(rms, format: .fixed(precision: 4))")
+            if sampleCount >= 8 {
+                let preview = int16Data.prefix(8).map(String.init)
+                AppLog.dictation.log("AudioPreprocessor: first8=\(preview.joined(separator: ","))")
+            }
+        }
+
+        int16Data.withUnsafeBytes { rawBuf in
+            let bytes = rawBuf.bindMemory(to: UInt8.self)
+            data.append(bytes)
+        }
+
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
     }
 }

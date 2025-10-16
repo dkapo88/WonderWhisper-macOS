@@ -196,8 +196,6 @@ final class AudioRecorder: NSObject {
         let url = recorder.url
         return await withCheckedContinuation { (cont: CheckedContinuation<URL?, Never>) in
             finishContinuation = cont
-
-            finishContinuation = cont
             self.recorder?.stop()
             isRecording = false
             stopLevelUpdates()
@@ -217,7 +215,7 @@ final class AudioRecorder: NSObject {
             self.recorder = nil
 
             // In case the delegate doesn't fire (shouldn't happen), provide a safety timeout
-            DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 guard let self = self else { return }
                 if let c = self.finishContinuation {
                     self.finishContinuation = nil

@@ -76,7 +76,9 @@ final class TranscriptionCache {
     
     // Fast content fingerprinting using first and last audio samples
     private func generateContentHash(for fileURL: URL) -> String? {
-        guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { return nil }
+        // Avoid memory-mapping here; small files are cheap to copy and this
+        // prevents rare crashes if the file is still settling.
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return generateContentHash(for: data)
     }
     
@@ -167,5 +169,4 @@ final class TranscriptionCache {
         totalSizeEstimate = 0
     }
 }
-
 

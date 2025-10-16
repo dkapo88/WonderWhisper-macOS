@@ -29,8 +29,9 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             return cached
         }
 
-        // Memory-map audio to reduce peak memory and speed up reads
-        let fileData = try Data(contentsOf: inputURL, options: .mappedIfSafe)
+        // Read audio into heap-backed Data to avoid potential mmapped lifetime issues
+        // that can happen if the file is still being finalized on some systems.
+        let fileData = try Data(contentsOf: inputURL)
         let mime = mimeType(for: inputURL.pathExtension.lowercased())
 
         return try await transcribeData(
@@ -75,6 +76,11 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         )
         let dt = Date().timeIntervalSince(t0)
         os_signpost(.end, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "elapsed=%.3f", dt)
+
+        if UserDefaults.standard.bool(forKey: "groq.file.debugResponse"),
+           let snippet = String(data: responseData.prefix(2048), encoding: .utf8) {
+            AppLog.dictation.log("Groq raw response (first 2KB): \(snippet)")
+        }
         
         // Many OpenAI-compatible transcription endpoints return {"text": "..."}
         if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
