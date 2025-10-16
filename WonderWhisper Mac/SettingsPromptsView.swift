@@ -166,10 +166,12 @@ struct SettingsPromptsView: View {
             if expanded {
                 PromptTriggerEditor(
                     prompt: prompt,
+                    vm: vm,
                     capturingPromptID: $capturingPromptID,
                     onShortcutChange: { vm.updateShortcut(for: prompt.id, to: $0) },
                     onSelectionChange: { vm.updateSelection(for: prompt.id, to: $0) },
-                    onTriggerOnSelectedTextChange: { vm.updateTriggerOnSelectedText(for: prompt.id, to: $0) }
+                    onTriggerOnSelectedTextChange: { vm.updateTriggerOnSelectedText(for: prompt.id, to: $0) },
+                    onPromptUpdate: { updatedPrompt in vm.updatePrompt(updatedPrompt) }
                 )
                 .padding(.leading, 22)
                 .padding(.top, 2)
@@ -187,7 +189,7 @@ struct SettingsPromptsView: View {
 
     private func triggerSummary(for prompt: PromptConfiguration) -> String {
         var parts: [String] = []
-        
+
         if let selection = prompt.selection {
             parts.append("Key: \(selection.displayName)")
         } else if let shortcut = prompt.shortcut {
@@ -195,11 +197,11 @@ struct SettingsPromptsView: View {
         } else {
             parts.append("No trigger")
         }
-        
+
         if prompt.triggerOnSelectedText {
             parts.append("📝 Selected Text")
         }
-        
+
         return parts.joined(separator: " • ")
     }
 
@@ -421,10 +423,12 @@ private struct PromptTriggerEditor: View {
     }
 
     let prompt: PromptConfiguration
+    let vm: DictationViewModel
     @Binding var capturingPromptID: UUID?
     let onShortcutChange: (HotkeyManager.Shortcut?) -> Void
     let onSelectionChange: (HotkeyManager.Selection?) -> Void
     let onTriggerOnSelectedTextChange: (Bool) -> Void
+    let onPromptUpdate: (PromptConfiguration) -> Void
 
     @State private var mode: TriggerMode
     @State private var selectionValue: HotkeyManager.Selection?
@@ -432,15 +436,19 @@ private struct PromptTriggerEditor: View {
     private var isCapturing: Bool { capturingPromptID == prompt.id && mode == .shortcut }
 
     init(prompt: PromptConfiguration,
+         vm: DictationViewModel,
          capturingPromptID: Binding<UUID?>,
          onShortcutChange: @escaping (HotkeyManager.Shortcut?) -> Void,
          onSelectionChange: @escaping (HotkeyManager.Selection?) -> Void,
-         onTriggerOnSelectedTextChange: @escaping (Bool) -> Void) {
+         onTriggerOnSelectedTextChange: @escaping (Bool) -> Void,
+         onPromptUpdate: @escaping (PromptConfiguration) -> Void = { _ in }) {
         self.prompt = prompt
+        self.vm = vm
         self._capturingPromptID = capturingPromptID
         self.onShortcutChange = onShortcutChange
         self.onSelectionChange = onSelectionChange
         self.onTriggerOnSelectedTextChange = onTriggerOnSelectedTextChange
+        self.onPromptUpdate = onPromptUpdate
         // Default to Single Key when nothing configured; preserve existing choices otherwise
         let initialMode: TriggerMode = (prompt.selection != nil || (prompt.selection == nil && prompt.shortcut == nil)) ? .selection : .shortcut
         self._mode = State(initialValue: initialMode)
@@ -458,7 +466,61 @@ private struct PromptTriggerEditor: View {
                 Spacer()
             }
             .padding(.bottom, 4)
-            
+
+            // Conversation Mode
+            HStack {
+                Toggle("Enable conversation mode", isOn: Binding(
+                    get: { prompt.conversationModeEnabled },
+                    set: { newValue in
+                        var updated = prompt
+                        updated.conversationModeEnabled = newValue
+                        onPromptUpdate(updated)
+                    }
+                ))
+                Spacer()
+            }
+            .padding(.bottom, 4)
+
+            if prompt.conversationModeEnabled {
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Text("Context messages:")
+                            .font(.caption)
+                        Stepper(
+                            value: Binding(
+                                get: { prompt.conversationContextMessages },
+                                set: { newValue in
+                                    var updated = prompt
+                                    updated.conversationContextMessages = max(1, min(20, newValue))
+                                    onPromptUpdate(updated)
+                                }
+                            ),
+                            in: 1...20,
+                            step: 1
+                        ) {
+                            Text("\(prompt.conversationContextMessages)")
+                                .monospacedDigit()
+                                .frame(width: 30)
+                        }
+                        Spacer()
+                    }
+
+                    Button(role: .destructive) {
+                        vm.clearConversationHistory(for: prompt.id)
+                    } label: {
+                        Text("Clear conversation history")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(6)
+                .padding(.bottom, 4)
+            }
+
             Picker("Trigger type", selection: $mode) {
                 ForEach(TriggerMode.allCases) { mode in
                     Text(mode.label).tag(mode)

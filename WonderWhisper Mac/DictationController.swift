@@ -16,6 +16,7 @@ actor DictationController {
     private let inserter: InsertionService
     private let screenContext: ScreenContextService
     private let history: HistoryStore?
+    private let conversationHistoryStore: ConversationHistoryStore
 
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
@@ -54,9 +55,13 @@ actor DictationController {
         self.inserter = inserter
         self.screenContext = screenContext
         self.history = history
+        self.conversationHistoryStore = ConversationHistoryStore()
     }
 
-    func toggle(userPrompt: String) async {
+    private var currentPrompt: PromptConfiguration?
+
+    func toggle(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
+        self.currentPrompt = activePrompt
         switch state {
         case .idle, .error:
             do {
@@ -70,11 +75,11 @@ actor DictationController {
                 } else {
                     recorder.captureProfile = .standard16k
                 }
-                
+
                 // Update state IMMEDIATELY after starting recording for instant UI feedback
                 let url = try recorder.startRecording()
                 state = .recording
-                
+
                 let recordingStart = Date()
                 currentRecordingURL = url
 
@@ -106,7 +111,7 @@ actor DictationController {
                         Task { try? await soniox.feedPCM16(data) }
                     }
                 }
-                
+
                 // Pre-capture screen context early so it is ready once recording stops
                 preCapturedScreenSnapshot = nil
                 preCapturedScreenText = nil
@@ -255,7 +260,42 @@ actor DictationController {
                 os_signpost(.begin, log: spLog, name: "WW.llm.process", signpostID: pipeId)
                 let t1 = Date()
                 do {
-                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+                    // Handle conversation mode if enabled for this prompt
+                    if let prompt = currentPrompt, prompt.conversationModeEnabled {
+                        // Check if provider changed and clear history if so
+                        _ = await conversationHistoryStore.checkProviderChange(for: prompt.id, currentProvider: llmSettings.model, currentEndpoint: llmSettings.endpoint)
+
+                        // Build context with prior messages
+                        let contextMessages = await conversationHistoryStore.getContextMessages(for: prompt.id, count: prompt.conversationContextMessages)
+
+                        // Build full message list with conversation context
+                        var fullPrompt = userMsg
+                        if !contextMessages.isEmpty {
+                            let contextStr = contextMessages.map { msg in
+                                let roleLabel = msg.role.uppercased()
+                                return "\(roleLabel): \(msg.content)"
+                            }.joined(separator: "\n\n")
+                            fullPrompt = contextStr + "\n\nUSER: " + userMsg
+                        }
+
+                        // Send to LLM with full context
+                        output = try await llm.process(text: fullPrompt, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+
+                        // Store both user and assistant messages
+                        await conversationHistoryStore.addMessages(to: prompt.id, messages: [
+                            PromptConversationMessage(role: "user", content: transcript),
+                            PromptConversationMessage(role: "assistant", content: output)
+                        ])
+
+                        // Update provider info
+                        await conversationHistoryStore.updateProvider(for: prompt.id, provider: llmSettings.model, endpoint: llmSettings.endpoint)
+
+                        AppLog.dictation.log("Conversation mode: stored \(contextMessages.count) context messages")
+                    } else {
+                        // Standard non-conversation mode
+                        output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+                    }
+
                     llmDT = Date().timeIntervalSince(t1)
                     AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
                     os_signpost(.end, log: spLog, name: "WW.llm.process", signpostID: pipeId)
@@ -369,11 +409,17 @@ actor DictationController {
     }
     func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
 
+    func clearConversationHistory(for promptID: UUID) {
+        conversationHistoryStore.clearHistory(for: promptID)
+        AppLog.dictation.log("Cleared conversation history for prompt \(promptID)")
+    }
+
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
 
     // Explicit controls for UI actions
-    func finish(userPrompt: String) async {
+    func finish(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
+        self.currentPrompt = activePrompt
         await stopAndProcess(userPrompt: userPrompt)
     }
 
@@ -464,7 +510,7 @@ actor DictationController {
                 let inferredMime = entry.screenImageMimeType ?? HistoryStore.mimeType(forExtension: imageURL.pathExtension)
                 screenAttachment = LLMImageAttachment(data: data, mimeType: inferredMime, detail: .high, filename: imageURL.lastPathComponent)
             }
-            
+
             if llmEnabled {
                 state = .processing
                 let userMsg = PromptBuilder.buildUserMessage(

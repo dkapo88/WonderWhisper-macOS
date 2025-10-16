@@ -16,6 +16,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var screenContextCaptureOverride: ScreenContextCaptureMode?
   var screenContextPreprocessingOverride: ScreenContextPreprocessingMode?
   var triggerOnSelectedText: Bool
+  var conversationModeEnabled: Bool
+  var conversationContextMessages: Int
 
   init(id: UUID = UUID(),
        name: String,
@@ -31,7 +33,9 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        clipboardContextOverride: Bool? = nil,
        screenContextCaptureOverride: ScreenContextCaptureMode? = nil,
        screenContextPreprocessingOverride: ScreenContextPreprocessingMode? = nil,
-       triggerOnSelectedText: Bool = false) {
+       triggerOnSelectedText: Bool = false,
+       conversationModeEnabled: Bool = false,
+       conversationContextMessages: Int = 5) {
     self.id = id
     self.name = name
     self.systemPrompt = systemPrompt
@@ -47,6 +51,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.screenContextCaptureOverride = screenContextCaptureOverride
     self.screenContextPreprocessingOverride = screenContextPreprocessingOverride
     self.triggerOnSelectedText = triggerOnSelectedText
+    self.conversationModeEnabled = conversationModeEnabled
+    self.conversationContextMessages = conversationContextMessages
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -65,6 +71,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case screenContextCaptureOverride
     case screenContextPreprocessingOverride
     case triggerOnSelectedText
+    case conversationModeEnabled
+    case conversationContextMessages
     case legacyOrganizeOverride = "organizeScreenContextOverride"
   }
 
@@ -84,6 +92,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     clipboardContextOverride = try container.decodeIfPresent(Bool.self, forKey: .clipboardContextOverride)
     screenContextCaptureOverride = try container.decodeIfPresent(ScreenContextCaptureMode.self, forKey: .screenContextCaptureOverride)
     triggerOnSelectedText = try container.decodeIfPresent(Bool.self, forKey: .triggerOnSelectedText) ?? false
+    conversationModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .conversationModeEnabled) ?? false
+    conversationContextMessages = try container.decodeIfPresent(Int.self, forKey: .conversationContextMessages) ?? 5
 
     if let mode = try container.decodeIfPresent(ScreenContextPreprocessingMode.self, forKey: .screenContextPreprocessingOverride) {
       screenContextPreprocessingOverride = mode
@@ -111,6 +121,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(screenContextCaptureOverride, forKey: .screenContextCaptureOverride)
     try container.encodeIfPresent(screenContextPreprocessingOverride, forKey: .screenContextPreprocessingOverride)
     try container.encode(triggerOnSelectedText, forKey: .triggerOnSelectedText)
+    try container.encode(conversationModeEnabled, forKey: .conversationModeEnabled)
+    try container.encode(conversationContextMessages, forKey: .conversationContextMessages)
   }
 }
 

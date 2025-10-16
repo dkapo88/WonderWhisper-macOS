@@ -182,11 +182,11 @@ final class DictationViewModel: ObservableObject {
     private var providerUpdateTask: Task<Void, Never>?
     private var selectedTextPromptOverride: PromptConfiguration?
     private var selectedTextFallbackTaskID: UUID?
-    
+
     // Debouncing for provider updates
     private var providerUpdateTimer: Timer?
     private let providerUpdateDebounceInterval: TimeInterval = 0.5 // 500ms debounce
-    
+
     // Provider cache to avoid unnecessary recreation
     private var transcriptionProviderCache: [String: TranscriptionProvider] = [:]
     private var llmProviderCache: [String: LLMProvider] = [:]
@@ -422,12 +422,14 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run { self.isRecording = true }
 
                 let prompt = await MainActor.run { self.userPrompt }
-                await controller.toggle(userPrompt: prompt)
+                let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
+                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
 
             case .recording:
                 await MainActor.run { self.isRecording = false }
                 let prompt = await MainActor.run { self.userPrompt }
-                await controller.toggle(userPrompt: prompt)
+                let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
+                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
 
             default:
                 break
@@ -440,7 +442,7 @@ final class DictationViewModel: ObservableObject {
         Task {
             // Use immediate provider update for critical operations
             await MainActor.run { self.updateProvidersImmediately() }
-            
+
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { self.isRecording = false }
 
@@ -461,7 +463,8 @@ final class DictationViewModel: ObservableObject {
             }
 
             let prompt = await MainActor.run { self.userPrompt }
-            await controller.finish(userPrompt: prompt)
+            let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
+            await controller.finish(userPrompt: prompt, activePrompt: activePrompt)
 
             // Restore original prompt if we had a selected text override
             await restoreOriginalPromptIfNeeded()
@@ -699,6 +702,21 @@ final class DictationViewModel: ObservableObject {
             if selectedPromptID == id {
                 selectedPromptID = prompts.first?.id
             }
+        }
+    }
+
+    func clearConversationHistory(for promptID: UUID) {
+        Task {
+            await controller.clearConversationHistory(for: promptID)
+        }
+    }
+
+    func updatePrompt(_ updated: PromptConfiguration) {
+        guard let idx = prompts.firstIndex(where: { $0.id == updated.id }) else { return }
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            systemPrompt = updated.systemPrompt
+            userPrompt = updated.userPrompt
         }
     }
 
@@ -1146,7 +1164,8 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run { self.isRecording = true }
 
                 let promptText = await MainActor.run { self.userPrompt }
-                await controller.toggle(userPrompt: promptText)
+                let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
+                await controller.toggle(userPrompt: promptText, activePrompt: activePrompt)
 
             case .recording:
                 await MainActor.run { self.isRecording = false }
@@ -1200,7 +1219,8 @@ final class DictationViewModel: ObservableObject {
                     }
 
                     let promptText = await MainActor.run { self.userPrompt }
-                    await controller.finish(userPrompt: promptText)
+                    let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
+                    await controller.finish(userPrompt: promptText, activePrompt: activePrompt)
                     await restoreOriginalPromptIfNeeded()
                 }
             }
@@ -1212,24 +1232,24 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTimer?.invalidate()
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
-        
+
         // Debounce provider updates to avoid excessive reinitialization
         providerUpdateTimer = Timer.scheduledTimer(withTimeInterval: providerUpdateDebounceInterval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            
+
             let prompt = self.prompts.prompt(withID: self.selectedPromptID) ?? self.prompts.first
             let task = self.applyProviders(using: prompt)
             self.providerUpdateTask = task
         }
     }
-    
+
     // Immediately apply provider updates without debouncing (for critical operations)
     private func updateProvidersImmediately() {
         // Cancel any existing timer and task
         providerUpdateTimer?.invalidate()
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
-        
+
         let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
         let task = applyProviders(using: prompt)
         providerUpdateTask = task
@@ -1337,7 +1357,7 @@ final class DictationViewModel: ObservableObject {
             let actualModel = "whisper-large-v3-turbo" // Default to the fastest model for streaming
             tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         }
-        
+
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
@@ -1345,7 +1365,7 @@ final class DictationViewModel: ObservableObject {
 
         // Get cached LLM provider
         let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt)
-        
+
         // Configure LLM settings based on provider
         switch providerForActivePrompt.lowercased() {
         case "openrouter":
@@ -1461,23 +1481,23 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTimer?.invalidate()
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
-        
+
         // Use the selected text prompt override for provider updates
         let task = applyProviders(using: selectedTextPromptOverride)
         providerUpdateTask = task
     }
 
     // MARK: - Provider Cache Management
-    
+
     private func getCachedTranscriptionProvider(for model: String) -> TranscriptionProvider? {
         // Check cache first
         if let cached = transcriptionProviderCache[model] {
             return cached
         }
-        
+
         // Create new provider and cache it
         let provider: TranscriptionProvider?
-        
+
         if model == "apple-native" {
             if #available(macOS 26, *) {
                 provider = NativeAppleTranscriptionProvider()
@@ -1502,26 +1522,26 @@ final class DictationViewModel: ObservableObject {
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
-        
+
         if let p = provider {
             transcriptionProviderCache[model] = p
         }
-        
+
         return provider
     }
-    
+
     private func getCachedLLMProvider(for provider: String, model: String) -> LLMProvider? {
         let cacheKey = "\(provider)::\(model)"
-        
+
         // Check cache first
         if let cached = llmProviderCache[cacheKey] {
             return cached
         }
-        
+
         // Create new provider and cache it
         let providerInstance: LLMProvider
         let canonicalModel = Self.canonicalLLMModel(for: model, provider: provider)
-        
+
         switch provider.lowercased() {
         case "openrouter":
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
@@ -1536,11 +1556,11 @@ final class DictationViewModel: ObservableObject {
             GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
             providerInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
-        
+
         llmProviderCache[cacheKey] = providerInstance
         return providerInstance
     }
-    
+
 }
 
 private struct PromptBootstrap {
