@@ -9,6 +9,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var selection: HotkeyManager.Selection?
   var llmModelOverride: String?
   var llmProviderOverride: String?
+  var voiceModelOverride: String?
+  var voiceLanguageOverride: String?
   var screenContextOverride: Bool?
   var clipboardContextOverride: Bool?
   var screenContextCaptureOverride: ScreenContextCaptureMode?
@@ -23,6 +25,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        selection: HotkeyManager.Selection? = nil,
        llmModelOverride: String? = nil,
        llmProviderOverride: String? = nil,
+       voiceModelOverride: String? = nil,
+       voiceLanguageOverride: String? = nil,
        screenContextOverride: Bool? = nil,
        clipboardContextOverride: Bool? = nil,
        screenContextCaptureOverride: ScreenContextCaptureMode? = nil,
@@ -36,6 +40,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.selection = selection
     self.llmModelOverride = llmModelOverride
     self.llmProviderOverride = llmProviderOverride
+    self.voiceModelOverride = voiceModelOverride
+    self.voiceLanguageOverride = voiceLanguageOverride
     self.screenContextOverride = screenContextOverride
     self.clipboardContextOverride = clipboardContextOverride
     self.screenContextCaptureOverride = screenContextCaptureOverride
@@ -52,6 +58,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case selection
     case llmModelOverride
     case llmProviderOverride
+    case voiceModelOverride
+    case voiceLanguageOverride
     case screenContextOverride
     case clipboardContextOverride
     case screenContextCaptureOverride
@@ -70,6 +78,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     selection = try container.decodeIfPresent(HotkeyManager.Selection.self, forKey: .selection)
     llmModelOverride = try container.decodeIfPresent(String.self, forKey: .llmModelOverride)
     llmProviderOverride = try container.decodeIfPresent(String.self, forKey: .llmProviderOverride)
+    voiceModelOverride = try container.decodeIfPresent(String.self, forKey: .voiceModelOverride)
+    voiceLanguageOverride = try container.decodeIfPresent(String.self, forKey: .voiceLanguageOverride)
     screenContextOverride = try container.decodeIfPresent(Bool.self, forKey: .screenContextOverride)
     clipboardContextOverride = try container.decodeIfPresent(Bool.self, forKey: .clipboardContextOverride)
     screenContextCaptureOverride = try container.decodeIfPresent(ScreenContextCaptureMode.self, forKey: .screenContextCaptureOverride)
@@ -94,6 +104,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(selection, forKey: .selection)
     try container.encodeIfPresent(llmModelOverride, forKey: .llmModelOverride)
     try container.encodeIfPresent(llmProviderOverride, forKey: .llmProviderOverride)
+    try container.encodeIfPresent(voiceModelOverride, forKey: .voiceModelOverride)
+    try container.encodeIfPresent(voiceLanguageOverride, forKey: .voiceLanguageOverride)
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)
     try container.encodeIfPresent(clipboardContextOverride, forKey: .clipboardContextOverride)
     try container.encodeIfPresent(screenContextCaptureOverride, forKey: .screenContextCaptureOverride)

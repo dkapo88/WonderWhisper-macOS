@@ -783,6 +783,24 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func updateVoiceOverride(for id: UUID, model overrideModel: String?, language overrideLanguage: String?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        let normalizedModel = overrideModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLanguage = overrideLanguage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelValue = (normalizedModel?.isEmpty ?? true) ? nil : normalizedModel
+        let languageValue = (normalizedLanguage?.isEmpty ?? true) ? nil : normalizedLanguage
+        var updated = prompts[idx]
+        if updated.voiceModelOverride == modelValue && updated.voiceLanguageOverride == languageValue {
+            return
+        }
+        updated.voiceModelOverride = modelValue
+        updated.voiceLanguageOverride = languageValue
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
     func addFavoriteLLMModel(provider: String, model: String) {
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1285,34 +1303,36 @@ final class DictationViewModel: ObservableObject {
     @discardableResult
     private func applyProviders(using prompt: PromptConfiguration?) -> Task<Void, Never> {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
-        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+        let voiceModel = resolvedVoiceModel(for: prompt)
+        let voiceLanguage = resolvedVoiceLanguage(for: prompt)
+        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
         let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt, provider: providerForActivePrompt)
-        
+
         // Get cached transcription provider
-        let provider = getCachedTranscriptionProvider(for: transcriptionModel)
-        
+        let provider = getCachedTranscriptionProvider(for: voiceModel)
+
         // Configure settings based on provider type
-        if transcriptionModel == "apple-native" {
+        if voiceModel == "apple-native" {
             if #available(macOS 26, *) {
-                tSettings = TranscriptionSettings(endpoint: URL(string: "https://apple-native.local")!, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+                tSettings = TranscriptionSettings(endpoint: URL(string: "https://apple-native.local")!, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
             } else {
                 tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: AppConfig.defaultTranscriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
             }
-        } else if openAITranscriptionModels.contains(transcriptionModel) {
-            tSettings = TranscriptionSettings(endpoint: AppConfig.openAIAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-        } else if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
-            tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)
-        } else if transcriptionModel == "assemblyai-streaming" {
+        } else if openAITranscriptionModels.contains(voiceModel) {
+            tSettings = TranscriptionSettings(endpoint: AppConfig.openAIAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+        } else if voiceModel.lowercased().contains("parakeet") || voiceModel.lowercased().contains("local") {
+            tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: voiceModel)
+        } else if voiceModel == "assemblyai-streaming" {
             // Endpoint not used by streaming provider, but keep for logging
-            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
-        } else if transcriptionModel == "deepgram-streaming" {
-            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
-        } else if transcriptionModel == "soniox-streaming" {
+            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: voiceModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
+        } else if voiceModel == "deepgram-streaming" {
+            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: voiceModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
+        } else if voiceModel == "soniox-streaming" {
             let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
             tSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
-        } else if transcriptionModel == "groq-streaming" {
+        } else if voiceModel == "groq-streaming" {
             // Use the actual Whisper model for the underlying transcription, but keep the groq-streaming identifier for the UI
             let actualModel = "whisper-large-v3-turbo" // Default to the fastest model for streaming
             tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
@@ -1657,5 +1677,21 @@ private extension DictationViewModel {
             return override
         }
         return screenContextPreprocessingMode
+    }
+
+    func resolvedVoiceModel(for prompt: PromptConfiguration?) -> String {
+        if let override = prompt?.voiceModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        let fallback = transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? AppConfig.defaultTranscriptionModel : fallback
+    }
+
+    func resolvedVoiceLanguage(for prompt: PromptConfiguration?) -> String {
+        if let override = prompt?.voiceLanguageOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        let fallback = transcriptionLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? "en" : fallback
     }
 }

@@ -334,6 +334,13 @@ struct SettingsPromptsView: View {
                         Text("Prompt Settings")
                             .font(.headline)
 
+                        PromptVoiceModelEditor(
+                            prompt: prompt,
+                            defaultModel: vm.transcriptionModel,
+                            defaultLanguage: vm.transcriptionLanguage,
+                            onUpdate: { model, language in vm.updateVoiceOverride(for: prompt.id, model: model, language: language) }
+                        )
+
                         PromptLLMModelEditor(
                             prompt: prompt,
                             defaultModel: vm.llmModel,
@@ -759,6 +766,153 @@ private struct PromptLLMModelEditor: View {
         case "cerebras": return "Cerebras"
         default: return "Groq"
         }
+    }
+}
+
+private struct PromptVoiceModelEditor: View {
+    let prompt: PromptConfiguration
+    let defaultModel: String
+    let defaultLanguage: String
+    let onUpdate: (String?, String?) -> Void
+
+    @State private var modelDraft: String
+    @State private var languageDraft: String
+    @FocusState private var isModelFieldFocused: Bool
+    @FocusState private var isLanguageFieldFocused: Bool
+
+    init(prompt: PromptConfiguration,
+         defaultModel: String,
+         defaultLanguage: String,
+         onUpdate: @escaping (String?, String?) -> Void) {
+        self.prompt = prompt
+        self.defaultModel = defaultModel
+        self.defaultLanguage = defaultLanguage
+        self.onUpdate = onUpdate
+        _modelDraft = State(initialValue: prompt.voiceModelOverride ?? "")
+        _languageDraft = State(initialValue: prompt.voiceLanguageOverride ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Voice model override")
+                    .font(.subheadline)
+                    .bold()
+                if hasOverride {
+                    Text("Override active")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
+            }
+
+            TextField("Use default (\(defaultModel))", text: $modelDraft)
+                .textFieldStyle(.roundedBorder)
+                .focused($isModelFieldFocused)
+                .onSubmit { commit() }
+                .onChange(of: isModelFieldFocused) { focused in
+                    if !focused { commit() }
+                }
+
+            HStack(spacing: 8) {
+                voiceModelMenu
+
+                Button("Use default") {
+                    modelDraft = ""
+                    languageDraft = ""
+                    commit()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!hasOverride && modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && languageDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer()
+                Text("Using \(effectiveModel)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Language field for Groq Whisper models (optional)
+            if effectiveModel.lowercased().contains("whisper") {
+                HStack(spacing: 8) {
+                    Text("Language (BCP-47):")
+                        .font(.caption)
+                    TextField("e.g., en, fr, de", text: $languageDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isLanguageFieldFocused)
+                        .onSubmit { commit() }
+                        .onChange(of: isLanguageFieldFocused) { focused in
+                            if !focused { commit() }
+                        }
+                }
+            }
+        }
+        .onChange(of: prompt.voiceModelOverride) { newValue in
+            if !isModelFieldFocused {
+                modelDraft = newValue ?? ""
+            }
+        }
+        .onChange(of: prompt.voiceLanguageOverride) { newValue in
+            if !isLanguageFieldFocused {
+                languageDraft = newValue ?? ""
+            }
+        }
+    }
+
+    private var hasOverride: Bool {
+        guard let override = prompt.voiceModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return !languageDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return !override.isEmpty
+    }
+
+    private var effectiveModel: String {
+        if let override = prompt.voiceModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        return defaultModel
+    }
+
+    private var voiceModelMenu: some View {
+        Menu("Voice models") {
+            Section("Groq Whisper") {
+                Button("whisper-large-v3-turbo") { modelDraft = "whisper-large-v3-turbo"; commit() }
+                Button("whisper-large-v3") { modelDraft = "whisper-large-v3"; commit() }
+                Button("distil-whisper-large-v3-en") { modelDraft = "distil-whisper-large-v3-en"; commit() }
+                Button("groq-streaming (Chunked)") { modelDraft = "groq-streaming"; commit() }
+            }
+            Section("OpenAI") {
+                Button("whisper-1") { modelDraft = "whisper-1"; commit() }
+                Button("gpt-4o-mini-transcribe") { modelDraft = "gpt-4o-mini-transcribe"; commit() }
+                Button("gpt-4o-transcribe") { modelDraft = "gpt-4o-transcribe"; commit() }
+            }
+            Section("AssemblyAI") {
+                Button("assemblyai-streaming") { modelDraft = "assemblyai-streaming"; commit() }
+            }
+            Section("Deepgram") {
+                Button("deepgram-streaming") { modelDraft = "deepgram-streaming"; commit() }
+            }
+            Section("Soniox") {
+                Button("soniox-streaming") { modelDraft = "soniox-streaming"; commit() }
+            }
+            Section("Local") {
+                Button("parakeet-local") { modelDraft = "parakeet-local"; commit() }
+            }
+            Section("Apple") {
+                Button("apple-native") { modelDraft = "apple-native"; commit() }
+            }
+        }
+    }
+
+    private func commit() {
+        let trimmedModel = modelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLanguage = languageDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModel = trimmedModel.isEmpty ? nil : trimmedModel
+        let normalizedLanguage = trimmedLanguage.isEmpty ? nil : trimmedLanguage
+        let current = prompt.voiceModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentLanguage = prompt.voiceLanguageOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedModel == (current?.isEmpty == true ? nil : current) && normalizedLanguage == (currentLanguage?.isEmpty == true ? nil : currentLanguage) {
+            return
+        }
+        onUpdate(normalizedModel, normalizedLanguage)
     }
 }
 
