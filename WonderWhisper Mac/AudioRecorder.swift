@@ -32,6 +32,7 @@ final class AudioRecorder: NSObject {
     private var bufferIndex = 0
     private let maxBuffers = 10
     private let bufferLock = NSLock()  // Synchronize buffer access
+    private var cleanupComplete = DispatchSemaphore(value: 1)  // Track cleanup completion
 
     // Health monitoring
     private var lastAudioTime: AVAudioTime?
@@ -262,11 +263,14 @@ final class AudioRecorder: NSObject {
 extension AudioRecorder {
 
     func startStreamingPCM16(onFrame: @escaping (Data) -> Void) throws {
-        // Force cleanup of any existing streaming session first
+        // Force cleanup of any existing streaming session first and WAIT for it to complete
         if isStreaming {
             stopStreamingPCM16()
-            // Give audio system time to fully clean up
-            Thread.sleep(forTimeInterval: 0.1)
+            // Wait for cleanup to complete (with timeout to prevent hanging)
+            let cleanupTimeout = DispatchTime.now() + .milliseconds(500)
+            if cleanupComplete.wait(timeout: cleanupTimeout) == .timedOut {
+                AppLog.dictation.warning("Audio engine cleanup timeout - continuing anyway")
+            }
         }
 
         // Ensure audio session is properly configured for streaming
@@ -465,8 +469,12 @@ extension AudioRecorder {
     func stopStreamingPCM16() {
         guard isStreaming else { return }
 
+        // Mark cleanup as in-progress (acquire the semaphore)
+        cleanupComplete.wait()
+
         audioQueue.async { [weak self] in
             guard let self = self else { return }
+            defer { self.cleanupComplete.signal() }  // Signal when done
 
             self.isStreaming = false
 
@@ -486,7 +494,7 @@ extension AudioRecorder {
             self.audioConverter = nil
             self.audioBufferList.removeAll(keepingCapacity: false)  // Release capacity to free memory
             self.onPCM16Frame = nil
-            
+
             // Reset health monitoring state
             self.lastAudioTime = nil
             self.totalFramesProcessed = 0

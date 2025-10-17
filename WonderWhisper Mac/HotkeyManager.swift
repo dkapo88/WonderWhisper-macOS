@@ -69,6 +69,7 @@ final class HotkeyManager {
     private var hotkeyPressStart: Date?
     private let briefPressThreshold: TimeInterval = 0.8
     private var lastPasteTrigger: Date?
+    private var activateCalledOnThisPress: Bool = false  // Prevent double-trigger
 
     // Settings (single source of truth)
     var selection: Selection? { didSet { applySelection() } }
@@ -209,6 +210,7 @@ final class HotkeyManager {
         eventTap = nil
         lastFnFlagsOn = false
         selectionActive = false
+        activateCalledOnThisPress = false
     }
 
     // MARK: - Helpers
@@ -265,26 +267,40 @@ final class HotkeyManager {
             newActive = false // handled via Carbon hotkey instead
         }
 
-        if newActive && !selectionActive { handleHotkeyDown() }
-        if !newActive && selectionActive { handleHotkeyUp() }
+        // Guard against state transitions triggering both down and up in the same event
+        // Only trigger state transitions on actual state changes
+        let stateChanged = newActive != selectionActive
+        if stateChanged {
+            if newActive {
+                handleHotkeyDown()
+            } else {
+                handleHotkeyUp()
+            }
+        }
         selectionActive = newActive
     }
 
     private func handleHotkeyDown() {
         hotkeyPressStart = Date()
+        activateCalledOnThisPress = false
         onActivate?() // Start recording immediately or toggle if already recording
+        activateCalledOnThisPress = true
     }
 
     private func handleHotkeyUp() {
         guard let start = hotkeyPressStart else { return }
         hotkeyPressStart = nil
         let duration = Date().timeIntervalSince(start)
-        if duration >= briefPressThreshold {
+        // Prevent double-invocation: only toggle on release if we haven't already called onActivate on this press
+        if duration >= briefPressThreshold && !activateCalledOnThisPress {
             // Held long enough: push-to-talk ends on release
             onActivate?()
+        } else if duration >= briefPressThreshold && activateCalledOnThisPress {
+            // Short hold: was already triggered on down, don't duplicate
         } else {
             // Short tap: hands-free mode (stay recording); next press will toggle stop
         }
+        activateCalledOnThisPress = false
     }
 
 

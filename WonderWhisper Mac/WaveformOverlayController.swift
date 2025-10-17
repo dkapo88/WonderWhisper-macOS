@@ -40,11 +40,9 @@ final class WaveformOverlayController {
                     self.positionAtTopCenter()
                     self.animateIn()
                     self.waveformView.startAnimating()
-                    SoundFeedback.playStart()
                 } else {
                     self.waveformView.stopAnimating()
                     self.animateOut()
-                    SoundFeedback.playStop()
                 }
             }
             .store(in: &cancellables)
