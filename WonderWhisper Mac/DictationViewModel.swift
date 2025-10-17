@@ -173,9 +173,10 @@ final class DictationViewModel: ObservableObject {
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
-    private let controller: DictationController
-    private var timer: Timer?
+    private var recordingStartTimestamp: Date? = nil  // Track optimistic recording start to prevent timer race
+    private var recordingStartInProgress: Bool = false
     private var idleSkipCounter: Int = 0
+    private var timer: Timer?
     let history = HistoryStore()
     private let promptHotkeyManager = PromptHotkeyManager()
     private var isApplyingPromptFromSelection = false
@@ -373,7 +374,28 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run {
                     if self.status != s { self.status = s }
                     let rec = (s == "Recording")
-                    if self.isRecording != rec { self.isRecording = rec }
+                    
+                    // Prevent race condition: Don't reset isRecording to false while startup is still in progress
+                    if !rec && self.isRecording {
+                        if self.recordingStartInProgress {
+                            return
+                        }
+                        if let startTime = self.recordingStartTimestamp,
+                           Date().timeIntervalSince(startTime) < 1.5 {
+                            // Within grace period after optimistic start - don't reset yet
+                            return
+                        }
+                    }
+                    
+                    if self.isRecording != rec {
+                        self.isRecording = rec
+                        if rec {
+                            self.recordingStartInProgress = false
+                        } else {
+                            self.recordingStartTimestamp = nil
+                            self.recordingStartInProgress = false
+                        }
+                    }
                 }
             }
         }
@@ -419,14 +441,23 @@ final class DictationViewModel: ObservableObject {
                 await checkAndStoreSelectedTextPromptFast()
 
                 // Update UI IMMEDIATELY
-                await MainActor.run { self.isRecording = true }
+                await MainActor.run { 
+                    self.isRecording = true
+                    self.recordingStartTimestamp = Date()  // Mark when we optimistically started
+                    self.recordingStartInProgress = true
+                }
 
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
                 await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
+                await MainActor.run { self.recordingStartInProgress = false }
 
             case .recording:
-                await MainActor.run { self.isRecording = false }
+                await MainActor.run { 
+                    self.isRecording = false
+                    self.recordingStartTimestamp = nil  // Clear timestamp when stopping
+                    self.recordingStartInProgress = false
+                }
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
                 await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
@@ -444,7 +475,11 @@ final class DictationViewModel: ObservableObject {
             await MainActor.run { self.updateProvidersImmediately() }
 
             // Optimistically update UI immediately for snappy visual feedback
-            await MainActor.run { self.isRecording = false }
+            await MainActor.run { 
+                self.isRecording = false
+                self.recordingStartTimestamp = nil
+                self.recordingStartInProgress = false
+            }
 
             // If we have a selected text prompt override, ensure providers are updated before LLM processing
             if selectedTextPromptOverride != nil {
@@ -474,7 +509,11 @@ final class DictationViewModel: ObservableObject {
     func cancel() {
         Task {
             // Optimistically update UI immediately for snappy visual feedback
-            await MainActor.run { self.isRecording = false }
+            await MainActor.run { 
+                self.isRecording = false
+                self.recordingStartTimestamp = nil
+                self.recordingStartInProgress = false
+            }
             await controller.cancel()
 
             // Restore original prompt if we had a selected text override
@@ -1161,14 +1200,23 @@ final class DictationViewModel: ObservableObject {
                 await checkAndStoreSelectedTextPromptFast()
 
                 // Update UI IMMEDIATELY
-                await MainActor.run { self.isRecording = true }
+                await MainActor.run { 
+                    self.isRecording = true
+                    self.recordingStartTimestamp = Date()
+                    self.recordingStartInProgress = true
+                }
 
                 let promptText = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
                 await controller.toggle(userPrompt: promptText, activePrompt: activePrompt)
+                await MainActor.run { self.recordingStartInProgress = false }
 
             case .recording:
-                await MainActor.run { self.isRecording = false }
+                await MainActor.run { 
+                    self.isRecording = false
+                    self.recordingStartTimestamp = nil
+                    self.recordingStartInProgress = false
+                }
 
                 // If we have a selected text prompt override, ensure providers are updated before LLM processing
                 if selectedTextPromptOverride != nil {
@@ -1200,7 +1248,11 @@ final class DictationViewModel: ObservableObject {
             if duration >= promptPressThreshold {
                 let state = await controller.currentState()
                 if case .recording = state {
-                    await MainActor.run { self.isRecording = false }
+                    await MainActor.run { 
+                        self.isRecording = false
+                        self.recordingStartTimestamp = nil
+                        self.recordingStartInProgress = false
+                    }
 
                     // If we have a selected text prompt override, ensure providers are updated before LLM processing
                     if selectedTextPromptOverride != nil {
