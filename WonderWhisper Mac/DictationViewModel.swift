@@ -179,6 +179,7 @@ final class DictationViewModel: ObservableObject {
     private var timer: Timer?
     let history = HistoryStore()
     private let promptHotkeyManager = PromptHotkeyManager()
+    private var controller: DictationController!
     private var isApplyingPromptFromSelection = false
     private var providerUpdateTask: Task<Void, Never>?
     private var selectedTextPromptOverride: PromptConfiguration?
@@ -427,25 +428,25 @@ final class DictationViewModel: ObservableObject {
     }
 
     func toggle() {
-        persistPromptLibrary()
         Task {
-            // Use immediate provider update for critical operations
-            await MainActor.run { self.updateProvidersImmediately() }
-            await waitForLatestProviderUpdate()
-
             let currentState = await controller.currentState()
 
             switch currentState {
             case .idle, .error:
-                // Fast check for selected text (AX only, ~5ms, no pasteboard fallback)
-                await checkAndStoreSelectedTextPromptFast()
-
-                // Update UI IMMEDIATELY
+                // Update UI IMMEDIATELY for instant feedback
                 await MainActor.run { 
                     self.isRecording = true
-                    self.recordingStartTimestamp = Date()  // Mark when we optimistically started
+                    self.recordingStartTimestamp = Date()
                     self.recordingStartInProgress = true
                 }
+
+                // Now perform slower operations after UI is updated
+                await MainActor.run { self.persistPromptLibrary() }
+                await MainActor.run { self.updateProvidersImmediately() }
+                await waitForLatestProviderUpdate()
+
+                // Fast check for selected text (AX only, ~5ms, no pasteboard fallback)
+                await checkAndStoreSelectedTextPromptFast()
 
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
@@ -455,9 +456,10 @@ final class DictationViewModel: ObservableObject {
             case .recording:
                 await MainActor.run { 
                     self.isRecording = false
-                    self.recordingStartTimestamp = nil  // Clear timestamp when stopping
+                    self.recordingStartTimestamp = nil
                     self.recordingStartInProgress = false
                 }
+                await MainActor.run { self.persistPromptLibrary() }
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
                 await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
@@ -1180,8 +1182,6 @@ final class DictationViewModel: ObservableObject {
     private let promptPressThreshold: TimeInterval = 0.8
 
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
-        await waitForLatestProviderUpdate()
-
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
@@ -1189,6 +1189,16 @@ final class DictationViewModel: ObservableObject {
 
             switch state {
             case .idle, .error:
+                // Update UI IMMEDIATELY for instant feedback
+                await MainActor.run { 
+                    self.isRecording = true
+                    self.recordingStartTimestamp = Date()
+                    self.recordingStartInProgress = true
+                }
+
+                // Now perform slower operations after UI is updated
+                await waitForLatestProviderUpdate()
+
                 // Select the prompt for this hotkey
                 await MainActor.run {
                     if self.selectedPromptID != id {
@@ -1198,13 +1208,6 @@ final class DictationViewModel: ObservableObject {
 
                 // Fast check for selected text (AX only, ~5ms)
                 await checkAndStoreSelectedTextPromptFast()
-
-                // Update UI IMMEDIATELY
-                await MainActor.run { 
-                    self.isRecording = true
-                    self.recordingStartTimestamp = Date()
-                    self.recordingStartInProgress = true
-                }
 
                 let promptText = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }

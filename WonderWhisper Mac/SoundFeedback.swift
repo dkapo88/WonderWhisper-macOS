@@ -13,7 +13,7 @@ final class SoundFeedback {
   
   /// Play start sound: low → high (ascending)
   static func playStart() {
-    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: 0.3)
+    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: 0.15)
   }
   
   /// Play stop sound: high → low (descending)

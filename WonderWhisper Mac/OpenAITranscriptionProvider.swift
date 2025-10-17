@@ -47,7 +47,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             // Prefer heap-backed Data to avoid mmapped file lifetime quirks during fresh recordings
             fileData = try Data(contentsOf: fileURL)
             filename = fileURL.lastPathComponent
-            mimeType = mimeType(for: ext)
+            mimeType = self.mimeType(for: ext)
         }
 
         return try await transcribeData(

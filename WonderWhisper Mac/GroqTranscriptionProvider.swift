@@ -49,7 +49,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             // Read audio into heap-backed Data to avoid potential mmapped lifetime issues
             fileData = try Data(contentsOf: fileURL)
             filename = fileURL.lastPathComponent
-            mimeType = mimeType(for: ext)
+            mimeType = self.mimeType(for: ext)
         }
 
         return try await transcribeData(

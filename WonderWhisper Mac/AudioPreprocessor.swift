@@ -197,57 +197,64 @@ enum AudioPreprocessor {
         guard isEnabled else { return nil }
 
         let start = CACurrentMediaTime()
-        var samples = try decodeToFloatMono16k(url: url)
-        if samples.isEmpty { return nil }
+        do {
+            var samples = try decodeToFloatMono16k(url: url)
+            if samples.isEmpty { return nil }
 
-        // Smart mode check: skip processing if audio is already clean
-        if smartModeEnabled {
-            do {
-                let quality = try analyzeAudioQuality(url)
-                let decision = quality.needsProcessing
-                if debugLoggingEnabled {
-                    AppLog.dictation.log("AudioPreprocessor: (ToData) smart analysis SNR=\(quality.snr, format: .fixed(precision: 2)) needsProcessing=\(decision)")
-                }
-                if !decision {
-                    // Return unprocessed audio as WAV Data
-                    let unprocessedData = try samplesAsWavData(samples)
+            // Smart mode check: skip processing if audio is already clean
+            if smartModeEnabled {
+                do {
+                    let quality = try analyzeAudioQuality(url)
+                    let decision = quality.needsProcessing
                     if debugLoggingEnabled {
-                        AppLog.dictation.log("AudioPreprocessor: (ToData) no processing needed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s")
+                        AppLog.dictation.log("AudioPreprocessor: (ToData) smart analysis SNR=\(quality.snr, format: .fixed(precision: 2)) needsProcessing=\(decision)")
                     }
-                    return unprocessedData
+                    if !decision {
+                        // Return unprocessed audio as WAV Data
+                        let unprocessedData = try samplesAsWavData(samples)
+                        if debugLoggingEnabled {
+                            AppLog.dictation.log("AudioPreprocessor: (ToData) no processing needed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s")
+                        }
+                        return unprocessedData
+                    }
+                } catch {
+                    if debugLoggingEnabled {
+                        AppLog.dictation.error("AudioPreprocessor: (ToData) smart analysis failed \(error.localizedDescription)")
+                    }
+                    // Fall through to apply processing as fallback
                 }
-            } catch {
-                if debugLoggingEnabled {
-                    AppLog.dictation.error("AudioPreprocessor: (ToData) smart analysis failed \(error.localizedDescription)")
-                }
-                // Fall through to apply processing as fallback
             }
-        }
 
-        // Apply preprocessing
-        let sr: Double = 16_000
-        applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
-        let defaultHum = 60
-        let humHz = {
-            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
-            return v == 50 || v == 60 ? v : defaultHum
-        }()
-        let applySecondHarmonic = {
-            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
-            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
-        }()
-        applyNotch(in: &samples, centerHz: Double(humHz), Q: 10.0, sampleRate: sr, cascades: 2)
-        if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
-            applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
-        }
-        applyPreEmphasis(in: &samples, coeff: 0.97)
-        let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
+            // Apply preprocessing
+            let sr: Double = 16_000
+            applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
+            let defaultHum = 60
+            let humHz = {
+                let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+                return v == 50 || v == 60 ? v : defaultHum
+            }()
+            let applySecondHarmonic = {
+                if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+                return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+            }()
+            applyNotch(in: &samples, centerHz: Double(humHz), Q: 10.0, sampleRate: sr, cascades: 2)
+            if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
+                applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
+            }
+            applyPreEmphasis(in: &samples, coeff: 0.97)
+            let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
 
-        let wavData = try samplesAsWavData(samples)
-        if debugLoggingEnabled {
-            AppLog.dictation.log("AudioPreprocessor: (ToData) processed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s gain=\(appliedGain, format: .fixed(precision: 3)) frames=\(samples.count) dataSize=\(wavData.count)")
+            let wavData = try samplesAsWavData(samples)
+            if debugLoggingEnabled {
+                AppLog.dictation.log("AudioPreprocessor: (ToData) processed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s gain=\(appliedGain, format: .fixed(precision: 3)) frames=\(samples.count) dataSize=\(wavData.count)")
+            }
+            return wavData
+        } catch {
+            if debugLoggingEnabled {
+                AppLog.dictation.error("AudioPreprocessor: (ToData) preprocessing failed \(error.localizedDescription)")
+            }
+            return nil
         }
-        return wavData
     }
 
     // MARK: - DSP helpers
