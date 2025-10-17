@@ -21,25 +21,43 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         let isCompressed = ["mp3","m4a","aac","ogg","opus","flac"].contains(ext)
         let allowPreprocCompressed = UserDefaults.standard.bool(forKey: "groq.file.preprocessCompressed")
         let applyPreprocessing = AudioPreprocessor.isEnabled && (!isCompressed || allowPreprocCompressed)
-        let inputURL = applyPreprocessing ? AudioPreprocessor.processIfEnabled(fileURL) : fileURL
 
-        // Cache lookup keyed by whether preprocessing actually applied
-        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: applyPreprocessing),
-           let cached = TranscriptionCache.shared.lookup(key) {
-            return cached
+        // Try in-memory preprocessing first (no disk I/O, eliminates race condition)
+        var fileData: Data
+        var filename: String
+        var mimeType: String
+        var cacheKey: TranscriptionCacheKey?
+
+        if applyPreprocessing,
+           let preprocessedData = try AudioPreprocessor.processToData(fileURL) {
+            // Use preprocessed audio from memory
+            fileData = preprocessedData
+            filename = "audio_proc.wav"
+            mimeType = "audio/wav"
+            // Don't use cache for in-memory preprocessing (prevents stale results)
+            cacheKey = nil
+        } else {
+            // Fall back to original file
+            let fileURL = fileURL
+            cacheKey = TranscriptionCache.shared.key(for: fileURL, provider: "groq", model: settings.model, language: nil, preprocessing: false)
+
+            // Check cache before reading file
+            if let key = cacheKey, let cached = TranscriptionCache.shared.lookup(key) {
+                return cached
+            }
+
+            // Read audio into heap-backed Data to avoid potential mmapped lifetime issues
+            fileData = try Data(contentsOf: fileURL)
+            filename = fileURL.lastPathComponent
+            mimeType = mimeType(for: ext)
         }
-
-        // Read audio into heap-backed Data to avoid potential mmapped lifetime issues
-        // that can happen if the file is still being finalized on some systems.
-        let fileData = try Data(contentsOf: inputURL)
-        let mime = mimeType(for: inputURL.pathExtension.lowercased())
 
         return try await transcribeData(
             data: fileData,
-            filename: inputURL.lastPathComponent,
-            mimeType: mime,
+            filename: filename,
+            mimeType: mimeType,
             settings: settings,
-            cacheKey: TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: applyPreprocessing)
+            cacheKey: cacheKey
         )
     }
     

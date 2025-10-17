@@ -19,22 +19,41 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         let isCompressed = ["mp3", "m4a", "aac", "ogg", "opus", "flac", "wav", "mp4", "mpeg", "mpga", "webm"].contains(ext)
         let allowPreprocCompressed = UserDefaults.standard.bool(forKey: "openai.file.preprocessCompressed")
         let applyPreprocessing = AudioPreprocessor.isEnabled && (!isCompressed || allowPreprocCompressed)
-        let inputURL = applyPreprocessing ? AudioPreprocessor.processIfEnabled(fileURL) : fileURL
 
-        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "openai", model: settings.model, language: nil, preprocessing: applyPreprocessing),
-           let cached = TranscriptionCache.shared.lookup(key) {
-            return cached
+        // Try in-memory preprocessing first (no disk I/O, eliminates race condition)
+        var fileData: Data
+        var filename: String
+        var mimeType: String
+        var cacheKey: TranscriptionCacheKey?
+
+        if applyPreprocessing,
+           let preprocessedData = try AudioPreprocessor.processToData(fileURL) {
+            // Use preprocessed audio from memory
+            fileData = preprocessedData
+            filename = "audio_proc.wav"
+            mimeType = "audio/wav"
+            // Don't use cache for in-memory preprocessing (prevents stale results)
+            cacheKey = nil
+        } else {
+            // Fall back to original file
+            let fileURL = fileURL
+            cacheKey = TranscriptionCache.shared.key(for: fileURL, provider: "openai", model: settings.model, language: nil, preprocessing: false)
+
+            // Check cache before reading file
+            if let key = cacheKey, let cached = TranscriptionCache.shared.lookup(key) {
+                return cached
+            }
+
+            // Prefer heap-backed Data to avoid mmapped file lifetime quirks during fresh recordings
+            fileData = try Data(contentsOf: fileURL)
+            filename = fileURL.lastPathComponent
+            mimeType = mimeType(for: ext)
         }
-
-        // Prefer heap-backed Data to avoid mmapped file lifetime quirks during fresh recordings
-        let fileData = try Data(contentsOf: inputURL)
-        let mime = mimeType(for: ext)
-        let cacheKey = TranscriptionCache.shared.key(for: inputURL, provider: "openai", model: settings.model, language: nil, preprocessing: applyPreprocessing)
 
         return try await transcribeData(
             data: fileData,
-            filename: inputURL.lastPathComponent,
-            mimeType: mime,
+            filename: filename,
+            mimeType: mimeType,
             settings: settings,
             cacheKey: cacheKey
         )

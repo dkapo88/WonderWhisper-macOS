@@ -191,6 +191,65 @@ enum AudioPreprocessor {
         return outURL
     }
 
+    // Process audio to Data without disk I/O. For fast in-memory preprocessing
+    // when uploading to API services. Returns nil if preprocessing is disabled.
+    static func processToData(_ url: URL) throws -> Data? {
+        guard isEnabled else { return nil }
+
+        let start = CACurrentMediaTime()
+        var samples = try decodeToFloatMono16k(url: url)
+        if samples.isEmpty { return nil }
+
+        // Smart mode check: skip processing if audio is already clean
+        if smartModeEnabled {
+            do {
+                let quality = try analyzeAudioQuality(url)
+                let decision = quality.needsProcessing
+                if debugLoggingEnabled {
+                    AppLog.dictation.log("AudioPreprocessor: (ToData) smart analysis SNR=\(quality.snr, format: .fixed(precision: 2)) needsProcessing=\(decision)")
+                }
+                if !decision {
+                    // Return unprocessed audio as WAV Data
+                    let unprocessedData = try samplesAsWavData(samples)
+                    if debugLoggingEnabled {
+                        AppLog.dictation.log("AudioPreprocessor: (ToData) no processing needed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s")
+                    }
+                    return unprocessedData
+                }
+            } catch {
+                if debugLoggingEnabled {
+                    AppLog.dictation.error("AudioPreprocessor: (ToData) smart analysis failed \(error.localizedDescription)")
+                }
+                // Fall through to apply processing as fallback
+            }
+        }
+
+        // Apply preprocessing
+        let sr: Double = 16_000
+        applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
+        let defaultHum = 60
+        let humHz = {
+            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+            return v == 50 || v == 60 ? v : defaultHum
+        }()
+        let applySecondHarmonic = {
+            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+        }()
+        applyNotch(in: &samples, centerHz: Double(humHz), Q: 10.0, sampleRate: sr, cascades: 2)
+        if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
+            applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
+        }
+        applyPreEmphasis(in: &samples, coeff: 0.97)
+        let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
+
+        let wavData = try samplesAsWavData(samples)
+        if debugLoggingEnabled {
+            AppLog.dictation.log("AudioPreprocessor: (ToData) processed in \(CACurrentMediaTime() - start, format: .fixed(precision: 4))s gain=\(appliedGain, format: .fixed(precision: 3)) frames=\(samples.count) dataSize=\(wavData.count)")
+        }
+        return wavData
+    }
+
     // MARK: - DSP helpers
     private static func applyHighPass(in samples: inout [Float], cutoffHz: Double, sampleRate: Double) {
         guard !samples.isEmpty else { return }
@@ -337,7 +396,9 @@ enum AudioPreprocessor {
         return samples
     }
 
-    private static func writeInt16Mono16kWav(samples: [Float], to url: URL) throws {
+    // Convert Float samples to WAV Data (16-bit mono at 16kHz)
+    // Used for in-memory preprocessing without disk I/O
+    private static func samplesAsWavData(_ samples: [Float]) throws -> Data {
         let sampleCount = samples.count
         var clipped = samples
 
@@ -412,6 +473,11 @@ enum AudioPreprocessor {
             data.append(bytes)
         }
 
+        return data
+    }
+
+    private static func writeInt16Mono16kWav(samples: [Float], to url: URL) throws {
+        let data = try samplesAsWavData(samples)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
     }
