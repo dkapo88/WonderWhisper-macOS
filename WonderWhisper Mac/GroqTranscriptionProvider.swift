@@ -18,7 +18,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         // For Groq file uploads, avoid preprocessing if the source is already a compressed format
         // (preprocessing expands to large WAV and hurts upload latency). Allow opt-in override.
         let ext = fileURL.pathExtension.lowercased()
-        let isCompressed = ["mp3","m4a","aac","ogg","opus","flac"].contains(ext)
+        let isCompressed = ["mp3","m4a","aac","ogg","opus","flac","wav"].contains(ext)
         let allowPreprocCompressed = UserDefaults.standard.bool(forKey: "groq.file.preprocessCompressed")
         let applyPreprocessing = AudioPreprocessor.isEnabled && (!isCompressed || allowPreprocCompressed)
 
