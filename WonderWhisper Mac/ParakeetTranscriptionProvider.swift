@@ -164,9 +164,11 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             }
         }
         var samples: [Float] = []
-        // Prefer AVAssetReader universally (robust across formats), fallback to AVAudioFile path
         AppLog.dictation.log("[Parakeet] Decode begin for \(inputURL.lastPathComponent)")
-        if let alt = try? Self.decodeWithAssetReader(url: inputURL), !alt.isEmpty {
+        if let decoded = try? Self.decodeFastPCM16(url: inputURL), !decoded.isEmpty {
+            AppLog.dictation.log("[Parakeet] Decode (FastPCM16): samples=\(decoded.count)")
+            samples = decoded
+        } else if let alt = try? Self.decodeWithAssetReader(url: inputURL), !alt.isEmpty {
             AppLog.dictation.log("[Parakeet] Decode (AssetReader): samples=\(alt.count)")
             samples = alt
         } else {
@@ -371,6 +373,63 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             }
         }
         return samples
+    }
+
+    private static func decodeFastPCM16(url: URL) throws -> [Float]? {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count >= 44 else { return nil }
+        guard data[0...3] == Data([82, 73, 70, 70]) else { return nil }
+        guard data[8...11] == Data([87, 65, 86, 69]) else { return nil }
+        let audioFormat = readUInt16(data, offset: 20)
+        let channels = readUInt16(data, offset: 22)
+        let sampleRate = readUInt32(data, offset: 24)
+        let bitsPerSample = readUInt16(data, offset: 34)
+        guard audioFormat == 1, channels == 1, sampleRate == 16_000, bitsPerSample == 16 else { return nil }
+        let dataOffset = findDataChunkOffset(in: data)
+        guard dataOffset >= 0 else { return nil }
+        let start = dataOffset + 8
+        guard start <= data.count else { return nil }
+        let length = data.count - start
+        guard length > 0 else { return [] }
+        let count = length / MemoryLayout<Int16>.size
+        var result = [Float](repeating: 0, count: count)
+        let clamp: (Float) -> Float = { min(max($0, -1.0), 1.0) }
+        result.withUnsafeMutableBufferPointer { dst in
+            data.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                let samples = base.advanced(by: start).assumingMemoryBound(to: Int16.self)
+                for i in 0..<count {
+                    let value = Float(Int16(littleEndian: samples[i])) / 32767.0
+                    dst[i] = clamp(value)
+                }
+            }
+        }
+        return result
+    }
+
+    private static func findDataChunkOffset(in data: Data) -> Int {
+        var offset = 12
+        while offset + 8 <= data.count {
+            let chunkID = data[offset..<(offset + 4)]
+            let size = Int(readUInt32(data, offset: offset + 4))
+            if chunkID == Data([100, 97, 116, 97]) { return offset }
+            offset += 8 + size
+        }
+        return -1
+    }
+
+    private static func readUInt16(_ data: Data, offset: Int) -> UInt16 {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return 0 }
+            return base.advanced(by: offset).assumingMemoryBound(to: UInt16.self).pointee.littleEndian
+        }
+    }
+
+    private static func readUInt32(_ data: Data, offset: Int) -> UInt32 {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return 0 }
+            return base.advanced(by: offset).assumingMemoryBound(to: UInt32.self).pointee.littleEndian
+        }
     }
 
     private static func stats(samples: [Float]) -> (meanAbs: Double, peak: Double) {
