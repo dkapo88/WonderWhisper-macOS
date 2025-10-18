@@ -389,7 +389,10 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         guard dataOffset >= 0 else { return nil }
         let start = dataOffset + 8
         guard start <= data.count else { return nil }
-        let length = data.count - start
+        // Respect the declared WAV data chunk size to avoid reading trailing metadata
+        let declaredDataSize = Int(readUInt32(data, offset: dataOffset + 4))
+        let available = data.count - start
+        let length = max(0, min(declaredDataSize, available))
         guard length > 0 else { return [] }
         let count = length / MemoryLayout<Int16>.size
         var result = [Float](repeating: 0, count: count)
