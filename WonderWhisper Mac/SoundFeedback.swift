@@ -6,6 +6,15 @@ final class SoundFeedback {
   private static let sampleRate: Double = 44100
   private static let toneDuration: Double = 0.06  // 60ms per tone - short and crisp
   private static let toneGap: Double = 0.01       // 10ms gap between tones
+  private static let startBaseVolume: Float = 0.15
+  private static let stopBaseVolume: Float = 0.25
+  private static let chimeVolumeKey = "audio.chime.volume"
+  private static var volumeScale: Float = {
+    let defaults = UserDefaults.standard
+    if defaults.object(forKey: chimeVolumeKey) == nil { return 1.0 }
+    let stored = defaults.double(forKey: chimeVolumeKey)
+    return clampScale(Float(stored))
+  }()
   
   // Frequencies for the two tones
   private static let lowFreq: Double = 600   // Low tone (E5)
@@ -13,40 +22,64 @@ final class SoundFeedback {
   
   /// Play start sound: low → high (ascending)
   static func playStart() {
-    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: 0.15)
+    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: effectiveVolume(for: startBaseVolume))
   }
-  
+
   /// Play stop sound: high → low (descending)
   static func playStop() {
-    playTwoTone(firstFreq: highFreq, secondFreq: lowFreq, volume: 0.25)
+    playTwoTone(firstFreq: highFreq, secondFreq: lowFreq, volume: effectiveVolume(for: stopBaseVolume))
   }
-  
+
   private static func playTwoTone(firstFreq: Double, secondFreq: Double, volume: Float) {
+    let adjustedVolume = max(0, min(1, volume))
+    guard adjustedVolume > 0.0001 else { return }
+
     DispatchQueue.global(qos: .userInitiated).async {
       guard let buffer = generateTwoToneBuffer(firstFreq: firstFreq, secondFreq: secondFreq) else { return }
-      
+
       let player = AVAudioPlayerNode()
       let engine = AVAudioEngine()
-      
+
       engine.attach(player)
       engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
-      
+      // Explicitly connect mainMixerNode to output to ensure audio is routed to speakers
+      engine.connect(engine.mainMixerNode, to: engine.outputNode, format: buffer.format)
+
       do {
         try engine.start()
-        player.volume = volume
+        player.volume = adjustedVolume
         player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
         player.play()
-        
+
         // Keep engine alive for the duration of playback
         let totalDuration = toneDuration * 2 + toneGap + 0.05
         Thread.sleep(forTimeInterval: totalDuration)
-        
+
         player.stop()
         engine.stop()
       } catch {
         // Silent failure - audio feedback is non-critical
       }
     }
+  }
+
+  private static func effectiveVolume(for baseVolume: Float) -> Float {
+    return baseVolume * volumeScale
+  }
+
+  static func setVolumeScale(_ scale: Double) {
+    let clamped = clampScale(Float(scale))
+    volumeScale = clamped
+    UserDefaults.standard.set(Double(clamped), forKey: chimeVolumeKey)
+  }
+
+  static func currentVolumeScale() -> Double {
+    Double(volumeScale)
+  }
+
+  @inline(__always)
+  private static func clampScale(_ value: Float) -> Float {
+    Float(max(0.0, min(1.0, value)))
   }
   
   private static func generateTwoToneBuffer(firstFreq: Double, secondFreq: Double) -> AVAudioPCMBuffer? {
@@ -110,4 +143,3 @@ final class SoundFeedback {
     }
   }
 }
-

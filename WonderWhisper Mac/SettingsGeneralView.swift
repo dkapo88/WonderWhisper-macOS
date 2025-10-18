@@ -53,6 +53,21 @@ struct SettingsGeneralView: View {
                         Text("Noise suppression and gentle AGC for live capture. Skips auto gain boosts to prevent fighting AGC.")
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Chime volume")
+                            Slider(value: $vm.chimeVolume, in: 0.0...1.0)
+                            HStack(spacing: 6) {
+                                Text("Start/stop sounds scale with this slider and your current system volume.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(Int(vm.chimeVolume * 100))%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
                         
                         // Audio recording format selection for better compression
                         LabeledContent {

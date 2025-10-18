@@ -168,6 +168,19 @@ final class DictationViewModel: ObservableObject {
     }() {
         didSet { UserDefaults.standard.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
     }
+    @Published var chimeVolume: Double = Double(SoundFeedback.currentVolumeScale()) {
+        didSet {
+            // Ensure value is in valid range and update SoundFeedback immediately
+            let clamped = max(0.0, min(1.0, chimeVolume))
+            // Only clamp if out of range (avoid unnecessary recursion)
+            if clamped != chimeVolume {
+                chimeVolume = clamped
+            } else {
+                // Value is already valid, update SoundFeedback
+                SoundFeedback.setVolumeScale(clamped)
+            }
+        }
+    }
 
     // Vocabulary
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
