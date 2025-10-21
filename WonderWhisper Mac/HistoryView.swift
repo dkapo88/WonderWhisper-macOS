@@ -4,10 +4,12 @@ import AppKit
 struct HistoryView: View {
     @ObservedObject var vm: DictationViewModel
     @EnvironmentObject var history: HistoryStore
-    @State private var searchText: String = ""
     @State private var selectionID: HistoryEntry.ID?
     @State private var isReprocessing: Bool = false
     @State private var pendingDelete: HistoryEntry?
+    @State private var selectedImage: NSImage?
+    @State private var imageLoadTask: Task<Void, Never>?
+    @State private var selectedImageURL: URL?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -16,12 +18,15 @@ struct HistoryView: View {
             Divider()
             detailPane
         }
-        .onAppear { if selectionID == nil { selectionID = filtered.first?.id } }
+        .onAppear { 
+            if selectionID == nil && !history.entries.isEmpty { 
+                selectionID = history.entries.first?.id 
+            }
+        }
     }
-
+    
     private var listPane: some View {
         VStack(spacing: 0) {
-            // Controls
             HStack {
                 Text("Max entries").font(.caption)
                 Spacer()
@@ -29,29 +34,24 @@ struct HistoryView: View {
                     .monospacedDigit()
             }
             .padding(.vertical, 6)
+            .padding([.leading, .trailing], 8)
 
-            if filtered.isEmpty {
-                ContentUnavailableView("No history yet", systemImage: "clock", description: Text("Start a dictation to see it here."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if history.entries.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading history...")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $selectionID) {
-                    ForEach(filtered) { entry in
+                    ForEach(history.entries, id: \.id) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(entry.appName ?? "Unknown App").bold()
                                 Spacer()
-                                HStack(spacing: 6) {
-                                    if let m = entry.screenContextMethod, !m.isEmpty {
-                                        Text(m)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.secondary.opacity(0.12))
-                                            .clipShape(Capsule())
-                                    }
-                                    Text(entry.date.formatted(date: .abbreviated, time: .shortened))
-                                }
+                                Text(entry.date.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -60,222 +60,299 @@ struct HistoryView: View {
                                 .font(.subheadline)
                         }
                         .tag(entry.id)
-                        .contextMenu {
-                            Button("Copy Processed") { copy(entry.output.isEmpty ? entry.transcript : entry.output) }
-                            Button("Copy Original") { copy(entry.transcript) }
-                            Button {
-                                triggerReprocess(for: entry)
-                            } label: {
-                                Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
-                            }
-                            Button("Reveal in Finder") { history.revealInFinder(entry: entry) }
-                            Divider()
-                            Button(role: .destructive) { pendingDelete = entry } label: { Text("Delete") }
-                        }
                     }
                     .onDelete(perform: deleteRows)
+                    
+                    if history.isLoadingMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                        .padding()
+                    }
                 }
-                .searchable(text: $searchText)
                 .listStyle(.inset)
             }
         }
         .padding([.leading, .trailing], 8)
-        .confirmationDialog("Delete this history entry?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                if let e = pendingDelete { history.delete(entry: e); pendingDelete = nil; selectionID = history.entries.first?.id }
-            }
-            Button("Cancel", role: .cancel) { pendingDelete = nil }
-        } message: {
-            if let e = pendingDelete { Text("This will delete the entry and any associated audio file.\n\n\(e.appName ?? "Unknown App") — \(e.date.formatted(date: .abbreviated, time: .shortened))") }
-        }
     }
-
+    
+    @ViewBuilder
     private var detailPane: some View {
-        GeometryReader { geo in
+        if let e = selectedEntry {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if let e = selectedEntry {
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(e.appName ?? "Unknown App").bold()
-                                if let b = e.bundleID { Text(b).font(.caption).foregroundColor(.secondary) }
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    Color.clear.frame(height: 0)
+                        .onAppear { selectedImage = nil; selectedImageURL = nil }
+                        .onDisappear { imageLoadTask?.cancel() }
+                    // Header with app name and reprocess button
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(e.appName ?? "Unknown App").bold()
+                            if let b = e.bundleID { 
+                                Text(b).font(.caption).foregroundColor(.secondary) 
                             }
-                            Spacer()
-                            Button {
-                                triggerReprocess(for: e)
-                            } label: {
-                                if isReprocessing {
-                                    HStack(spacing: 6) {
-                                        ProgressView().scaleEffect(0.8)
-                                        Text("Reprocessing…")
+                        }
+                        Spacer()
+                        if let audioURL = history.audioURL(for: e) {
+                            Button(action: { NSWorkspace.shared.activateFileViewerSelecting([audioURL]) }) {
+                                Label("Reveal", systemImage: "folder")
+                            }
+                        }
+                        Button(action: { reprocessEntry(e) }) {
+                            if isReprocessing {
+                                HStack(spacing: 6) {
+                                    ProgressView().scaleEffect(0.8)
+                                    Text("Reprocessing…")
+                                }
+                            } else {
+                                Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                        }
+                        .disabled(isReprocessing)
+                    }
+                    
+                    // Model info
+                    HStack(spacing: 12) {
+                        if let tm = e.transcriptionModel {
+                            Label("Voice: \(tm)", systemImage: "mic").font(.caption)
+                        }
+                        if let lm = e.llmModel {
+                            Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
+                        }
+                    }
+                    
+                    // Timing info
+                    HStack(spacing: 12) {
+                        if let t = e.transcriptionSeconds {
+                            Text(String(format: "ASR: %.2fs", t)).font(.caption).foregroundColor(.secondary)
+                        }
+                        if let l = e.llmSeconds {
+                            Text(String(format: "LLM: %.2fs", l)).font(.caption).foregroundColor(.secondary)
+                        }
+                        if let tot = e.totalSeconds {
+                            Text(String(format: "Total: %.2fs", tot)).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    // Processed output
+                    GroupBox("Processed Output") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ScrollView {
+                                Text(e.output.isEmpty ? "(No output)" : e.output)
+                                    .font(.body)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(minHeight: 60)
+                            HStack {
+                                Button(action: { copyText(e.output) }) {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                        .font(.caption)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .padding(6)
+                    }
+                    
+                    // Original transcript
+                    GroupBox("Original Transcript") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ScrollView {
+                                Text(e.transcript)
+                                    .font(.body)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(minHeight: 60)
+                            HStack {
+                                Button(action: { copyText(e.transcript) }) {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                        .font(.caption)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .padding(6)
+                    }
+                    
+                    // System message
+                    if let sys = e.llmSystemMessage, !sys.isEmpty {
+                        GroupBox("System Message") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ScrollView {
+                                    Text(sys)
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(minHeight: 60)
+                                HStack {
+                                    Button(action: { copyText(sys) }) {
+                                        Label("Copy", systemImage: "doc.on.doc")
+                                            .font(.caption)
                                     }
-                                } else {
-                                    Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
+                                    Spacer()
                                 }
                             }
-                            .disabled(isReprocessing)
-
-                            Button(action: { history.revealInFinder(entry: e) }) { Label("Reveal", systemImage: "folder") }
+                            .padding(6)
                         }
-                        HStack(spacing: 12) {
-                            if let tm = e.transcriptionModel {
-                                Label("Voice: \(tm)", systemImage: "mic").font(.caption)
-                            }
-                            if let lm = e.llmModel {
-                                Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
-                            }
-                            if let descriptor = contextDescriptor(for: e) {
-                                Label("Context: \(descriptor)", systemImage: "eye").font(.caption)
-                            }
-                        }
-                        HStack(spacing: 12) {
-                            if let t = e.transcriptionSeconds {
-                                Text(String(format: "ASR: %.2fs", t)).font(.caption).foregroundColor(.secondary)
-                            }
-                            if let l = e.llmSeconds {
-                                Text(String(format: "LLM: %.2fs", l)).font(.caption).foregroundColor(.secondary)
-                            }
-                            if let tot = e.totalSeconds {
-                                Text(String(format: "Total: %.2fs", tot)).font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                        GroupBox("Processed") {
+                    }
+                    
+                    // User message
+                    if let usr = e.llmUserMessage, !usr.isEmpty {
+                        GroupBox("User Message") {
                             VStack(alignment: .leading, spacing: 6) {
-                                autoSizingTextBox(e.output, availableWidth: geo.size.width - 40)
-                                HStack { Button("Copy Processed") { copy(e.output) } }
+                                ScrollView {
+                                    Text(usr)
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(minHeight: 60)
+                                HStack {
+                                    Button(action: { copyText(usr) }) {
+                                        Label("Copy", systemImage: "doc.on.doc")
+                                            .font(.caption)
+                                    }
+                                    Spacer()
+                                }
                             }
                             .padding(6)
                         }
-                        GroupBox("Original Transcript") {
+                    }
+                    
+                    // Screen context info
+                    if let ctx = e.screenContext, !ctx.isEmpty {
+                        GroupBox("Screen Context") {
                             VStack(alignment: .leading, spacing: 6) {
-                                autoSizingTextBox(e.transcript, availableWidth: geo.size.width - 40)
-                                HStack { Button("Copy Original") { copy(e.transcript) } }
+                                ScrollView {
+                                    Text(ctx)
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(minHeight: 60)
+                                HStack {
+                                    Button(action: { copyText(ctx) }) {
+                                        Label("Copy", systemImage: "doc.on.doc")
+                                            .font(.caption)
+                                    }
+                                    Spacer()
+                                }
                             }
                             .padding(6)
                         }
-                        // Replace Screen Context with full LLM prompt transparency
-                        if let sys = e.llmSystemMessage, !sys.isEmpty {
-                            GroupBox("System Message") {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    autoSizingTextBox(sys, availableWidth: geo.size.width - 40)
-                                    HStack { Button("Copy System Message") { copy(sys) } }
-                                }.padding(6)
-                            }
-                        }
-                        if let usr = e.llmUserMessage, !usr.isEmpty {
-                            GroupBox("User Message") {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    autoSizingTextBox(usr, availableWidth: geo.size.width - 40)
-                                    HStack { Button("Copy User Message") { copy(usr) } }
-                                }.padding(6)
-                            }
-                        }
-                        if let imageURL = history.imageURL(for: e),
-                           let nsImage = NSImage(contentsOf: imageURL) {
-                            GroupBox("Screen Image") {
-                                VStack(alignment: .leading, spacing: 6) {
+                    }
+                    
+                    // Screen image
+                    if let imageURL = history.imageURL(for: e) {
+                        GroupBox("Screen Image") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if let nsImage = selectedImage, selectedImageURL == imageURL {
                                     Image(nsImage: nsImage)
                                         .resizable()
                                         .scaledToFit()
                                         .frame(maxHeight: 220)
                                         .cornerRadius(6)
-                                    HStack { Button("Open Screenshot") { NSWorkspace.shared.open(imageURL) } }
+                                } else {
+                                    ProgressView()
+                                        .frame(height: 120)
                                 }
-                                .padding(6)
+                                HStack {
+                                    Button(action: { NSWorkspace.shared.open(imageURL) }) {
+                                        Label("Open", systemImage: "folder")
+                                            .font(.caption)
+                                    }
+                                    Spacer()
+                                }
                             }
+                            .padding(6)
                         }
-                        if let sel = e.selectedText, !sel.isEmpty {
-                            GroupBox("Selected Text") {
-                                autoSizingTextBox(sel, availableWidth: geo.size.width - 40, maxHeight: 200, font: .caption)
+                        .onAppear {
+                            loadImageAsync(from: imageURL)
+                        }
+                        .onDisappear {
+                            imageLoadTask?.cancel()
+                        }
+                    }
+                    
+                    // Selected text
+                    if let sel = e.selectedText, !sel.isEmpty {
+                        GroupBox("Selected Text") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ScrollView {
+                                    Text(sel)
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(minHeight: 60)
+                                HStack {
+                                    Button(action: { copyText(sel) }) {
+                                        Label("Copy", systemImage: "doc.on.doc")
+                                            .font(.caption)
+                                    }
+                                    Spacer()
+                                }
                             }
+                            .padding(6)
                         }
-                    } else {
-                        ContentUnavailableView("Select an entry", systemImage: "doc.text")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                .frame(maxWidth: max(geo.size.width - 24, 300), alignment: .center)
                 .padding(12)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack {
+                Text("Select an entry")
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    private func triggerReprocess(for entry: HistoryEntry) {
+    
+    private var selectedEntry: HistoryEntry? {
+        guard let id = selectionID else { return nil }
+        return history.entries.first(where: { $0.id == id })
+    }
+    
+    private func deleteRows(at offsets: IndexSet) {
+        for idx in offsets {
+            if idx < history.entries.count {
+                history.delete(entry: history.entries[idx])
+            }
+        }
+        selectionID = history.entries.first?.id
+    }
+    
+    private func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+    
+    private func reprocessEntry(_ entry: HistoryEntry) {
         guard !isReprocessing else { return }
-        selectionID = entry.id
         isReprocessing = true
         Task {
             await vm.reprocessHistoryEntry(entry)
             await MainActor.run { isReprocessing = false }
         }
     }
-
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    private func contextDescriptor(for entry: HistoryEntry) -> String? {
-        guard let method = entry.screenContextMethod, !method.isEmpty else { return nil }
-        if let w = entry.screenImageWidth, let h = entry.screenImageHeight {
-            return "\(method) (\(w)x\(h))"
+    
+    private func loadImageAsync(from url: URL) {
+        imageLoadTask?.cancel()
+        selectedImageURL = url
+        selectedImage = nil
+        
+        imageLoadTask = Task {
+            let image = await Task.detached(priority: .userInitiated) {
+                NSImage(contentsOf: url)
+            }.value
+            
+            await MainActor.run {
+                if selectedImageURL == url {
+                    selectedImage = image
+                }
+            }
         }
-        return method
-    }
-
-    private var filtered: [HistoryEntry] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return history.entries }
-        return history.entries.filter { e in
-            (e.appName?.localizedCaseInsensitiveContains(q) ?? false) ||
-            e.transcript.localizedCaseInsensitiveContains(q) ||
-            e.output.localizedCaseInsensitiveContains(q)
-        }
-    }
-
-    private var selectedEntry: HistoryEntry? {
-        guard let id = selectionID else { return nil }
-        return history.entries.first(where: { $0.id == id })
-    }
-
-    // MARK: - Helpers
-    // Auto-sizing, scrollable text box that grows to fit content up to maxHeight and otherwise stays compact.
-    @ViewBuilder
-    private func autoSizingTextBox(_ text: String,
-                                   availableWidth: CGFloat,
-                                   minHeight: CGFloat = 16,
-                                   maxHeight: CGFloat = 400,
-                                   font: Font = .body) -> some View {
-        let measured = estimateHeight(text: text, width: max(availableWidth - 16, 80), font: font)
-        let height = min(max(measured, minHeight), maxHeight)
-        ScrollView {
-            Text(text)
-                .font(font)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minHeight: height)
-    }
-
-    private func estimateHeight(text: String, width: CGFloat, font: Font) -> CGFloat {
-        let uiFont: NSFont
-        switch font {
-        case .caption: uiFont = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        case .subheadline: uiFont = .systemFont(ofSize: 12)
-        default: uiFont = .systemFont(ofSize: NSFont.systemFontSize)
-        }
-        let attr = [NSAttributedString.Key.font: uiFont]
-        let bounding = (text as NSString).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attr)
-        return ceil(bounding.height) + 8
-    }
-}
-
-// MARK: - Deletion helpers
-private extension HistoryView {
-    func deleteRows(at offsets: IndexSet) {
-        // Map offsets in filtered array back to actual entries
-        let toDelete = offsets.compactMap { idx in filtered.indices.contains(idx) ? filtered[idx] : nil }
-        for e in toDelete { history.delete(entry: e) }
-        selectionID = history.entries.first?.id
     }
 }

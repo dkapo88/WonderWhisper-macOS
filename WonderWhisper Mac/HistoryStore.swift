@@ -30,6 +30,7 @@ final class HistoryStore: ObservableObject {
     private let pageSize = 20 // Number of entries to load at once
     private var allEntryFiles: [URL] = []
     private var currentIndex = 0
+    private var isInitialized = false  // Guard against duplicate initialization
     private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.history", qos: .utility)
 
     init() {
@@ -60,6 +61,9 @@ final class HistoryStore: ObservableObject {
     }
 
     func loadInitialEntries() {
+        guard !isInitialized else { return }
+        isInitialized = true
+        
         backgroundQueue.async { [weak self] in
             self?.loadEntryFiles()
             
@@ -72,16 +76,34 @@ final class HistoryStore: ObservableObject {
     private func loadEntryFiles() {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
-        guard let files = try? fm.contentsOfDirectory(at: entriesDir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
         
-        // Consider only JSON files and sort by most recent file date (modification or creation)
-        let jsonFiles = files.filter { $0.pathExtension == "json" }
-        func fileDate(_ url: URL) -> Date {
-            let values = try? url.resourceValues(forKeys: Set(keys))
-            return values?.contentModificationDate ?? values?.creationDate ?? .distantPast
+        // Use shallow enumeration without prefetching all metadata upfront
+        // This avoids the expensive I/O of reading all file metadata at once
+        var filesByDate: [(url: URL, date: Date)] = []
+        
+        guard let enumerator = fm.enumerator(at: entriesDir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]) else { return }
+        
+        for case let fileURL as URL in enumerator {
+            // Only process JSON files
+            guard fileURL.pathExtension.lowercased() == "json" else { continue }
+            
+            // Get file date with lazy evaluation
+            let date: Date
+            if let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+               let modDate = values.contentModificationDate {
+                date = modDate
+            } else if let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+                      let creationDate = values.creationDate {
+                date = creationDate
+            } else {
+                date = .distantPast
+            }
+            
+            filesByDate.append((url: fileURL, date: date))
         }
         
-        allEntryFiles = jsonFiles.sorted { fileDate($0) > fileDate($1) }
+        // Sort only once at the end, using pre-fetched dates
+        allEntryFiles = filesByDate.sorted { $0.date > $1.date }.map { $0.url }
         currentIndex = 0
     }
     
@@ -120,6 +142,7 @@ final class HistoryStore: ObservableObject {
         entries.removeAll()
         currentIndex = 0
         hasMoreEntries = false
+        isInitialized = false
         loadInitialEntries()
     }
 
@@ -301,23 +324,21 @@ private extension HistoryStore {
         // Update in-memory state
         entries = Array(entries.prefix(maxEntries))
         
-        // Clean up files in background
+        // Clean up files in background - ALL array access must be on same queue
         backgroundQueue.async { [weak self] in
             guard let self = self else { return }
             let fm = FileManager.default
+            
+            // Track files that need removal from allEntryFiles array
+            var filesToRemoveFromArray: [URL] = []
+            var indexAdjustment = 0
             
             for entry in entriesToRemove {
                 // Remove JSON
                 let jsonURL = self.entriesDir.appendingPathComponent("\(entry.id).json")
                 if fm.fileExists(atPath: jsonURL.path) { 
                     try? fm.removeItem(at: jsonURL)
-                    // Also remove from allEntryFiles if present
-                    if let index = self.allEntryFiles.firstIndex(of: jsonURL) {
-                        self.allEntryFiles.remove(at: index)
-                        if self.currentIndex > index {
-                            self.currentIndex -= 1
-                        }
-                    }
+                    filesToRemoveFromArray.append(jsonURL)
                 }
                 
                 // Remove audio
@@ -335,6 +356,27 @@ private extension HistoryStore {
                         try? fm.removeItem(at: imgURL) 
                     }
                 }
+            }
+            
+            // Update allEntryFiles array on main thread to avoid race conditions
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                
+                // Remove files from allEntryFiles array and adjust currentIndex
+                for fileURL in filesToRemoveFromArray {
+                    if let index = self.allEntryFiles.firstIndex(of: fileURL) {
+                        self.allEntryFiles.remove(at: index)
+                        if self.currentIndex > index {
+                            indexAdjustment += 1
+                        }
+                    }
+                }
+                
+                // Apply index adjustment
+                self.currentIndex = max(0, self.currentIndex - indexAdjustment)
+                
+                // Update hasMoreEntries flag
+                self.hasMoreEntries = self.currentIndex < self.allEntryFiles.count
             }
         }
     }
