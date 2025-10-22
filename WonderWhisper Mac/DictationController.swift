@@ -523,43 +523,7 @@ actor DictationController {
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 let t1 = Date()
-                do {
-                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
-                } catch {
-                    let ns = error as NSError
-                    let isTransient = (ns.domain == NSURLErrorDomain) && (ns.code == NSURLErrorTimedOut || ns.code == NSURLErrorNetworkConnectionLost || ns.code == NSURLErrorCannotConnectToHost || ns.code == NSURLErrorCannotFindHost || ns.code == NSURLErrorNotConnectedToInternet)
-                    // Skip fallback for Ollama since model names won't work with other providers
-                    let isOllama = llmSettings.endpoint.absoluteString.contains("localhost:11434")
-                    if AppConfig.llmEnableProviderFallback && isTransient && !isOllama {
-                        AppLog.network.error("Primary LLM failed transiently; attempting provider fallback")
-                        // Build a temporary fallback provider instance (try OpenRouter, then Groq)
-                        let fallbackOrder: [(provider: String, endpoint: URL, factory: () -> LLMProvider)] = [
-                            ("openrouter", AppConfig.openrouterChatCompletions, { OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) })) }),
-                            ("groq", AppConfig.groqChatCompletions, { GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) })) })
-                        ]
-                        var success: String? = nil
-                        for cand in fallbackOrder {
-                            do {
-                                let s = LLMSettings(
-                                    endpoint: cand.endpoint,
-                                    model: llmSettings.model,
-                                    systemPrompt: llmSettings.systemPrompt,
-                                    timeout: max(30, llmSettings.timeout),
-                                    streaming: llmSettings.streaming,
-                                    temperature: llmSettings.temperature
-                                )
-                                success = try await cand.factory().process(text: userMsg, userPrompt: userPrompt, settings: s, imageAttachment: screenAttachment)
-                                AppLog.network.log("LLM provider fallback succeeded with \(cand.provider)")
-                                break
-                            } catch {
-                                AppLog.network.error("LLM provider fallback \(cand.provider) failed: \((error as NSError).localizedDescription)")
-                            }
-                        }
-                        if let ok = success { output = ok } else { throw error }
-                    } else {
-                        throw error
-                    }
-                }
+                output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
                 llmDT = Date().timeIntervalSince(t1)
             }
             state = .idle

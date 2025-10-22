@@ -50,14 +50,15 @@ struct GroqHTTPClient {
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
         cfg.httpMaximumConnectionsPerHost = 8 // Increased for better parallelism
-        cfg.timeoutIntervalForRequest = 10 // Reduced from 20s for faster failure detection
-        cfg.timeoutIntervalForResource = 30 // Reduced from 60s for tighter timeouts
+        cfg.timeoutIntervalForRequest = 10 // Default timeout, configurable later
+        cfg.timeoutIntervalForResource = 30 // Default timeout, configurable later
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
 
-        // Enable HTTP/3 QUIC support for faster connection establishment
-        // Remove Alt-Svc request header; server advertises this in responses
-        // cfg.httpAdditionalHeaders = ["Alt-Svc": "h3=\":443\"; ma=86400"]
+        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
+        cfg.httpShouldUsePipelining = true
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
         cfg.networkServiceType = .responsiveData
 
         // Connection pooling and keep-alive optimizations
@@ -74,11 +75,15 @@ struct GroqHTTPClient {
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
         cfg.httpMaximumConnectionsPerHost = 4 // Dedicated connections
-        cfg.timeoutIntervalForRequest = 8 // Very tight for priority requests
+        cfg.timeoutIntervalForRequest = 8 // Default timeout for priority requests, configurable later
         cfg.timeoutIntervalForResource = 25
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
         cfg.networkServiceType = .responsiveData
+        // Force HTTP/2 only
+        cfg.httpShouldUsePipelining = true
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
@@ -88,11 +93,12 @@ struct GroqHTTPClient {
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
         cfg.httpMaximumConnectionsPerHost = 8
-        cfg.timeoutIntervalForRequest = 10
-        cfg.timeoutIntervalForResource = 30
+        cfg.timeoutIntervalForRequest = 10 // Default timeout, configurable later
+        cfg.timeoutIntervalForResource = 30 // Default timeout, configurable later
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
         cfg.networkServiceType = .responsiveData
+        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
         cfg.httpShouldUsePipelining = true
         cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
         cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
@@ -105,11 +111,12 @@ struct GroqHTTPClient {
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
         cfg.httpMaximumConnectionsPerHost = 4
-        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForRequest = 8 // Default timeout for priority requests, configurable later
         cfg.timeoutIntervalForResource = 25
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
         cfg.networkServiceType = .responsiveData
+        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
         cfg.httpShouldUsePipelining = true
         cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
         cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
