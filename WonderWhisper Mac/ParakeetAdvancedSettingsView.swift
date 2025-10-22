@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ParakeetAdvancedSettingsView: View {
     @AppStorage("parakeet.version") private var version: String = "v3" // "v2" or "v3"
+    @AppStorage("parakeet.raw.mode") private var rawMode: Bool = false
     @AppStorage("parakeet.preemphasis") private var preEmphasisEnabled: Bool = true
     @AppStorage("parakeet.highpass.hz") private var highPassHz: Int = 60
     @AppStorage("parakeet.rms.target") private var targetRMS: Double = 0.06
@@ -140,6 +141,20 @@ struct ParakeetAdvancedSettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 320)
                 .help("Choose Parakeet TDT version. V2 is English-only with higher recall; V3 supports 25 languages.")
+            }
+            Divider()
+            
+            // Raw mode toggle (VoiceInk-style minimal processing)
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Raw Mode (VoiceInk-style minimal processing)", isOn: $rawMode)
+                    .help("Skip ALL preprocessing (high-pass, pre-emphasis, RMS normalization). Uses simple WAV decoding like VoiceInk reference implementation. Recommended if experiencing hallucinations.")
+                
+                if rawMode {
+                    Text("⚠️ Raw mode bypasses all audio preprocessing. High-pass filter, pre-emphasis, RMS normalization, and auto-adjust are disabled. VAD is only applied to audio > 20 seconds.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Divider()
             Toggle("Pre-emphasis (0.97)", isOn: $preEmphasisEnabled)

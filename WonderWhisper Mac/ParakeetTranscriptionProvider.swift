@@ -22,6 +22,11 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var loadedVadThreshold: Double?
     // Ephemeral auto-adjust overrides for the current transcription
     private var autoOverrides: AutoOverrides?
+    
+    // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
+    private var rawMode: Bool {
+        (UserDefaults.standard.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
+    }
 
     // Auto-adjust container
     private struct AutoOverrides {
@@ -146,6 +151,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         try await ensureModelsLoaded(version: preferredVersion(for: settings))
         scheduleIdleUnload()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
+        
+        // Raw mode: VoiceInk-style minimal processing path
+        if rawMode {
+            AppLog.dictation.log("[Parakeet] Raw mode enabled - using VoiceInk-style minimal processing")
+            return try await transcribeRawMode(mgr: mgr, fileURL: fileURL)
+        }
 
         // Optional smart preprocessing (shared with Groq path)
         var cleanupURLs: [URL] = []
@@ -664,6 +675,119 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return out
     }
 
+    // Robust decode path using AVAssetReader
+    // MARK: - Raw Mode (VoiceInk-style)
+    
+    /// Raw mode transcription: minimal processing like VoiceInk reference implementation
+    /// - No preprocessing (no high-pass, no pre-emphasis, no RMS normalization)
+    /// - No source hint parameter
+    /// - Idle timeout (60s) instead of immediate cleanup (preserves rapid transcription support)
+    /// - Simple WAV decoding starting at byte 44
+    private func transcribeRawMode(mgr: AsrManager, fileURL: URL) async throws -> String {
+        // Simple WAV decoding (VoiceInk-style)
+        AppLog.dictation.log("[Parakeet] Raw mode: decoding audio")
+        guard let samples = Self.decodeAudioRaw(url: fileURL) else {
+            throw NSError(domain: "Parakeet", code: -1, userInfo: [NSLocalizedDescriptionKey: "Raw mode: Failed to decode WAV audio"])
+        }
+        
+        let stats = Self.stats(samples: samples)
+        log.notice("[Parakeet] Raw mode samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
+        AppLog.dictation.log("[Parakeet] Raw mode: samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")
+        
+        // Validate audio
+        if samples.count < 16_000 {
+            throw NSError(domain: "Parakeet", code: -1001, userInfo: [NSLocalizedDescriptionKey: "Audio too short for ASR (need >= 1s)"])
+        }
+        if stats.meanAbs < 0.002 && stats.peak < 0.01 {
+            throw NSError(domain: "Parakeet", code: -1002, userInfo: [NSLocalizedDescriptionKey: "Audio appears near-silent; check microphone and input gain"])
+        }
+        
+        // Optional VAD (only for long audio like VoiceInk)
+        var finalSamples = samples
+        let audioDurationSeconds = Double(samples.count) / 16_000.0
+        let isVADEnabled = (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true
+        
+        if audioDurationSeconds > 20.0 && isVADEnabled {
+            AppLog.dictation.log("[Parakeet] Raw mode: applying VAD for long audio (\(String(format: "%.1f", audioDurationSeconds))s)")
+            if let trimmed = try? await applyVADRawMode(samples), trimmed.count >= 16_000 {
+                finalSamples = trimmed
+                AppLog.dictation.log("[Parakeet] Raw mode: VAD trimmed to \(finalSamples.count) samples")
+            }
+        } else {
+            AppLog.dictation.log("[Parakeet] Raw mode: skipping VAD (duration: \(String(format: "%.1f", audioDurationSeconds))s)")
+        }
+        
+        // Transcribe WITHOUT source hint (VoiceInk-style)
+        AppLog.dictation.log("[Parakeet] Raw mode: transcribing (no source hint)")
+        let result: ASRResult
+        do {
+            result = try await mgr.transcribe(finalSamples)
+        } catch {
+            let ns = error as NSError
+            log.notice("[Parakeet] Raw mode transcribe error=\(ns.localizedDescription, privacy: .public)")
+            AppLog.dictation.error("[Parakeet] Raw mode error: \(ns.localizedDescription)")
+            throw error
+        }
+        
+        let preview = result.text.prefix(120)
+        log.notice("[Parakeet] Raw mode result length=\(result.text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
+        AppLog.dictation.log("[Parakeet] Raw mode: result length=\(result.text.count) preview=\(String(preview))")
+        
+        // Schedule idle unload instead of immediate cleanup
+        // Immediate cleanup breaks subsequent transcriptions by de-initializing the manager
+        // The idle timeout (60s) provides the same benefits without breaking rapid-fire transcriptions
+        AppLog.dictation.log("[Parakeet] Raw mode: scheduling idle unload (\(Int(self.idleSeconds))s)")
+        scheduleIdleUnload()
+        
+        return result.text
+    }
+    
+    /// Simple WAV decoder for raw mode (VoiceInk-style)
+    /// Reads from byte 44 onwards, converts Int16 to Float32
+    private static func decodeAudioRaw(url: URL) -> [Float]? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+        guard data.count >= 44 else { return nil }
+        
+        // Basic WAV validation
+        guard data[0...3] == Data([82, 73, 70, 70]) else { return nil }  // "RIFF"
+        guard data[8...11] == Data([87, 65, 86, 69]) else { return nil }  // "WAVE"
+        
+        // Simple conversion: skip header, convert Int16 → Float32
+        let samples: [Float] = stride(from: 44, to: data.count, by: 2).compactMap { offset in
+            guard offset + 1 < data.count else { return nil }
+            let bytes = data[offset..<offset + 2]
+            let short = bytes.withUnsafeBytes { $0.load(as: Int16.self).littleEndian }
+            let float = Float(short) / 32767.0
+            return max(-1.0, min(float, 1.0))  // Clamp to [-1, 1]
+        }
+        
+        return samples.isEmpty ? nil : samples
+    }
+    
+    /// VAD for raw mode: simple threshold 0.7 like VoiceInk
+    private func applyVADRawMode(_ samples: [Float]) async throws -> [Float]? {
+        let threshold = 0.7  // Fixed threshold like VoiceInk
+        guard let vad = try? await ensureVadManager(preferredThreshold: threshold) else { return nil }
+        if samples.isEmpty { return nil }
+        
+        var segCfg = VadSegmentationConfig.default
+        segCfg.minSpeechDuration = 0.25
+        segCfg.minSilenceDuration = 0.35
+        segCfg.speechPadding = 0.10
+        
+        let segments = try await vad.segmentSpeech(samples, config: segCfg)
+        guard let first = segments.first, let last = segments.last else { return nil }
+        
+        let sr = 16_000.0
+        let startIdx = max(0, Int(first.startTime * sr))
+        let endIdx = min(samples.count, Int(last.endTime * sr))
+        guard endIdx > startIdx else { return nil }
+        
+        return Array(samples[startIdx..<endIdx])
+    }
+    
+    // MARK: - Asset Reader Decoder
+    
     // Robust decode path using AVAssetReader
     private static func decodeWithAssetReader(url: URL) throws -> [Float] {
         let asset = AVURLAsset(url: url)

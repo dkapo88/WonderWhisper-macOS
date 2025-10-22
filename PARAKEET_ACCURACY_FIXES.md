@@ -235,3 +235,131 @@ The 60-second idle timeout approach balances:
 
 - VoiceInk implementation analysis: `repomix-output-Beingpax-VoiceInk.git.xml` (lines 25871, 4493, 25339)
 - Fluid Audio Parakeet documentation: https://fluidaudio.dev
+
+---
+
+## UPDATE 2025-01-22: Raw Mode Implementation
+
+### New Discovery: Preprocessing Causes Hallucinations
+
+After comparing WonderWhisper Mac to VoiceInk reference implementation, we discovered:
+
+**VoiceInk does ZERO preprocessing:**
+- No high-pass filter
+- No pre-emphasis
+- No RMS normalization
+- No auto-adjust
+- Simple WAV decoding from byte 44
+- No source hint parameter in transcribe call
+- Immediate cleanup after every transcription
+
+**WonderWhisper does EXTENSIVE preprocessing:**
+- 60 Hz high-pass filter (configurable)
+- Pre-emphasis 0.97 coefficient
+- RMS normalization to 0.06 target
+- Environmental auto-adjust system
+- Complex multi-path audio decoding
+- Source hint parameter (`.microphone`)
+- Idle timeout cleanup (60s)
+
+### Hallucination Examples
+
+Problem audio produced with WonderWhisper preprocessing:
+```
+"transc.ription" (broken word)
+"don't don't think" (stuttering)
+"as a as a table" (repetition)
+"Y.es." (broken word with punctuation)
+"..what's the best?" (phantom fragment)
+"I'm not sure if I can do it" (completely hallucinated sentence)
+"If you can't capture if you can capture" (confused repetition)
+```
+
+### Root Cause Hypothesis
+
+**Preprocessing cascade destroys audio quality:**
+1. High-pass filter removes low-frequency speech information
+2. Pre-emphasis amplifies remaining high-frequency noise
+3. RMS normalization creates unnatural amplitude dynamics
+4. Model receives distorted audio it wasn't trained on
+5. Model becomes "confused" and hallucinates
+
+### Solution: Raw Mode
+
+Implemented `parakeet.raw.mode` (UserDefaults boolean, default false) that:
+
+**In ParakeetTranscriptionProvider.swift:**
+- Adds `rawMode` computed property checking UserDefaults
+- Implements `transcribeRawMode()` function:
+  - Simple WAV decoding (`decodeAudioRaw()`) starting at byte 44
+  - Skips ALL preprocessing (high-pass, pre-emphasis, RMS normalization)
+  - Only applies VAD for audio > 20 seconds (like VoiceInk)
+  - Calls `mgr.transcribe(samples)` WITHOUT source hint
+  - Uses idle timeout (60s) instead of immediate cleanup to avoid breaking rapid transcriptions
+- Takes early return path if raw mode enabled
+
+**In ParakeetAdvancedSettingsView.swift:**
+- Adds toggle: "Raw Mode (VoiceInk-style minimal processing)"
+- Shows warning when enabled about bypassed preprocessing
+- Located after Engine version section
+
+### Testing Instructions
+
+1. **Enable raw mode:**
+   - Open WonderWhisper Mac settings
+   - Navigate to Models → Parakeet Advanced Settings
+   - Enable "Raw Mode (VoiceInk-style minimal processing)"
+
+2. **Test with problem audio:**
+   - Transcribe the audio that previously produced hallucinations
+   - Compare output to reference transcription
+   - Look for:
+     - Elimination of broken words ("transc.ription" → "transcription")
+     - Elimination of stuttering ("don't don't" → "don't")
+     - Elimination of repetitions ("as a as a" → "as a")
+     - Elimination of phantom fragments
+     - Overall accuracy improvement
+
+3. **Document results:**
+   - If raw mode fixes hallucinations: **preprocessing is confirmed culprit**
+   - If raw mode doesn't fix: investigate source hint and cleanup timing
+   - Create matrix of preprocessing components to isolate specific culprit
+
+### Expected Outcome
+
+**If raw mode eliminates hallucinations:**
+- Consider defaulting new installations to raw mode
+- Add prominent warning about preprocessing risks
+- Keep preprocessing as opt-in for advanced users who understand trade-offs
+- Update presets to use minimal preprocessing
+
+**If raw mode doesn't eliminate hallucinations:**
+- Source hint parameter (`.microphone`) may be the culprit
+- Test removing source hint in normal mode
+- Model state accumulation despite cleanup
+- FluidAudio library version mismatch with VoiceInk
+
+### Files Modified
+
+- `WonderWhisper Mac/ParakeetTranscriptionProvider.swift`
+  - Lines 26-29: Raw mode property
+  - Lines 155-159: Early return for raw mode
+  - Lines 678-785: Raw mode implementation (transcribeRawMode, decodeAudioRaw, applyVADRawMode)
+
+- `WonderWhisper Mac/ParakeetAdvancedSettingsView.swift`
+  - Line 5: Raw mode @AppStorage property
+  - Lines 147-159: Raw mode toggle UI
+
+- `VOICEINK_VS_WONDERWHISPER.md` (new file)
+  - Comprehensive comparison of implementations
+  - Hallucination examples
+  - Root cause analysis
+  - Testing plan
+
+### Next Steps
+
+1. Test raw mode with problematic audio samples
+2. If successful, conduct systematic testing of preprocessing components
+3. Update default settings based on findings
+4. Create automated tests to prevent regression
+5. Add diagnostic logging for troubleshooting
