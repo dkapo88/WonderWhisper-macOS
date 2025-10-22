@@ -10,6 +10,7 @@ import SwiftUI
 private enum SidebarItem: Hashable, Identifiable {
     case home
     case history
+    case fileTranscription
     case settingsGeneral
     case settingsModels
     case settingsPrompts
@@ -20,6 +21,7 @@ private enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .home: return "home"
         case .history: return "history"
+        case .fileTranscription: return "fileTranscription"
         case .settingsGeneral: return "settings.general"
         case .settingsModels: return "settings.models"
         case .settingsPrompts: return "settings.prompts"
@@ -32,6 +34,7 @@ private enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .home: return "Scratchpad"
         case .history: return "History"
+        case .fileTranscription: return "File Transcription"
         case .settingsGeneral: return "General"
         case .settingsModels: return "Models"
         case .settingsPrompts: return "Prompts"
@@ -44,6 +47,7 @@ private enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .home: return "mic"
         case .history: return "clock"
+        case .fileTranscription: return "waveform.badge.magnifyingglass"
         case .settingsGeneral: return "gear"
         case .settingsModels: return "brain.head.profile"
         case .settingsPrompts: return "text.justify.left"
@@ -65,7 +69,7 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("WonderWhisper") {
-                    ForEach([SidebarItem.home, SidebarItem.history], id: \.self) { item in
+                    ForEach([SidebarItem.home, SidebarItem.history, SidebarItem.fileTranscription], id: \.self) { item in
                         Label(item.title, systemImage: item.systemImage)
                             .tag(item)
                     }
@@ -88,6 +92,9 @@ struct ContentView: View {
                 HistoryView(vm: vm)
                     .environmentObject(vm.history)
                     .navigationTitle("History")
+            case .fileTranscription:
+                FileTranscriptionView(dictationVM: vm)
+                    .navigationTitle("File Transcription")
             case .settingsGeneral:
                 SettingsGeneralView(vm: vm)
                     .navigationTitle("Settings · General")
