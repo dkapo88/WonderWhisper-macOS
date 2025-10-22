@@ -60,7 +60,7 @@ final class DictationViewModel: ObservableObject {
         }
         return .image
     }() { didSet { UserDefaults.standard.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode"); persistAndUpdate() } }
-    @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? false { didSet { persistAndUpdate() } }
+    @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextPreprocessingMode: ScreenContextPreprocessingMode = {
         if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
            let mode = ScreenContextPreprocessingMode(rawValue: raw) {

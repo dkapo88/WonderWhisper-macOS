@@ -371,7 +371,7 @@ actor DictationController {
                 screenContext: textForHistory,
                 screenContextMethod: (captureModeForSession == .text) ? preCapturedScreenMethod : imageForHistory?.method.rawValue,
                 screenImage: captureModeForSession == .image ? preCapturedScreenSnapshot : nil,
-                selectedText: screenContextEnabled ? screenContext.selectedText() : nil,
+                selectedText: preCapturedSelectedText,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,

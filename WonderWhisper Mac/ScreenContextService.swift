@@ -38,7 +38,7 @@ final class ScreenContextService {
     }
 
     func selectedText() -> String? {
-        // 1) Try AX APIs first (fast path)
+        // Use only Accessibility APIs to capture highlighted/selected text
         let sys = AXUIElementCreateSystemWide()
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
@@ -64,8 +64,8 @@ final class ScreenContextService {
                 if paramRes == .success, let s = strForRange as? String, !s.isEmpty { return s }
             }
         }
-        // 2) Fallback: non-destructive copy-based capture (works in many Electron/Chromium apps)
-        return copySelectedTextNonDestructively()
+        // No selected text found via Accessibility APIs
+        return nil
     }
 
     func selectedTextFast() -> String? {
