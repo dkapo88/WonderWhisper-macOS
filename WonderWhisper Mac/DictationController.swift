@@ -668,7 +668,7 @@ extension DictationController {
     /// Waits until the file's size has remained unchanged for a short window,
     /// or until a timeout elapses. This helps avoid racing with AVAudioRecorder's
     /// final flush on some systems.
-    static func waitUntilFileIsStable(_ url: URL, minStableMillis: Int = 200, timeoutSeconds: Double = 3.0) async {
+    static func waitUntilFileIsStable(_ url: URL, minStableMillis: Int = 50, timeoutSeconds: Double = 3.0) async {
         let fm = FileManager.default
         let pollInterval: useconds_t = 50_000 // 50 ms
         let minStable: useconds_t = useconds_t(minStableMillis) * 1000

@@ -36,6 +36,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let lfReduction: Double
     }
 
+    // Caching for auto-adjust parameters (reduces expensive computation from ~35-45ms to near-zero)
+    private var cachedAutoOverrides: AutoOverrides?
+    private var lastAutoAdjustTime: Date?
+    private let autoAdjustCacheDuration: TimeInterval = 600 // 10 minutes
+    private let autoAdjustCacheLock = NSLock()
+
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
@@ -186,23 +192,49 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Front-end conditioning (configurable via UserDefaults) with optional auto-adjust
         let defaults = UserDefaults.standard
         let autoEnabled = (defaults.object(forKey: "parakeet.auto.enabled") as? Bool) ?? false
-        // Compute auto overrides once using decoded samples
+        // Compute auto overrides with caching (reduces expensive computation from ~35-45ms to near-zero)
         if autoEnabled {
-            if let overrides = Self.deriveAutoOverrides(from: samples) {
-                autoOverrides = overrides
-                let d = UserDefaults.standard
-                d.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
-                d.set(overrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
-                d.set(overrides.lfReduction, forKey: "parakeet.auto.lastLFR")
-                d.set(overrides.highPassHz, forKey: "parakeet.auto.lastHP")
-                d.set(overrides.targetRMS, forKey: "parakeet.auto.lastRMS")
-                d.set(overrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
-                d.set(overrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
-                d.set(overrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
-                d.set(overrides.padding, forKey: "parakeet.auto.lastPadding")
-                AppLog.dictation.log("[Parakeet] Auto profile=\(overrides.profile) snr=\(overrides.snrDb, format: .fixed(precision: 1))dB lfr=\(overrides.lfReduction, format: .fixed(precision: 3)) hp=\(overrides.highPassHz) thr=\(String(format: "%.2f", overrides.vadThreshold))")
+            if shouldRecomputeAutoAdjust() {
+                // Cache miss or expired: compute new parameters
+                let computeStart = Date()
+                if let overrides = Self.deriveAutoOverrides(from: samples) {
+                    let computeTime = Date().timeIntervalSince(computeStart)
+                    
+                    // Store in cache with thread safety
+                    autoAdjustCacheLock.lock()
+                    cachedAutoOverrides = overrides
+                    lastAutoAdjustTime = Date()
+                    autoAdjustCacheLock.unlock()
+                    
+                    autoOverrides = overrides
+                    
+                    // Update UserDefaults for UI display
+                    let d = UserDefaults.standard
+                    d.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
+                    d.set(overrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
+                    d.set(overrides.lfReduction, forKey: "parakeet.auto.lastLFR")
+                    d.set(overrides.highPassHz, forKey: "parakeet.auto.lastHP")
+                    d.set(overrides.targetRMS, forKey: "parakeet.auto.lastRMS")
+                    d.set(overrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
+                    d.set(overrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
+                    d.set(overrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
+                    d.set(overrides.padding, forKey: "parakeet.auto.lastPadding")
+                    
+                    AppLog.dictation.log("[Parakeet] Auto-adjust COMPUTED in \(computeTime * 1000, format: .fixed(precision: 1))ms: profile=\(overrides.profile) snr=\(overrides.snrDb, format: .fixed(precision: 1))dB lfr=\(overrides.lfReduction, format: .fixed(precision: 3)) hp=\(overrides.highPassHz) thr=\(String(format: "%.2f", overrides.vadThreshold))")
+                } else {
+                    autoOverrides = nil
+                }
             } else {
-                autoOverrides = nil
+                // Cache hit: use cached parameters
+                autoAdjustCacheLock.lock()
+                if let cached = cachedAutoOverrides {
+                    autoOverrides = cached
+                    let cacheAge = Date().timeIntervalSince(lastAutoAdjustTime!)
+                    AppLog.dictation.log("[Parakeet] Auto-adjust CACHED (age: \(cacheAge, format: .fixed(precision: 1))s): profile=\(cached.profile) hp=\(cached.highPassHz) thr=\(String(format: "%.2f", cached.vadThreshold))")
+                } else {
+                    autoOverrides = nil
+                }
+                autoAdjustCacheLock.unlock()
             }
         } else {
             autoOverrides = nil
@@ -289,6 +321,20 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         let pref = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
         return (pref == "v2") ? .v2 : .v3
+    }
+
+    // Check if cached auto-adjust parameters are still valid (within 10-minute window)
+    private func shouldRecomputeAutoAdjust() -> Bool {
+        autoAdjustCacheLock.lock()
+        defer { autoAdjustCacheLock.unlock() }
+        
+        guard let lastTime = lastAutoAdjustTime,
+              cachedAutoOverrides != nil else {
+            return true // No cache exists, must compute
+        }
+        
+        let elapsed = Date().timeIntervalSince(lastTime)
+        return elapsed >= autoAdjustCacheDuration
     }
 
     // MARK: - VAD (Silero) integration
