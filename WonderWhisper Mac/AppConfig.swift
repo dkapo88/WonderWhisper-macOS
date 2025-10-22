@@ -96,23 +96,8 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
     static let openrouterTitle = "WonderWhisper Mac"
     static let openrouterReferer = "https://wonderwhisper.app"
 
-    // Networking feature flags
-    // Toggle via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_uploads -bool YES
-    static var forceHTTP2ForUploads: Bool {
-        UserDefaults.standard.bool(forKey: "network.force_http2_uploads")
-    }
-
-    // Optional: Prefer HTTP/2 for chat/completions on flaky networks (e.g., carrier hotspots that interfere with QUIC/HTTP3)
-    // Enable via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_chat -bool YES
-    // Note: The client also auto-falls back to an HTTP/2-configured session on transient errors.
-    static var forceHTTP2ForChat: Bool {
-        // Default to true for hotspot resilience; can be disabled via defaults.
-        let defaultsKey = "network.force_http2_chat"
-        if UserDefaults.standard.object(forKey: defaultsKey) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: defaultsKey)
-    }
+    // HTTP Protocol Preference (HTTP/2 by default, HTTP/1.1 for VPN/hotspot troubleshooting)
+    // Note: The old forceHTTP2ForUploads and forceHTTP2ForChat flags are now superseded by httpProtocolPreference
 
     // Optional: Fallback to an alternate LLM provider if the primary fails with transient errors
     static var llmEnableProviderFallback: Bool {
@@ -121,6 +106,16 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
             return true
         }
         return UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+
+    // HTTP Protocol Preference (HTTP/2 by default, HTTP/1.1 for VPN/hotspot troubleshooting)
+    static var httpProtocolPreference: HTTPProtocolPreference {
+        let key = "network.http_protocol_preference"
+        if let raw = UserDefaults.standard.string(forKey: key),
+           let pref = HTTPProtocolPreference(rawValue: raw) {
+            return pref
+        }
+        return .http2 // Default to HTTP/2
     }
 
     // Exact Android default dictation prompt (baseline for new users)

@@ -5,17 +5,8 @@ struct OllamaHTTPClient {
     static let spLog = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Network-SP")
     
     static let session: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = false
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 4
-        cfg.timeoutIntervalForRequest = 60
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 60, maxConnections: 4)
         cfg.timeoutIntervalForResource = 120
-        cfg.allowsExpensiveNetworkAccess = true
-        cfg.allowsConstrainedNetworkAccess = true
-        cfg.networkServiceType = .responsiveData
-        cfg.httpShouldSetCookies = false
         return URLSession(configuration: cfg)
     }()
     

@@ -11,17 +11,13 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
   init(apiKeyProvider: @escaping () -> String?) {
     self.apiKeyProvider = apiKeyProvider
-    let config = URLSessionConfiguration.default
-    config.timeoutIntervalForRequest = 30 // Increased for better reliability
+    let config = NetworkConfiguration.createConfiguration(timeout: 30, maxConnections: 5)
     config.timeoutIntervalForResource = 300 // Increased for longer sessions
     config.waitsForConnectivity = true // Wait for connectivity
-    config.httpMaximumConnectionsPerHost = 5 // Allow multiple connections
-    // config.httpShouldUsePipelining = false // Deprecated in macOS 15.4
-    config.httpAdditionalHeaders = [
-      "User-Agent": "WonderWhisper-Mac/soniox",
-      "Connection": "Upgrade",
-      "Upgrade": "websocket"
-    ]
+    config.httpAdditionalHeaders = config.httpAdditionalHeaders ?? [:]
+    config.httpAdditionalHeaders?["User-Agent"] = "WonderWhisper-Mac/soniox"
+    config.httpAdditionalHeaders?["Connection"] = "Upgrade"
+    config.httpAdditionalHeaders?["Upgrade"] = "websocket"
     self.session = URLSession(configuration: config)
   }
 

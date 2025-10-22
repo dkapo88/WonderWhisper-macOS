@@ -60,6 +60,32 @@ struct HistoryView: View {
                                 .font(.subheadline)
                         }
                         .tag(entry.id)
+                        .contextMenu {
+                            Button {
+                                copyText(entry.output)
+                            } label: {
+                                Label("Copy AI Output", systemImage: "doc.on.doc")
+                            }
+                            .disabled(entry.output.isEmpty)
+                            
+                            Button {
+                                reprocessEntry(entry)
+                            } label: {
+                                Label("Reprocess", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .disabled(isReprocessing)
+                            
+                            Divider()
+                            
+                            Button(role: .destructive) {
+                                history.delete(entry: entry)
+                                if selectionID == entry.id {
+                                    selectionID = history.entries.first?.id
+                                }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
                     .onDelete(perform: deleteRows)
                     

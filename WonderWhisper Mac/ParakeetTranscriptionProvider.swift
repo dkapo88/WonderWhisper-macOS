@@ -205,39 +205,48 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let autoEnabled = (defaults.object(forKey: "parakeet.auto.enabled") as? Bool) ?? false
         // Compute auto overrides with caching (reduces expensive computation from ~35-45ms to near-zero)
         if autoEnabled {
-            if shouldRecomputeAutoAdjust() {
+            // Lock protects entire check-and-compute operation to prevent race conditions
+            autoAdjustCacheLock.lock()
+            let shouldRecompute = shouldRecomputeAutoAdjust()
+            
+            if shouldRecompute {
                 // Cache miss or expired: compute new parameters
+                // Release lock during expensive computation to avoid blocking other threads
+                autoAdjustCacheLock.unlock()
                 let computeStart = Date()
                 if let overrides = Self.deriveAutoOverrides(from: samples) {
                     let computeTime = Date().timeIntervalSince(computeStart)
                     
-                    // Store in cache with thread safety
+                    // Re-acquire lock to store results atomically
                     autoAdjustCacheLock.lock()
-                    cachedAutoOverrides = overrides
-                    lastAutoAdjustTime = Date()
+                    // Double-check: another thread may have computed while we were unlocked
+                    if shouldRecomputeAutoAdjust() {
+                        cachedAutoOverrides = overrides
+                        lastAutoAdjustTime = Date()
+                    }
+                    let storedOverrides = cachedAutoOverrides ?? overrides
                     autoAdjustCacheLock.unlock()
                     
-                    autoOverrides = overrides
+                    autoOverrides = storedOverrides
                     
                     // Update UserDefaults for UI display
                     let d = UserDefaults.standard
-                    d.set(overrides.profile, forKey: "parakeet.auto.lastProfile")
-                    d.set(overrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
-                    d.set(overrides.lfReduction, forKey: "parakeet.auto.lastLFR")
-                    d.set(overrides.highPassHz, forKey: "parakeet.auto.lastHP")
-                    d.set(overrides.targetRMS, forKey: "parakeet.auto.lastRMS")
-                    d.set(overrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
-                    d.set(overrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
-                    d.set(overrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
-                    d.set(overrides.padding, forKey: "parakeet.auto.lastPadding")
+                    d.set(storedOverrides.profile, forKey: "parakeet.auto.lastProfile")
+                    d.set(storedOverrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
+                    d.set(storedOverrides.lfReduction, forKey: "parakeet.auto.lastLFR")
+                    d.set(storedOverrides.highPassHz, forKey: "parakeet.auto.lastHP")
+                    d.set(storedOverrides.targetRMS, forKey: "parakeet.auto.lastRMS")
+                    d.set(storedOverrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
+                    d.set(storedOverrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
+                    d.set(storedOverrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
+                    d.set(storedOverrides.padding, forKey: "parakeet.auto.lastPadding")
                     
-                    AppLog.dictation.log("[Parakeet] Auto-adjust COMPUTED in \(computeTime * 1000, format: .fixed(precision: 1))ms: profile=\(overrides.profile) snr=\(overrides.snrDb, format: .fixed(precision: 1))dB lfr=\(overrides.lfReduction, format: .fixed(precision: 3)) hp=\(overrides.highPassHz) thr=\(String(format: "%.2f", overrides.vadThreshold))")
+                    AppLog.dictation.log("[Parakeet] Auto-adjust COMPUTED in \(computeTime * 1000, format: .fixed(precision: 1))ms: profile=\(storedOverrides.profile) snr=\(storedOverrides.snrDb, format: .fixed(precision: 1))dB lfr=\(storedOverrides.lfReduction, format: .fixed(precision: 3)) hp=\(storedOverrides.highPassHz) thr=\(String(format: "%.2f", storedOverrides.vadThreshold))")
                 } else {
                     autoOverrides = nil
                 }
             } else {
                 // Cache hit: use cached parameters
-                autoAdjustCacheLock.lock()
                 if let cached = cachedAutoOverrides {
                     autoOverrides = cached
                     let cacheAge = Date().timeIntervalSince(lastAutoAdjustTime!)

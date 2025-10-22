@@ -31,6 +31,8 @@ final class HistoryStore: ObservableObject {
     private var allEntryFiles: [URL] = []
     private var currentIndex = 0
     private var isInitialized = false  // Guard against duplicate initialization
+    private var isLoadingInitial = false  // Track if initial load is in progress
+    private var initialLoadWorkItem: DispatchWorkItem?  // Track background work for cancellation
     private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.history", qos: .utility)
 
     init() {
@@ -61,16 +63,27 @@ final class HistoryStore: ObservableObject {
     }
 
     func loadInitialEntries() {
-        guard !isInitialized else { return }
+        guard !isInitialized && !isLoadingInitial else { return }
         isInitialized = true
+        isLoadingInitial = true
         
-        backgroundQueue.async { [weak self] in
-            self?.loadEntryFiles()
+        // Cancel any pending initial load work
+        initialLoadWorkItem?.cancel()
+        
+        // Create new work item
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.loadEntryFiles()
             
-            DispatchQueue.main.async {
-                self?.loadNextPage()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.isLoadingInitial = false
+                self.loadNextPage()
             }
         }
+        
+        initialLoadWorkItem = workItem
+        backgroundQueue.async(execute: workItem)
     }
     
     private func loadEntryFiles() {
@@ -139,10 +152,15 @@ final class HistoryStore: ObservableObject {
     }
     
     func refresh() {
+        // Cancel any pending initial load work
+        initialLoadWorkItem?.cancel()
+        initialLoadWorkItem = nil
+        
         entries.removeAll()
         currentIndex = 0
         hasMoreEntries = false
         isInitialized = false
+        isLoadingInitial = false
         loadInitialEntries()
     }
 
@@ -331,7 +349,6 @@ private extension HistoryStore {
             
             // Track files that need removal from allEntryFiles array
             var filesToRemoveFromArray: [URL] = []
-            var indexAdjustment = 0
             
             for entry in entriesToRemove {
                 // Remove JSON
@@ -362,18 +379,24 @@ private extension HistoryStore {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 
-                // Remove files from allEntryFiles array and adjust currentIndex
+                // Find indices before removing to avoid shifting issues
+                var indicesToRemove: [Int] = []
                 for fileURL in filesToRemoveFromArray {
                     if let index = self.allEntryFiles.firstIndex(of: fileURL) {
-                        self.allEntryFiles.remove(at: index)
-                        if self.currentIndex > index {
-                            indexAdjustment += 1
-                        }
+                        indicesToRemove.append(index)
                     }
                 }
                 
-                // Apply index adjustment
-                self.currentIndex = max(0, self.currentIndex - indexAdjustment)
+                // Count how many files below currentIndex will be removed
+                let filesBelowCurrent = indicesToRemove.filter { $0 < self.currentIndex }.count
+                
+                // Remove files from allEntryFiles array (in reverse order to avoid index shifting)
+                for index in indicesToRemove.sorted(by: >) {
+                    self.allEntryFiles.remove(at: index)
+                }
+                
+                // Apply index adjustment based on files removed before currentIndex
+                self.currentIndex = max(0, self.currentIndex - filesBelowCurrent)
                 
                 // Update hasMoreEntries flag
                 self.hasMoreEntries = self.currentIndex < self.allEntryFiles.count

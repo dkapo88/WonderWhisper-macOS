@@ -362,6 +362,8 @@ actor DictationController {
             bundleIDHist = screenContextEnabled ? pair.1 : nil
             let imageForHistory = captureModeForSession == .image ? preCapturedScreenSnapshot : nil
             let textForHistory = (captureModeForSession == .text) ? preCapturedScreenText : nil
+            // Capture selected text dynamically for error case (preCapturedSelectedText may not be set)
+            let selectedTextForHistory = screenContextEnabled ? (preCapturedSelectedText ?? screenContext.selectedText()) : nil
             await history?.append(
                 fileURL: recordingFileURL,
                 appName: appNameHist,
@@ -371,7 +373,7 @@ actor DictationController {
                 screenContext: textForHistory,
                 screenContextMethod: (captureModeForSession == .text) ? preCapturedScreenMethod : imageForHistory?.method.rawValue,
                 screenImage: captureModeForSession == .image ? preCapturedScreenSnapshot : nil,
-                selectedText: preCapturedSelectedText,
+                selectedText: selectedTextForHistory,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,

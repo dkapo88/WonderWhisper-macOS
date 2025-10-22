@@ -13,9 +13,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
 
   init(apiKey: String) {
     self.apiKey = apiKey
-    let config = URLSessionConfiguration.default
-    // Keep connections alive for streaming
-    config.timeoutIntervalForRequest = 60
+    let config = NetworkConfiguration.createConfiguration(timeout: 60, maxConnections: 4)
     config.timeoutIntervalForResource = 300
     self.session = URLSession(configuration: config)
   }

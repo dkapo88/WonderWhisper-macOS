@@ -106,9 +106,13 @@ struct SettingsGeneralView: View {
                             }
                         }
 
-                        Toggle("Force HTTP/2 for uploads (experimental)", isOn: $vm.forceHTTP2Uploads)
-                            .help("Bypasses HTTP/3/QUIC for multipart uploads to avoid stalls on some networks.")
-                        Text("Useful if your network has trouble with HTTP/3/QUIC. Leave off unless uploads stall.")
+                        Picker("Connection Protocol", selection: $vm.httpProtocolPreference) {
+                            Text("HTTP/2 (Recommended)").tag(HTTPProtocolPreference.http2)
+                            Text("HTTP/1.1 (Fallback)").tag(HTTPProtocolPreference.http1)
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        Text("Change to HTTP/1.1 if experiencing connection issues on VPNs or mobile hotspots.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

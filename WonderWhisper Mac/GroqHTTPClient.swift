@@ -20,12 +20,8 @@ struct GroqHTTPClient {
                 let req2 = request
                 async let warm1: (Data, URLResponse) = session.data(for: req1)
                 async let warm2: (Data, URLResponse) = prioritySession.data(for: req2)
-                async let warm3: (Data, URLResponse)? = AppConfig.forceHTTP2ForUploads ? http2Session.data(for: req1) : nil
-                async let warm4: (Data, URLResponse)? = AppConfig.forceHTTP2ForUploads ? http2PrioritySession.data(for: req2) : nil
                 _ = try await warm1
                 _ = try await warm2
-                _ = try await warm3
-                _ = try await warm4
             } catch {
                 // Ignore pre-warming errors
             }
@@ -45,81 +41,28 @@ struct GroqHTTPClient {
     }
 
     static let session: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = false // fail fast; our retry/backoff handles transient offline
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 8 // Increased for better parallelism
-        cfg.timeoutIntervalForRequest = 10 // Default timeout, configurable later
-        cfg.timeoutIntervalForResource = 30 // Default timeout, configurable later
-        cfg.allowsExpensiveNetworkAccess = true
-        cfg.allowsConstrainedNetworkAccess = true
-
-        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
-        cfg.httpShouldUsePipelining = true
-        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
-        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
-        cfg.networkServiceType = .responsiveData
-
-        // Connection pooling and keep-alive optimizations
-        cfg.httpShouldSetCookies = false
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 10, maxConnections: 8)
+        cfg.timeoutIntervalForResource = 30
         cfg.connectionProxyDictionary = nil // Direct connections
-
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
     // Pre-warmed session for critical requests
     static let prioritySession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = false
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 4 // Dedicated connections
-        cfg.timeoutIntervalForRequest = 8 // Default timeout for priority requests, configurable later
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 8, maxConnections: 4)
         cfg.timeoutIntervalForResource = 25
-        cfg.allowsExpensiveNetworkAccess = true
-        cfg.allowsConstrainedNetworkAccess = true
-        cfg.networkServiceType = .responsiveData
-        // Force HTTP/2 only
-        cfg.httpShouldUsePipelining = true
-        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
-        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
     static let http2Session: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = false
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 8
-        cfg.timeoutIntervalForRequest = 10 // Default timeout, configurable later
-        cfg.timeoutIntervalForResource = 30 // Default timeout, configurable later
-        cfg.allowsExpensiveNetworkAccess = true
-        cfg.allowsConstrainedNetworkAccess = true
-        cfg.networkServiceType = .responsiveData
-        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
-        cfg.httpShouldUsePipelining = true
-        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
-        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 10, maxConnections: 8)
+        cfg.timeoutIntervalForResource = 30
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
     static let http2PrioritySession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = false
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 4
-        cfg.timeoutIntervalForRequest = 8 // Default timeout for priority requests, configurable later
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 8, maxConnections: 4)
         cfg.timeoutIntervalForResource = 25
-        cfg.allowsExpensiveNetworkAccess = true
-        cfg.allowsConstrainedNetworkAccess = true
-        cfg.networkServiceType = .responsiveData
-        // Force HTTP/2 only - disable HTTP/3 (QUIC) protocol
-        cfg.httpShouldUsePipelining = true
-        cfg.httpAdditionalHeaders = ["X-WW-Preferred-Protocol": "h2"]
-        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
@@ -318,13 +261,9 @@ struct GroqHTTPClient {
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .voice
 
-        let preferHTTP2 = AppConfig.forceHTTP2ForUploads
-        if preferHTTP2 {
-            request.setValue("1", forHTTPHeaderField: "X-WW-Expect-H2")
-        }
-
-        let baseSession = preferHTTP2 ? Self.http2Session : Self.session
-        let prioritySession = preferHTTP2 ? Self.http2PrioritySession : Self.prioritySession
+        // All sessions now respect global protocol preference via NetworkConfiguration
+        let baseSession = Self.session
+        let prioritySession = Self.prioritySession
 
         // Set compression headers if body was compressed
         if shouldCompress {

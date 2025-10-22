@@ -20,9 +20,8 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
 
   init(apiKey: String) {
     self.apiKey = apiKey
-    let cfg = URLSessionConfiguration.default
-    cfg.timeoutIntervalForRequest = 10  // Reduced from 60
-    cfg.timeoutIntervalForResource = 120 // Reduced from 300
+    let cfg = NetworkConfiguration.createConfiguration(timeout: 10, maxConnections: 4)
+    cfg.timeoutIntervalForResource = 120
     cfg.waitsForConnectivity = false // Don't wait if no connectivity
     cfg.allowsCellularAccess = true
     self.session = URLSession(configuration: cfg)

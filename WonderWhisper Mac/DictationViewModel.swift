@@ -167,7 +167,13 @@ final class DictationViewModel: ObservableObject {
         let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
         return max(5, min(120, v))
     }() { didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
-    @Published var forceHTTP2Uploads: Bool = UserDefaults.standard.bool(forKey: "network.force_http2_uploads") { didSet { UserDefaults.standard.set(forceHTTP2Uploads, forKey: "network.force_http2_uploads") } }
+    @Published var httpProtocolPreference: HTTPProtocolPreference = AppConfig.httpProtocolPreference {
+        didSet {
+            UserDefaults.standard.set(httpProtocolPreference.rawValue, forKey: "network.http_protocol_preference")
+            // Notify providers to recreate sessions with new preference
+            NotificationCenter.default.post(name: .networkProtocolPreferenceChanged, object: nil)
+        }
+    }
 
     // Audio
     @Published var audioEnhancementEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled") {

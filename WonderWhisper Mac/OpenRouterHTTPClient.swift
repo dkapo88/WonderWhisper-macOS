@@ -5,6 +5,12 @@ struct OpenRouterHTTPClient {
     let apiKeyProvider: () -> String?
     static let log = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "OpenRouter")
 
+    static let session: URLSession = {
+        let cfg = NetworkConfiguration.createConfiguration(timeout: 15, maxConnections: 8)
+        cfg.timeoutIntervalForResource = 60
+        return URLSession(configuration: cfg)
+    }()
+
     private func authHeader() throws -> String {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw ProviderError.missingAPIKey }
         return "Bearer \(key)"
@@ -21,7 +27,7 @@ struct OpenRouterHTTPClient {
         req.setValue(AppConfig.openrouterTitle, forHTTPHeaderField: "X-Title")
         req.setValue(AppConfig.openrouterReferer, forHTTPHeaderField: "Referer")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, resp) = try await GroqHTTPClient.session.data(for: req)
+        let (data, resp) = try await Self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw ProviderError.networkError("No HTTP response") }
         guard (200...299).contains(http.statusCode) else { throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>") }
         // Response shape: { data: [ { id: String, ... }, ... ] }
@@ -95,7 +101,7 @@ struct OpenRouterHTTPClient {
         req.setValue(AppConfig.openrouterReferer, forHTTPHeaderField: "Referer")
         let enc = JSONEncoder()
         req.httpBody = try enc.encode(body)
-        let (data, resp) = try await GroqHTTPClient.session.data(for: req)
+        let (data, resp) = try await Self.session.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
         }
@@ -117,7 +123,7 @@ struct OpenRouterHTTPClient {
         return try await withThrowingTaskGroup(of: String.self) { group in
             group.addTask {
                 var aggregated = ""
-                let (bytes, response) = try await GroqHTTPClient.session.bytes(for: req)
+                let (bytes, response) = try await Self.session.bytes(for: req)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     var bodySample = ""
                     for try await line in bytes.lines {
