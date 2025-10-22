@@ -23,7 +23,18 @@ struct FavoriteLLMModel: Identifiable, Codable, Hashable {
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
-    @Published var isRecording: Bool = false { didSet { updateEscapeMonitor(isRecording: isRecording) } }
+    @Published var isRecording: Bool = false { 
+        didSet { 
+            updateEscapeMonitor(isRecording: isRecording)
+            // Play chime sounds for recording start/stop
+            if isRecording {
+                SoundFeedback.playStart()
+            } else if oldValue {
+                // Only play stop sound if we were previously recording
+                SoundFeedback.playStop()
+            }
+        }
+    }
     @Published var audioLevel: Float = 0
 
     // Prompts

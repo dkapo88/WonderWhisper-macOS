@@ -1,13 +1,14 @@
 import Foundation
 import AVFoundation
+import OSLog
 
 /// Generates simple, clean two-tone audio feedback for recording start/stop
 final class SoundFeedback {
   private static let sampleRate: Double = 44100
   private static let toneDuration: Double = 0.06  // 60ms per tone - short and crisp
   private static let toneGap: Double = 0.01       // 10ms gap between tones
-  private static let startBaseVolume: Float = 0.15
-  private static let stopBaseVolume: Float = 0.25
+  private static let startBaseVolume: Float = 0.4  // Increased from 0.15 for better audibility
+  private static let stopBaseVolume: Float = 0.5   // Increased from 0.25 for better audibility
   private static let chimeVolumeKey = "audio.chime.volume"
   private static var volumeScale: Float = {
     let defaults = UserDefaults.standard
@@ -22,20 +23,36 @@ final class SoundFeedback {
   
   /// Play start sound: low → high (ascending)
   static func playStart() {
-    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: effectiveVolume(for: startBaseVolume))
+    let vol = effectiveVolume(for: startBaseVolume)
+    AppLog.dictation.debug("Playing start chime: baseVolume=\(startBaseVolume), volumeScale=\(volumeScale), effectiveVolume=\(vol)")
+    playTwoTone(firstFreq: lowFreq, secondFreq: highFreq, volume: vol)
   }
 
   /// Play stop sound: high → low (descending)
   static func playStop() {
-    playTwoTone(firstFreq: highFreq, secondFreq: lowFreq, volume: effectiveVolume(for: stopBaseVolume))
+    let vol = effectiveVolume(for: stopBaseVolume)
+    AppLog.dictation.debug("Playing stop chime: baseVolume=\(stopBaseVolume), volumeScale=\(volumeScale), effectiveVolume=\(vol)")
+    playTwoTone(firstFreq: highFreq, secondFreq: lowFreq, volume: vol)
   }
 
   private static func playTwoTone(firstFreq: Double, secondFreq: Double, volume: Float) {
     let adjustedVolume = max(0, min(1, volume))
-    guard adjustedVolume > 0.0001 else { return }
+    AppLog.dictation.log("Chime: adjustedVolume=\(adjustedVolume)")
+    
+    guard adjustedVolume > 0.0001 else {
+      AppLog.dictation.error("Chime: Volume too low (adjustedVolume=\(adjustedVolume)), aborting")
+      return
+    }
 
     DispatchQueue.global(qos: .userInitiated).async {
-      guard let buffer = generateTwoToneBuffer(firstFreq: firstFreq, secondFreq: secondFreq) else { return }
+      AppLog.dictation.log("Chime: Starting async audio generation")
+      
+      guard let buffer = generateTwoToneBuffer(firstFreq: firstFreq, secondFreq: secondFreq, volume: adjustedVolume) else {
+        AppLog.dictation.error("Chime: Failed to generate audio buffer")
+        return
+      }
+      
+      AppLog.dictation.log("Chime: Buffer generated successfully, samples=\(buffer.frameLength)")
 
       let player = AVAudioPlayerNode()
       let engine = AVAudioEngine()
@@ -46,10 +63,14 @@ final class SoundFeedback {
       engine.connect(engine.mainMixerNode, to: engine.outputNode, format: buffer.format)
 
       do {
+        AppLog.dictation.log("Chime: Starting audio engine")
         try engine.start()
-        player.volume = adjustedVolume
+        AppLog.dictation.log("Chime: Engine started, playing at volume \(adjustedVolume)")
+        // Set player volume to 1.0 since volume is already embedded in the buffer
+        player.volume = 1.0
         player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
         player.play()
+        AppLog.dictation.log("Chime: Player started")
 
         // Keep engine alive for the duration of playback
         let totalDuration = toneDuration * 2 + toneGap + 0.05
@@ -57,8 +78,10 @@ final class SoundFeedback {
 
         player.stop()
         engine.stop()
+        AppLog.dictation.log("Chime: Playback completed successfully")
       } catch {
-        // Silent failure - audio feedback is non-critical
+        // Log audio engine errors for debugging
+        AppLog.dictation.error("Chime audio playback failed: \(error.localizedDescription)")
       }
     }
   }
@@ -82,7 +105,7 @@ final class SoundFeedback {
     Float(max(0.0, min(1.0, value)))
   }
   
-  private static func generateTwoToneBuffer(firstFreq: Double, secondFreq: Double) -> AVAudioPCMBuffer? {
+  private static func generateTwoToneBuffer(firstFreq: Double, secondFreq: Double, volume: Float) -> AVAudioPCMBuffer? {
     let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
     guard let format = format else { return nil }
     
@@ -100,11 +123,11 @@ final class SoundFeedback {
     
     var sampleIndex = 0
     
-    // First tone with fade in/out envelope
+    // First tone with fade in/out envelope and volume scaling
     for i in 0..<tone1Samples {
       let t = Double(i) / sampleRate
       let envelope = envelopeFactor(sample: i, totalSamples: tone1Samples)
-      let value = sin(2.0 * .pi * firstFreq * t) * envelope
+      let value = sin(2.0 * .pi * firstFreq * t) * envelope * Double(volume)
       samples[sampleIndex] = Float(value)
       sampleIndex += 1
     }
@@ -115,11 +138,11 @@ final class SoundFeedback {
       sampleIndex += 1
     }
     
-    // Second tone with fade in/out envelope
+    // Second tone with fade in/out envelope and volume scaling
     for i in 0..<tone2Samples {
       let t = Double(i) / sampleRate
       let envelope = envelopeFactor(sample: i, totalSamples: tone2Samples)
-      let value = sin(2.0 * .pi * secondFreq * t) * envelope
+      let value = sin(2.0 * .pi * secondFreq * t) * envelope * Double(volume)
       samples[sampleIndex] = Float(value)
       sampleIndex += 1
     }
