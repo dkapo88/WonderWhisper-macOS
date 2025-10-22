@@ -11,8 +11,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var modelsDirectory: URL
     private let log = Logger(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
+    // UPDATED: Reduced from 10 minutes to 60 seconds to prevent state accumulation
     private var idleUnloadTask: Task<Void, Never>?
-    private let idleSeconds: TimeInterval = 600 // 10 minutes
+    private let idleSeconds: TimeInterval = 60 // 1 minute
     // Coalesce model loading to avoid duplicate work/logs
     private var loadTask: Task<Void, Error>?
     // Track which ASR model version is loaded to allow switching between v2 and v3
@@ -219,11 +220,17 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
-                AppLog.dictation.log("[Parakeet] VAD begin")
-                if let trimmed = try await applyVADIfAvailable(samples, overrides: autoOverrides), trimmed.count >= 16_000 {
-                    samples = trimmed
+                let audioDurationSeconds = Double(samples.count) / 16_000.0
+                // Conditional VAD: only apply to audio longer than 3 seconds (like VoiceInk)
+                if audioDurationSeconds > 3.0 {
+                    AppLog.dictation.log("[Parakeet] VAD begin (audio duration: \(String(format: "%.1f", audioDurationSeconds))s)")
+                    if let trimmed = try await applyVADIfAvailable(samples, overrides: autoOverrides), trimmed.count >= 16_000 {
+                        samples = trimmed
+                    }
+                    AppLog.dictation.log("[Parakeet] VAD end")
+                } else {
+                    AppLog.dictation.log("[Parakeet] VAD skipped for short audio (\(String(format: "%.1f", audioDurationSeconds))s)")
                 }
-                AppLog.dictation.log("[Parakeet] VAD end")
             }
         } catch {
             AppLog.dictation.error("[Parakeet] VAD failed: \(error.localizedDescription)")
@@ -308,7 +315,22 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // Returns trimmed samples if VAD finds speech; nil otherwise
     private func applyVADIfAvailable(_ samples: [Float], overrides: AutoOverrides?) async throws -> [Float]? {
-        guard let vad = try await ensureVadManager(preferredThreshold: overrides?.vadThreshold) else { return nil }
+        // Adaptive VAD threshold: use higher threshold for longer audio (like VoiceInk)
+        let audioDurationSeconds = Double(samples.count) / 16_000.0
+        let baseThreshold = overrides?.vadThreshold 
+            ?? (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double) 
+            ?? 0.5
+        
+        let adaptiveThreshold: Double
+        if audioDurationSeconds > 20.0 {
+            // Longer audio: use stricter threshold to filter background noise
+            adaptiveThreshold = max(baseThreshold, 0.7)
+            AppLog.dictation.log("[Parakeet] VAD using adaptive threshold \(String(format: "%.2f", adaptiveThreshold)) for long audio (\(String(format: "%.1f", audioDurationSeconds))s)")
+        } else {
+            adaptiveThreshold = baseThreshold
+        }
+        
+        guard let vad = try await ensureVadManager(preferredThreshold: adaptiveThreshold) else { return nil }
         if samples.isEmpty { return nil }
         // Use 0.6 segmentation API for robust trimming
         var segCfg = VadSegmentationConfig.default
