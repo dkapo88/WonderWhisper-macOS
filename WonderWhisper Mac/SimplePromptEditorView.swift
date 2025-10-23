@@ -49,11 +49,15 @@ struct SimplePromptEditorView: View {
   private var captureSection: some View {
     GroupBox("Context inputs") {
       VStack(alignment: .leading, spacing: 12) {
+        Text("Simple Mode uses on-device OCR to capture key names and terms from the active window when screen context is enabled.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
         Toggle("Use screen context", isOn: Binding(
           get: { settings.enableScreenContext },
           set: { vm.setSimpleScreenContext($0, for: kind) }
         ))
-        .help("When on, a screenshot + OCR text are sent so the model can resolve names and tone.")
+        .help("When on, WonderWhisper OCRs the active window locally and sends the extracted keywords to the model.")
 
         Toggle("Use clipboard", isOn: Binding(
           get: { settings.enableClipboardContext },
@@ -66,6 +70,13 @@ struct SimplePromptEditorView: View {
           set: { vm.setSimpleSelectedText($0, for: kind) }
         ))
         .help("Send highlighted text from the current app into the prompt.")
+        .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
+
+        if kind == .assistant {
+          Toggle("Attach screenshot to prompt", isOn: includeImageBinding)
+            .help("Adds the active window screenshot alongside the OCR keywords for extra visual context.")
+            .disabled(!settings.enableScreenContext)
+        }
       }
       .padding(.top, 4)
     }
@@ -190,5 +201,12 @@ private extension SimplePromptEditorView {
 
   var singleKeyOptions: [HotkeyManager.Selection] {
     HotkeyManager.Selection.allCases
+  }
+
+  var includeImageBinding: Binding<Bool> {
+    Binding(
+      get: { kind == .assistant ? vm.simpleAssistant.includeScreenImage : false },
+      set: { vm.setSimpleIncludeImage($0, for: kind) }
+    )
   }
 }

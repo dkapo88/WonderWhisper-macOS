@@ -39,6 +39,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case scratchpad
   case dictation
   case assistant
+  case history
   case settings
 
   var id: String { rawValue }
@@ -48,6 +49,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .scratchpad: return "Scratchpad"
     case .dictation: return "Dictation"
     case .assistant: return "Assistant"
+    case .history: return "History"
     case .settings: return "Settings"
     }
   }
@@ -57,6 +59,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .scratchpad: return "square.and.pencil"
     case .dictation: return "mic.fill"
     case .assistant: return "wand.and.stars"
+    case .history: return "clock.arrow.circlepath"
     case .settings: return "gearshape.fill"
     }
   }
@@ -82,17 +85,20 @@ struct SimplePromptSettings: Codable, Equatable {
   var enableClipboardContext: Bool
   var enableSelectedText: Bool
   var selection: HotkeyManager.Selection?
+  var includeScreenImage: Bool
 
   init(rules: [SimplePromptRule],
        enableScreenContext: Bool,
        enableClipboardContext: Bool,
        enableSelectedText: Bool,
-       selection: HotkeyManager.Selection?) {
+       selection: HotkeyManager.Selection?,
+       includeScreenImage: Bool) {
     self.rules = rules
     self.enableScreenContext = enableScreenContext
     self.enableClipboardContext = enableClipboardContext
     self.enableSelectedText = enableSelectedText
     self.selection = selection
+    self.includeScreenImage = includeScreenImage
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -102,6 +108,7 @@ struct SimplePromptSettings: Codable, Equatable {
     case enableSelectedText
     case selection
     case legacyShortcut = "shortcut"
+    case includeScreenImage
   }
 
   init(from decoder: Decoder) throws {
@@ -111,6 +118,7 @@ struct SimplePromptSettings: Codable, Equatable {
     enableClipboardContext = try container.decode(Bool.self, forKey: .enableClipboardContext)
     enableSelectedText = try container.decode(Bool.self, forKey: .enableSelectedText)
     selection = try container.decodeIfPresent(HotkeyManager.Selection.self, forKey: .selection)
+    includeScreenImage = try container.decodeIfPresent(Bool.self, forKey: .includeScreenImage) ?? false
     // Ignore legacy shortcut combos; simple mode now uses single-key selections only.
   }
 
@@ -121,6 +129,7 @@ struct SimplePromptSettings: Codable, Equatable {
     try container.encode(enableClipboardContext, forKey: .enableClipboardContext)
     try container.encode(enableSelectedText, forKey: .enableSelectedText)
     try container.encodeIfPresent(selection, forKey: .selection)
+    try container.encode(includeScreenImage, forKey: .includeScreenImage)
   }
 
   func sanitized() -> SimplePromptSettings {
@@ -132,7 +141,8 @@ struct SimplePromptSettings: Codable, Equatable {
       enableScreenContext: enableScreenContext,
       enableClipboardContext: enableClipboardContext,
       enableSelectedText: enableSelectedText,
-      selection: selection
+      selection: selection,
+      includeScreenImage: includeScreenImage
     )
   }
 }
@@ -194,7 +204,8 @@ enum SimpleModeDefaults {
         enableScreenContext: true,
         enableClipboardContext: false,
         enableSelectedText: true,
-        selection: .fnGlobe
+        selection: .fnGlobe,
+        includeScreenImage: false
       )
     case .assistant:
       return SimplePromptSettings(
@@ -202,7 +213,8 @@ enum SimpleModeDefaults {
         enableScreenContext: true,
         enableClipboardContext: true,
         enableSelectedText: true,
-        selection: .rightCommand
+        selection: .rightCommand,
+        includeScreenImage: false
       )
     }
   }
@@ -367,6 +379,9 @@ enum SimplePromptComposer {
     prompt.screenContextOverride = settings.enableScreenContext
     prompt.clipboardContextOverride = settings.enableClipboardContext
     prompt.selectedTextOverride = settings.enableSelectedText
+    prompt.screenContextCaptureOverride = settings.enableScreenContext ? .text : nil
+    prompt.screenContextPreprocessingOverride = settings.enableScreenContext ? .onDevice : nil
+    prompt.includeScreenImageOverride = settings.includeScreenImage
 
     switch kind {
     case .dictation:

@@ -61,19 +61,11 @@ struct ContentView: View {
     @ObservedObject var vm: DictationViewModel
     @State private var proSelection: SidebarItem? = .home
 
-    private let simpleItems: [SimpleSidebarItem] = [.scratchpad, .dictation, .assistant, .settings]
+    private let simpleItems: [SimpleSidebarItem] = [.scratchpad, .dictation, .assistant, .history, .settings]
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Mode", selection: $vm.interfaceMode) {
-                    ForEach(InterfaceMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 12)
-
+            VStack(spacing: 0) {
                 if vm.interfaceMode == .simple {
                     List(selection: Binding<SimpleSidebarItem?>(
                         get: { vm.simpleSidebarSelection },
@@ -88,6 +80,7 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.sidebar)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(selection: $proSelection) {
                         Section("WonderWhisper") {
@@ -104,9 +97,13 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.sidebar)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+
+                ModeToggle(mode: $vm.interfaceMode)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
             }
-            .padding(.top, 12)
             .navigationTitle("WonderWhisper")
         } detail: {
             if vm.interfaceMode == .simple {
@@ -120,6 +117,9 @@ struct ContentView: View {
                 case .assistant:
                     SimplePromptEditorView(vm: vm, kind: .assistant)
                         .navigationTitle("Assistant")
+                case .history:
+                    SimpleHistoryView(vm: vm)
+                        .navigationTitle("History")
                 case .settings:
                     SimpleModeSettingsView(vm: vm)
                         .navigationTitle("Simple Settings")
@@ -161,6 +161,46 @@ struct ContentView: View {
         }
     }
 }
+
+private struct ModeToggle: View {
+    @Binding var mode: InterfaceMode
+
+    var body: some View {
+        GeometryReader { geometry in
+            let segmentWidth = geometry.size.width / 2
+            ZStack(alignment: mode == .simple ? .leading : .trailing) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.1))
+                Capsule()
+                    .fill(mode == .simple ? Color.blue : Color.red)
+                    .frame(width: segmentWidth - 8)
+                    .padding(4)
+                    .animation(.easeInOut(duration: 0.25), value: mode)
+
+                HStack(spacing: 0) {
+                    modeButton(for: .simple, width: segmentWidth)
+                    modeButton(for: .pro, width: segmentWidth)
+                }
+            }
+        }
+        .frame(height: 46)
+    }
+
+    private func modeButton(for candidate: InterfaceMode, width: CGFloat) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                mode = candidate
+            }
+        } label: {
+            Text(candidate.displayName)
+                .font(.headline)
+                .foregroundColor(mode == candidate ? .white : .primary)
+                .frame(width: width, height: 46)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 #Preview {
     ContentView(vm: DictationViewModel())
 }

@@ -1302,6 +1302,14 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
+    func setSimpleIncludeImage(_ include: Bool, for kind: SimplePromptKind) {
+        guard kind == .assistant else { return }
+        var settings = simpleSettings(for: kind)
+        guard settings.includeScreenImage != include else { return }
+        settings.includeScreenImage = include
+        applySimpleSettings(settings, for: kind)
+    }
+
     func addSimpleRule(for kind: SimplePromptKind) {
         var settings = simpleSettings(for: kind)
         settings.rules.append(SimplePromptRule(text: ""))
@@ -1431,6 +1439,12 @@ final class DictationViewModel: ObservableObject {
         if interfaceMode == .simple && !isSwitchingInterfaceMode {
             screenContextEnabled = simpleShouldEnableScreenContext()
             clipboardContextEnabled = simpleShouldEnableClipboard()
+            if screenContextCaptureMode != .text {
+                screenContextCaptureMode = .text
+            }
+            if screenContextPreprocessingMode != .onDevice {
+                screenContextPreprocessingMode = .onDevice
+            }
             applySimplePrompts()
         }
     }
@@ -1546,8 +1560,8 @@ final class DictationViewModel: ObservableObject {
         transcriptionModel = "parakeet-local"
         screenContextEnabled = simpleShouldEnableScreenContext()
         clipboardContextEnabled = simpleShouldEnableClipboard()
-        screenContextCaptureMode = .image
-        screenContextPreprocessingMode = .off
+        screenContextCaptureMode = .text
+        screenContextPreprocessingMode = .onDevice
 
         updateProvidersImmediately()
     }
@@ -1909,6 +1923,7 @@ final class DictationViewModel: ObservableObject {
         let useSelectedText = resolvedSelectedText(for: prompt)
         let captureMode = resolvedScreenContextCaptureMode(for: prompt)
         let preprocessingMode = resolvedScreenContextPreprocessingMode(for: prompt)
+        let includeScreenImage = resolvedScreenImage(for: prompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
 
         return Task {
@@ -1927,6 +1942,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateSelectedTextEnabled(useSelectedText)
             await controller.updateScreenContextPreprocessingMode(preprocessingMode)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
+            await controller.updateScreenImageEnabled(includeScreenImage)
         }
     }
 
@@ -2294,6 +2310,14 @@ private extension DictationViewModel {
             return override
         }
         return true
+    }
+
+    func resolvedScreenImage(for prompt: PromptConfiguration?) -> Bool {
+        guard resolvedScreenContext(for: prompt) else { return false }
+        if let override = prompt?.includeScreenImageOverride {
+            return override
+        }
+        return false
     }
 
     func resolvedVoiceModel(for prompt: PromptConfiguration?) -> String {

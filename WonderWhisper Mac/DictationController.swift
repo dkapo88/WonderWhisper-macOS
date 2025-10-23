@@ -21,6 +21,7 @@ actor DictationController {
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
     private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
+    private var screenImageEnabled: Bool = false
     private var clipboardContextEnabled: Bool = false
     private var selectedTextEnabled: Bool = true
     private var currentRecordingURL: URL?
@@ -246,6 +247,12 @@ actor DictationController {
                             }
                         }
                     }
+                    if screenImageEnabled, let snapshot = preCapturedScreenSnapshot {
+                        screenAttachment = snapshot.asAttachment()
+                        if screenMethod == nil {
+                            screenMethod = snapshot.method.rawValue
+                        }
+                    }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
@@ -332,7 +339,7 @@ actor DictationController {
             appNameHist = pair.0
             bundleIDHist = screenContextEnabled ? pair.1 : nil
             let totalDT = Date().timeIntervalSince(overallStart)
-            let imageForHistory = captureModeForSession == .image ? preCapturedScreenSnapshot : nil
+            let imageForHistory = (captureModeForSession == .image || (screenImageEnabled && preCapturedScreenSnapshot != nil)) ? preCapturedScreenSnapshot : nil
             await history?.append(
                 fileURL: recordingFileURL ?? currentRecordingURL,
                 appName: appNameHist,
@@ -361,7 +368,7 @@ actor DictationController {
             let pair = screenContext.frontmostAppNameAndBundle()
             appNameHist = pair.0
             bundleIDHist = screenContextEnabled ? pair.1 : nil
-            let imageForHistory = captureModeForSession == .image ? preCapturedScreenSnapshot : nil
+            let imageForHistory = (captureModeForSession == .image || (screenImageEnabled && preCapturedScreenSnapshot != nil)) ? preCapturedScreenSnapshot : nil
             let textForHistory = (captureModeForSession == .text) ? preCapturedScreenText : nil
             // Capture selected text dynamically for error case (preCapturedSelectedText may not be set)
             let selectedTextForHistory: String? = {
@@ -382,7 +389,7 @@ actor DictationController {
                 output: "",
                 screenContext: textForHistory,
                 screenContextMethod: (captureModeForSession == .text) ? preCapturedScreenMethod : imageForHistory?.method.rawValue,
-                screenImage: captureModeForSession == .image ? preCapturedScreenSnapshot : nil,
+                screenImage: imageForHistory,
                 selectedText: selectedTextForHistory,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
@@ -420,6 +427,7 @@ actor DictationController {
         }
     }
     func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
+    func updateScreenImageEnabled(_ enabled: Bool) { self.screenImageEnabled = enabled }
 
     func clearConversationHistory(for promptID: UUID) {
         conversationHistoryStore.clearHistory(for: promptID)
@@ -617,6 +625,14 @@ extension DictationController {
                     self.preCapturedScreenText = trimmed
                     self.preCapturedScreenMethod = "OCR"
                 }
+            }
+        }
+
+        if screenImageEnabled && preCapturedScreenSnapshot == nil {
+            let snapshot = await screenContext.captureActiveWindowImage()
+            self.preCapturedScreenSnapshot = snapshot
+            if let method = snapshot?.method.rawValue {
+                self.preCapturedScreenMethod = method
             }
         }
     }

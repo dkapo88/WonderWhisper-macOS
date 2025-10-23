@@ -16,6 +16,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var selectedTextOverride: Bool?
   var screenContextCaptureOverride: ScreenContextCaptureMode?
   var screenContextPreprocessingOverride: ScreenContextPreprocessingMode?
+  var includeScreenImageOverride: Bool?
   var triggerOnSelectedText: Bool
   var conversationModeEnabled: Bool
   var conversationContextMessages: Int
@@ -35,6 +36,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        selectedTextOverride: Bool? = nil,
        screenContextCaptureOverride: ScreenContextCaptureMode? = nil,
        screenContextPreprocessingOverride: ScreenContextPreprocessingMode? = nil,
+       includeScreenImageOverride: Bool? = nil,
        triggerOnSelectedText: Bool = false,
        conversationModeEnabled: Bool = false,
        conversationContextMessages: Int = 5) {
@@ -53,6 +55,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.selectedTextOverride = selectedTextOverride
     self.screenContextCaptureOverride = screenContextCaptureOverride
     self.screenContextPreprocessingOverride = screenContextPreprocessingOverride
+    self.includeScreenImageOverride = includeScreenImageOverride
     self.triggerOnSelectedText = triggerOnSelectedText
     self.conversationModeEnabled = conversationModeEnabled
     self.conversationContextMessages = conversationContextMessages
@@ -74,6 +77,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case selectedTextOverride
     case screenContextCaptureOverride
     case screenContextPreprocessingOverride
+    case includeScreenImageOverride
     case triggerOnSelectedText
     case conversationModeEnabled
     case conversationContextMessages
@@ -99,6 +103,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     triggerOnSelectedText = try container.decodeIfPresent(Bool.self, forKey: .triggerOnSelectedText) ?? false
     conversationModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .conversationModeEnabled) ?? false
     conversationContextMessages = try container.decodeIfPresent(Int.self, forKey: .conversationContextMessages) ?? 5
+    includeScreenImageOverride = try container.decodeIfPresent(Bool.self, forKey: .includeScreenImageOverride)
 
     if let mode = try container.decodeIfPresent(ScreenContextPreprocessingMode.self, forKey: .screenContextPreprocessingOverride) {
       screenContextPreprocessingOverride = mode
@@ -126,6 +131,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(selectedTextOverride, forKey: .selectedTextOverride)
     try container.encodeIfPresent(screenContextCaptureOverride, forKey: .screenContextCaptureOverride)
     try container.encodeIfPresent(screenContextPreprocessingOverride, forKey: .screenContextPreprocessingOverride)
+    try container.encodeIfPresent(includeScreenImageOverride, forKey: .includeScreenImageOverride)
     try container.encode(triggerOnSelectedText, forKey: .triggerOnSelectedText)
     try container.encode(conversationModeEnabled, forKey: .conversationModeEnabled)
     try container.encode(conversationContextMessages, forKey: .conversationContextMessages)
