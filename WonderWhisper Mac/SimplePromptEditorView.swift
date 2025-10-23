@@ -124,9 +124,17 @@ struct SimplePromptEditorView: View {
   private var rulesSection: some View {
     GroupBox("Rule list") {
       VStack(alignment: .leading, spacing: 12) {
-        Text("The list below feeds directly into the system prompt. Reorder, edit, or remove items to match your workflow.")
-          .font(.caption)
-          .foregroundColor(.secondary)
+        HStack {
+          Text("The list below feeds directly into the system prompt. Reorder, edit, or remove items to match your workflow.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Spacer()
+          Button("Restore defaults") {
+            vm.restoreSimpleRules(for: kind)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
 
         VStack(alignment: .leading, spacing: 12) {
           ForEach(Array(settings.rules.enumerated()), id: \.element.id) { index, rule in

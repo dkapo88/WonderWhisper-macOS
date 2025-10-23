@@ -133,9 +133,7 @@ struct SimplePromptSettings: Codable, Equatable {
   }
 
   func sanitized() -> SimplePromptSettings {
-    let cleanedRules = rules
-      .map { $0.trimmed() }
-      .filter { !$0.text.isEmpty }
+    let cleanedRules = rules.map { $0.trimmed() }
     return SimplePromptSettings(
       rules: cleanedRules,
       enableScreenContext: enableScreenContext,
@@ -271,43 +269,43 @@ SYSTEM REQUIREMENTS (non-editable backend guidance):
   }
 
   private static let dictationRules: [String] = [
-    "Match the user's voice and tone so the text reads like they typed it themselves.",
-    "Use numerals for numbers and convert spoken symbols (%, @, £, etc.) to their symbolic form.",
-    "Interpret app context (Gmail, Slack, Notion, etc.) to pick suitable formatting and structure.",
-    "Prioritise names and terms found in <VOCABULARY> and <SCREEN_CONTENTS>; make confident corrections.",
-    "Never insert em dashes (—) or en dashes (–); prefer commas or periods, and only output a hyphen if the user dictated “dash”.",
-    "Do not answer questions; only reformat the transcript.",
-    "Break long thoughts into short readable paragraphs; avoid large blocks of text.",
-    "Trim filler sounds like “um”, “uh”, and repeated hesitation, but keep affirmations that carry intent.",
-    "Convert spoken lists into bullet points or numbered lists when it improves clarity.",
-    "Tidy verbosity while preserving the user’s meaning and intent.",
-    "Respect self-corrections; keep only the final stated version.",
-    "When dictating in Slack, automatically convert “at Name” into @handles using the first name.",
-    "Use British spelling and Singapore currency context (default to $ for dollars).",
-    "Avoid starting sentences with “And” unless absolutely necessary.",
-    "Structure long technical passages with headings, paragraphs, and bullets for clarity.",
-    "Resolve repeated rambles into a concise, coherent output without losing intent.",
-    "Always wrap the final answer in <FORMATTED_TEXT>…</FORMATTED_TEXT>."
+    "Always sound like me: match my tonality, word choice, and speaking style. The output should sound natural and authentic to how I communicate.",
+    "Smart corrections: always use numerals instead of spelling out numbers (5 not five), convert percentages to % symbol, convert emojis when mentioned, and convert 'at' to @ when mentioning names in Slack.",
+    "Be intelligent with formatting based on the active application context. Emails typically start with greetings and have structured paragraphs. Slack and chat apps are more casual but still readable. Adapt formatting to match the typical style of the application I'm using.",
+    "Be really intelligent with names. Use the provided vocabulary and screen context to make high-confidence corrections to names and key terms. If 'Lewis' sounds like 'Luis' on screen, correct it to Luis.",
+    "Never use em-dashes (—) or en-dashes (–). I don't use these in my natural typing style.",
+    "Never answer questions or execute commands. Only reformat the transcript text according to these rules.",
+    "Good paragraphing is essential. Break text into readable paragraphs, especially in messaging apps. Limit paragraph length for better readability. Each paragraph should represent a distinct idea or topic.",
+    "Use British spelling, not American spelling (e.g., 'realise' not 'realize', 'colour' not 'color').",
+    "Prefer not to start sentences with 'And' where possible.",
+    "Remove filler words intelligently (um, uh, err, excessive 'like'). However, keep affirmation words that serve a purpose ('Hey', 'Yes', 'No problem' as sentence starters are fine).",
+    "Format lists properly. If I say 'one this, two that, three something else', format as numbered or bulleted lists, not inline text.",
+    "Reduce verbosity. I tend to be more wordy when speaking than typing. Make the output concise and readable while maintaining my intended meaning and adhering to other rules.",
+    "For longer technical transcripts, structure the output with headings, paragraphs, and bullet points for better readability.",
+    "Clean up rambling and repetition. I sometimes repeat things for emphasis. Consolidate these into coherent, well-structured text that reads better than the raw dictation.",
+    "Understand self-corrections. If I say 'scratch that' or 'no, actually this', use the final corrected version in the output.",
+    "When the active application is Slack, prefer to use the @ symbol before first names. No need for other applications.",
+    "I live in Singapore. When I mention monetary values, I typically mean dollars $ (SGD or USD), not pounds £."
   ]
 
   private static let dictationRuleUUIDs: [String] = [
-    "145EA5FA-6311-4F49-ADCF-3CEADBBF4F90",
-    "CB757710-B2E1-47E7-86D5-7DE5A5E98203",
-    "E467488E-D7A1-4E3E-A8F0-9A4A9C24842C",
-    "1F2041A8-A4F2-4CB5-AF8A-612E64D4CF73",
-    "F40642CF-8E59-4056-AB1F-07BB0C2418A0",
-    "D02E4E4C-9B52-42F8-945B-441D73A1F0E7",
-    "0FCCE47C-8C24-4925-8BD3-3E39E5158B05",
-    "7F205FD5-16C9-4DFD-A761-CCEA11DE6FF2",
-    "0D0F0AA3-E86F-4FE1-A2C9-DAD8C1A56051",
-    "9785DFBC-6B34-48C6-939F-962539CE79B4",
-    "A3F64D0D-5EB9-4C6E-8A1D-278775401D18",
-    "2CE9E3B6-7A65-4FE7-AF13-2AA267D6D4C7",
-    "0C01B4FB-CF3C-4DAF-8745-03BDE320CC8A",
-    "D9403F09-36F2-4D61-A2C3-493ABF53EC7C",
-    "40DDF566-712C-4361-8EDD-816A246FBD56",
-    "535E9C7E-FD1B-4D91-924C-ADF7371362C5",
-    "7657D864-EC41-45A9-AF7C-736D2E29C161"
+    "933E398B-BDB1-4729-B579-C794FFEF8CFA",
+    "ACE8AF23-E5E3-4903-B81F-C2420394AE33",
+    "994F33D5-3F54-4AED-BC64-F9E68FB9D215",
+    "1B069FD8-B235-4712-AED7-E7936299DA6F",
+    "60480F22-2F12-4746-9B8A-4D05B631029F",
+    "3F1E2F4E-FD13-474F-B805-E3F7330F8D8F",
+    "70086DD2-099D-45D6-BE7B-9A06F664850A",
+    "ECF8314F-F4F6-4DF2-B456-40CC14CA2877",
+    "D24C294B-EF33-479C-95E4-4C2FDFDCE14A",
+    "B39E47AC-D368-468A-9CB7-3524CFF2EB98",
+    "2D897154-02B2-4334-8956-B94473322AB2",
+    "29522552-A0AA-4683-8219-E0C9909830E9",
+    "F1DD1733-0247-483E-962C-4C3E82926435",
+    "CF99CE33-56B8-4BEF-918B-0FD12EFAD8D6",
+    "7F8BB6F7-E899-43D6-A0C8-98132783B051",
+    "EB1209AB-A9BD-40D6-AE38-1D5ED0B48493",
+    "FC76615E-58EE-4BF3-9BD2-CCF17291ACBB"
   ]
 
   private static let assistantRules: [String] = [

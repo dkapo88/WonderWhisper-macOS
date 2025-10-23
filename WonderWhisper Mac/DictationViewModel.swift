@@ -1316,6 +1316,12 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
+    func restoreSimpleRules(for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        settings.rules = SimpleModeDefaults.rules(for: kind)
+        applySimpleSettings(settings, for: kind)
+    }
+
     func updateSimpleRule(kind: SimplePromptKind, ruleID: UUID, text: String) {
         var settings = simpleSettings(for: kind)
         guard let idx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }

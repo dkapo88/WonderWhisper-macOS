@@ -252,6 +252,12 @@ actor DictationController {
                         if screenMethod == nil {
                             screenMethod = snapshot.method.rawValue
                         }
+                        let imageGuidance = makeScreenInstruction(from: snapshot, appName: appNameForPrompt)
+                        if let existing = screenContentsForPrompt, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            screenContentsForPrompt = existing + "\n\n" + imageGuidance
+                        } else {
+                            screenContentsForPrompt = imageGuidance
+                        }
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
