@@ -13,6 +13,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var voiceLanguageOverride: String?
   var screenContextOverride: Bool?
   var clipboardContextOverride: Bool?
+  var selectedTextOverride: Bool?
   var screenContextCaptureOverride: ScreenContextCaptureMode?
   var screenContextPreprocessingOverride: ScreenContextPreprocessingMode?
   var triggerOnSelectedText: Bool
@@ -31,6 +32,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        voiceLanguageOverride: String? = nil,
        screenContextOverride: Bool? = nil,
        clipboardContextOverride: Bool? = nil,
+       selectedTextOverride: Bool? = nil,
        screenContextCaptureOverride: ScreenContextCaptureMode? = nil,
        screenContextPreprocessingOverride: ScreenContextPreprocessingMode? = nil,
        triggerOnSelectedText: Bool = false,
@@ -48,6 +50,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.voiceLanguageOverride = voiceLanguageOverride
     self.screenContextOverride = screenContextOverride
     self.clipboardContextOverride = clipboardContextOverride
+    self.selectedTextOverride = selectedTextOverride
     self.screenContextCaptureOverride = screenContextCaptureOverride
     self.screenContextPreprocessingOverride = screenContextPreprocessingOverride
     self.triggerOnSelectedText = triggerOnSelectedText
@@ -68,6 +71,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case voiceLanguageOverride
     case screenContextOverride
     case clipboardContextOverride
+    case selectedTextOverride
     case screenContextCaptureOverride
     case screenContextPreprocessingOverride
     case triggerOnSelectedText
@@ -90,6 +94,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     voiceLanguageOverride = try container.decodeIfPresent(String.self, forKey: .voiceLanguageOverride)
     screenContextOverride = try container.decodeIfPresent(Bool.self, forKey: .screenContextOverride)
     clipboardContextOverride = try container.decodeIfPresent(Bool.self, forKey: .clipboardContextOverride)
+    selectedTextOverride = try container.decodeIfPresent(Bool.self, forKey: .selectedTextOverride)
     screenContextCaptureOverride = try container.decodeIfPresent(ScreenContextCaptureMode.self, forKey: .screenContextCaptureOverride)
     triggerOnSelectedText = try container.decodeIfPresent(Bool.self, forKey: .triggerOnSelectedText) ?? false
     conversationModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .conversationModeEnabled) ?? false
@@ -118,6 +123,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(voiceLanguageOverride, forKey: .voiceLanguageOverride)
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)
     try container.encodeIfPresent(clipboardContextOverride, forKey: .clipboardContextOverride)
+    try container.encodeIfPresent(selectedTextOverride, forKey: .selectedTextOverride)
     try container.encodeIfPresent(screenContextCaptureOverride, forKey: .screenContextCaptureOverride)
     try container.encodeIfPresent(screenContextPreprocessingOverride, forKey: .screenContextPreprocessingOverride)
     try container.encode(triggerOnSelectedText, forKey: .triggerOnSelectedText)

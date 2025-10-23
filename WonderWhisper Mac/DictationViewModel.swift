@@ -52,6 +52,35 @@ final class DictationViewModel: ObservableObject {
     // User prompt is an additional user message appended after the structured transcript context
     @Published var userPrompt: String = "" { didSet { updateActivePrompt(userText: userPrompt) } }
 
+    @Published var interfaceMode: InterfaceMode = DictationViewModel.loadInterfaceMode() {
+        didSet { interfaceModeDidChange(from: oldValue) }
+    }
+    @Published private var simpleDictationSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .dictation) {
+        didSet { simpleSettingsDidChange(kind: .dictation, oldValue: oldValue) }
+    }
+    @Published private var simpleAssistantSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .assistant) {
+        didSet { simpleSettingsDidChange(kind: .assistant, oldValue: oldValue) }
+    }
+    @Published var simpleScratchpadText: String = DictationViewModel.loadSimpleScratchpad() {
+        didSet { persistSimpleScratchpad() }
+    }
+    @Published var simpleSelectedModel: String = DictationViewModel.loadSimpleSelectedModel() {
+        didSet { simpleModelDidChange(oldValue: oldValue) }
+    }
+    @Published var simpleCustomModels: [String] = DictationViewModel.loadSimpleCustomModels() {
+        didSet { persistSimpleCustomModels() }
+    }
+    @Published var simpleLLMEnabled: Bool = DictationViewModel.loadSimpleLLMEnabled() {
+        didSet { simpleLLMEnabledDidChange(oldValue: oldValue) }
+    }
+    @Published var simpleSidebarSelection: SimpleSidebarItem = DictationViewModel.loadSimpleSidebarSelection() {
+        didSet { simpleSidebarSelectionDidChange(oldValue: oldValue) }
+    }
+
+    var simpleDictation: SimplePromptSettings { simpleDictationSettings }
+    var simpleAssistant: SimplePromptSettings { simpleAssistantSettings }
+    var simpleModelOptions: [SimpleModelOption] { SimpleModeDefaults.modelOptions(custom: simpleCustomModels) }
+
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     // Groq Whisper options
@@ -203,6 +232,11 @@ final class DictationViewModel: ObservableObject {
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
+    private var proSnapshot: ProModeSnapshot?
+    private var isSwitchingInterfaceMode: Bool = false
+    private var isApplyingSimplePrompts: Bool = false
+    private var isUpdatingSimpleSidebar: Bool = false
+    private var suppressSimpleSidebarSync: Bool = false
     private var recordingStartTimestamp: Date? = nil  // Track optimistic recording start to prevent timer race
     private var recordingStartInProgress: Bool = false
     private var idleSkipCounter: Int = 0
@@ -287,22 +321,38 @@ final class DictationViewModel: ObservableObject {
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
 
+        var activeTranscriptionModel = persistedTranscriptionModel
+        var activeLLMEnabled = persistedLLMEnabled
+        var activeScreenContextEnabled = persistedScreenContextEnabled
+        var activeClipboardContextEnabled = persistedClipboardContextEnabled
+        var activeLLMModel = persistedLLMModel
+        var activeLLMProvider = persistedLLMProvider
+
+        if interfaceMode == .simple {
+            activeTranscriptionModel = "parakeet-local"
+            activeLLMEnabled = simpleLLMEnabled
+            activeScreenContextEnabled = simpleShouldEnableScreenContext()
+            activeClipboardContextEnabled = simpleShouldEnableClipboard()
+            activeLLMModel = simpleSelectedModel
+            activeLLMProvider = "openrouter"
+        }
+
         var transcriber: TranscriptionProvider = GroqTranscriptionProvider(client: http)
         var transcriberSettings = TranscriptionSettings(
             endpoint: AppConfig.groqAudioTranscriptions,
-            model: persistedTranscriptionModel,
+            model: activeTranscriptionModel,
             timeout: max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
         )
-        if persistedTranscriptionModel.lowercased().contains("parakeet") || persistedTranscriptionModel.lowercased().contains("local") {
+        if activeTranscriptionModel.lowercased().contains("parakeet") || activeTranscriptionModel.lowercased().contains("local") {
             transcriber = ParakeetTranscriptionProvider()
             // Dummy settings to satisfy interface (not used by local provider)
-            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: persistedTranscriptionModel)
-        } else if persistedTranscriptionModel == "assemblyai-streaming" {
+            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: activeTranscriptionModel)
+        } else if activeTranscriptionModel == "assemblyai-streaming" {
             let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
             transcriber = AssemblyAIStreamingProvider(apiKey: key)
             // Endpoint not used by streaming provider but keep required contract
-            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: persistedTranscriptionModel, timeout: 180)
-        } else if persistedTranscriptionModel == "soniox-streaming" {
+            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: activeTranscriptionModel, timeout: 180)
+        } else if activeTranscriptionModel == "soniox-streaming" {
             let provider = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
             transcriber = provider
             let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
@@ -319,8 +369,8 @@ final class DictationViewModel: ObservableObject {
 
         var llm: LLMProvider
         var llmSettings: LLMSettings
-        let canonicalPersistedModel = Self.canonicalLLMModel(for: persistedLLMModel, provider: persistedLLMProvider)
-        switch persistedLLMProvider.lowercased() {
+        let canonicalPersistedModel = Self.canonicalLLMModel(for: activeLLMModel, provider: activeLLMProvider)
+        switch activeLLMProvider.lowercased() {
         case "openrouter":
             llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
             llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
@@ -366,10 +416,10 @@ final class DictationViewModel: ObservableObject {
         clipboardContextEnabled = persistedClipboardContextEnabled
 
         Task {
-            await controller.updateLLMEnabled(persistedLLMEnabled)
-            await controller.updateScreenContextEnabled(persistedScreenContextEnabled)
+            await controller.updateLLMEnabled(activeLLMEnabled)
+            await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
-            await controller.updateClipboardContextEnabled(persistedClipboardContextEnabled)
+            await controller.updateClipboardContextEnabled(activeClipboardContextEnabled)
             await controller.updateScreenContextPreprocessingMode(persistedPreprocessMode)
             await controller.updateScreenOrganizePrompt(persistedOrganizePrompt)
         }
@@ -378,6 +428,12 @@ final class DictationViewModel: ObservableObject {
             Task { await self?.handlePromptHotkey(id: id, phase: phase) }
         }
         refreshPromptHotkeys()
+
+        if interfaceMode == .simple {
+            enterSimpleMode()
+        } else {
+            proSnapshot = nil
+        }
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -1119,6 +1175,10 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistAndUpdate() {
+        if interfaceMode == .simple {
+            updateProviders()
+            return
+        }
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
@@ -1163,6 +1223,10 @@ final class DictationViewModel: ObservableObject {
 
     private func persistPromptLibrary() {
         if isApplyingPromptFromSelection { return }
+        if interfaceMode == .simple {
+            persistSimplePromptSelection()
+            return
+        }
         let defaults = UserDefaults.standard
         if let data = try? JSONEncoder().encode(prompts) {
             defaults.set(data, forKey: "prompts.library")
@@ -1174,6 +1238,359 @@ final class DictationViewModel: ObservableObject {
         defaults.set(userPrompt, forKey: "llm.userMessage")
     }
 
+    // MARK: - Simple Mode Helpers
+
+    private func simpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
+        switch kind {
+        case .dictation: return simpleDictationSettings
+        case .assistant: return simpleAssistantSettings
+        }
+    }
+
+    private func withSimpleSidebarSyncSuppressed(_ action: () -> Void) {
+        let previous = suppressSimpleSidebarSync
+        suppressSimpleSidebarSync = true
+        action()
+        suppressSimpleSidebarSync = previous
+    }
+
+    private func sanitizedSimpleSettings(_ settings: SimplePromptSettings, for kind: SimplePromptKind) -> SimplePromptSettings {
+        var sanitized = settings.sanitized()
+        if sanitized.rules.isEmpty {
+            sanitized.rules = SimpleModeDefaults.rules(for: kind)
+        }
+        return sanitized
+    }
+
+    private func applySimpleSettings(_ settings: SimplePromptSettings, for kind: SimplePromptKind) {
+        let sanitized = sanitizedSimpleSettings(settings, for: kind)
+        switch kind {
+        case .dictation:
+            guard simpleDictationSettings != sanitized else { return }
+            simpleDictationSettings = sanitized
+        case .assistant:
+            guard simpleAssistantSettings != sanitized else { return }
+            simpleAssistantSettings = sanitized
+        }
+    }
+
+    func setSimpleScreenContext(_ value: Bool, for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        guard settings.enableScreenContext != value else { return }
+        settings.enableScreenContext = value
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func setSimpleClipboard(_ value: Bool, for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        guard settings.enableClipboardContext != value else { return }
+        settings.enableClipboardContext = value
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func setSimpleSelectedText(_ value: Bool, for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        guard settings.enableSelectedText != value else { return }
+        settings.enableSelectedText = value
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func setSimpleSelection(_ selection: HotkeyManager.Selection?, for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        guard settings.selection != selection else { return }
+        settings.selection = selection
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func addSimpleRule(for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        settings.rules.append(SimplePromptRule(text: ""))
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func updateSimpleRule(kind: SimplePromptKind, ruleID: UUID, text: String) {
+        var settings = simpleSettings(for: kind)
+        guard let idx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        if settings.rules[idx].text == text { return }
+        settings.rules[idx].text = text
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func removeSimpleRule(kind: SimplePromptKind, ruleID: UUID) {
+        var settings = simpleSettings(for: kind)
+        guard let idx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        settings.rules.remove(at: idx)
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func moveSimpleRule(kind: SimplePromptKind, from offsets: IndexSet, to destination: Int) {
+        var settings = simpleSettings(for: kind)
+        settings.rules.move(fromOffsets: offsets, toOffset: destination)
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func addCustomSimpleModel(id: String) {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if simpleCustomModels.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) { return }
+        simpleCustomModels.append(trimmed)
+        if interfaceMode == .simple {
+            simpleSelectedModel = trimmed
+        }
+    }
+
+    func removeCustomSimpleModel(id: String) {
+        simpleCustomModels.removeAll { $0.caseInsensitiveCompare(id) == .orderedSame }
+        if simpleSelectedModel.caseInsensitiveCompare(id) == .orderedSame {
+            simpleSelectedModel = SimpleModeDefaults.defaultModelID
+        }
+    }
+
+    private func persistSimpleSettings(kind: SimplePromptKind, settings: SimplePromptSettings) {
+        let sanitized = sanitizedSimpleSettings(settings, for: kind)
+        let key = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.assistantSettings
+        if let data = try? JSONEncoder().encode(sanitized) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private func persistSimpleScratchpad() {
+        UserDefaults.standard.set(simpleScratchpadText, forKey: SimpleDefaultsKey.scratchpad)
+    }
+
+    private func persistSimpleCustomModels() {
+        var seen: Set<String> = []
+        let cleaned = simpleCustomModels.compactMap { entry -> String? in
+            let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return trimmed
+        }
+        if cleaned != simpleCustomModels {
+            simpleCustomModels = cleaned
+            return
+        }
+        UserDefaults.standard.set(cleaned, forKey: SimpleDefaultsKey.customModels)
+        if interfaceMode == .simple && !isSwitchingInterfaceMode {
+            applySimplePrompts()
+        }
+    }
+
+    private func simpleModelDidChange(oldValue: String) {
+        let trimmed = simpleSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let final = trimmed.isEmpty ? SimpleModeDefaults.defaultModelID : trimmed
+        if final != simpleSelectedModel {
+            simpleSelectedModel = final
+            return
+        }
+        if final == oldValue { return }
+        UserDefaults.standard.set(final, forKey: SimpleDefaultsKey.selectedModel)
+        if interfaceMode == .simple && !isSwitchingInterfaceMode {
+            llmModel = final
+            applySimplePrompts()
+        }
+    }
+
+    private func simpleLLMEnabledDidChange(oldValue: Bool) {
+        if simpleLLMEnabled == oldValue { return }
+        UserDefaults.standard.set(simpleLLMEnabled, forKey: SimpleDefaultsKey.llmEnabled)
+        if interfaceMode == .simple && !isSwitchingInterfaceMode {
+            llmEnabled = simpleLLMEnabled
+            updateProviders()
+        }
+    }
+
+    private func simpleSidebarSelectionDidChange(oldValue: SimpleSidebarItem) {
+        if simpleSidebarSelection == oldValue { return }
+        if !isUpdatingSimpleSidebar {
+            persistSimpleSidebarSelection()
+        }
+        guard interfaceMode == .simple else { return }
+        guard let kind = promptKind(forSidebar: simpleSidebarSelection) else { return }
+        let targetID = kind.promptID
+        guard selectedPromptID != targetID else { return }
+        isApplyingPromptFromSelection = true
+        selectedPromptID = targetID
+        if let prompt = prompts.first(where: { $0.id == targetID }) {
+            systemPrompt = prompt.systemPrompt
+            userPrompt = prompt.userPrompt
+        }
+        isApplyingPromptFromSelection = false
+    }
+
+    private func persistSimpleSidebarSelection() {
+        UserDefaults.standard.set(simpleSidebarSelection.rawValue, forKey: SimpleDefaultsKey.sidebar)
+    }
+
+    private func simpleSettingsDidChange(kind: SimplePromptKind, oldValue: SimplePromptSettings) {
+        let current = simpleSettings(for: kind)
+        if current == oldValue { return }
+        persistSimpleSettings(kind: kind, settings: current)
+        if interfaceMode == .simple && !isSwitchingInterfaceMode {
+            screenContextEnabled = simpleShouldEnableScreenContext()
+            clipboardContextEnabled = simpleShouldEnableClipboard()
+            applySimplePrompts()
+        }
+    }
+
+    private func persistSimplePromptSelection() {
+        guard interfaceMode == .simple else { return }
+        if !suppressSimpleSidebarSync,
+           let sidebar = sidebarItem(forPromptID: selectedPromptID),
+           simpleSidebarSelection != sidebar {
+            isUpdatingSimpleSidebar = true
+            simpleSidebarSelection = sidebar
+            isUpdatingSimpleSidebar = false
+        }
+        persistSimpleSidebarSelection()
+    }
+
+    private func sidebarItem(forPromptID id: UUID?) -> SimpleSidebarItem? {
+        guard let id else { return nil }
+        if id == SimplePromptKind.dictation.promptID { return .dictation }
+        if id == SimplePromptKind.assistant.promptID { return .assistant }
+        return nil
+    }
+
+    private func promptKind(forSidebar item: SimpleSidebarItem) -> SimplePromptKind? {
+        switch item {
+        case .dictation: return .dictation
+        case .assistant: return .assistant
+        default: return nil
+        }
+    }
+
+    private func buildSimplePromptConfigurations() -> [PromptConfiguration] {
+        let dictation = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
+        let assistant = sanitizedSimpleSettings(simpleAssistantSettings, for: .assistant)
+        return [
+            SimplePromptComposer.configuration(for: .dictation, settings: dictation, llmModel: simpleSelectedModel, provider: "openrouter"),
+            SimplePromptComposer.configuration(for: .assistant, settings: assistant, llmModel: simpleSelectedModel, provider: "openrouter")
+        ]
+    }
+
+    private func simpleShouldEnableScreenContext() -> Bool {
+        simpleDictationSettings.enableScreenContext || simpleAssistantSettings.enableScreenContext
+    }
+
+    private func simpleShouldEnableClipboard() -> Bool {
+        simpleDictationSettings.enableClipboardContext || simpleAssistantSettings.enableClipboardContext
+    }
+
+    private func applySimplePrompts(preferredKind: SimplePromptKind? = nil) {
+        guard interfaceMode == .simple else { return }
+        if isApplyingSimplePrompts { return }
+        let configs = buildSimplePromptConfigurations()
+        guard !configs.isEmpty else { return }
+        isApplyingSimplePrompts = true
+        let currentKind = preferredKind ?? promptKind(forSidebar: simpleSidebarSelection) ?? .dictation
+        let targetID = configs.contains(where: { $0.id == currentKind.promptID }) ? currentKind.promptID : configs[0].id
+        isApplyingPromptFromSelection = true
+        prompts = configs
+        selectedPromptID = targetID
+        if let active = configs.first(where: { $0.id == targetID }) ?? configs.first {
+            systemPrompt = active.systemPrompt
+            userPrompt = active.userPrompt
+        }
+        isApplyingPromptFromSelection = false
+        if let sidebar = sidebarItem(forPromptID: targetID), !isUpdatingSimpleSidebar, simpleSidebarSelection != sidebar {
+            isUpdatingSimpleSidebar = true
+            simpleSidebarSelection = sidebar
+            isUpdatingSimpleSidebar = false
+        }
+        isApplyingSimplePrompts = false
+        updateProvidersImmediately()
+    }
+
+    private func interfaceModeDidChange(from oldValue: InterfaceMode) {
+        guard interfaceMode != oldValue else { return }
+        UserDefaults.standard.set(interfaceMode.rawValue, forKey: SimpleDefaultsKey.interfaceMode)
+        switch interfaceMode {
+        case .simple:
+            enterSimpleMode()
+        case .pro:
+            exitSimpleMode()
+        }
+    }
+
+    private func enterSimpleMode() {
+        isSwitchingInterfaceMode = true
+        defer { isSwitchingInterfaceMode = false }
+
+        proSnapshot = ProModeSnapshot(
+            prompts: prompts,
+            selectedPromptID: selectedPromptID,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            llmModel: llmModel,
+            llmProvider: llmProvider,
+            llmEnabled: llmEnabled,
+            screenContextEnabled: screenContextEnabled,
+            clipboardContextEnabled: clipboardContextEnabled,
+            screenContextCaptureMode: screenContextCaptureMode,
+            screenContextPreprocessingMode: screenContextPreprocessingMode,
+            transcriptionModel: transcriptionModel
+        )
+
+        // Ensure settings are sanitized before applying
+        simpleDictationSettings = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
+        simpleAssistantSettings = sanitizedSimpleSettings(simpleAssistantSettings, for: .assistant)
+
+        applySimplePrompts()
+
+        llmEnabled = simpleLLMEnabled
+        llmProvider = "openrouter"
+        llmModel = simpleSelectedModel
+        transcriptionModel = "parakeet-local"
+        screenContextEnabled = simpleShouldEnableScreenContext()
+        clipboardContextEnabled = simpleShouldEnableClipboard()
+        screenContextCaptureMode = .image
+        screenContextPreprocessingMode = .off
+
+        updateProvidersImmediately()
+    }
+
+    private func exitSimpleMode() {
+        isSwitchingInterfaceMode = true
+        defer { isSwitchingInterfaceMode = false }
+
+        guard let snapshot = proSnapshot else {
+            // Fallback to stored defaults if no snapshot is available
+            let storedSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
+            let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
+            let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: AppConfig.defaultDictationPrompt)
+            isApplyingPromptFromSelection = true
+            prompts = promptBootstrap.prompts
+            selectedPromptID = promptBootstrap.selectedID
+            systemPrompt = promptBootstrap.activeSystem
+            userPrompt = promptBootstrap.activeUser
+            isApplyingPromptFromSelection = false
+            updateProvidersImmediately()
+            return
+        }
+
+        isApplyingPromptFromSelection = true
+        prompts = snapshot.prompts
+        selectedPromptID = snapshot.selectedPromptID
+        systemPrompt = snapshot.systemPrompt
+        userPrompt = snapshot.userPrompt
+        isApplyingPromptFromSelection = false
+
+        llmModel = snapshot.llmModel
+        llmProvider = snapshot.llmProvider
+        llmEnabled = snapshot.llmEnabled
+        screenContextEnabled = snapshot.screenContextEnabled
+        clipboardContextEnabled = snapshot.clipboardContextEnabled
+        screenContextCaptureMode = snapshot.screenContextCaptureMode
+        screenContextPreprocessingMode = snapshot.screenContextPreprocessingMode
+        transcriptionModel = snapshot.transcriptionModel
+
+        updateProvidersImmediately()
+        persistPromptLibrary()
+    }
+
     private func applySelection() {
         guard !isApplyingPromptFromSelection else { return }
         guard let prompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first else { return }
@@ -1181,6 +1598,15 @@ final class DictationViewModel: ObservableObject {
         systemPrompt = prompt.systemPrompt
         userPrompt = prompt.userPrompt
         isApplyingPromptFromSelection = false
+        if interfaceMode == .simple,
+           !isUpdatingSimpleSidebar,
+           !suppressSimpleSidebarSync,
+           let sidebar = sidebarItem(forPromptID: prompt.id),
+           simpleSidebarSelection != sidebar {
+            isUpdatingSimpleSidebar = true
+            simpleSidebarSelection = sidebar
+            isUpdatingSimpleSidebar = false
+        }
         persistPromptLibrary()
         updateProviders()
     }
@@ -1231,7 +1657,13 @@ final class DictationViewModel: ObservableObject {
 
                 // Select the prompt for this hotkey
                 await MainActor.run {
-                    if self.selectedPromptID != id {
+                    if self.interfaceMode == .simple {
+                        self.withSimpleSidebarSyncSuppressed {
+                            if self.selectedPromptID != id {
+                                self.selectedPromptID = id
+                            }
+                        }
+                    } else if self.selectedPromptID != id {
                         self.selectedPromptID = id
                     }
                 }
@@ -1474,6 +1906,7 @@ final class DictationViewModel: ObservableObject {
         let isLLMEnabled = llmEnabled
         let useScreenContext = resolvedScreenContext(for: prompt)
         let useClipboardContext = resolvedClipboardContext(for: prompt)
+        let useSelectedText = resolvedSelectedText(for: prompt)
         let captureMode = resolvedScreenContextCaptureMode(for: prompt)
         let preprocessingMode = resolvedScreenContextPreprocessingMode(for: prompt)
         let screenOrganizePromptToApply = screenOrganizePrompt
@@ -1491,6 +1924,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextEnabled(useScreenContext)
             await controller.updateScreenContextCaptureMode(captureMode)
             await controller.updateClipboardContextEnabled(useClipboardContext)
+            await controller.updateSelectedTextEnabled(useSelectedText)
             await controller.updateScreenContextPreprocessingMode(preprocessingMode)
             await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
         }
@@ -1655,6 +2089,77 @@ private struct PromptBootstrap {
     let activeUser: String
 }
 
+private struct ProModeSnapshot {
+    let prompts: [PromptConfiguration]
+    let selectedPromptID: UUID?
+    let systemPrompt: String
+    let userPrompt: String
+    let llmModel: String
+    let llmProvider: String
+    let llmEnabled: Bool
+    let screenContextEnabled: Bool
+    let clipboardContextEnabled: Bool
+    let screenContextCaptureMode: ScreenContextCaptureMode
+    let screenContextPreprocessingMode: ScreenContextPreprocessingMode
+    let transcriptionModel: String
+}
+
+private enum SimpleDefaultsKey {
+    static let interfaceMode = "interface.mode"
+    static let scratchpad = "simple.scratchpad.text"
+    static let dictationSettings = "simple.dictation.settings"
+    static let assistantSettings = "simple.assistant.settings"
+    static let selectedModel = "simple.model.selected"
+    static let customModels = "simple.model.custom"
+    static let llmEnabled = "simple.llm.enabled"
+    static let sidebar = "simple.sidebar.selection"
+}
+
+private extension DictationViewModel {
+    static func loadInterfaceMode() -> InterfaceMode {
+        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.interfaceMode) ?? InterfaceMode.pro.rawValue
+        return InterfaceMode(rawValue: raw) ?? .pro
+    }
+
+    static func loadSimpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
+        let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.assistantSettings
+        if let data = UserDefaults.standard.data(forKey: key),
+           let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
+            let sanitized = decoded.sanitized()
+            if sanitized.rules.isEmpty {
+                return SimpleModeDefaults.settings(for: kind)
+            }
+            return sanitized
+        }
+        return SimpleModeDefaults.settings(for: kind)
+    }
+
+    static func loadSimpleScratchpad() -> String {
+        UserDefaults.standard.string(forKey: SimpleDefaultsKey.scratchpad) ?? ""
+    }
+
+    static func loadSimpleSelectedModel() -> String {
+        let stored = UserDefaults.standard.string(forKey: SimpleDefaultsKey.selectedModel) ?? SimpleModeDefaults.defaultModelID
+        return stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? SimpleModeDefaults.defaultModelID : stored
+    }
+
+    static func loadSimpleCustomModels() -> [String] {
+        UserDefaults.standard.stringArray(forKey: SimpleDefaultsKey.customModels) ?? []
+    }
+
+    static func loadSimpleLLMEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: SimpleDefaultsKey.llmEnabled) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: SimpleDefaultsKey.llmEnabled)
+    }
+
+    static func loadSimpleSidebarSelection() -> SimpleSidebarItem {
+        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.scratchpad.rawValue
+        return SimpleSidebarItem(rawValue: raw) ?? .scratchpad
+    }
+}
+
 private extension DictationViewModel {
     static let favoritesDataKey = "llm.models.favorites.data"
     static let favoritesLegacyKey = "llm.models.favorites"
@@ -1782,6 +2287,13 @@ private extension DictationViewModel {
             return override
         }
         return screenContextPreprocessingMode
+    }
+
+    func resolvedSelectedText(for prompt: PromptConfiguration?) -> Bool {
+        if let override = prompt?.selectedTextOverride {
+            return override
+        }
+        return true
     }
 
     func resolvedVoiceModel(for prompt: PromptConfiguration?) -> String {

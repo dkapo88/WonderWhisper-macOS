@@ -22,6 +22,7 @@ actor DictationController {
     private var screenContextEnabled: Bool = true
     private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
     private var clipboardContextEnabled: Bool = false
+    private var selectedTextEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var preCapturedScreenSnapshot: ScreenCaptureSnapshot?
     private var preCapturedScreenText: String?
@@ -214,7 +215,7 @@ actor DictationController {
 
             var output = transcript
             var llmDT: TimeInterval = 0
-            let selected = screenContextEnabled ? preCapturedSelectedText : nil
+            let selected = (screenContextEnabled && selectedTextEnabled) ? preCapturedSelectedText : nil
             var screenContentsForPrompt: String? = nil
             var screenMethod: String? = nil
             var screenAttachment: LLMImageAttachment? = nil
@@ -363,7 +364,16 @@ actor DictationController {
             let imageForHistory = captureModeForSession == .image ? preCapturedScreenSnapshot : nil
             let textForHistory = (captureModeForSession == .text) ? preCapturedScreenText : nil
             // Capture selected text dynamically for error case (preCapturedSelectedText may not be set)
-            let selectedTextForHistory = screenContextEnabled ? (preCapturedSelectedText ?? screenContext.selectedText()) : nil
+            let selectedTextForHistory: String? = {
+                guard screenContextEnabled && selectedTextEnabled else { return nil }
+                if let cached = preCapturedSelectedText, !cached.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return cached
+                }
+                if let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return sel
+                }
+                return nil
+            }()
             await history?.append(
                 fileURL: recordingFileURL,
                 appName: appNameHist,
@@ -561,7 +571,7 @@ extension DictationController {
     private func preCaptureScreenContext() async {
         if !screenContextEnabled { return }
 
-        if let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if selectedTextEnabled, let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.preCapturedSelectedText = sel
         }
 
@@ -661,6 +671,12 @@ extension DictationController {
                 }
                 return nil
             }
+        }
+    }
+    func updateSelectedTextEnabled(_ enabled: Bool) async {
+        selectedTextEnabled = enabled
+        if !enabled {
+            preCapturedSelectedText = nil
         }
     }
 }
