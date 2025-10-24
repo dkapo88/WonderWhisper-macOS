@@ -711,20 +711,10 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             throw NSError(domain: "Parakeet", code: -1002, userInfo: [NSLocalizedDescriptionKey: "Audio appears near-silent; check microphone and input gain"])
         }
         
-        // Optional VAD (only for long audio like VoiceInk)
+        // Raw mode always keeps the full capture; skip VAD entirely so long-form dictations stay intact
         var finalSamples = samples
         let audioDurationSeconds = Double(samples.count) / 16_000.0
-        let isVADEnabled = (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true
-        
-        if audioDurationSeconds > 20.0 && isVADEnabled {
-            AppLog.dictation.log("[Parakeet] Raw mode: applying VAD for long audio (\(String(format: "%.1f", audioDurationSeconds))s)")
-            if let trimmed = try? await applyVADRawMode(samples), trimmed.count >= 16_000 {
-                finalSamples = trimmed
-                AppLog.dictation.log("[Parakeet] Raw mode: VAD trimmed to \(finalSamples.count) samples")
-            }
-        } else {
-            AppLog.dictation.log("[Parakeet] Raw mode: skipping VAD (duration: \(String(format: "%.1f", audioDurationSeconds))s)")
-        }
+        AppLog.dictation.log("[Parakeet] Raw mode: skipping VAD (duration: \(String(format: "%.1f", audioDurationSeconds))s)")
         
         // Transcribe WITHOUT source hint (VoiceInk-style)
         AppLog.dictation.log("[Parakeet] Raw mode: transcribing (no source hint)")

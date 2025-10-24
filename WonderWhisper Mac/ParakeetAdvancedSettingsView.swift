@@ -150,7 +150,7 @@ struct ParakeetAdvancedSettingsView: View {
                     .help("Skip ALL preprocessing (high-pass, pre-emphasis, RMS normalization). Uses simple WAV decoding like VoiceInk reference implementation. Recommended if experiencing hallucinations.")
                 
                 if rawMode {
-                    Text("⚠️ Raw mode bypasses all audio preprocessing. High-pass filter, pre-emphasis, RMS normalization, and auto-adjust are disabled. VAD is only applied to audio > 20 seconds.")
+                    Text("⚠️ Raw mode bypasses all audio preprocessing. High-pass filter, pre-emphasis, RMS normalization, and auto-adjust are disabled. VAD is skipped so the full capture is always transcribed.")
                         .font(.caption)
                         .foregroundColor(.orange)
                         .fixedSize(horizontal: false, vertical: true)

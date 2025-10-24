@@ -216,7 +216,7 @@ actor DictationController {
 
             var output = transcript
             var llmDT: TimeInterval = 0
-            let selected = (screenContextEnabled && selectedTextEnabled) ? preCapturedSelectedText : nil
+            let selected = resolveSelectedTextForSession()
             var screenContentsForPrompt: String? = nil
             var screenMethod: String? = nil
             var screenAttachment: LLMImageAttachment? = nil
@@ -377,16 +377,7 @@ actor DictationController {
             let imageForHistory = (captureModeForSession == .image || (screenImageEnabled && preCapturedScreenSnapshot != nil)) ? preCapturedScreenSnapshot : nil
             let textForHistory = (captureModeForSession == .text) ? preCapturedScreenText : nil
             // Capture selected text dynamically for error case (preCapturedSelectedText may not be set)
-            let selectedTextForHistory: String? = {
-                guard screenContextEnabled && selectedTextEnabled else { return nil }
-                if let cached = preCapturedSelectedText, !cached.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return cached
-                }
-                if let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return sel
-                }
-                return nil
-            }()
+            let selectedTextForHistory = resolveSelectedTextForSession()
             await history?.append(
                 fileURL: recordingFileURL,
                 appName: appNameHist,
@@ -582,11 +573,29 @@ actor DictationController {
 
 // MARK: - Pre-capture helpers
 extension DictationController {
+    private func resolveSelectedTextForSession() -> String? {
+        guard selectedTextEnabled else { return nil }
+
+        if let cached = preCapturedSelectedText?.trimmingCharacters(in: .whitespacesAndNewlines), !cached.isEmpty {
+            if cached != preCapturedSelectedText {
+                preCapturedSelectedText = cached
+            }
+            return cached
+        }
+
+        if let live = screenContext.selectedText()?.trimmingCharacters(in: .whitespacesAndNewlines), !live.isEmpty {
+            preCapturedSelectedText = live
+            return live
+        }
+
+        return nil
+    }
+
     private func preCaptureScreenContext() async {
         if !screenContextEnabled { return }
 
-        if selectedTextEnabled, let sel = screenContext.selectedText(), !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            self.preCapturedSelectedText = sel
+        if selectedTextEnabled {
+            _ = resolveSelectedTextForSession()
         }
 
         switch screenContextCaptureMode {
