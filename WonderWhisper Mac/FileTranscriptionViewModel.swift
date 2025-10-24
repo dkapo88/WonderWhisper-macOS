@@ -340,7 +340,8 @@ class FileTranscriptionViewModel: ObservableObject {
                 llmModel: result.configuration.llmModel,
                 transcriptionSeconds: result.transcriptionTime,
                 llmSeconds: result.llmProcessingTime,
-                totalSeconds: result.totalTime
+                totalSeconds: result.totalTime,
+                copyFileOnly: true
             )
         }
     }

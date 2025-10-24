@@ -184,7 +184,8 @@ final class HistoryStore: ObservableObject {
                 llmModel: String?,
                 transcriptionSeconds: Double?,
                 llmSeconds: Double?,
-                totalSeconds: Double?) async {
+                totalSeconds: Double?,
+                copyFileOnly: Bool = false) async {
         let id = UUID()
         let date = Date()
         var audioFilename: String? = nil
@@ -196,14 +197,26 @@ final class HistoryStore: ObservableObject {
                 if FileManager.default.fileExists(atPath: dest.path) {
                     try FileManager.default.removeItem(at: dest)
                 }
-                try FileManager.default.moveItem(at: src, to: dest)
-                audioFilename = dest.lastPathComponent
-            } catch {
-                // If move fails (e.g., permission), try copy
-                do {
+                
+                if copyFileOnly {
+                    // For file transcription benchmarking, copy instead of move
                     try FileManager.default.copyItem(at: src, to: dest)
                     audioFilename = dest.lastPathComponent
-                } catch {
+                } else {
+                    // For dictation recordings, try move first (faster), fall back to copy
+                    try FileManager.default.moveItem(at: src, to: dest)
+                    audioFilename = dest.lastPathComponent
+                }
+            } catch {
+                // If move fails (e.g., permission), try copy
+                if !copyFileOnly {
+                    do {
+                        try FileManager.default.copyItem(at: src, to: dest)
+                        audioFilename = dest.lastPathComponent
+                    } catch {
+                        audioFilename = nil
+                    }
+                } else {
                     audioFilename = nil
                 }
             }
