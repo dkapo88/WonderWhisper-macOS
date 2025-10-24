@@ -6,8 +6,13 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   private let apiKeyProvider: () -> String?
   private let session: URLSession
   private var liveSession: SonioxLiveSession?
-  private let sampleRate: Double = 16_000
+  private let sampleRate: Double = 48_000
   private let channelCount: Int = 1
+  // Pre-handshake provider-level buffer so we can capture audio immediately
+  // even if the WebSocket handshake is still in progress.
+  private var prebuffer: [Data] = []
+  private var prebufferBytes: Int = 0
+  private let maxPrebufferBytes = 1_048_576 // 1 MB safeguard
 
   init(apiKeyProvider: @escaping () -> String?) {
     self.apiKeyProvider = apiKeyProvider
@@ -16,8 +21,6 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     config.waitsForConnectivity = true // Wait for connectivity
     config.httpAdditionalHeaders = config.httpAdditionalHeaders ?? [:]
     config.httpAdditionalHeaders?["User-Agent"] = "WonderWhisper-Mac/soniox"
-    config.httpAdditionalHeaders?["Connection"] = "Upgrade"
-    config.httpAdditionalHeaders?["Upgrade"] = "websocket"
     self.session = URLSession(configuration: config)
   }
 
@@ -28,7 +31,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let endpointDetection = Self.endpointDetectionEnabled()
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
-    let enhancedContext = Self.buildEnhancedContext(baseContext: settings.context)
+    let contextObject = Self.buildRequestContext(baseContext: settings.context)
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -37,10 +40,12 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: enhancedContext,
+      context: contextObject,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
+    // Flush any audio captured before handshake (rare for file path flow)
+    try await flushPrebufferInto(live)
     try await streamFile(at: fileURL, into: live)
     let timeout = Self.finalizationTimeout(for: settings.timeout)
     let text = try await live.finish(timeout: timeout)
@@ -59,7 +64,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let endpointDetection = Self.endpointDetectionEnabled()
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
-    let enhancedContext = Self.buildEnhancedContext(baseContext: settings.context)
+    let contextObject = Self.buildRequestContext(baseContext: settings.context)
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -68,16 +73,28 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: enhancedContext,
+      context: contextObject,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
+    // If any PCM frames were fed before the session was ready, flush them now.
+    try await flushPrebufferInto(live)
     liveSession = live
   }
 
   func feedPCM16(_ data: Data) async throws {
-    guard let liveSession else { return }
-    try await liveSession.enqueueAudio(data)
+    // If the live session isn't ready yet, buffer at the provider level.
+    if let live = liveSession {
+      try await live.enqueueAudio(data)
+    } else {
+      prebuffer.append(data)
+      prebufferBytes += data.count
+      // Trim prebuffer if it grows too large
+      while prebufferBytes > maxPrebufferBytes, !prebuffer.isEmpty {
+        let removed = prebuffer.removeFirst()
+        prebufferBytes -= removed.count
+      }
+    }
   }
 
   func endRealtime(trailingSilenceMs: Int? = nil) async throws -> String {
@@ -88,7 +105,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
     // Add trailing silence for better finalization accuracy
     // Reduced from 500ms to 100ms for faster response without sacrificing accuracy
-    let silenceMs = trailingSilenceMs ?? 100 // Default 100ms of silence (was 500ms)
+    let silenceMs = trailingSilenceMs ?? 200 // Default 200ms of silence to allow finalization
     if silenceMs > 0 {
       try await liveSession.addTrailingSilence(ms: silenceMs)
     }
@@ -190,10 +207,8 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
   private static func endpointDetectionEnabled() -> Bool {
     let defaults = UserDefaults.standard
-    if defaults.object(forKey: "soniox.endpointDetection") == nil {
-      // Default off to avoid premature cutoffs; match compare implementation defaults
-      return false
-    }
+    // Default ON for lower latency finalization per Soniox docs
+    if defaults.object(forKey: "soniox.endpointDetection") == nil { return true }
     return defaults.bool(forKey: "soniox.endpointDetection")
   }
 
@@ -221,28 +236,39 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     return clamped
   }
 
-  private static func buildEnhancedContext(baseContext: String?) -> String? {
-    var contextParts: [String] = []
-
-    // Add base context from transcription settings
-    if let base = baseContext, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      contextParts.append(base.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-
-    // Add keywords from the enhanced context system
+  // Build Soniox v3 context object from our stored fields.
+  private static func buildRequestContext(baseContext: String?) -> SonioxRequestContext? {
+    var textParts: [String] = []
     let defaults = UserDefaults.standard
-    if let keywords = defaults.string(forKey: "soniox.context.keywords"),
-       !keywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      contextParts.append(keywords.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
 
-    // Add paragraph context from the enhanced context system
+    if let base = baseContext, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      textParts.append(base.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
     if let paragraph = defaults.string(forKey: "soniox.context.paragraph"),
        !paragraph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      contextParts.append(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+      textParts.append(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    let text = textParts.isEmpty ? nil : textParts.joined(separator: "\n")
+
+    var terms: [String]? = nil
+    if let keywords = defaults.string(forKey: "soniox.context.keywords"),
+       !keywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      let split = keywords
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+      if !split.isEmpty { terms = split }
     }
 
-    return contextParts.isEmpty ? nil : contextParts.joined(separator: "\n")
+    if text == nil && terms == nil { return nil }
+    return SonioxRequestContext(general: nil, text: text, terms: terms, translationTerms: nil)
+  }
+
+  private func flushPrebufferInto(_ live: SonioxLiveSession) async throws {
+    guard !prebuffer.isEmpty else { return }
+    for chunk in prebuffer { try await live.enqueueAudio(chunk) }
+    prebuffer.removeAll(keepingCapacity: false)
+    prebufferBytes = 0
   }
 }
 
@@ -256,7 +282,7 @@ private actor SonioxLiveSession {
   private let enableEndpointDetection: Bool
   private let enableLanguageIdentification: Bool
   private let enableSpeakerDiarization: Bool
-  private let context: String?
+  private let context: SonioxRequestContext?
   private let keepAliveEnabled: Bool
   private let logger = AppLog.dictation
 
@@ -337,13 +363,14 @@ private actor SonioxLiveSession {
       apiKey: apiKey,
       model: settings.model,
       audioFormat: "pcm_s16le",
-      sampleRate: Int(16_000),
+      sampleRate: Int(48_000),
       numChannels: 1,
       languageHints: languageHints.isEmpty ? nil : languageHints,
       context: context,
-      enableEndpointDetection: false, // Disabled for faster response
-      enableLanguageIdentification: nil, // Disabled for faster response
-      enableSpeakerDiarization: nil, // Disabled for faster response
+      // Force endpoint detection ON for low latency and reliable finalization
+      enableEndpointDetection: true,
+      enableLanguageIdentification: enableLanguageIdentification ? true : nil,
+      enableSpeakerDiarization: enableSpeakerDiarization ? true : nil,
       clientReferenceId: UUID().uuidString
     )
     let encoder = JSONEncoder()
@@ -365,9 +392,7 @@ private actor SonioxLiveSession {
       retryCount = 0 // Reset retry count on successful handshake
       logger.log("Soniox: handshake sent successfully (model: \(self.settings.model), endpoint detection: \(self.enableEndpointDetection))")
 
-      // Reduced delay from 500ms to 50ms for faster response
-      try await Task.sleep(nanoseconds: 50_000_000) // 50ms (was 500ms)
-      logger.log("Soniox: handshake processing delay completed")
+      // Small delay is unnecessary with Soniox; proceed immediately
     } catch {
       logger.error("Soniox: handshake send failed \(error.localizedDescription, privacy: .public)")
       if retryCount < maxRetries && self.shouldRetry(error: error) {
@@ -513,36 +538,45 @@ private actor SonioxLiveSession {
 
   private func sendEnd() async throws {
     guard let task = webSocket else { return }
-    try await task.send(.string(""))
+    // Send empty binary frame to signal end-of-audio (per Soniox docs)
+    do {
+      try await task.send(.data(Data()))
+    } catch {
+      // Fallback to empty text frame
+      try await task.send(.string(""))
+    }
     readyForAudio = false
   }
 
   private func waitForFinalTranscript(timeout: TimeInterval) async throws -> String {
+    // If server already indicated error but we have text, return it
     if let error = pendingError {
+      let current = await accumulator.currentText()
+      if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return current }
       throw error
     }
     if await accumulator.hasFinished() {
       return await accumulator.finalTranscript()
     }
-    return try await withThrowingTaskGroup(of: String.self) { group in
-      group.addTask { try await self.awaitFinalTranscript() }
-      group.addTask {
-        try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-        throw ProviderError.networkError("Soniox realtime session timed out")
-      }
-      do {
+    do {
+      return try await withThrowingTaskGroup(of: String.self) { group in
+        group.addTask { try await self.awaitFinalTranscript() }
+        group.addTask {
+          try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+          throw ProviderError.networkError("Soniox realtime session timed out")
+        }
         if let result = try await group.next() {
           group.cancelAll()
           return result
         }
         throw ProviderError.networkError("Soniox realtime session ended unexpectedly")
-      } catch {
-        group.cancelAll()
-        throw error
       }
+    } catch {
+      // On timeout or transport error, return any accumulated text rather than failing hard
+      let current = await accumulator.currentText()
+      if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return current }
+      throw error
     }
-
-
   }
 
   private func awaitFinalTranscript() async throws -> String {
@@ -828,11 +862,20 @@ private struct SonioxHandshake: Encodable {
   let sampleRate: Int
   let numChannels: Int
   let languageHints: [String]?
-  let context: String?
+  let context: SonioxRequestContext?
   let enableEndpointDetection: Bool
   let enableLanguageIdentification: Bool?
   let enableSpeakerDiarization: Bool?
   let clientReferenceId: String
+}
+
+// Minimal Soniox v3 request context we support
+private struct SonioxRequestContext: Encodable {
+  struct KV: Encodable { let key: String; let value: String }
+  let general: [KV]?
+  let text: String?
+  let terms: [String]?
+  let translationTerms: [KV]?
 }
 
 private struct SonioxResponse: Decodable {
@@ -898,5 +941,9 @@ private actor SonioxTranscriptAccumulator {
 
   func finalTranscript() -> String {
     (finalTokens.joined() + interimText).trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  func currentText() -> String {
+    (finalTokens.joined() + interimText)
   }
 }

@@ -318,9 +318,9 @@ extension AudioRecorder {
             return
         }
 
-        // Create target format (16kHz, mono, 16-bit)
+        // Create target format (48kHz, mono, 16-bit) to match macOS default input
         guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: 16000.0,
+                                         sampleRate: 48000.0,
                                          channels: 1,
                                          interleaved: false) else {
             print("❌ Failed to create audio format")
@@ -328,8 +328,8 @@ extension AudioRecorder {
         }
         audioFormat = format
 
-        // Optimize buffer size for 16kHz (shorter buffers reduce perceived dropouts)
-        let bufferSize: AVAudioFrameCount = 160 // 10ms at 16kHz
+        // Optimize buffer size for 48kHz (shorter buffers reduce perceived dropouts)
+        let bufferSize: AVAudioFrameCount = 480 // ~10ms at 48kHz
 
         // Prepare audio buffers
         for _ in 0..<maxBuffers {
@@ -383,7 +383,7 @@ extension AudioRecorder {
                 energy += sample * sample
             }
             let rms = sqrtf(energy / Float(frameCount))
-            if rms < 0.0008 {
+            if rms < 0.0002 {
                 return
             }
         }
@@ -408,7 +408,7 @@ extension AudioRecorder {
         }
 
         // If input format matches target format, return as-is
-        if inputBuffer.format.sampleRate == 16000.0 &&
+        if inputBuffer.format.sampleRate == 48000.0 &&
            inputBuffer.format.channelCount == 1 {
             return inputBuffer
         }

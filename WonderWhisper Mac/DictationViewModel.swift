@@ -149,7 +149,8 @@ final class DictationViewModel: ObservableObject {
 
     // Soniox + streaming audio options
     @Published var sonioxEndpointDetection: Bool = {
-        if UserDefaults.standard.object(forKey: "soniox.endpointDetection") == nil { return false }
+        // Default ON to reduce tail latency per Soniox v3 guidance
+        if UserDefaults.standard.object(forKey: "soniox.endpointDetection") == nil { return true }
         return UserDefaults.standard.bool(forKey: "soniox.endpointDetection")
     }() { didSet { UserDefaults.standard.set(sonioxEndpointDetection, forKey: "soniox.endpointDetection") } }
     @Published var sonioxLanguageIdentification: Bool = {

@@ -90,7 +90,8 @@ You are an assistant that creates concise, human-friendly titles for notes. Outp
         return url
     }()
     static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
-    static let defaultSonioxModel = "stt-rt-preview-v2"
+    // Migrate to Soniox v3 real-time model; v2 is deprecated.
+    static let defaultSonioxModel = "stt-rt-v3"
 
     // OpenRouter header defaults
     static let openrouterTitle = "WonderWhisper Mac"

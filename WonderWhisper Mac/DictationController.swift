@@ -108,10 +108,12 @@ actor DictationController {
                         Task { try? await groq.feedPCM16(data) }
                     }
                 } else if let soniox = transcriber as? SonioxStreamingProvider {
-                    try await soniox.beginRealtime(settings: transcriberSettings)
+                    // Start capturing audio immediately; provider will prebuffer frames
+                    // until the WebSocket handshake completes.
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await soniox.feedPCM16(data) }
                     }
+                    try await soniox.beginRealtime(settings: transcriberSettings)
                 }
 
                 // Pre-capture screen context early so it is ready once recording stops
@@ -141,17 +143,10 @@ actor DictationController {
 
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
-        // Stop live streaming if active and abort any pending operations
+        // Stop live streaming if active
         recorder.stopStreamingPCM16()
-        if let aai = transcriber as? AssemblyAIStreamingProvider {
-            await aai.abortRealtimeSession()
-        } else if let dg = transcriber as? DeepgramStreamingProvider {
-            await dg.abort()
-        } else if let groq = transcriber as? GroqStreamingProvider {
-            await groq.abort()
-        } else if let soniox = transcriber as? SonioxStreamingProvider {
-            await soniox.abort()
-        }
+        // Do NOT abort streaming providers here; we want them to finalize
+        // and provide a fast, low-latency final transcript.
 
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
 
@@ -196,7 +191,18 @@ actor DictationController {
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else if let soniox = transcriber as? SonioxStreamingProvider {
-                transcript = try await soniox.endRealtime()
+                // Prefer Soniox live session transcript
+                do {
+                    transcript = try await soniox.endRealtime()
+                } catch {
+                    // On streaming failure, gracefully fallback to file-based transcription
+                    if let fileURL = recordingFileURL {
+                        AppLog.dictation.log("Streaming failed; fallback to file transcription")
+                        transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                    } else {
+                        throw error
+                    }
+                }
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
                     AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)

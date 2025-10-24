@@ -1,16 +1,16 @@
 # Soniox Streaming Integration Notes
 
-_Compiled 2024‑XX‑XX from <https://soniox.com/docs>_
+_Compiled 2025-10-24 from <https://soniox.com/docs>_
 
 ## Core Endpoints & Session Lifecycle
 
-- **WebSocket URL:** `wss://stt-rt.soniox.com/transcribe-websocket`  
+- **WebSocket URL:** `wss://stt-rt.soniox.com/transcribe-websocket`
   Source: “WebSocket API → WebSocket endpoint”.
 - **Handshake payload (JSON, first message):**
   ```json
   {
     "api_key": "<SONIOX_API_KEY|TEMP_KEY>",
-    "model": "stt-rt-preview-v2",
+    "model": "stt-rt-v3",
     "audio_format": "pcm_s16le",
     "sample_rate": 16000,
     "num_channels": 1,
@@ -30,7 +30,7 @@ _Compiled 2024‑XX‑XX from <https://soniox.com/docs>_
 |--------------------|-----------------------------------|-------|
 | Manual finalise     | `{"type":"finalize","trailing_silence_ms":150}` | Emits `<fin>` marker, finalises all pending tokens. |
 | Keep connection alive | `{"type":"keepalive"}`            | Required every ≤20 s during silence (“Connection keepalive”). |
-| Endpoint detection   | `enable_endpoint_detection: true` | Streams `<end>` when Soniox detects an utterance boundary (“Endpoint detection”). |
+| Endpoint detection   | `enable_endpoint_detection: true` | Finalizes tokens immediately on pause; reduces tail latency. |
 
 ## Response Semantics
 
@@ -44,7 +44,7 @@ _Compiled 2024‑XX‑XX from <https://soniox.com/docs>_
 
 ## Reliability Considerations
 
-1. **First-frame capture:** queue PCM frames until the socket is open and the handshake succeeds (mirrors Soniox Web SDK `RecordTranscribe`, which buffers while state is `OpeningWebSocket`).
+1. **First-frame capture:** buffer PCM frames before and during handshake, then flush once the socket is ready. We maintain a provider-level prebuffer plus a session buffer for reliability.
 2. **Final words:** always send `finalize` with a small `trailing_silence_ms`, then an empty frame, and wait for `finished`. Flush any locally buffered PCM before shutdown to avoid truncation.
 3. **Keepalive:** when VAD mutes output, start a 10 s heartbeat that sends `{"type":"keepalive"}`; cancel once audio resumes to keep the session alive without extra latency.
 4. **Endpoint detection:** enable to reduce tail latency—Soniox emits `<end>` once speech stops; treat it as a reliable “segment complete” marker but omit it from the rendered transcript.
@@ -52,7 +52,7 @@ _Compiled 2024‑XX‑XX from <https://soniox.com/docs>_
 
 ## Suggested Defaults for WonderWhisper
 
-- **Model ID:** `stt-rt-preview-v2` (latest low-latency Soniox streaming model).
+- **Model ID:** `stt-rt-v3` (current low-latency Soniox streaming model). `stt-rt-preview-v2` is deprecated.
 - **Language hints:** derive from user preference (`transcription.language`, fallback `["en"]`).
 - **Latency tuning:**
   - Send approx. 30 ms PCM chunks (current recorder default) for balance between responsiveness and bandwidth.
@@ -67,4 +67,3 @@ _Compiled 2024‑XX‑XX from <https://soniox.com/docs>_
 - **Temporary API keys:** server-side helper required if exposing Soniox directly to clients (not needed for WonderWhisper desktop yet).
 - **Speaker diarisation & translation:** available via flags; defer until baseline reliability is validated.
 - **Adaptive chunk sizing:** monitor for token drift on very long sessions; consider dynamic chunk window or periodic manual finalisation.
-
