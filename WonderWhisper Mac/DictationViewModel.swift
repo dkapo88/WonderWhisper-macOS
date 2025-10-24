@@ -928,6 +928,23 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func resolvedOpenRouterRouting(for prompt: PromptConfiguration?) -> String {
+        if let override = prompt?.openrouterRoutingOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        return openrouterRouting
+    }
+
+    func updateOpenRouterRoutingOverride(for id: UUID, to routing: String?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        updated.openrouterRoutingOverride = routing
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
     func updateVoiceOverride(for id: UUID, model overrideModel: String?, language overrideLanguage: String?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         let normalizedModel = overrideModel?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1900,8 +1917,9 @@ final class DictationViewModel: ObservableObject {
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
 
-        // Get cached LLM provider
-        let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt)
+        // Get cached LLM provider with resolved routing preference
+        let routingForActivePrompt = resolvedOpenRouterRouting(for: prompt)
+        let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt, routing: routingForActivePrompt)
 
         // Configure LLM settings based on provider
         switch providerForActivePrompt.lowercased() {
@@ -2071,8 +2089,8 @@ final class DictationViewModel: ObservableObject {
         return provider
     }
 
-    private func getCachedLLMProvider(for provider: String, model: String) -> LLMProvider? {
-        let cacheKey = "\(provider)::\(model)"
+    private func getCachedLLMProvider(for provider: String, model: String, routing: String? = nil) -> LLMProvider? {
+        let cacheKey = provider.lowercased() == "openrouter" ? "\(provider)::\(model)::\(routing ?? "default")" : "\(provider)::\(model)"
 
         // Check cache first
         if let cached = llmProviderCache[cacheKey] {
@@ -2086,7 +2104,11 @@ final class DictationViewModel: ObservableObject {
         switch provider.lowercased() {
         case "openrouter":
             GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-            providerInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+            let routingPref = routing ?? openrouterRouting
+            providerInstance = OpenRouterLLMProvider(
+                client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }),
+                routingPrefProvider: { routingPref }
+            )
         case "cerebras":
             GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
             providerInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))

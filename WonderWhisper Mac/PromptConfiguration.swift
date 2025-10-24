@@ -9,6 +9,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var selection: HotkeyManager.Selection?
   var llmModelOverride: String?
   var llmProviderOverride: String?
+  var openrouterRoutingOverride: String?
   var voiceModelOverride: String?
   var voiceLanguageOverride: String?
   var screenContextOverride: Bool?
@@ -70,6 +71,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case selection
     case llmModelOverride
     case llmProviderOverride
+    case openrouterRoutingOverride
     case voiceModelOverride
     case voiceLanguageOverride
     case screenContextOverride
@@ -124,6 +126,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(selection, forKey: .selection)
     try container.encodeIfPresent(llmModelOverride, forKey: .llmModelOverride)
     try container.encodeIfPresent(llmProviderOverride, forKey: .llmProviderOverride)
+    try container.encodeIfPresent(openrouterRoutingOverride, forKey: .openrouterRoutingOverride)
     try container.encodeIfPresent(voiceModelOverride, forKey: .voiceModelOverride)
     try container.encodeIfPresent(voiceLanguageOverride, forKey: .voiceLanguageOverride)
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)

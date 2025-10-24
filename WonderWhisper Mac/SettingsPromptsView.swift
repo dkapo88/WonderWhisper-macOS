@@ -348,7 +348,8 @@ struct SettingsPromptsView: View {
                             defaultModel: vm.llmModel,
                             provider: vm.llmProvider,
                             favorites: vm.favoriteLLMModels,
-                            onUpdate: { model, provider in vm.updateLLMOverride(for: prompt.id, model: model, provider: provider) }
+                            onUpdate: { model, provider in vm.updateLLMOverride(for: prompt.id, model: model, provider: provider) },
+                            onRoutingUpdate: { routing in vm.updateOpenRouterRoutingOverride(for: prompt.id, to: routing) }
                         )
 
                         PromptScreenContextEditor(
@@ -628,23 +629,28 @@ private struct PromptLLMModelEditor: View {
     let provider: String
     let favorites: [FavoriteLLMModel]
     let onUpdate: (String?, String?) -> Void
+    let onRoutingUpdate: (String?) -> Void
 
     @State private var modelDraft: String
     @State private var providerState: String
+    @State private var routingChoice: String
     @FocusState private var isFieldFocused: Bool
 
     init(prompt: PromptConfiguration,
          defaultModel: String,
          provider: String,
          favorites: [FavoriteLLMModel],
-         onUpdate: @escaping (String?, String?) -> Void) {
+         onUpdate: @escaping (String?, String?) -> Void,
+         onRoutingUpdate: @escaping (String?) -> Void) {
         self.prompt = prompt
         self.defaultModel = defaultModel
         self.provider = provider
         self.favorites = favorites
         self.onUpdate = onUpdate
+        self.onRoutingUpdate = onRoutingUpdate
         _modelDraft = State(initialValue: prompt.llmModelOverride ?? "")
         _providerState = State(initialValue: (prompt.llmProviderOverride ?? provider).lowercased())
+        _routingChoice = State(initialValue: prompt.openrouterRoutingOverride ?? "default")
     }
 
     var body: some View {
@@ -699,6 +705,40 @@ private struct PromptLLMModelEditor: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            if effectiveProvider.lowercased() == "openrouter" {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text("OpenRouter routing")
+                            .font(.subheadline)
+                            .bold()
+                        if hasRoutingOverride {
+                            Text("Override active")
+                                .font(.caption)
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+
+                    Picker("Routing preference", selection: $routingChoice) {
+                        Text("Use default").tag("default")
+                        Text("Prioritize latency").tag("latency")
+                        Text("Prioritize throughput").tag("throughput")
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: routingChoice) { newValue in
+                        let routing = newValue == "default" ? nil : newValue
+                        onRoutingUpdate(routing)
+                    }
+
+                    HStack {
+                        Spacer()
+                        Text("Using \(routingChoice == "default" ? "default" : routingChoice)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 6)
+            }
         }
         .onChange(of: prompt.llmModelOverride) { newValue in
             if !isFieldFocused {
@@ -709,6 +749,9 @@ private struct PromptLLMModelEditor: View {
             if !isFieldFocused {
                 providerState = (newValue ?? provider).lowercased()
             }
+        }
+        .onChange(of: prompt.openrouterRoutingOverride) { newValue in
+            routingChoice = newValue ?? "default"
         }
         .onChange(of: favorites) { _ in
             // Ensure provider state remains valid if favorites removed
@@ -722,6 +765,10 @@ private struct PromptLLMModelEditor: View {
         guard let override = prompt.llmModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
         if !override.isEmpty { return true }
         return providerState.caseInsensitiveCompare(provider) != .orderedSame
+    }
+
+    private var hasRoutingOverride: Bool {
+        return prompt.openrouterRoutingOverride != nil
     }
 
     private var effectiveModel: String {
