@@ -57,7 +57,7 @@ struct CerebrasHTTPClient {
         let model: String
         let messages: [Message]
         let temperature: Double
-        let stream: Bool?
+        var stream: Bool?
         let reasoning_effort: String?
     }
 

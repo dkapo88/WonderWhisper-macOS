@@ -32,6 +32,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
     let contextObject = Self.buildRequestContext(baseContext: settings.context)
+    let contextString = contextObject != nil ? (try? String(data: JSONEncoder().encode(contextObject!), encoding: .utf8)) : nil
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -40,7 +41,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: contextObject,
+      context: contextString,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
@@ -65,6 +66,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let langID = Self.languageIdentificationEnabled()
     let diarization = Self.speakerDiarizationEnabled()
     let contextObject = Self.buildRequestContext(baseContext: settings.context)
+    let contextString = contextObject != nil ? (try? String(data: JSONEncoder().encode(contextObject!), encoding: .utf8)) : nil
     let live = SonioxLiveSession(
       apiKeyProvider: apiKeyProvider,
       urlSession: session,
@@ -73,7 +75,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       enableEndpointDetection: endpointDetection,
       enableLanguageIdentification: langID,
       enableSpeakerDiarization: diarization,
-      context: contextObject,
+      context: contextString,
       keepAliveEnabled: Self.keepAliveEnabled()
     )
     try await live.start()
@@ -329,7 +331,7 @@ private actor SonioxLiveSession {
     self.enableEndpointDetection = enableEndpointDetection
     self.enableLanguageIdentification = enableLanguageIdentification
     self.enableSpeakerDiarization = enableSpeakerDiarization
-    self.context = context
+    self.context = context != nil ? (try? JSONDecoder().decode(SonioxRequestContext.self, from: context!.data(using: .utf8)!)) : nil
     self.keepAliveEnabled = keepAliveEnabled
     self.timeoutSeconds = settings.timeout
   }
@@ -870,8 +872,8 @@ private struct SonioxHandshake: Encodable {
 }
 
 // Minimal Soniox v3 request context we support
-private struct SonioxRequestContext: Encodable {
-  struct KV: Encodable { let key: String; let value: String }
+private struct SonioxRequestContext: Codable {
+  struct KV: Codable { let key: String; let value: String }
   let general: [KV]?
   let text: String?
   let terms: [String]?
