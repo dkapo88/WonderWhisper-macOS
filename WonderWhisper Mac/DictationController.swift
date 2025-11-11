@@ -70,13 +70,7 @@ actor DictationController {
                 AppLog.dictation.log("Recording start")
 
                 // Always start file recording as backup for all providers
-                // For Apple's native Speech provider, switch to a high-quality capture profile.
-                if transcriber is NativeAppleTranscriptionProvider {
-                    // Capture at 48 kHz float for better front‑end fidelity, then resample for ASR
-                    recorder.captureProfile = .appleNativeHighQuality
-                } else {
-                    recorder.captureProfile = .standard16k
-                }
+                recorder.captureProfile = .standard16k
 
                 // Update state IMMEDIATELY after starting recording for instant UI feedback
                 let url = try recorder.startRecording()
@@ -90,30 +84,12 @@ actor DictationController {
                     Task { await pk.warmUp() }
                 }
 
-                // If AssemblyAI v3 streaming is active, begin live session and stream mic frames
-                if let aai = transcriber as? AssemblyAIStreamingProvider {
-                    try await aai.beginRealtimeSession(sampleRate: 16_000)
-                    try? recorder.startStreamingPCM16 { data in
-                        Task { try? await aai.feedPCM16(data) }
-                    }
-                } else if let dg = transcriber as? DeepgramStreamingProvider {
-                    try await dg.beginRealtime()
-                    try? recorder.startStreamingPCM16 { data in
-                        Task { try? await dg.feedPCM16(data) }
-                    }
-                } else if let groq = transcriber as? GroqStreamingProvider {
+                if let groq = transcriber as? GroqStreamingProvider {
                     groq.updateSettings(transcriberSettings)
                     try await groq.beginRealtime()
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await groq.feedPCM16(data) }
                     }
-                } else if let soniox = transcriber as? SonioxStreamingProvider {
-                    // Start capturing audio immediately; provider will prebuffer frames
-                    // until the WebSocket handshake completes.
-                    try? recorder.startStreamingPCM16 { data in
-                        Task { try? await soniox.feedPCM16(data) }
-                    }
-                    try await soniox.beginRealtime(settings: transcriberSettings)
                 }
 
                 // Pre-capture screen context early so it is ready once recording stops
@@ -167,42 +143,9 @@ actor DictationController {
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
 
             os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
-            // Handle streaming providers first (prefer live, fallback to file if empty)
-            if let aai = transcriber as? AssemblyAIStreamingProvider {
-                // Prefer the live session's final transcript for speed
-                transcript = try await aai.endRealtimeSessionAndGetTranscript()
-                // If empty (fallback), run file-based for safety
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Streaming fallback to file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else if let dg = transcriber as? DeepgramStreamingProvider {
-                // Prefer Deepgram live session transcript gathered during recording
-                transcript = try await dg.endRealtime()
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Streaming fallback to file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else if let groq = transcriber as? GroqStreamingProvider {
+            if let groq = transcriber as? GroqStreamingProvider {
                 // Prefer Groq chunked streaming transcript for speed
                 transcript = try await groq.endRealtime()
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Streaming fallback to file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else if let soniox = transcriber as? SonioxStreamingProvider {
-                // Prefer Soniox live session transcript
-                do {
-                    transcript = try await soniox.endRealtime()
-                } catch {
-                    // On streaming failure, gracefully fallback to file-based transcription
-                    if let fileURL = recordingFileURL {
-                        AppLog.dictation.log("Streaming failed; fallback to file transcription")
-                        transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                    } else {
-                        throw error
-                    }
-                }
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
                     AppLog.dictation.log("Streaming fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
@@ -452,14 +395,8 @@ actor DictationController {
         // Stop live mic streaming if active
         recorder.stopStreamingPCM16()
         // Abort any active streaming provider sessions immediately (best-effort)
-        if let aai = transcriber as? AssemblyAIStreamingProvider {
-            await aai.abortRealtimeSession()
-        } else if let dg = transcriber as? DeepgramStreamingProvider {
-            await dg.abort()
-        } else if let groq = transcriber as? GroqStreamingProvider {
+        if let groq = transcriber as? GroqStreamingProvider {
             await groq.abort()
-        } else if let soniox = transcriber as? SonioxStreamingProvider {
-            await soniox.abort()
         }
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()

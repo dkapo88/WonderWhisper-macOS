@@ -12,16 +12,6 @@ struct AppConfig {
     static let groqAudioTranscriptions = groqBase.appendingPathComponent("audio/transcriptions")
     static let groqChatCompletions = groqBase.appendingPathComponent("chat/completions")
 
-    // OpenAI base and endpoints
-    private static let openAIBaseString = "https://api.openai.com/v1"
-    static let openAIBase: URL = {
-        guard let url = URL(string: openAIBaseString) else {
-            fatalError("Invalid OpenAI base URL")
-        }
-        return url
-    }()
-    static let openAIAudioTranscriptions = openAIBase.appendingPathComponent("audio/transcriptions")
-
     // OpenRouter base and endpoints (OpenAI-compatible)
     private static let openrouterBaseString = "https://openrouter.ai/api/v1"
     static let openrouterBase: URL = {
@@ -33,26 +23,6 @@ struct AppConfig {
     static let openrouterChatCompletions = openrouterBase.appendingPathComponent("chat/completions")
     static let openrouterModels = openrouterBase.appendingPathComponent("models")
 
-    // Cerebras base and endpoints (OpenAI-compatible)
-    private static let cerebrasBaseString = "https://api.cerebras.ai/v1"
-    static let cerebrasBase: URL = {
-        guard let url = URL(string: cerebrasBaseString) else {
-            fatalError("Invalid Cerebras base URL")
-        }
-        return url
-    }()
-    static let cerebrasChatCompletions = cerebrasBase.appendingPathComponent("chat/completions")
-
-    // Ollama local base and endpoints
-    private static let ollamaBaseString = "http://localhost:11434/api"
-    static let ollamaBase: URL = {
-        guard let url = URL(string: ollamaBaseString) else {
-            fatalError("Invalid Ollama base URL")
-        }
-        return url
-    }()
-    static let ollamaChatCompletions = ollamaBase.appendingPathComponent("chat")
-
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
@@ -61,38 +31,10 @@ struct AppConfig {
     // Legacy prompt previously used for OCR screen content organization
     static let defaultScreenOrganizePrompt: String = "Organize the captured screen context into a concise summary and list of key terms."
 
-    static let scratchpadTitleSystemPrompt: String = """
-You are an assistant that creates concise, human-friendly titles for notes. Output must never include quotation marks or trailing punctuation. Keep the title within 6 words and use Title Case.
-"""
-
-    static let scratchpadTitleUserPrompt: String = "Generate a short title (max 6 words) for the note inside <NOTE_CONTENT>. Respond with the title only, no prefixes or suffixes."
-
     // Keychain alias for the Groq API key
     static let groqAPIKeyAlias = "GROQ_API_KEY"
-    // Keychain alias for the OpenAI API key
-    static let openaiAPIKeyAlias = "OPENAI_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
-    // Keychain alias for the Cerebras API key
-    static let cerebrasAPIKeyAlias = "CEREBRAS_API_KEY"
-
-    // Keychain alias for the AssemblyAI API key
-    static let assemblyAIAPIKeyAlias = "ASSEMBLYAI_API_KEY"
-
-    // Keychain alias for the Deepgram API key
-    static let deepgramAPIKeyAlias = "DEEPGRAM_API_KEY"
-
-    // Soniox realtime streaming endpoint + aliases
-    static let sonioxRealtime: URL = {
-        guard let url = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket") else {
-            fatalError("Invalid Soniox realtime URL")
-        }
-        return url
-    }()
-    static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
-    // Migrate to Soniox v3 real-time model; v2 is deprecated.
-    static let defaultSonioxModel = "stt-rt-v3"
-
     // OpenRouter header defaults
     static let openrouterTitle = "WonderWhisper Mac"
     static let openrouterReferer = "https://wonderwhisper.app"

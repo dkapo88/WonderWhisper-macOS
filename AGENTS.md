@@ -9,6 +9,11 @@ Note to agents and contributors: Keep this document up to date with any changes.
 ## Project Structure & Module Organization
 WonderWhisper Mac stores SwiftUI sources under `WonderWhisper Mac/`, with views, view models, and helpers grouped by feature. Shared assets live in `Resources/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `WonderWhisper MacTests/`, and UI automation lives in `WonderWhisper MacUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
+## Feature Scope & Providers
+- The app ships a single window with four tabs: Dictation, Command, History, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- Transcription uses either Groq Whisper Large V3 Turbo (`groq-streaming`) or local Parakeet V3 (`parakeet-local`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
+- All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
+
 ## Build, Test, and Development Commands
 Use `open "WonderWhisper Mac.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug build`. Execute tests with `xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test`. After a successful build, `open build/Debug/WonderWhisper\ Mac.app` launches the latest artifact.
 
@@ -34,4 +39,5 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 - When in doubt, link to source files/paths instead of duplicating long content.
 
 ## Changelog
+- 2025-11-11: Documented the slimmed-down Dictation/Command surface, Groq/Parakeet transcription engines, and OpenRouter-only LLM stack.
 - 2025-10-25: Linked `datamodel.md`, added maintenance notes and agent guidance.

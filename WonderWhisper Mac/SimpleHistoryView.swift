@@ -16,7 +16,7 @@ struct SimpleHistoryView: View {
             .foregroundColor(.secondary)
           Text("No history yet")
             .font(.headline)
-          Text("Run a dictation or assistant request to see it appear here.")
+          Text("Run a dictation or command request to see it appear here.")
             .font(.caption)
             .foregroundColor(.secondary)
         }

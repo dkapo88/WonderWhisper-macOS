@@ -125,29 +125,7 @@ erDiagram
 
 ---
 
-### 3. Scratchpad & Notes System
-
-```mermaid
-erDiagram
-    ScratchpadNote {
-        UUID id PK
-        Date createdAt
-        Date updatedAt
-        String title
-        String content
-    }
-```
-
-**ScratchpadNote**: User notes created in the scratchpad view. Notes can be:
-- Created manually or from dictation
-- Processed with AI prompts
-- Edited and updated over time
-
-**Storage**: Persisted as JSON array in `~/Library/Application Support/WonderWhisper/Scratchpad/notes.json`
-
----
-
-### 4. Simple Mode System
+### 3. Simple Mode System
 
 ```mermaid
 erDiagram
@@ -168,45 +146,18 @@ erDiagram
     SimplePromptSettings ||--|{ SimplePromptRule : "contains"
 ```
 
-**SimplePromptSettings**: Simplified configuration for non-technical users. Two presets:
+**SimplePromptSettings**: Simplified configuration for the two user-facing modes:
 - **Dictation**: Voice-to-text formatting
-- **Assistant**: Command/instruction mode
+- **Command**: Selected-text/OCR aware assistant mode
 
 **SimplePromptRule**: Individual formatting/behavior rules as plain text statements
 
----
+**SimpleVoiceEngine**: User-facing toggle that selects the transcription backend.
 
-### 5. Benchmark & Testing System
-
-```mermaid
-erDiagram
-    BenchmarkConfiguration {
-        UUID id PK
-        String voiceModel
-        String llmModel "optional - None if transcription only"
-        String llmProvider "optional - groq, openrouter, cerebras"
-        UUID promptID "optional"
-    }
-    
-    BenchmarkResult {
-        UUID id PK
-        UUID configurationID FK
-        TimeInterval audioDuration
-        TimeInterval transcriptionTime
-        TimeInterval llmProcessingTime "optional"
-        TimeInterval uploadTime "optional"
-        TimeInterval totalTime
-        String rawTranscript
-        String processedOutput "optional"
-        String error "optional"
-    }
-    
-    BenchmarkConfiguration ||--o{ BenchmarkResult : "produces"
-```
-
-**BenchmarkConfiguration**: Test configuration for file transcription benchmarking. Allows testing different model combinations.
-
-**BenchmarkResult**: Performance and quality metrics from benchmark runs.
+| Case | Description | Underlying Model |
+|------|-------------|------------------|
+| `parakeet-local` | On-device Parakeet V3 for maximum privacy/latency | `parakeet-local` |
+| `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
 
 ---
 
@@ -233,7 +184,7 @@ erDiagram
     }
 ```
 
-**TranscriptionSettings**: Configuration for speech-to-text providers (Groq, Groq Streaming, Parakeet, AssemblyAI, Deepgram, Soniox, OpenAI, Native Apple)
+**TranscriptionSettings**: Configuration for speech-to-text providers (Parakeet V3 local capture + Groq Whisper Turbo streaming)
 
 **LLMSettings**: Configuration for language model providers (Groq, OpenRouter, Cerebras, Ollama)
 
@@ -272,10 +223,6 @@ erDiagram
 
 ```mermaid
 erDiagram
-    InterfaceMode {
-        String value "simple or pro"
-    }
-    
     ScreenContextCaptureMode {
         String value "image or text"
     }
@@ -285,7 +232,11 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "scratchpad, dictation, assistant, history, settings"
+        String value "dictation, command, history, settings"
+    }
+    
+    SimpleVoiceEngine {
+        String value "parakeetLocal or groqStreaming"
     }
 ```
 
@@ -304,12 +255,6 @@ erDiagram
     
     HistoryStore ||--|{ HistoryEntry : "stores"
     
-    ScratchpadViewModel ||--|| ScratchpadStore : "uses"
-    ScratchpadStore ||--|{ ScratchpadNote : "stores"
-    
-    FileTranscriptionViewModel ||--|{ BenchmarkConfiguration : "manages"
-    FileTranscriptionViewModel ||--|{ BenchmarkResult : "produces"
-    
     ConversationHistoryStore ||--|{ PromptConversationMessage : "stores"
     ConversationHistoryStore ||--|{ ConversationHistoryMetadata : "tracks"
     
@@ -321,12 +266,13 @@ erDiagram
         String status
         Bool isRecording
         Float audioLevel
-        InterfaceMode interfaceMode
+        SimplePromptSettings simpleDictationSettings
+        SimplePromptSettings simpleCommandSettings
+        SimpleVoiceEngine simpleVoiceEngine
         String transcriptionModel
         String transcriptionLanguage
         Bool llmEnabled
         String llmModel
-        String llmProvider
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
         ScreenContextPreprocessingMode screenContextPreprocessingMode
@@ -363,8 +309,6 @@ erDiagram
 │   └── images/            # PNG/JPG screen captures
 │       ├── <uuid>.png
 │       └── ...
-├── Scratchpad/
-│   └── notes.json         # Array of ScratchpadNote
 └── ConversationHistory/
     └── conversations/
         ├── <promptID>_messages.json    # PromptConversationMessage[]
@@ -382,7 +326,6 @@ erDiagram
 | `transcription.timeout` | Double | Network timeout (seconds) |
 | `llm.enabled` | Bool | LLM processing enabled |
 | `llm.model` | String | Active LLM model |
-| `llm.provider` | String | LLM provider (groq/openrouter/cerebras) |
 | `llm.streaming` | Bool | Streaming mode enabled |
 | `llm.temperature` | Double | LLM temperature (0.0-1.0) |
 | `llm.systemPrompt` | String | Last-selected system prompt text |
@@ -402,21 +345,13 @@ erDiagram
 | `audio.preprocess.enabled` | Bool | Audio preprocessing enabled |
 | `audio.voiceProcessing.enabled` | Bool | Voice processing enabled |
 | `history.maxEntries` | Int | Maximum history entries to keep |
-| `interfaceMode` | String | UI mode (simple/pro) |
 | `simpleMode.llmEnabled` | Bool | LLM enabled in simple mode |
-| `simpleMode.selectedModel` | String | Selected model in simple mode |
-| `simpleMode.customModels` | Array<String> | Custom model IDs |
+| `simpleMode.selectedModel` | String | Selected OpenRouter model |
+| `simpleMode.customModels` | Array<String> | Custom OpenRouter model IDs |
+| `simpleMode.voiceEngine` | String | Selected transcription engine (`parakeet-local` or `groq-streaming`) |
 | `simpleMode.dictation` | Data | Dictation prompt settings |
-| `simpleMode.assistant` | Data | Assistant prompt settings |
-| `simpleMode.scratchpadText` | String | Draft scratchpad text |
+| `simpleMode.command` | Data | Command prompt settings |
 | `simpleMode.sidebarSelection` | String | Selected sidebar item |
-| `soniox.endpointDetection` | Bool | Soniox endpoint detection |
-| `soniox.languageIdentification.enabled` | Bool | Language ID enabled |
-| `soniox.speakerDiarization.enabled` | Bool | Speaker diarization enabled |
-| `soniox.context.keywords` | String | Context keywords |
-| `soniox.context.paragraph` | String | Context paragraph |
-| `soniox.languageHints` | String | Language hints |
-| `soniox.debug.enabled` | Bool | Debug mode |
 | `audio.stream.eq.enabled` | Bool | Stream EQ enabled |
 | `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
 | `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
@@ -428,12 +363,8 @@ Secure storage via `KeychainService` for API keys:
 
 | Key Alias | Purpose |
 |-----------|---------|
-| `GROQ_API_KEY` | Groq API authentication |
+| `GROQ_API_KEY` | Groq API authentication (Whisper Turbo) |
 | `OPENROUTER_API_KEY` | OpenRouter API authentication |
-| `CEREBRAS_API_KEY` | Cerebras API authentication |
-| `ASSEMBLYAI_API_KEY` | AssemblyAI API authentication |
-| `DEEPGRAM_API_KEY` | Deepgram API authentication |
-| `SONIOX_API_KEY` | Soniox API authentication |
 
 ---
 
@@ -451,35 +382,13 @@ erDiagram
         UUID selectedPromptID "optional"
         String systemPrompt
         String userPrompt
-        InterfaceMode interfaceMode
         SimplePromptSettings simpleDictationSettings
-        SimplePromptSettings simpleAssistantSettings
-        String simpleScratchpadText
+        SimplePromptSettings simpleCommandSettings
+        SimpleVoiceEngine simpleVoiceEngine
         String simpleSelectedModel
         String[] simpleCustomModels
         Bool simpleLLMEnabled
         SimpleSidebarItem simpleSidebarSelection
-    }
-    
-    FileTranscriptionViewModel {
-        URL selectedFileURL "optional"
-        String selectedFileName "optional"
-        String selectedFileSize "optional"
-        TimeInterval audioDuration "optional"
-        BenchmarkConfiguration[] configurations
-        BenchmarkResult[] results
-        Bool isRunning
-        Int currentTestIndex
-        Int totalTests
-        Set<UUID> expandedResults
-    }
-    
-    ScratchpadViewModel {
-        String draftText
-        ScratchpadNote[] notes
-        Bool isSaving
-        Bool isProcessingPrompt
-        String errorMessage "optional"
     }
 ```
 
@@ -502,7 +411,6 @@ struct AppConfig {
     // Default Models
     static let defaultTranscriptionModel: String = "whisper-large-v3-turbo"
     static let defaultLLMModel: String = "moonshotai/kimi-k2-instruct"
-    static let defaultSonioxModel: String = "stt-rt-v3"
     
     // Default Prompts
     static let defaultSystemPromptTemplate: String
@@ -541,7 +449,7 @@ enum SimpleModeDefaults {
     ]
     
     // Default rules for dictation mode (17 rules)
-    // Default rules for assistant mode (16 rules)
+    // Default rules for command mode (16 rules)
 }
 ```
 
@@ -725,20 +633,12 @@ protocol LLMProvider {
 ### Provider Implementations
 
 - **TranscriptionProvider**:
-  - `GroqTranscriptionProvider` (Groq Whisper API)
+  - `GroqTranscriptionProvider` (Groq Whisper API - batch)
   - `GroqStreamingProvider` (Groq chunked streaming)
-  - `ParakeetTranscriptionProvider` (Local on-device)
-  - `AssemblyAIStreamingProvider` (AssemblyAI realtime)
-  - `DeepgramStreamingProvider` (Deepgram realtime)
-  - `SonioxStreamingProvider` (Soniox realtime)
-  - `OpenAITranscriptionProvider` (OpenAI Whisper)
-  - `NativeAppleTranscriptionProvider` (Apple Speech Recognition)
+  - `ParakeetTranscriptionProvider` (local V3 on-device)
 
 - **LLMProvider**:
-  - `GroqLLMProvider` (Groq Chat API)
-  - `OpenRouterLLMProvider` (OpenRouter)
-  - `CerebrasLLMProvider` (Cerebras)
-  - `OllamaLLMProvider` (Local Ollama)
+  - `OpenRouterLLMProvider` (OpenRouter multiplexed models)
 
 ---
 
@@ -749,11 +649,9 @@ protocol LLMProvider {
 | **Prompt Configuration** | Template defining how voice input is processed and formatted |
 | **Conversation Mode** | Stateful interaction maintaining context across multiple dictations |
 | **Screen Context** | Information about active application and on-screen content |
-| **Simple Mode** | Simplified UI with preset configurations for non-technical users |
-| **Pro Mode** | Advanced UI with full control over prompts, models, and settings |
+| **Simple Mode** | Primary UI with Dictate and Command presets |
 | **Push-to-Talk** | Hold hotkey to record, release to process |
 | **Toggle Mode** | Tap hotkey to start/stop recording |
-| **Benchmark** | Performance testing of different model combinations |
 | **Provider** | External or local service for transcription or LLM processing |
 
 ---

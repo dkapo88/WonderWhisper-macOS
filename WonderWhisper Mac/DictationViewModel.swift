@@ -52,17 +52,12 @@ final class DictationViewModel: ObservableObject {
     // User prompt is an additional user message appended after the structured transcript context
     @Published var userPrompt: String = "" { didSet { updateActivePrompt(userText: userPrompt) } }
 
-    @Published var interfaceMode: InterfaceMode = DictationViewModel.loadInterfaceMode() {
-        didSet { interfaceModeDidChange(from: oldValue) }
-    }
+
     @Published private var simpleDictationSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .dictation) {
         didSet { simpleSettingsDidChange(kind: .dictation, oldValue: oldValue) }
     }
-    @Published private var simpleAssistantSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .assistant) {
-        didSet { simpleSettingsDidChange(kind: .assistant, oldValue: oldValue) }
-    }
-    @Published var simpleScratchpadText: String = DictationViewModel.loadSimpleScratchpad() {
-        didSet { persistSimpleScratchpad() }
+    @Published private var simpleCommandSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .command) {
+        didSet { simpleSettingsDidChange(kind: .command, oldValue: oldValue) }
     }
     @Published var simpleSelectedModel: String = DictationViewModel.loadSimpleSelectedModel() {
         didSet { simpleModelDidChange(oldValue: oldValue) }
@@ -73,12 +68,15 @@ final class DictationViewModel: ObservableObject {
     @Published var simpleLLMEnabled: Bool = DictationViewModel.loadSimpleLLMEnabled() {
         didSet { simpleLLMEnabledDidChange(oldValue: oldValue) }
     }
+    @Published var simpleVoiceEngine: SimpleVoiceEngine = DictationViewModel.loadSimpleVoiceEngine() {
+        didSet { simpleVoiceEngineDidChange(oldValue: oldValue) }
+    }
     @Published var simpleSidebarSelection: SimpleSidebarItem = DictationViewModel.loadSimpleSidebarSelection() {
         didSet { simpleSidebarSelectionDidChange(oldValue: oldValue) }
     }
 
     var simpleDictation: SimplePromptSettings { simpleDictationSettings }
-    var simpleAssistant: SimplePromptSettings { simpleAssistantSettings }
+    var simpleCommand: SimplePromptSettings { simpleCommandSettings }
     var simpleModelOptions: [SimpleModelOption] { SimpleModeDefaults.modelOptions(custom: simpleCustomModels) }
 
     // Transcription + LLM preferences
@@ -117,7 +115,7 @@ final class DictationViewModel: ObservableObject {
 
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // LLM provider selection: "groq" (default) or "openrouter"
-    @Published var llmProvider: String = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq" { didSet { persistAndUpdate() } }
+    let llmProvider: String = "openrouter"
     // OpenRouter routing preference: "latency" or "throughput"
     @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "latency" { didSet { persistAndUpdate() } }
     @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
@@ -135,49 +133,6 @@ final class DictationViewModel: ObservableObject {
     @Published var favoriteLLMModels: [FavoriteLLMModel] = DictationViewModel.loadFavoriteLLMModels() {
         didSet { persistFavoriteLLMModels() }
     }
-
-    private let openAITranscriptionModels: Set<String> = ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"]
-    private static let groqModelAliases: [String: String] = [
-        "llama-4-scout-17b-16e-instruct": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "llama-4-maverick-17b-128e-instruct": "meta-llama/llama-4-maverick-17b-128e-instruct"
-    ]
-
-    // API Key inputs (not persisted directly; saved via Keychain on action)
-    @Published var assemblyAIKeyInput: String = ""
-    @Published var deepgramKeyInput: String = ""
-    @Published var sonioxKeyInput: String = ""
-
-    // Soniox + streaming audio options
-    @Published var sonioxEndpointDetection: Bool = {
-        // Default ON to reduce tail latency per Soniox v3 guidance
-        if UserDefaults.standard.object(forKey: "soniox.endpointDetection") == nil { return true }
-        return UserDefaults.standard.bool(forKey: "soniox.endpointDetection")
-    }() { didSet { UserDefaults.standard.set(sonioxEndpointDetection, forKey: "soniox.endpointDetection") } }
-    @Published var sonioxLanguageIdentification: Bool = {
-        if UserDefaults.standard.object(forKey: "soniox.languageIdentification.enabled") == nil { return false }
-        return UserDefaults.standard.bool(forKey: "soniox.languageIdentification.enabled")
-    }() { didSet { UserDefaults.standard.set(sonioxLanguageIdentification, forKey: "soniox.languageIdentification.enabled") } }
-    @Published var sonioxSpeakerDiarization: Bool = {
-        if UserDefaults.standard.object(forKey: "soniox.speakerDiarization.enabled") == nil { return false }
-        return UserDefaults.standard.bool(forKey: "soniox.speakerDiarization.enabled")
-    }() { didSet { UserDefaults.standard.set(sonioxSpeakerDiarization, forKey: "soniox.speakerDiarization.enabled") } }
-
-    // Soniox context configuration for maximum accuracy
-    @Published var sonioxContextKeywords: String = {
-        UserDefaults.standard.string(forKey: "soniox.context.keywords") ?? ""
-    }() { didSet { UserDefaults.standard.set(sonioxContextKeywords, forKey: "soniox.context.keywords") } }
-    @Published var sonioxContextParagraph: String = {
-        UserDefaults.standard.string(forKey: "soniox.context.paragraph") ?? ""
-    }() { didSet { UserDefaults.standard.set(sonioxContextParagraph, forKey: "soniox.context.paragraph") } }
-    @Published var sonioxLanguageHints: String = {
-        UserDefaults.standard.string(forKey: "soniox.languageHints") ?? ""
-    }() { didSet { UserDefaults.standard.set(sonioxLanguageHints, forKey: "soniox.languageHints") } }
-
-    // Soniox debug mode for troubleshooting
-    @Published var sonioxDebugMode: Bool = {
-        if UserDefaults.standard.object(forKey: "soniox.debug.enabled") == nil { return false }
-        return UserDefaults.standard.bool(forKey: "soniox.debug.enabled")
-    }() { didSet { UserDefaults.standard.set(sonioxDebugMode, forKey: "soniox.debug.enabled") } }
 
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
@@ -233,8 +188,6 @@ final class DictationViewModel: ObservableObject {
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
-    private var proSnapshot: ProModeSnapshot?
-    private var isSwitchingInterfaceMode: Bool = false
     private var isApplyingSimplePrompts: Bool = false
     private var isUpdatingSimpleSidebar: Bool = false
     private var suppressSimpleSidebarSync: Bool = false
@@ -292,10 +245,6 @@ final class DictationViewModel: ObservableObject {
 
     init() {
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
-        let persistedTranscriptionModel = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel
-        let persistedLLMEnabled = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true
-        let persistedScreenContextEnabled = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true
-        let persistedClipboardContextEnabled = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? false
         let persistedOrganizePrompt = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt
 
         let persistedPreprocessMode: ScreenContextPreprocessingMode = {
@@ -311,8 +260,6 @@ final class DictationViewModel: ObservableObject {
             return .off
         }()
 
-        let persistedLLMModel = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel
-        let persistedLLMProvider = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq"
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
@@ -322,43 +269,25 @@ final class DictationViewModel: ObservableObject {
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
 
-        var activeTranscriptionModel = persistedTranscriptionModel
-        var activeLLMEnabled = persistedLLMEnabled
-        var activeScreenContextEnabled = persistedScreenContextEnabled
-        var activeClipboardContextEnabled = persistedClipboardContextEnabled
-        var activeLLMModel = persistedLLMModel
-        var activeLLMProvider = persistedLLMProvider
+        let activeTranscriptionModel = simpleVoiceEngine.transcriptionModel
+        let activeLLMEnabled = simpleLLMEnabled
+        let activeScreenContextEnabled = simpleShouldEnableScreenContext()
+        let activeClipboardContextEnabled = simpleShouldEnableClipboard()
+        let activeLLMModel = simpleSelectedModel
 
-        if interfaceMode == .simple {
-            activeTranscriptionModel = "parakeet-local"
-            activeLLMEnabled = simpleLLMEnabled
-            activeScreenContextEnabled = simpleShouldEnableScreenContext()
-            activeClipboardContextEnabled = simpleShouldEnableClipboard()
-            activeLLMModel = simpleSelectedModel
-            activeLLMProvider = "openrouter"
-        }
-
-        var transcriber: TranscriptionProvider = GroqTranscriptionProvider(client: http)
-        var transcriberSettings = TranscriptionSettings(
-            endpoint: AppConfig.groqAudioTranscriptions,
-            model: activeTranscriptionModel,
-            timeout: max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
-        )
-        if activeTranscriptionModel.lowercased().contains("parakeet") || activeTranscriptionModel.lowercased().contains("local") {
+        let transcriptionTimeout = max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
+        let transcriber: TranscriptionProvider
+        let transcriberSettings: TranscriptionSettings
+        if activeTranscriptionModel.lowercased().contains("parakeet") {
             transcriber = ParakeetTranscriptionProvider()
-            // Dummy settings to satisfy interface (not used by local provider)
             transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: activeTranscriptionModel)
-        } else if activeTranscriptionModel == "assemblyai-streaming" {
-            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
-            transcriber = AssemblyAIStreamingProvider(apiKey: key)
-            // Endpoint not used by streaming provider but keep required contract
-            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: activeTranscriptionModel, timeout: 180)
-        } else if activeTranscriptionModel == "soniox-streaming" {
-            let provider = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
-            transcriber = provider
-            let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
-            let timeout = max(5, min(180, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
-            transcriberSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: timeout)
+        } else {
+            transcriber = GroqTranscriptionProvider(client: http)
+            transcriberSettings = TranscriptionSettings(
+                endpoint: AppConfig.groqAudioTranscriptions,
+                model: activeTranscriptionModel,
+                timeout: transcriptionTimeout
+            )
         }
 
         // Choose initial LLM provider/endpoints based on persisted settings
@@ -368,25 +297,17 @@ final class DictationViewModel: ObservableObject {
 
         let renderedInitial = PromptBuilder.renderSystemPrompt(template: promptBootstrap.activeSystem, customVocabulary: persistedVocabCustom)
 
-        var llm: LLMProvider
-        var llmSettings: LLMSettings
-        let canonicalPersistedModel = Self.canonicalLLMModel(for: activeLLMModel, provider: activeLLMProvider)
-        switch activeLLMProvider.lowercased() {
-        case "openrouter":
-            llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
-            llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-        case "cerebras":
-            llm = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
-            llmSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
-        default:
-            // Groq as default
-            let httpClient = http
-            llm = GroqLLMProvider(client: httpClient)
-            llmSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalPersistedModel, systemPrompt: renderedInitial, timeout: 60, streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false, temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
-        }
+        let canonicalPersistedModel = Self.canonicalLLMModel(for: activeLLMModel)
+        let llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+        let llmSettings = LLMSettings(
+            endpoint: AppConfig.openrouterChatCompletions,
+            model: canonicalPersistedModel,
+            systemPrompt: renderedInitial,
+            timeout: 60,
+            streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false,
+            temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2
+        )
+        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
 
         let recorder = AudioRecorder()
         let inserter = InsertionService()
@@ -412,10 +333,6 @@ final class DictationViewModel: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor in self.audioLevel = level }
         }
-        // Apply initial LLM/screen-context flags
-        screenContextPreprocessingMode = persistedPreprocessMode
-        clipboardContextEnabled = persistedClipboardContextEnabled
-
         Task {
             await controller.updateLLMEnabled(activeLLMEnabled)
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
@@ -430,11 +347,7 @@ final class DictationViewModel: ObservableObject {
         }
         refreshPromptHotkeys()
 
-        if interfaceMode == .simple {
-            enterSimpleMode()
-        } else {
-            proSnapshot = nil
-        }
+        configureSimpleModeState()
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -724,70 +637,12 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    func saveOpenAIKey(_ value: String) {
-        let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.openaiAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
-        }
-        if openAITranscriptionModels.contains(transcriptionModel) {
-            updateProviders()
-        }
-    }
-
-    func saveAssemblyAIKey(_ value: String) {
-        let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.assemblyAIAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
-        }
-        // If currently selected, refresh provider so it picks up new key
-        if transcriptionModel == "assemblyai-streaming" {
-            updateProviders()
-        }
-    }
-
-    func saveCerebrasKey(_ value: String) {
-        let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.cerebrasAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
-        }
-    }
-
     func saveOpenRouterKey(_ value: String) {
         let kc = KeychainService()
         do { try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias) } catch {
             #if DEBUG
             print("Keychain error: \(error)")
             #endif
-        }
-    }
-
-    func saveDeepgramKey(_ value: String) {
-        let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.deepgramAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
-        }
-        if transcriptionModel == "deepgram-streaming" {
-            updateProviders()
-        }
-    }
-
-    func saveSonioxKey(_ value: String) {
-        let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.sonioxAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
-        }
-        if transcriptionModel == "soniox-streaming" {
-            updateProviders()
         }
     }
 
@@ -1193,10 +1048,6 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistAndUpdate() {
-        if interfaceMode == .simple {
-            updateProviders()
-            return
-        }
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
@@ -1206,7 +1057,6 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(screenContextPreprocessingMode == .llm, forKey: "screenContext.organize")
 
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
-        UserDefaults.standard.set(llmProvider, forKey: "llm.provider")
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
@@ -1241,19 +1091,7 @@ final class DictationViewModel: ObservableObject {
 
     private func persistPromptLibrary() {
         if isApplyingPromptFromSelection { return }
-        if interfaceMode == .simple {
-            persistSimplePromptSelection()
-            return
-        }
-        let defaults = UserDefaults.standard
-        if let data = try? JSONEncoder().encode(prompts) {
-            defaults.set(data, forKey: "prompts.library")
-        }
-        if let id = selectedPromptID {
-            defaults.set(id.uuidString, forKey: "prompts.selected.id")
-        }
-        defaults.set(systemPrompt, forKey: "llm.systemPrompt")
-        defaults.set(userPrompt, forKey: "llm.userMessage")
+        persistSimplePromptSelection()
     }
 
     // MARK: - Simple Mode Helpers
@@ -1261,7 +1099,7 @@ final class DictationViewModel: ObservableObject {
     private func simpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
         switch kind {
         case .dictation: return simpleDictationSettings
-        case .assistant: return simpleAssistantSettings
+        case .command: return simpleCommandSettings
         }
     }
 
@@ -1286,9 +1124,9 @@ final class DictationViewModel: ObservableObject {
         case .dictation:
             guard simpleDictationSettings != sanitized else { return }
             simpleDictationSettings = sanitized
-        case .assistant:
-            guard simpleAssistantSettings != sanitized else { return }
-            simpleAssistantSettings = sanitized
+        case .command:
+            guard simpleCommandSettings != sanitized else { return }
+            simpleCommandSettings = sanitized
         }
     }
 
@@ -1321,7 +1159,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     func setSimpleIncludeImage(_ include: Bool, for kind: SimplePromptKind) {
-        guard kind == .assistant else { return }
+        guard kind == .command else { return }
         var settings = simpleSettings(for: kind)
         guard settings.includeScreenImage != include else { return }
         settings.includeScreenImage = include
@@ -1366,9 +1204,7 @@ final class DictationViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         if simpleCustomModels.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) { return }
         simpleCustomModels.append(trimmed)
-        if interfaceMode == .simple {
-            simpleSelectedModel = trimmed
-        }
+        simpleSelectedModel = trimmed
     }
 
     func removeCustomSimpleModel(id: String) {
@@ -1380,14 +1216,10 @@ final class DictationViewModel: ObservableObject {
 
     private func persistSimpleSettings(kind: SimplePromptKind, settings: SimplePromptSettings) {
         let sanitized = sanitizedSimpleSettings(settings, for: kind)
-        let key = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.assistantSettings
+        let key = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = try? JSONEncoder().encode(sanitized) {
             UserDefaults.standard.set(data, forKey: key)
         }
-    }
-
-    private func persistSimpleScratchpad() {
-        UserDefaults.standard.set(simpleScratchpadText, forKey: SimpleDefaultsKey.scratchpad)
     }
 
     private func persistSimpleCustomModels() {
@@ -1405,9 +1237,14 @@ final class DictationViewModel: ObservableObject {
             return
         }
         UserDefaults.standard.set(cleaned, forKey: SimpleDefaultsKey.customModels)
-        if interfaceMode == .simple && !isSwitchingInterfaceMode {
-            applySimplePrompts()
-        }
+        applySimplePrompts()
+    }
+
+    private func simpleVoiceEngineDidChange(oldValue: SimpleVoiceEngine) {
+        if simpleVoiceEngine == oldValue { return }
+        UserDefaults.standard.set(simpleVoiceEngine.rawValue, forKey: SimpleDefaultsKey.voiceEngine)
+        transcriptionModel = simpleVoiceEngine.transcriptionModel
+        applySimplePrompts()
     }
 
     private func simpleModelDidChange(oldValue: String) {
@@ -1419,19 +1256,15 @@ final class DictationViewModel: ObservableObject {
         }
         if final == oldValue { return }
         UserDefaults.standard.set(final, forKey: SimpleDefaultsKey.selectedModel)
-        if interfaceMode == .simple && !isSwitchingInterfaceMode {
-            llmModel = final
-            applySimplePrompts()
-        }
+        llmModel = final
+        applySimplePrompts()
     }
 
     private func simpleLLMEnabledDidChange(oldValue: Bool) {
         if simpleLLMEnabled == oldValue { return }
         UserDefaults.standard.set(simpleLLMEnabled, forKey: SimpleDefaultsKey.llmEnabled)
-        if interfaceMode == .simple && !isSwitchingInterfaceMode {
-            llmEnabled = simpleLLMEnabled
-            updateProviders()
-        }
+        llmEnabled = simpleLLMEnabled
+        updateProviders()
     }
 
     private func simpleSidebarSelectionDidChange(oldValue: SimpleSidebarItem) {
@@ -1439,7 +1272,6 @@ final class DictationViewModel: ObservableObject {
         if !isUpdatingSimpleSidebar {
             persistSimpleSidebarSelection()
         }
-        guard interfaceMode == .simple else { return }
         guard let kind = promptKind(forSidebar: simpleSidebarSelection) else { return }
         let targetID = kind.promptID
         guard selectedPromptID != targetID else { return }
@@ -1460,21 +1292,18 @@ final class DictationViewModel: ObservableObject {
         let current = simpleSettings(for: kind)
         if current == oldValue { return }
         persistSimpleSettings(kind: kind, settings: current)
-        if interfaceMode == .simple && !isSwitchingInterfaceMode {
-            screenContextEnabled = simpleShouldEnableScreenContext()
-            clipboardContextEnabled = simpleShouldEnableClipboard()
-            if screenContextCaptureMode != .text {
-                screenContextCaptureMode = .text
-            }
-            if screenContextPreprocessingMode != .onDevice {
-                screenContextPreprocessingMode = .onDevice
-            }
-            applySimplePrompts()
+        screenContextEnabled = simpleShouldEnableScreenContext()
+        clipboardContextEnabled = simpleShouldEnableClipboard()
+        if screenContextCaptureMode != .text {
+            screenContextCaptureMode = .text
         }
+        if screenContextPreprocessingMode != .onDevice {
+            screenContextPreprocessingMode = .onDevice
+        }
+        applySimplePrompts()
     }
 
     private func persistSimplePromptSelection() {
-        guard interfaceMode == .simple else { return }
         if !suppressSimpleSidebarSync,
            let sidebar = sidebarItem(forPromptID: selectedPromptID),
            simpleSidebarSelection != sidebar {
@@ -1488,37 +1317,37 @@ final class DictationViewModel: ObservableObject {
     private func sidebarItem(forPromptID id: UUID?) -> SimpleSidebarItem? {
         guard let id else { return nil }
         if id == SimplePromptKind.dictation.promptID { return .dictation }
-        if id == SimplePromptKind.assistant.promptID { return .assistant }
+        if id == SimplePromptKind.command.promptID { return .command }
         return nil
     }
 
     private func promptKind(forSidebar item: SimpleSidebarItem) -> SimplePromptKind? {
         switch item {
         case .dictation: return .dictation
-        case .assistant: return .assistant
-        default: return nil
+        case .command: return .command
+        case .history, .settings: return nil
         }
     }
 
     private func buildSimplePromptConfigurations() -> [PromptConfiguration] {
         let dictation = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
-        let assistant = sanitizedSimpleSettings(simpleAssistantSettings, for: .assistant)
+        let command = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
+        let voiceModel = simpleVoiceEngine.transcriptionModel
         return [
-            SimplePromptComposer.configuration(for: .dictation, settings: dictation, llmModel: simpleSelectedModel, provider: "openrouter"),
-            SimplePromptComposer.configuration(for: .assistant, settings: assistant, llmModel: simpleSelectedModel, provider: "openrouter")
+            SimplePromptComposer.configuration(for: .dictation, settings: dictation, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel),
+            SimplePromptComposer.configuration(for: .command, settings: command, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel)
         ]
     }
 
     private func simpleShouldEnableScreenContext() -> Bool {
-        simpleDictationSettings.enableScreenContext || simpleAssistantSettings.enableScreenContext
+        simpleDictationSettings.enableScreenContext || simpleCommandSettings.enableScreenContext
     }
 
     private func simpleShouldEnableClipboard() -> Bool {
-        simpleDictationSettings.enableClipboardContext || simpleAssistantSettings.enableClipboardContext
+        simpleDictationSettings.enableClipboardContext || simpleCommandSettings.enableClipboardContext
     }
 
     private func applySimplePrompts(preferredKind: SimplePromptKind? = nil) {
-        guard interfaceMode == .simple else { return }
         if isApplyingSimplePrompts { return }
         let configs = buildSimplePromptConfigurations()
         guard !configs.isEmpty else { return }
@@ -1542,91 +1371,17 @@ final class DictationViewModel: ObservableObject {
         updateProvidersImmediately()
     }
 
-    private func interfaceModeDidChange(from oldValue: InterfaceMode) {
-        guard interfaceMode != oldValue else { return }
-        UserDefaults.standard.set(interfaceMode.rawValue, forKey: SimpleDefaultsKey.interfaceMode)
-        switch interfaceMode {
-        case .simple:
-            enterSimpleMode()
-        case .pro:
-            exitSimpleMode()
-        }
-    }
-
-    private func enterSimpleMode() {
-        isSwitchingInterfaceMode = true
-        defer { isSwitchingInterfaceMode = false }
-
-        proSnapshot = ProModeSnapshot(
-            prompts: prompts,
-            selectedPromptID: selectedPromptID,
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            llmModel: llmModel,
-            llmProvider: llmProvider,
-            llmEnabled: llmEnabled,
-            screenContextEnabled: screenContextEnabled,
-            clipboardContextEnabled: clipboardContextEnabled,
-            screenContextCaptureMode: screenContextCaptureMode,
-            screenContextPreprocessingMode: screenContextPreprocessingMode,
-            transcriptionModel: transcriptionModel
-        )
-
-        // Ensure settings are sanitized before applying
+    private func configureSimpleModeState(preferredKind: SimplePromptKind? = nil) {
         simpleDictationSettings = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
-        simpleAssistantSettings = sanitizedSimpleSettings(simpleAssistantSettings, for: .assistant)
-
-        applySimplePrompts()
-
+        simpleCommandSettings = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
         llmEnabled = simpleLLMEnabled
-        llmProvider = "openrouter"
         llmModel = simpleSelectedModel
-        transcriptionModel = "parakeet-local"
+        transcriptionModel = simpleVoiceEngine.transcriptionModel
         screenContextEnabled = simpleShouldEnableScreenContext()
         clipboardContextEnabled = simpleShouldEnableClipboard()
         screenContextCaptureMode = .text
         screenContextPreprocessingMode = .onDevice
-
-        updateProvidersImmediately()
-    }
-
-    private func exitSimpleMode() {
-        isSwitchingInterfaceMode = true
-        defer { isSwitchingInterfaceMode = false }
-
-        guard let snapshot = proSnapshot else {
-            // Fallback to stored defaults if no snapshot is available
-            let storedSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
-            let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
-            let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: AppConfig.defaultDictationPrompt)
-            isApplyingPromptFromSelection = true
-            prompts = promptBootstrap.prompts
-            selectedPromptID = promptBootstrap.selectedID
-            systemPrompt = promptBootstrap.activeSystem
-            userPrompt = promptBootstrap.activeUser
-            isApplyingPromptFromSelection = false
-            updateProvidersImmediately()
-            return
-        }
-
-        isApplyingPromptFromSelection = true
-        prompts = snapshot.prompts
-        selectedPromptID = snapshot.selectedPromptID
-        systemPrompt = snapshot.systemPrompt
-        userPrompt = snapshot.userPrompt
-        isApplyingPromptFromSelection = false
-
-        llmModel = snapshot.llmModel
-        llmProvider = snapshot.llmProvider
-        llmEnabled = snapshot.llmEnabled
-        screenContextEnabled = snapshot.screenContextEnabled
-        clipboardContextEnabled = snapshot.clipboardContextEnabled
-        screenContextCaptureMode = snapshot.screenContextCaptureMode
-        screenContextPreprocessingMode = snapshot.screenContextPreprocessingMode
-        transcriptionModel = snapshot.transcriptionModel
-
-        updateProvidersImmediately()
-        persistPromptLibrary()
+        applySimplePrompts(preferredKind: preferredKind)
     }
 
     private func applySelection() {
@@ -1636,8 +1391,7 @@ final class DictationViewModel: ObservableObject {
         systemPrompt = prompt.systemPrompt
         userPrompt = prompt.userPrompt
         isApplyingPromptFromSelection = false
-        if interfaceMode == .simple,
-           !isUpdatingSimpleSidebar,
+        if !isUpdatingSimpleSidebar,
            !suppressSimpleSidebarSync,
            let sidebar = sidebarItem(forPromptID: prompt.id),
            simpleSidebarSelection != sidebar {
@@ -1695,14 +1449,10 @@ final class DictationViewModel: ObservableObject {
 
                 // Select the prompt for this hotkey
                 await MainActor.run {
-                    if self.interfaceMode == .simple {
-                        self.withSimpleSidebarSyncSuppressed {
-                            if self.selectedPromptID != id {
-                                self.selectedPromptID = id
-                            }
+                    self.withSimpleSidebarSyncSuppressed {
+                        if self.selectedPromptID != id {
+                            self.selectedPromptID = id
                         }
-                    } else if self.selectedPromptID != id {
-                        self.selectedPromptID = id
                     }
                 }
 
@@ -1810,71 +1560,6 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTask = task
     }
 
-    // MARK: - Soniox Context Optimization
-
-    func buildSonioxContext() -> String {
-        var contextParts: [String] = []
-
-        // Add keyword context (highest priority for accuracy)
-        if !sonioxContextKeywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            contextParts.append(sonioxContextKeywords.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-
-        // Add paragraph context (domain-specific information)
-        if !sonioxContextParagraph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            contextParts.append(sonioxContextParagraph.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-
-        return contextParts.joined(separator: "\n")
-    }
-
-    func buildSonioxLanguageHints() -> [String] {
-        let hints = sonioxLanguageHints.trimmingCharacters(in: .whitespacesAndNewlines)
-        if hints.isEmpty {
-            // Fallback to single language from settings
-            let lang = UserDefaults.standard.string(forKey: "transcription.language") ?? "en"
-            return [lang]
-        }
-
-        // Parse comma-separated language hints
-        return hints.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
-
-    // MARK: - Soniox Accuracy Presets
-
-    enum SonioxPreset {
-        case medical
-        case legal
-        case technical
-        case general
-    }
-
-    func applySonioxPreset(_ preset: SonioxPreset) {
-        switch preset {
-        case .medical:
-            sonioxContextKeywords = "Celebrex, Zyrtec, Xanax, Prilosec, Amoxicillin, Clavulanate, Potassium, patient, diagnosis, treatment, medication, prescription, dosage, symptoms, examination, clinical, therapy, regimen, adverse, reaction, contraindication, pharmacology, therapeutic, efficacy, prognosis"
-            sonioxContextParagraph = "Medical consultation discussing patient symptoms, diagnosis, treatment options, medications, dosages, and clinical observations. Includes discussion of drug interactions, side effects, and patient care plans."
-            sonioxLanguageHints = "en"
-
-        case .legal:
-            sonioxContextKeywords = "plaintiff, defendant, jurisdiction, statute, regulation, contract, agreement, liability, negligence, tort, claim, settlement, judgment, appeal, precedent, testimony, evidence, deposition, affidavit, motion, hearing, verdict, damages, injunction"
-            sonioxContextParagraph = "Legal proceedings discussing case law, statutes, regulations, contracts, and legal arguments. Includes references to court filings, testimony, evidence, and judicial decisions."
-            sonioxLanguageHints = "en"
-
-        case .technical:
-            sonioxContextKeywords = "API, endpoint, database, PostgreSQL, MySQL, Redis, cache, authentication, authorization, token, JWT, OAuth, REST, GraphQL, microservices, container, Docker, Kubernetes, deployment, CI/CD, pipeline, repository, commit, merge, branch, frontend, backend, fullstack"
-            sonioxContextParagraph = "Technical discussion about software development, system architecture, APIs, databases, deployment pipelines, and engineering practices. Includes discussion of programming concepts, infrastructure, and development workflows."
-            sonioxLanguageHints = "en"
-
-        case .general:
-            sonioxContextKeywords = ""
-            sonioxContextParagraph = ""
-            sonioxLanguageHints = "en"
-        }
-    }
-
     @discardableResult
     private func applyProviders(using prompt: PromptConfiguration?) -> Task<Void, Never> {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
@@ -1883,34 +1568,18 @@ final class DictationViewModel: ObservableObject {
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
-        let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt, provider: providerForActivePrompt)
+        let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt)
 
         // Get cached transcription provider
         let provider = getCachedTranscriptionProvider(for: voiceModel)
 
-        // Configure settings based on provider type
-        if voiceModel == "apple-native" {
-            if #available(macOS 26, *) {
-                tSettings = TranscriptionSettings(endpoint: URL(string: "https://apple-native.local")!, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-            } else {
-                tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: AppConfig.defaultTranscriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-            }
-        } else if openAITranscriptionModels.contains(voiceModel) {
-            tSettings = TranscriptionSettings(endpoint: AppConfig.openAIAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
-        } else if voiceModel.lowercased().contains("parakeet") || voiceModel.lowercased().contains("local") {
+        if voiceModel.lowercased().contains("parakeet") {
             tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: voiceModel)
-        } else if voiceModel == "assemblyai-streaming" {
-            // Endpoint not used by streaming provider, but keep for logging
-            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: voiceModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
-        } else if voiceModel == "deepgram-streaming" {
-            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: voiceModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
-        } else if voiceModel == "soniox-streaming" {
-            let sonioxModel = UserDefaults.standard.string(forKey: "soniox.model") ?? AppConfig.defaultSonioxModel
-            tSettings = TranscriptionSettings(endpoint: AppConfig.sonioxRealtime, model: sonioxModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else if voiceModel == "groq-streaming" {
-            // Use the actual Whisper model for the underlying transcription, but keep the groq-streaming identifier for the UI
-            let actualModel = "whisper-large-v3-turbo" // Default to the fastest model for streaming
+            let actualModel = AppConfig.defaultTranscriptionModel
             tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+        } else {
+            tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         }
 
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
@@ -1918,27 +1587,10 @@ final class DictationViewModel: ObservableObject {
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
 
-        // Get cached LLM provider with resolved routing preference
         let routingForActivePrompt = resolvedOpenRouterRouting(for: prompt)
         let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt, routing: routingForActivePrompt)
-
-        // Configure LLM settings based on provider
-        switch providerForActivePrompt.lowercased() {
-        case "openrouter":
-            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-        case "cerebras":
-            lSettings = LLMSettings(endpoint: AppConfig.cerebrasChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
-        case "ollama":
-            // Use longer timeout for Ollama since local models can be slow on first load
-            let ollamaTimeout = max(180, llmTimeout)
-            lSettings = LLMSettings(endpoint: AppConfig.ollamaChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: ollamaTimeout, streaming: llmStreaming, temperature: llmTemperature)
-            // Ollama runs locally, no pre-warming needed
-        default:
-            lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
-            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
-        }
+        lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
+        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
 
         let transcriberSettings = tSettings
         let llmSettingsToApply = lSettings
@@ -1985,57 +1637,6 @@ final class DictationViewModel: ObservableObject {
         Task { await controller.insert(text) }
     }
 
-    func generateScratchpadTitle(for content: String) async throws -> String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        guard llmEnabled else {
-            throw NSError(domain: "DictationViewModel", code: -2100, userInfo: [NSLocalizedDescriptionKey: "LLM processing is disabled in settings."])
-        }
-        await waitForLatestProviderUpdate()
-        let noteText = """
-        <NOTE_CONTENT>
-        \(trimmed)
-        </NOTE_CONTENT>
-        """
-        let response = try await controller.runLLM(
-            text: noteText,
-            userPrompt: AppConfig.scratchpadTitleUserPrompt,
-            systemPromptOverride: AppConfig.scratchpadTitleSystemPrompt,
-            streamingOverride: false
-        )
-        return response.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func runScratchpadPrompt(content: String, prompt: PromptConfiguration) async throws -> String {
-        guard llmEnabled else {
-            throw NSError(domain: "DictationViewModel", code: -2101, userInfo: [NSLocalizedDescriptionKey: "LLM processing is disabled in settings."])
-        }
-        await waitForLatestProviderUpdate()
-        let previousPrompt = prompts.prompt(withID: selectedPromptID) ?? prompts.first
-        let overrideTask = applyProviders(using: prompt)
-        providerUpdateTask = overrideTask
-        defer {
-            if previousPrompt?.id != prompt.id {
-                updateProviders()
-            }
-        }
-        await overrideTask.value
-        let system = PromptBuilder.renderSystemPrompt(template: prompt.systemPrompt, customVocabulary: vocabCustom)
-        let noteText = """
-        <NOTE_CONTENT>
-        \(content)
-        </NOTE_CONTENT>
-        """
-        let response = try await controller.runLLM(
-            text: noteText,
-            userPrompt: prompt.userPrompt,
-            systemPromptOverride: system,
-            streamingOverride: llmStreaming,
-            modelOverride: Self.canonicalLLMModel(for: resolvedLLMModel(for: prompt), provider: resolvedLLMProvider(for: prompt))
-        )
-        return response.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private func updateProvidersWithSelectedTextOverride() async {
         // Cancel any existing timer and task
         providerUpdateTimer?.invalidate()
@@ -2050,76 +1651,36 @@ final class DictationViewModel: ObservableObject {
     // MARK: - Provider Cache Management
 
     private func getCachedTranscriptionProvider(for model: String) -> TranscriptionProvider? {
-        // Check cache first
         if let cached = transcriptionProviderCache[model] {
             return cached
         }
 
-        // Create new provider and cache it
-        let provider: TranscriptionProvider?
-
-        if model == "apple-native" {
-            if #available(macOS 26, *) {
-                provider = NativeAppleTranscriptionProvider()
-            } else {
-                AppLog.dictation.error("Apple native transcription requires macOS 26 or later; falling back to Groq.")
-                provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
-            }
-        } else if openAITranscriptionModels.contains(model) {
-            provider = OpenAITranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openaiAPIKeyAlias) }))
-        } else if model.lowercased().contains("parakeet") || model.lowercased().contains("local") {
+        let provider: TranscriptionProvider
+        if model.lowercased().contains("parakeet") {
             provider = ParakeetTranscriptionProvider()
-        } else if model == "assemblyai-streaming" {
-            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
-            provider = AssemblyAIStreamingProvider(apiKey: key)
-        } else if model == "deepgram-streaming" {
-            let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
-            provider = DeepgramStreamingProvider(apiKey: key)
-        } else if model == "soniox-streaming" {
-            provider = SonioxStreamingProvider(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) })
         } else if model == "groq-streaming" {
             provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
 
-        if let p = provider {
-            transcriptionProviderCache[model] = p
-        }
-
+        transcriptionProviderCache[model] = provider
         return provider
     }
 
     private func getCachedLLMProvider(for provider: String, model: String, routing: String? = nil) -> LLMProvider? {
-        let cacheKey = provider.lowercased() == "openrouter" ? "\(provider)::\(model)::\(routing ?? "default")" : "\(provider)::\(model)"
+        let cacheKey = "\(model)::\(routing ?? "default")"
 
-        // Check cache first
         if let cached = llmProviderCache[cacheKey] {
             return cached
         }
 
-        // Create new provider and cache it
-        let providerInstance: LLMProvider
-        let canonicalModel = Self.canonicalLLMModel(for: model, provider: provider)
-
-        switch provider.lowercased() {
-        case "openrouter":
-            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-            let routingPref = routing ?? openrouterRouting
-            providerInstance = OpenRouterLLMProvider(
-                client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }),
-                routingPrefProvider: { routingPref }
-            )
-        case "cerebras":
-            GroqHTTPClient.preWarmConnection(to: AppConfig.cerebrasChatCompletions)
-            providerInstance = CerebrasLLMProvider(client: CerebrasHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.cerebrasAPIKeyAlias) }))
-        case "ollama":
-            // Ollama runs locally, no API key needed, no pre-warming needed
-            providerInstance = OllamaLLMProvider(client: OllamaHTTPClient())
-        default:
-            GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
-            providerInstance = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
-        }
+        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
+        let routingPref = routing ?? openrouterRouting
+        let providerInstance = OpenRouterLLMProvider(
+            client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }),
+            routingPrefProvider: { routingPref }
+        )
 
         llmProviderCache[cacheKey] = providerInstance
         return providerInstance
@@ -2134,40 +1695,19 @@ private struct PromptBootstrap {
     let activeUser: String
 }
 
-private struct ProModeSnapshot {
-    let prompts: [PromptConfiguration]
-    let selectedPromptID: UUID?
-    let systemPrompt: String
-    let userPrompt: String
-    let llmModel: String
-    let llmProvider: String
-    let llmEnabled: Bool
-    let screenContextEnabled: Bool
-    let clipboardContextEnabled: Bool
-    let screenContextCaptureMode: ScreenContextCaptureMode
-    let screenContextPreprocessingMode: ScreenContextPreprocessingMode
-    let transcriptionModel: String
-}
-
 private enum SimpleDefaultsKey {
-    static let interfaceMode = "interface.mode"
-    static let scratchpad = "simple.scratchpad.text"
     static let dictationSettings = "simple.dictation.settings"
-    static let assistantSettings = "simple.assistant.settings"
+    static let commandSettings = "simple.command.settings"
     static let selectedModel = "simple.model.selected"
     static let customModels = "simple.model.custom"
     static let llmEnabled = "simple.llm.enabled"
+    static let voiceEngine = "simple.voice.engine"
     static let sidebar = "simple.sidebar.selection"
 }
 
 private extension DictationViewModel {
-    static func loadInterfaceMode() -> InterfaceMode {
-        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.interfaceMode) ?? InterfaceMode.pro.rawValue
-        return InterfaceMode(rawValue: raw) ?? .pro
-    }
-
     static func loadSimpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
-        let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.assistantSettings
+        let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = UserDefaults.standard.data(forKey: key),
            let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
             let sanitized = decoded.sanitized()
@@ -2177,10 +1717,6 @@ private extension DictationViewModel {
             return sanitized
         }
         return SimpleModeDefaults.settings(for: kind)
-    }
-
-    static func loadSimpleScratchpad() -> String {
-        UserDefaults.standard.string(forKey: SimpleDefaultsKey.scratchpad) ?? ""
     }
 
     static func loadSimpleSelectedModel() -> String {
@@ -2199,9 +1735,14 @@ private extension DictationViewModel {
         return UserDefaults.standard.bool(forKey: SimpleDefaultsKey.llmEnabled)
     }
 
+    static func loadSimpleVoiceEngine() -> SimpleVoiceEngine {
+        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.voiceEngine) ?? SimpleVoiceEngine.parakeetLocal.rawValue
+        return SimpleVoiceEngine(rawValue: raw) ?? .parakeetLocal
+    }
+
     static func loadSimpleSidebarSelection() -> SimpleSidebarItem {
-        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.scratchpad.rawValue
-        return SimpleSidebarItem(rawValue: raw) ?? .scratchpad
+        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.dictation.rawValue
+        return SimpleSidebarItem(rawValue: raw) ?? .dictation
     }
 }
 
@@ -2281,22 +1822,11 @@ private extension DictationViewModel {
     }
 
     func resolvedLLMProvider(for prompt: PromptConfiguration?) -> String {
-        if let override = prompt?.llmProviderOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-            return override
-        }
-        let fallback = llmProvider.trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallback.isEmpty ? "groq" : fallback
+        return "openrouter"
     }
 
-    private static func canonicalLLMModel(for model: String, provider: String) -> String {
+    private static func canonicalLLMModel(for model: String) -> String {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return trimmed }
-        if provider.lowercased() == "groq" {
-            let key = trimmed.lowercased()
-            if let mapped = groqModelAliases[key] {
-                return mapped
-            }
-        }
         return trimmed
     }
 

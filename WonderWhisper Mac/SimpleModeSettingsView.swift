@@ -7,6 +7,7 @@ import FluidAudio
 struct SimpleModeSettingsView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var openRouterKeyInput: String = ""
+  @State private var groqKeyInput: String = ""
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
 
@@ -15,19 +16,43 @@ struct SimpleModeSettingsView: View {
   private var hasOpenRouterKey: Bool {
     keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias) != nil
   }
+  private var hasGroqKey: Bool {
+    keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) != nil
+  }
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         llmSection
+        voiceEngineSection
         customModelSection
-        apiKeySection
+        openRouterSection
+        groqSection
         parakeetSection
         audioSection
         Spacer(minLength: 0)
       }
       .padding(24)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private var voiceEngineSection: some View {
+    GroupBox("Transcription engine") {
+      VStack(alignment: .leading, spacing: 10) {
+        Picker("Engine", selection: $vm.simpleVoiceEngine) {
+          ForEach(SimpleVoiceEngine.allCases) { engine in
+            Text(engine.displayName).tag(engine)
+          }
+        }
+        .pickerStyle(.radioGroup)
+        .labelsHidden()
+
+        Text(vm.simpleVoiceEngine.detail)
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.top, 4)
     }
   }
 
@@ -47,7 +72,7 @@ struct SimpleModeSettingsView: View {
           }
           .labelsHidden()
           .frame(maxWidth: 360)
-          Text("Applies to Simple Dictation and Simple Assistant when LLM output is enabled.")
+          Text("Applies to Dictate and Command modes when LLM output is enabled.")
             .font(.caption)
             .foregroundColor(.secondary)
         }
@@ -102,7 +127,7 @@ struct SimpleModeSettingsView: View {
     }
   }
 
-  private var apiKeySection: some View {
+  private var openRouterSection: some View {
     GroupBox("OpenRouter API key") {
       VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 6) {
@@ -123,6 +148,32 @@ struct SimpleModeSettingsView: View {
           openRouterKeyInput = ""
         }
         .disabled(openRouterKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private var groqSection: some View {
+    GroupBox("Groq API key") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 6) {
+          Text(hasGroqKey ? "Status: Saved" : "Status: Missing")
+            .font(.callout.weight(.semibold))
+            .foregroundColor(hasGroqKey ? .green : .red)
+          if hasGroqKey {
+            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+          }
+        }
+
+        SecureField("Paste Groq API key", text: $groqKeyInput)
+          .textFieldStyle(.roundedBorder)
+          .frame(maxWidth: 360)
+
+        Button("Save key") {
+          vm.saveGroqApiKey(groqKeyInput)
+          groqKeyInput = ""
+        }
+        .disabled(groqKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
       .padding(.top, 4)
     }

@@ -5,13 +5,13 @@ struct SimplePromptEditorView: View {
   let kind: SimplePromptKind
 
   private var settings: SimplePromptSettings {
-    kind == .dictation ? vm.simpleDictation : vm.simpleAssistant
+    kind == .dictation ? vm.simpleDictation : vm.simpleCommand
   }
 
   private var headerTitle: String {
     switch kind {
     case .dictation: return "Dictation Rules"
-    case .assistant: return "Assistant Rules"
+    case .command: return "Command Rules"
     }
   }
 
@@ -19,8 +19,8 @@ struct SimplePromptEditorView: View {
     switch kind {
     case .dictation:
       return "These rules shape how the Simple Dictation formatter cleans up your transcript before insertion."
-    case .assistant:
-      return "Fine-tune the Simple Assistant’s behaviour when transforming copied or selected text."
+    case .command:
+      return "Fine-tune Command Mode when transforming selected or OCR’d text."
     }
   }
 
@@ -72,7 +72,7 @@ struct SimplePromptEditorView: View {
         .help("Send highlighted text from the current app into the prompt.")
         .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
 
-        if kind == .assistant {
+        if kind == .command {
           Toggle("Attach screenshot to prompt", isOn: includeImageBinding)
             .help("Adds the active window screenshot alongside the OCR keywords for extra visual context.")
             .disabled(!settings.enableScreenContext)
@@ -87,7 +87,7 @@ struct SimplePromptEditorView: View {
       VStack(alignment: .leading, spacing: 10) {
         Text(kind == .dictation
              ? "Pick a single modifier key to trigger Simple Dictation on press-and-hold."
-             : "Pick a single modifier key to trigger the Simple Assistant hotkey.")
+             : "Pick a single modifier key to trigger Command Mode.")
           .font(.caption)
           .foregroundColor(.secondary)
 
@@ -170,7 +170,7 @@ struct SimplePromptEditorView: View {
 
       TextEditor(text: Binding(
         get: {
-          let currentRules = kind == .dictation ? vm.simpleDictation.rules : vm.simpleAssistant.rules
+          let currentRules = kind == .dictation ? vm.simpleDictation.rules : vm.simpleCommand.rules
           return currentRules.first(where: { $0.id == rule.id })?.text ?? ""
         },
         set: { vm.updateSimpleRule(kind: kind, ruleID: rule.id, text: $0) }
@@ -202,7 +202,7 @@ struct SimplePromptEditorView: View {
 private extension SimplePromptEditorView {
   var singleKeyBinding: Binding<HotkeyManager.Selection?> {
     Binding(
-      get: { kind == .dictation ? vm.simpleDictation.selection : vm.simpleAssistant.selection },
+      get: { kind == .dictation ? vm.simpleDictation.selection : vm.simpleCommand.selection },
       set: { vm.setSimpleSelection($0, for: kind) }
     )
   }
@@ -213,7 +213,7 @@ private extension SimplePromptEditorView {
 
   var includeImageBinding: Binding<Bool> {
     Binding(
-      get: { kind == .assistant ? vm.simpleAssistant.includeScreenImage : false },
+      get: { kind == .command ? vm.simpleCommand.includeScreenImage : false },
       set: { vm.setSimpleIncludeImage($0, for: kind) }
     )
   }
