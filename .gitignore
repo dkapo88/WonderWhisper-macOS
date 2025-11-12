@@ -1,2 +1,37 @@
+# Build artifacts
+/build/
+/DerivedData_WW/
+
+# Xcode
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xcworkspace/
+!xcshareddata/
+!xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Code signing certificate
+*.mobileprovision
+
+# User-specific project files
+.xcuserstate
+.xcuserdata/
+
+# Augment template rules
 .augment/rules/product-manager.md
-/.worktrees/
+
+# Git worktrees
+.worktrees/
