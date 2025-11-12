@@ -4,6 +4,8 @@ import AppKit
 struct SimpleHistoryView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var expandedEntries: Set<UUID> = []
+  @State private var selectedEntryForDebug: HistoryEntry?
+  @State private var showDebugModal = false
 
   private var entries: [HistoryEntry] { vm.history.entries }
 
@@ -32,6 +34,11 @@ struct SimpleHistoryView: View {
       }
     }
     .padding(.horizontal, 20)
+    .sheet(isPresented: $showDebugModal) {
+      if let entry = selectedEntryForDebug {
+        PromptDebugView(entry: entry)
+      }
+    }
   }
 
   private func historyCard(for entry: HistoryEntry) -> some View {
@@ -80,6 +87,21 @@ struct SimpleHistoryView: View {
             }
           }
           .padding(8)
+        }
+
+        // Debug prompt button
+        if entry.llmSystemMessage != nil || entry.llmUserMessage != nil {
+          HStack {
+            Spacer()
+            Button {
+              selectedEntryForDebug = entry
+              showDebugModal = true
+            } label: {
+              Label("View Prompt", systemImage: "terminal")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
         }
       }
       .padding(.top, 6)

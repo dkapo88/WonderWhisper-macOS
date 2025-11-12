@@ -25,6 +25,7 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case dictation
   case command
+  case vocabulary
   case history
   case settings
 
@@ -34,6 +35,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "Dictation"
     case .command: return "Command"
+    case .vocabulary: return "Vocabulary"
     case .history: return "History"
     case .settings: return "Settings"
     }
@@ -43,6 +45,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "mic.fill"
     case .command: return "wand.and.stars"
+    case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
     case .settings: return "gearshape.fill"
     }
