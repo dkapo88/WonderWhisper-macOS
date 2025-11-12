@@ -35,14 +35,48 @@ struct SimplePromptEditorView: View {
             .foregroundColor(.secondary)
         }
 
+        promptHeaderSection
+        rulesSection
+        promptFooterSection
         captureSection
         singleKeySection
-        rulesSection
 
         Spacer(minLength: 0)
       }
       .padding(24)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private var promptHeaderSection: some View {
+    GroupBox("Prompt header") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(alignment: .firstTextBaseline) {
+          Text("Set the tone and scaffolding for the system prompt before any rules are injected.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Spacer()
+          Button("Restore default") {
+            vm.restoreSimpleHeader(for: kind)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+
+        TextEditor(text: headerBinding)
+          .font(.body)
+          .frame(minHeight: 140)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 10)
+              .fill(Color(nsColor: .textBackgroundColor))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.secondary.opacity(0.2))
+          )
+      }
+      .padding(.top, 4)
     }
   }
 
@@ -153,6 +187,38 @@ struct SimplePromptEditorView: View {
     }
   }
 
+  private var promptFooterSection: some View {
+    GroupBox("Prompt footer") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(alignment: .firstTextBaseline) {
+          Text("Add final guardrails or context that should always trail the rules.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Spacer()
+          Button("Restore default") {
+            vm.restoreSimpleFooter(for: kind)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+
+        TextEditor(text: footerBinding)
+          .font(.body)
+          .frame(minHeight: 120)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 10)
+              .fill(Color(nsColor: .textBackgroundColor))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.secondary.opacity(0.2))
+          )
+      }
+      .padding(.top, 4)
+    }
+  }
+
   private func ruleCard(index: Int, rule: SimplePromptRule) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .center) {
@@ -215,6 +281,20 @@ private extension SimplePromptEditorView {
     Binding(
       get: { kind == .command ? vm.simpleCommand.includeScreenImage : false },
       set: { vm.setSimpleIncludeImage($0, for: kind) }
+    )
+  }
+
+  var headerBinding: Binding<String> {
+    Binding(
+      get: { settings.header },
+      set: { vm.updateSimpleHeader(kind: kind, text: $0) }
+    )
+  }
+
+  var footerBinding: Binding<String> {
+    Binding(
+      get: { settings.footer },
+      set: { vm.updateSimpleFooter(kind: kind, text: $0) }
     )
   }
 }
