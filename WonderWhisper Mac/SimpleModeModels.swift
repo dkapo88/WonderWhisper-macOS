@@ -95,6 +95,8 @@ struct SimplePromptRule: Identifiable, Codable, Hashable {
 
 struct SimplePromptSettings: Codable, Equatable {
   var rules: [SimplePromptRule]
+  var header: String
+  var footer: String
   var enableScreenContext: Bool
   var enableClipboardContext: Bool
   var enableSelectedText: Bool
@@ -102,12 +104,16 @@ struct SimplePromptSettings: Codable, Equatable {
   var includeScreenImage: Bool
 
   init(rules: [SimplePromptRule],
+       header: String = "",
+       footer: String = "",
        enableScreenContext: Bool,
        enableClipboardContext: Bool,
        enableSelectedText: Bool,
        selection: HotkeyManager.Selection?,
        includeScreenImage: Bool) {
     self.rules = rules
+    self.header = header
+    self.footer = footer
     self.enableScreenContext = enableScreenContext
     self.enableClipboardContext = enableClipboardContext
     self.enableSelectedText = enableSelectedText
@@ -117,6 +123,8 @@ struct SimplePromptSettings: Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case rules
+    case header
+    case footer
     case enableScreenContext
     case enableClipboardContext
     case enableSelectedText
@@ -128,6 +136,8 @@ struct SimplePromptSettings: Codable, Equatable {
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     rules = try container.decode([SimplePromptRule].self, forKey: .rules)
+    header = try container.decodeIfPresent(String.self, forKey: .header) ?? ""
+    footer = try container.decodeIfPresent(String.self, forKey: .footer) ?? ""
     enableScreenContext = try container.decode(Bool.self, forKey: .enableScreenContext)
     enableClipboardContext = try container.decode(Bool.self, forKey: .enableClipboardContext)
     enableSelectedText = try container.decode(Bool.self, forKey: .enableSelectedText)
@@ -139,6 +149,8 @@ struct SimplePromptSettings: Codable, Equatable {
   func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(rules, forKey: .rules)
+    try container.encode(header, forKey: .header)
+    try container.encode(footer, forKey: .footer)
     try container.encode(enableScreenContext, forKey: .enableScreenContext)
     try container.encode(enableClipboardContext, forKey: .enableClipboardContext)
     try container.encode(enableSelectedText, forKey: .enableSelectedText)
@@ -148,8 +160,12 @@ struct SimplePromptSettings: Codable, Equatable {
 
   func sanitized() -> SimplePromptSettings {
     let cleanedRules = rules.map { $0.trimmed() }
+    let trimmedHeader = header.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedFooter = footer.trimmingCharacters(in: .whitespacesAndNewlines)
     return SimplePromptSettings(
       rules: cleanedRules,
+      header: trimmedHeader,
+      footer: trimmedFooter,
       enableScreenContext: enableScreenContext,
       enableClipboardContext: enableClipboardContext,
       enableSelectedText: enableSelectedText,
@@ -213,6 +229,8 @@ enum SimpleModeDefaults {
     case .dictation:
       return SimplePromptSettings(
         rules: rules(for: .dictation),
+        header: systemHeader(for: .dictation),
+        footer: systemFooter(for: .dictation),
         enableScreenContext: true,
         enableClipboardContext: false,
         enableSelectedText: true,
@@ -222,6 +240,8 @@ enum SimpleModeDefaults {
     case .command:
       return SimplePromptSettings(
         rules: rules(for: .command),
+        header: systemHeader(for: .command),
+        footer: systemFooter(for: .command),
         enableScreenContext: true,
         enableClipboardContext: true,
         enableSelectedText: true,
@@ -362,15 +382,16 @@ SYSTEM REQUIREMENTS (non-editable backend guidance):
 }
 
 enum SimplePromptComposer {
-  static func systemPrompt(for kind: SimplePromptKind, rules: [SimplePromptRule]) -> String {
-    let header = SimpleModeDefaults.systemHeader(for: kind)
-    let footer = SimpleModeDefaults.systemFooter(for: kind)
-    let nonEmptyRules = rules.map { $0.trimmed() }.filter { !$0.text.isEmpty }
+  static func systemPrompt(for kind: SimplePromptKind, settings: SimplePromptSettings) -> String {
+    let header = settings.header.trimmingCharacters(in: .whitespacesAndNewlines)
+    let footer = settings.footer.trimmingCharacters(in: .whitespacesAndNewlines)
+    let nonEmptyRules = settings.rules.map { $0.trimmed() }.filter { !$0.text.isEmpty }
     let renderedRules: String = nonEmptyRules
       .map { "- \($0.text)" }
       .joined(separator: "\n")
+    let sections = [header, renderedRules, footer].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    return [header, renderedRules, footer].joined(separator: "\n")
+    return sections.joined(separator: "\n")
   }
 
   static func configuration(for kind: SimplePromptKind,
@@ -378,7 +399,7 @@ enum SimplePromptComposer {
                             llmModel: String,
                             provider: String,
                             voiceModel: String) -> PromptConfiguration {
-    let system = systemPrompt(for: kind, rules: settings.rules)
+    let system = systemPrompt(for: kind, settings: settings)
     var prompt = PromptConfiguration(
       id: kind.promptID,
       name: kind.title,

@@ -1115,6 +1115,12 @@ final class DictationViewModel: ObservableObject {
         if sanitized.rules.isEmpty {
             sanitized.rules = SimpleModeDefaults.rules(for: kind)
         }
+        if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
+        }
+        if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
+        }
         return sanitized
     }
 
@@ -1163,6 +1169,32 @@ final class DictationViewModel: ObservableObject {
         var settings = simpleSettings(for: kind)
         guard settings.includeScreenImage != include else { return }
         settings.includeScreenImage = include
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func updateSimpleHeader(kind: SimplePromptKind, text: String) {
+        var settings = simpleSettings(for: kind)
+        guard settings.header != text else { return }
+        settings.header = text
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func updateSimpleFooter(kind: SimplePromptKind, text: String) {
+        var settings = simpleSettings(for: kind)
+        guard settings.footer != text else { return }
+        settings.footer = text
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func restoreSimpleHeader(for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        settings.header = SimpleModeDefaults.systemHeader(for: kind)
+        applySimpleSettings(settings, for: kind)
+    }
+
+    func restoreSimpleFooter(for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        settings.footer = SimpleModeDefaults.systemFooter(for: kind)
         applySimpleSettings(settings, for: kind)
     }
 
@@ -1710,9 +1742,15 @@ private extension DictationViewModel {
         let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = UserDefaults.standard.data(forKey: key),
            let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
-            let sanitized = decoded.sanitized()
+            var sanitized = decoded.sanitized()
             if sanitized.rules.isEmpty {
-                return SimpleModeDefaults.settings(for: kind)
+                sanitized.rules = SimpleModeDefaults.rules(for: kind)
+            }
+            if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
+            }
+            if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
             }
             return sanitized
         }
