@@ -1,5 +1,5 @@
 {
-  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ContentView.swift",
+  "source": "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/ContentView.swift",
   "tables": {
     "Localizable": [
       {
@@ -7,31 +7,31 @@
         "key": "WonderWhisper",
         "location": {
           "startingColumn": 30,
-          "startingLine": 81
+          "startingLine": 30
         }
       },
       {
         "comment": "",
-        "key": "WonderWhisper",
-        "location": {
-          "startingColumn": 25,
-          "startingLine": 67
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings",
-        "location": {
-          "startingColumn": 25,
-          "startingLine": 73
-        }
-      },
-      {
-        "comment": "",
-        "key": "Scratchpad",
+        "key": "Dictation",
         "location": {
           "startingColumn": 38,
-          "startingLine": 86
+          "startingLine": 35
+        }
+      },
+      {
+        "comment": "",
+        "key": "Command",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 38
+        }
+      },
+      {
+        "comment": "",
+        "key": "Vocabulary",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 41
         }
       },
       {
@@ -39,47 +39,15 @@
         "key": "History",
         "location": {
           "startingColumn": 38,
-          "startingLine": 90
+          "startingLine": 44
         }
       },
       {
         "comment": "",
-        "key": "Settings · General",
+        "key": "Settings",
         "location": {
           "startingColumn": 38,
-          "startingLine": 93
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings · Models",
-        "location": {
-          "startingColumn": 38,
-          "startingLine": 96
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings · Prompts",
-        "location": {
-          "startingColumn": 38,
-          "startingLine": 99
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings · Vocabulary",
-        "location": {
-          "startingColumn": 38,
-          "startingLine": 102
-        }
-      },
-      {
-        "comment": "",
-        "key": "Settings · API Keys",
-        "location": {
-          "startingColumn": 38,
-          "startingLine": 105
+          "startingLine": 47
         }
       }
     ]

@@ -1,10 +1,23 @@
+660f28fefca01bdfd93e6a77055c79c1d3ee70d0	not-for-merge	branch 'IOS-deploy' of https://github.com/FluidInference/FluidAudio
 91323c74d1471e2235800263c75218b9e765bd2f	not-for-merge	branch 'asr-streaming' of https://github.com/FluidInference/FluidAudio
 539c28df6b22b917a2982b0a5d7fb5e931d73441	not-for-merge	branch 'av-swift-6' of https://github.com/FluidInference/FluidAudio
-cd493531704235b967e3cc9e2f75ba26a124b9b3	not-for-merge	branch 'kokoro' of https://github.com/FluidInference/FluidAudio
-1416b2f8d6be50d7aa47f32a3baeeb8669c375e9	not-for-merge	branch 'main' of https://github.com/FluidInference/FluidAudio
+d5620925795197271f244c917f653e0217a28330	not-for-merge	branch 'claude/issue-120-20251002-0441' of https://github.com/FluidInference/FluidAudio
+ff17f97193294ee7b046ea0d7d2f0dd27d9ffd5c	not-for-merge	branch 'concurrency-com' of https://github.com/FluidInference/FluidAudio
+9e0bfb629b3420f4cf242b629435ef0c79142975	not-for-merge	branch 'espeakng-notarization' of https://github.com/FluidInference/FluidAudio
+3db33fe506788684a02886186fbc91d0435d38bb	not-for-merge	branch 'exclude' of https://github.com/FluidInference/FluidAudio
+b832bd29f94f4ebeba4b20d08223736fec28580e	not-for-merge	branch 'fix-missing-text' of https://github.com/FluidInference/FluidAudio
+fd66df72bc17975dc14dc8c6fbf98e5081d31d84	not-for-merge	branch 'fix/diarization-auto-normalization' of https://github.com/FluidInference/FluidAudio
+394fcef6b8ab245267a07b49ab1c4483682762b8	not-for-merge	branch 'kokoro' of https://github.com/FluidInference/FluidAudio
+c366ca042c8fbe2b03d649406865e3627e57f985	not-for-merge	branch 'main' of https://github.com/FluidInference/FluidAudio
+11eb401fa006fc4f4d191ed0f2543457474bc92d	not-for-merge	branch 'missing-v2' of https://github.com/FluidInference/FluidAudio
+0638d6df8c164190eccb66ddbc3cb64e6e373881	not-for-merge	branch 'new-against-mlx' of https://github.com/FluidInference/FluidAudio
 64b1fee749b79c85e0f22b0350050c374deaf1f4	not-for-merge	branch 'offline-diarizer' of https://github.com/FluidInference/FluidAudio
+369adf632d1fc543ee979942c37e1ecd151a1997	not-for-merge	branch 'realtime-asr-2' of https://github.com/FluidInference/FluidAudio
 7b173706a28eff8c8c17949db17e4771fce523af	not-for-merge	branch 'reset-decoder-between-chunks' of https://github.com/FluidInference/FluidAudio
+5cffd274b42d1d74d000d7d7538aa86581d3b65c	not-for-merge	branch 'streammsss' of https://github.com/FluidInference/FluidAudio
 e3d06f9fd02d9c7ff3689f351b2648e25fb19dee	not-for-merge	branch 'swift-6' of https://github.com/FluidInference/FluidAudio
+abcf4c817d00227b68bbfe947aa2eac7bec0bf96	not-for-merge	branch 'tts-quality-report' of https://github.com/FluidInference/FluidAudio
+3678aaf9c02d261e7cf1ca60a2422f0b47c5006d	not-for-merge	branch 'vad-asrr' of https://github.com/FluidInference/FluidAudio
 306c4c6676712ba7ead31c902fb5359cfbbb858b	not-for-merge	branch 'version-updates' of https://github.com/FluidInference/FluidAudio
 6bee0f97fd78aa476106bb5493ad8e20ab94c454	not-for-merge	'refs/pull/1/head' of https://github.com/FluidInference/FluidAudio
 64b1fee749b79c85e0f22b0350050c374deaf1f4	not-for-merge	'refs/pull/101/head' of https://github.com/FluidInference/FluidAudio
@@ -16,11 +29,65 @@ e3d06f9fd02d9c7ff3689f351b2648e25fb19dee	not-for-merge	branch 'swift-6' of https
 d598bee95a356502c081b8e9f2d84963a406af94	not-for-merge	'refs/pull/109/head' of https://github.com/FluidInference/FluidAudio
 f9341727d1f4a1e9801480468844698bce64215c	not-for-merge	'refs/pull/11/head' of https://github.com/FluidInference/FluidAudio
 20286aa8fb2fe6ce821265fe33b0ebb8ac384a3b	not-for-merge	'refs/pull/110/head' of https://github.com/FluidInference/FluidAudio
+2dcafc2f2a28bf0fa60d16dbe387ce2c69f68c91	not-for-merge	'refs/pull/112/head' of https://github.com/FluidInference/FluidAudio
+a70be98383007f444b3236386867d68f21bfca6e	not-for-merge	'refs/pull/113/head' of https://github.com/FluidInference/FluidAudio
+4eeb37460fb8a245687ae074de9ca169b9637385	not-for-merge	'refs/pull/116/head' of https://github.com/FluidInference/FluidAudio
+b7d7a63e7aebd484f14fb0c1fffc635338c233eb	not-for-merge	'refs/pull/118/head' of https://github.com/FluidInference/FluidAudio
+6fab646f0d77801e0bef0824d1ea7b074f90a476	not-for-merge	'refs/pull/119/head' of https://github.com/FluidInference/FluidAudio
 db698c972df49db0867950430d1f884a402e2f04	not-for-merge	'refs/pull/12/head' of https://github.com/FluidInference/FluidAudio
+689ebe7115d4ecddd5cc67c532851774967756aa	not-for-merge	'refs/pull/122/head' of https://github.com/FluidInference/FluidAudio
+426da98f977631ad066c2e81e030e7c20de59b49	not-for-merge	'refs/pull/123/head' of https://github.com/FluidInference/FluidAudio
+1201a48ba3bcbb755c58a7bb90d8d4bcdb89a25f	not-for-merge	'refs/pull/124/head' of https://github.com/FluidInference/FluidAudio
+c08cfbc452866d1f2b1dffd3e39ea5caaec3fbda	not-for-merge	'refs/pull/125/head' of https://github.com/FluidInference/FluidAudio
+d6b2604eb9ea7fdf42851cc07f861708d5bf2881	not-for-merge	'refs/pull/127/head' of https://github.com/FluidInference/FluidAudio
+db349b006d5d4a5c45e36367d1373bb8f68c5dd3	not-for-merge	'refs/pull/129/head' of https://github.com/FluidInference/FluidAudio
 bcc5b10082a8735987c90a8b1345aa52cebd56a4	not-for-merge	'refs/pull/13/head' of https://github.com/FluidInference/FluidAudio
+64dda7dce0909f4a8ebf3825c9ce5741696168f8	not-for-merge	'refs/pull/130/head' of https://github.com/FluidInference/FluidAudio
+a8e4e9c7776368545ce4268e9ad74ea1bbdfde86	not-for-merge	'refs/pull/131/head' of https://github.com/FluidInference/FluidAudio
+d5620925795197271f244c917f653e0217a28330	not-for-merge	'refs/pull/132/head' of https://github.com/FluidInference/FluidAudio
+5f7b25ac979aa08c63aa1eeca9168d018c4138ed	not-for-merge	'refs/pull/134/head' of https://github.com/FluidInference/FluidAudio
+a6b1c073fe9be949585842215287645773d0d39d	not-for-merge	'refs/pull/135/head' of https://github.com/FluidInference/FluidAudio
+8ee5b890da1683708dbc37bd57331ad6f6c4045f	not-for-merge	'refs/pull/136/head' of https://github.com/FluidInference/FluidAudio
+9e0bfb629b3420f4cf242b629435ef0c79142975	not-for-merge	'refs/pull/137/head' of https://github.com/FluidInference/FluidAudio
+ae493d95256d362eb4e7977b3a375ca86e2e240a	not-for-merge	'refs/pull/138/head' of https://github.com/FluidInference/FluidAudio
+786ecd2791cff4dd6b3138ae1fbd16e323335b95	not-for-merge	'refs/pull/139/head' of https://github.com/FluidInference/FluidAudio
 6929a41227809cec574361fd13f2f7e4195fa533	not-for-merge	'refs/pull/14/head' of https://github.com/FluidInference/FluidAudio
+c157f162a992e90131dd14d889c67dd7dddd5747	not-for-merge	'refs/pull/140/head' of https://github.com/FluidInference/FluidAudio
+7ef9f519cfbccf1c7a499dff523f83ec7a1d9d48	not-for-merge	'refs/pull/141/head' of https://github.com/FluidInference/FluidAudio
+660f28fefca01bdfd93e6a77055c79c1d3ee70d0	not-for-merge	'refs/pull/144/head' of https://github.com/FluidInference/FluidAudio
+3db33fe506788684a02886186fbc91d0435d38bb	not-for-merge	'refs/pull/145/head' of https://github.com/FluidInference/FluidAudio
+369adf632d1fc543ee979942c37e1ecd151a1997	not-for-merge	'refs/pull/146/head' of https://github.com/FluidInference/FluidAudio
+ce28a0b1c980e9e2b2cb04d4d6cb29d104e259e2	not-for-merge	'refs/pull/147/head' of https://github.com/FluidInference/FluidAudio
+5b538d9ed414b58db05e76887b9d8a41bfd80d13	not-for-merge	'refs/pull/148/head' of https://github.com/FluidInference/FluidAudio
+76c4193345d6d92778e26903e57a3417225ff29d	not-for-merge	'refs/pull/149/head' of https://github.com/FluidInference/FluidAudio
 67f694b7efeac15840c8362e241345f2d014784a	not-for-merge	'refs/pull/15/head' of https://github.com/FluidInference/FluidAudio
+8a06c299a389d7b188bfd61e3bc2ee6f95e6e90b	not-for-merge	'refs/pull/150/head' of https://github.com/FluidInference/FluidAudio
+8404cc60a29659cb6c0872ae18f90bbffb189b9a	not-for-merge	'refs/pull/151/head' of https://github.com/FluidInference/FluidAudio
+358e6ff4c6e6e537b5f569dbdcf000bed2143df0	not-for-merge	'refs/pull/152/head' of https://github.com/FluidInference/FluidAudio
+a02285fa2353d8e89d57c4a2ba652c51e85aa23b	not-for-merge	'refs/pull/153/head' of https://github.com/FluidInference/FluidAudio
+61c7e6fa75c416942895cc30b7f89d343e21d5a6	not-for-merge	'refs/pull/155/head' of https://github.com/FluidInference/FluidAudio
+7f18373e42d8725520a819df365dedc74c9795c7	not-for-merge	'refs/pull/156/head' of https://github.com/FluidInference/FluidAudio
+5da09d4ed5fe4de8096d3402660afd29177eab54	not-for-merge	'refs/pull/157/head' of https://github.com/FluidInference/FluidAudio
+e0b2b5f55479a630dc8ff8bbbd5c983fa90f27e4	not-for-merge	'refs/pull/158/head' of https://github.com/FluidInference/FluidAudio
 99855d54cf19c26b04677afbe5da85308cdfba7f	not-for-merge	'refs/pull/16/head' of https://github.com/FluidInference/FluidAudio
+740f4cbe091bf259daaf4535f612ae7bf94207ed	not-for-merge	'refs/pull/161/head' of https://github.com/FluidInference/FluidAudio
+2b38c5c41ee5622b7bbccf277318b50e9ac6e64c	not-for-merge	'refs/pull/162/head' of https://github.com/FluidInference/FluidAudio
+fbbb43c1ae0f90013e16d377eb39f465b5929010	not-for-merge	'refs/pull/165/head' of https://github.com/FluidInference/FluidAudio
+5f4ceb64c39e10e65d308f3d4e398abeb297a9a0	not-for-merge	'refs/pull/166/head' of https://github.com/FluidInference/FluidAudio
+d946049a375166582b46335e820d15cee4225cd4	not-for-merge	'refs/pull/167/head' of https://github.com/FluidInference/FluidAudio
+11eb401fa006fc4f4d191ed0f2543457474bc92d	not-for-merge	'refs/pull/168/head' of https://github.com/FluidInference/FluidAudio
+abcf4c817d00227b68bbfe947aa2eac7bec0bf96	not-for-merge	'refs/pull/169/head' of https://github.com/FluidInference/FluidAudio
+fa77f8bf94e067d44f261c0ded0a54c01c439c93	not-for-merge	'refs/pull/169/merge' of https://github.com/FluidInference/FluidAudio
+ff17f97193294ee7b046ea0d7d2f0dd27d9ffd5c	not-for-merge	'refs/pull/171/head' of https://github.com/FluidInference/FluidAudio
+2ae8785295952d29a32b6bd1bf2950beb97ddba4	not-for-merge	'refs/pull/172/head' of https://github.com/FluidInference/FluidAudio
+e23b775d1cbe5bb441faca328e460816950c05a3	not-for-merge	'refs/pull/175/head' of https://github.com/FluidInference/FluidAudio
+d530ab18911cbee9be98cefb018f60816c22e310	not-for-merge	'refs/pull/176/head' of https://github.com/FluidInference/FluidAudio
+e031f519e5d68997bcd9a20bfa3a38b4ac84748d	not-for-merge	'refs/pull/177/head' of https://github.com/FluidInference/FluidAudio
+fd66df72bc17975dc14dc8c6fbf98e5081d31d84	not-for-merge	'refs/pull/178/head' of https://github.com/FluidInference/FluidAudio
+e443a667ceaebbc029eae5c60a7b099dd05da30f	not-for-merge	'refs/pull/180/head' of https://github.com/FluidInference/FluidAudio
+655897ad85ca340a9d74b80b83f6dd0d20044804	not-for-merge	'refs/pull/181/head' of https://github.com/FluidInference/FluidAudio
+8ee1f64ad7f6c5d3e8ba7d1a70b452af16cdb4b6	not-for-merge	'refs/pull/182/head' of https://github.com/FluidInference/FluidAudio
+0539ed5317c8a10ea629647dd6c2e6f832149b01	not-for-merge	'refs/pull/183/head' of https://github.com/FluidInference/FluidAudio
 f8c041b57c82e1c0215ea08f445a9ec2ae914d22	not-for-merge	'refs/pull/19/head' of https://github.com/FluidInference/FluidAudio
 4b52df658956cd4e5cad15258e3b49a188e3e4a6	not-for-merge	'refs/pull/2/head' of https://github.com/FluidInference/FluidAudio
 f172f8caaaa8a7fde30f8b6f22456bbc77ad9620	not-for-merge	'refs/pull/21/head' of https://github.com/FluidInference/FluidAudio
@@ -77,7 +144,6 @@ a3c529b08536043f09006bc92bfb7045b68a64ff	not-for-merge	'refs/pull/76/head' of ht
 b976f8b4670d1671d83b3080dcfb635ffc5b8bed	not-for-merge	'refs/pull/77/head' of https://github.com/FluidInference/FluidAudio
 b4c6082fbc9fa5b2103dbb6fce742093324bde67	not-for-merge	'refs/pull/78/head' of https://github.com/FluidInference/FluidAudio
 91323c74d1471e2235800263c75218b9e765bd2f	not-for-merge	'refs/pull/79/head' of https://github.com/FluidInference/FluidAudio
-74a50c4f68d64a2670436caac49a9c713bb57580	not-for-merge	'refs/pull/79/merge' of https://github.com/FluidInference/FluidAudio
 4508c64465d5ca614381439f0058143a98c7592a	not-for-merge	'refs/pull/8/head' of https://github.com/FluidInference/FluidAudio
 7e3972d03dac0c0de0ff6ac0401a27667eb0a64f	not-for-merge	'refs/pull/80/head' of https://github.com/FluidInference/FluidAudio
 ead927a2f1f5c845876749b31580774f43bc8027	not-for-merge	'refs/pull/81/head' of https://github.com/FluidInference/FluidAudio
@@ -92,8 +158,7 @@ bd3c3d8a63f54fc516051d2bbd4ecca774c60ab6	not-for-merge	'refs/pull/9/head' of htt
 5b5781753ec224c866b16d9225b8b79b6ab5163b	not-for-merge	'refs/pull/90/head' of https://github.com/FluidInference/FluidAudio
 366ee1c990da2c55324bd92b81a60964876f7dc9	not-for-merge	'refs/pull/91/head' of https://github.com/FluidInference/FluidAudio
 816978429060986495bbe6a47a89a8e05a2a601b	not-for-merge	'refs/pull/93/head' of https://github.com/FluidInference/FluidAudio
-cd493531704235b967e3cc9e2f75ba26a124b9b3	not-for-merge	'refs/pull/94/head' of https://github.com/FluidInference/FluidAudio
-97b480c368b8383374c3df2a586ca382e776cfb5	not-for-merge	'refs/pull/94/merge' of https://github.com/FluidInference/FluidAudio
+394fcef6b8ab245267a07b49ab1c4483682762b8	not-for-merge	'refs/pull/94/head' of https://github.com/FluidInference/FluidAudio
 b67f112da1a9c922bf2c2a0c2e59688f673def89	not-for-merge	'refs/pull/95/head' of https://github.com/FluidInference/FluidAudio
 3a5fd0ce480ffb589e6f459bf4e493223f9c3efd	not-for-merge	'refs/pull/96/head' of https://github.com/FluidInference/FluidAudio
 12b9eab93c52a2fd282be6687214223462532e3b	not-for-merge	'refs/pull/97/head' of https://github.com/FluidInference/FluidAudio
@@ -108,3 +173,14 @@ a973d997d4336298a8b054b408ea9a74a880a8c0	not-for-merge	tag 'v0.2.0' of https://g
 289f32d36d41c18b4f5ae75e47f37fbfa353b4cf	not-for-merge	tag 'v0.4.1' of https://github.com/FluidInference/FluidAudio
 a9726e5c2a8f2642036e88813937971152762228	not-for-merge	tag 'v0.5.0' of https://github.com/FluidInference/FluidAudio
 be8e1d6c60822385ad97ce78013d2d6933e26f02	not-for-merge	tag 'v0.5.1' of https://github.com/FluidInference/FluidAudio
+a5eeed9a0d5699c765670b5f56704739beb32a76	not-for-merge	tag 'v0.5.2' of https://github.com/FluidInference/FluidAudio
+3bfd6f9e71867a68808604cd3d4c5a59a365f4e5	not-for-merge	tag 'v0.6.0' of https://github.com/FluidInference/FluidAudio
+b4aa3baa2fb5a56e1f31b721eb22c3c32f2bb6b3	not-for-merge	tag 'v0.6.1' of https://github.com/FluidInference/FluidAudio
+e1bd7cec1a99d211b15c9514489459d3d828ec45	not-for-merge	tag 'v0.7.0' of https://github.com/FluidInference/FluidAudio
+3a7402877ea4eb4d7a10e0b421e68f691d33a887	not-for-merge	tag 'v0.7.1' of https://github.com/FluidInference/FluidAudio
+2df5261b05f2c94b069aa7862d6255768bf9a0e5	not-for-merge	tag 'v0.7.2' of https://github.com/FluidInference/FluidAudio
+06ab3d5cac39f661619d5d22e1113807e439cd50	not-for-merge	tag 'v0.7.4' of https://github.com/FluidInference/FluidAudio
+f47209a44e26c8d930983358e497c581bfb9442d	not-for-merge	tag 'v0.7.5' of https://github.com/FluidInference/FluidAudio
+b2248c4d110b6c1931ea8c55d8b01e05854f40f6	not-for-merge	tag 'v0.7.6' of https://github.com/FluidInference/FluidAudio
+2dd0bd1849147f772167bc2f28535e614ca6dd53	not-for-merge	tag 'v0.7.7' of https://github.com/FluidInference/FluidAudio
+8136bd0642e7c5ce1f6f5b2931890266aeecb08c	not-for-merge	tag 'v0.7.8' of https://github.com/FluidInference/FluidAudio

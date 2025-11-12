@@ -1,30 +1,30 @@
 {
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/LRUCache.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/LRUCache.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/LRUCache.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/LRUCache.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/LRUCache.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/LRUCache.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/MenuBarController.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/MenuBarController.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/MenuBarController.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/NetworkConfiguration.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NetworkConfiguration.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NetworkConfiguration.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NetworkConfiguration.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NetworkConfiguration.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NetworkConfiguration.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/NativeAppleTranscriptionProvider.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NativeAppleTranscriptionProvider.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NativeAppleTranscriptionProvider.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NativeAppleTranscriptionProvider.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NativeAppleTranscriptionProvider.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NativeAppleTranscriptionProvider.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/NotchIndicatorController.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/NotchIndicatorController.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/NotchIndicatorController.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/OpenRouterHTTPClient.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/OpenRouterHTTPClient.swiftdeps"
   }
 }

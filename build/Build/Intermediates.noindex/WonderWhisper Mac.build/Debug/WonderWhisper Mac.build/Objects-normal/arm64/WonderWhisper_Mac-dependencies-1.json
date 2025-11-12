@@ -2,829 +2,822 @@
   {
     "isFramework" : true,
     "moduleName" : "AVFAudio",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/AVFAudio.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/AVFAudio.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "AVFoundation",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/AVFoundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/AVFoundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Accelerate",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Accelerate.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Accelerate.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "Accessibility",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Accessibility.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Accessibility.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "AppKit",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/AppKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/AppKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "AudioToolbox",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/AudioToolbox.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/AudioToolbox.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "Combine",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Combine.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Combine.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Compression",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Compression.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Compression.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "CoreAudio",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreAudio.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreAudio.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreData",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreData.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreData.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "CoreFoundation",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreFoundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreFoundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreGraphics",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreGraphics.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreGraphics.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "CoreImage",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreImage.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreImage.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "CoreMIDI",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreMIDI.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreMIDI.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreML",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreML.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreML.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "CoreMedia",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreMedia.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreMedia.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreText",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreText.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreText.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreTransferable",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreTransferable.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreTransferable.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CoreVideo",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CoreVideo.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CoreVideo.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "CryptoKit",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/CryptoKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/CryptoKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Darwin",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Darwin.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Darwin.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "DataDetection",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/DataDetection.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/DataDetection.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "DeveloperToolsSupport",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/DeveloperToolsSupport.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/DeveloperToolsSupport.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Dispatch",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Dispatch.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Dispatch.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "FluidAudio",
-    "modulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/Build\/Products\/Debug\/FluidAudio.swiftmodule\/arm64-apple-macos.swiftmodule"
+    "modulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/Build\/Products\/Debug\/FluidAudio.swiftmodule\/arm64-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "Foundation",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Foundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Foundation.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "IOKit",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/IOKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/IOKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "LocalAuthentication",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/LocalAuthentication.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/LocalAuthentication.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Metal",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Metal.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Metal.swiftmodule\/arm64e-apple-macos.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "NaturalLanguage",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/NaturalLanguage.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "OSLog",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/OSLog.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/OSLog.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "ObjectiveC",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/ObjectiveC.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/ObjectiveC.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Observation",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Observation.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Observation.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "QuartzCore",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/QuartzCore.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/QuartzCore.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "ScreenCaptureKit",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/ScreenCaptureKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/ScreenCaptureKit.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Spatial",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Spatial.swiftmodule\/arm64e-apple-macos.swiftmodule"
-  },
-  {
-    "isFramework" : true,
-    "moduleName" : "Speech",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Speech.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Spatial.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Swift",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Swift.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Swift.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "SwiftOnoneSupport",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/SwiftOnoneSupport.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/SwiftOnoneSupport.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "SwiftUI",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/SwiftUI.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/SwiftUI.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "SwiftUICore",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/SwiftUICore.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/SwiftUICore.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "Symbols",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Symbols.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Symbols.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "Synchronization",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Synchronization.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Synchronization.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "System",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/System.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/System.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "UniformTypeIdentifiers",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/UniformTypeIdentifiers.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/UniformTypeIdentifiers.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : true,
     "moduleName" : "Vision",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/Vision.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/Vision.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "XPC",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/XPC.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/XPC.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_Builtin_float",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_Builtin_float.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_Builtin_float.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_Concurrency",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_Concurrency.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_Concurrency.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation1",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_DarwinFoundation1.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_DarwinFoundation1.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation2",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_DarwinFoundation2.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_DarwinFoundation2.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation3",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_DarwinFoundation3.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_DarwinFoundation3.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "_StringProcessing",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/_StringProcessing.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/_StringProcessing.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "os",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/os.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/os.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "isFramework" : false,
     "moduleName" : "simd",
-    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.0\/simd.swiftmodule\/arm64e-apple-macos.swiftmodule"
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/macosx\/prebuilt-modules\/26.1\/simd.swiftmodule\/arm64e-apple-macos.swiftmodule"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/AVFAudio.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/AVFAudio-8V6ZLHDZ3R3EYH8Q8CYSVIDBO.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/AVFAudio-1G5NLA0090I5RS9W7CH8VRITS.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "AVFAudio"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/AVFoundation.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/AVFoundation-7R8JYEBKAXI9RZD8AVWEOI0VD.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/AVFoundation-2GOZP8KFP9OZECUWILN0391KE.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "AVFoundation"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Accelerate.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Accelerate-3022DE0OC5W1IEZRQ6DSK9IP5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Accelerate-9P690MXEG6XM5CTYLGL6J11TY.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Accelerate"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Accessibility.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Accessibility-6B0PNAHNWH704YBI0E1VFOJ42.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Accessibility-3G0ZSCCHWGEVMZ9AAJVT82BKE.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Accessibility"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/AppKit.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/AppKit-AB1YC2IAFJ72UVNNC548953OI.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/AppKit-CXUO26O6N1Y2JJN4NUVR5SMP.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "AppKit"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/ApplicationServices.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ApplicationServices-8H1KP93QCKY2MB1YWZUXJFGMH.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ApplicationServices-2DD3QK9FONC85K74BEOSRU9AC.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ApplicationServices"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/AudioToolbox.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/AudioToolbox-AYQLOCNHTG8BMCJGG5YZOLJ5B.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/AudioToolbox-23N4VID1POAHFXR7QUEQ5KOLS.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "AudioToolbox"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CFNetwork.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CFNetwork-EOVBF155VUOS2O9V17FFF8XRS.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CFNetwork-4YASERDR569XRN9XRMLH5HUO5.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CFNetwork"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/cups.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CUPS-8A8GG33HC3D7OA175ZYTIFTJ7.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CUPS-C2PI5VAHB4105M6TRWYPX7O8H.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CUPS"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Carbon.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Carbon-37NXT2Z2VQJTTZMFIJJHJ7UZ8.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Carbon-2777HVCSIHSKAHEXRKVFGZNSL.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Carbon"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Cocoa.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Cocoa-5IGK1DNREHTWL2AXU8BCZ064K.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Cocoa-BHVCNA2LLFLTVIBOC2AWVAOVQ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Cocoa"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/ColorSync.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ColorSync-60TBKPWFN978QLEHZ4B4S1E7W.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ColorSync-1EHELCQSBW8ITGWIPRFSCXUMZ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ColorSync"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/compression.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Compression-6FSFA0MH8OCQNLVSVDM0D8B4B.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Compression-BR0FGUA8W6AOZ6ASNVK7HD94D.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Compression"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreAudio.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreAudio-7S3IBJ3ARBOAHL466D8STZLPW.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreAudio-BR4DEEFI0IJM5KB1I7YO4NWYU.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreAudio"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreAudioTypes.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreAudioTypes-F4B5DR7VR10XGGVSSV1PRMN93.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreAudioTypes-45YPEQU1BMGBF9EHN5ZPCZAVQ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreAudioTypes"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreData.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreData-CYRX5M289ZZK6DUIY05RPYEPD.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreData-4MHET39IVA3D56FOI7A3KEVI1.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreData"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreFoundation.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreFoundation-9Q6E3JQHQAGVRG38NMNY0YBTZ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreFoundation-HKF2P89PPDGTJBW6ZXQO8LGZ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreFoundation"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreGraphics.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreGraphics-2TL3HIZNANPS4ZLXZ56FJXIE9.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreGraphics-DZD9COOMV5IXRN1XOL6HOWOZW.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreGraphics"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreImage.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreImage-1DXKMS7P3IAHO02CUZNMTS3SY.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreImage-E6A5J7690EV2GOZ3DI5JKVC1L.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreImage"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreMIDI.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreMIDI-5GT56XYZ7H3S07GZJNG21MH5M.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreMIDI-CBG2TV2MBPSZ2QUO6EXLV3AKK.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreMIDI"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreML.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreML-7NFU0E8VO1QV397LVWULA7BVQ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreML-F313IT6Y5EAOSGXEFBBI1DWP9.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreML"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreMedia.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreMedia-F1YLD6Z43CTUPKLWJQ2QN8K65.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreMedia-9D7C0JLNZ4QH9YS4ZT0DRUWS7.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreMedia"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreServices.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreServices-BTRCGNRXKDGTX0U67KHKLZKBW.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreServices-7UZAISM7VMO7G8OUVEBEU1F1O.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreServices"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreText.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreText-68VTGYR71NKF0XH56EMI3QNEM.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreText-BZCAA2DDI3X8Q1QVIWIKVCTQ8.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreText"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreTransferable.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreTransferable-CW4RC8ZSF1D20YWF30WP7TSO6.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreTransferable-8CGYB8UH4PVD9OWX8WGDJZANX.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreTransferable"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/CoreVideo.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/CoreVideo-20ZZ26EUN5264V5ZOJC2OBDB9.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/CoreVideo-9VBXVKL0265MUY4WOG3FIMZRN.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "CoreVideo"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/Darwin.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Darwin-20FPVU37GJLVHZZ68QTXSQGFN.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Darwin-4HAS0ABKT59YKO5XMPNC3FI15.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Darwin"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/DataDetection.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/DataDetection-4FQH873R03D2IFC74AZ095NJ5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/DataDetection-2337NIHS50928Q3MKU4QX7R7T.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "DataDetection"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/DeveloperToolsSupport.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/DeveloperToolsSupport-UBDU4IPNJ2F3DQUV4LQQTO7M.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/DeveloperToolsSupport-C5Q57PXZ1W2QHCRWNF7NNF5JE.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "DeveloperToolsSupport"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/DiskArbitration.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/DiskArbitration-8DL383IMNAKK7G5G131D5E0PT.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/DiskArbitration-9A0F6OEOROC9JIDT67O1388IW.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "DiskArbitration"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/dispatch.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Dispatch-6E9OECZ8PPM2BRDO0MFLKK7N5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Dispatch-43N9QN6QG1JG911BCXPN6EOOG.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Dispatch"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Foundation.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Foundation-85P27KB8FS9HIER3SYDZQ2GVZ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Foundation-4EOJEWN9VBFRHX33R6O85J8L4.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Foundation"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/IOKit.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/IOKit-CSZ2LD5Z3YP8LFSAMAXOE8DX5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/IOKit-7S2DMVPGP29F9PIQSXDQUMV7G.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "IOKit"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/IOSurface.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/IOSurface-9C76ZT6IQ8MA7O7EO8OFDB3A5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/IOSurface-5LYUH24CH4K09LALCLM79X0XW.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "IOSurface"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/ImageIO.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ImageIO-AIVI5W2OMVY1E9M4WM66WXGV4.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ImageIO-7KGJJP77PU66E2SU6J8CTU5SF.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ImageIO"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/LocalAuthentication.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/LocalAuthentication-SYAAGFHF29GYD2XLITCTY9RD.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/LocalAuthentication-8DIXQ5X2GZOOWPA5I16UNIIB2.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "LocalAuthentication"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinBasic.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/MachO-3GUJCZ8Q4FK0DEOW88O94BX8A.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/MachO-BKNPCCZ2J4JC37WNRF1XDUV6T.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "MachO"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/MediaToolbox.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/MediaToolbox-EKNBRAKZ174QFE8KTY001NX6T.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/MediaToolbox-1O1QAO9XGLMTZIM2SN37T98J3.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "MediaToolbox"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Metal.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Metal-PN4RKMZN1B2RBABL031X6ZOZ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Metal-602JGPUCSMNSUYD66D38E2XRT.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Metal"
   },
   {
-    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/MetalPerformanceShaders.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/MetalPerformanceShaders-35RFINGTNDJY028QNZ641UBZ1.pcm",
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/NaturalLanguage.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/NaturalLanguage-4QROZB6V9SN29WK1FR1X0JTCP.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
-    "moduleName" : "MetalPerformanceShaders"
+    "moduleName" : "NaturalLanguage"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/OSLog.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/OSLog-8YOO21W2RI2SZ1885FCP1PJBE.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/OSLog-38YQEA207QWW5QP49SNY5KMIL.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "OSLog"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/ObjectiveC.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ObjectiveC-B4R617QN7NCC2OJXE46HPEIJ6.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ObjectiveC-19AG55TAP6FQ44SVPH18DRUVV.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ObjectiveC"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/OpenGL.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/OpenGL-2OXAXDYD0VGXKJXAUNEAEK9ID.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/OpenGL-BZ7JAJ8UJ6K1A61NNAQ4766W0.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "OpenGL"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/QuartzCore.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/QuartzCore-C0PWOUCMUHEZ3VG25KG5MEMUS.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/QuartzCore-6RJC0L186EFMU77A6BN15DFDG.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "QuartzCore"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/ScreenCaptureKit.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ScreenCaptureKit-AX7A9WO1PTF7ADQ9SK8S061E0.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ScreenCaptureKit-6JGBU9P544VIBDYEX2MWPQURS.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ScreenCaptureKit"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Security.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Security-68RYNJG77LWV2RE68088V6MIJ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Security-7TVSINNFP8UWKMWXM47SRT55S.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Security"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/Spatial\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Spatial-J4QK88QA5W0I7L0IK80MB960.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Spatial-CY5YVHUAS39FB1Q9RSI9N1EIN.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Spatial"
   },
   {
-    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Speech.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Speech-1LZH1ZSVDHDD8O6M8DXTQDQST.pcm",
-    "isBridgingHeaderDependency" : false,
-    "isFramework" : false,
-    "moduleName" : "Speech"
-  },
-  {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/lib\/swift\/shims\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/SwiftShims-AO6DKQ8G520BIH7Z8A40IAWZK.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/SwiftShims-1DQ5NRE9EK7X1UVWCQIBNRBGJ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "SwiftShims"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/SwiftUI.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/SwiftUI-5COZ5U56TWF22IJCO1TXH8560.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/SwiftUI-286HC4L3I92XYGMH6DBYKNCYV.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "SwiftUI"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/SwiftUICore.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/SwiftUICore-9R7Q7I7H8LKIQMY329YNX2VLN.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/SwiftUICore-BRW74TG8CURXM6VMXHWZM854X.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "SwiftUICore"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Symbols.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Symbols-BFT35TJIS2G0QJDN7UVPSIX12.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Symbols-4NENN30EL9NKTO372KFVN1WV5.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Symbols"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/UniformTypeIdentifiers.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/UniformTypeIdentifiers-D0WU2FRVJBUZSM4FEKI4P43W6.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/UniformTypeIdentifiers-7HVOC2VFYR08DB0U20QLJCOYA.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "UniformTypeIdentifiers"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/System\/Library\/Frameworks\/Vision.framework\/Modules\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/Vision-EBMSPH3L2YFTH1KTRYQ3RIFHR.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/Vision-5AS9H4R7L5OYGGL3QZ5HRESUQ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "Vision"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/xpc.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/XPC-1IE64P5F8BLD56BCY6ONUMNEG.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/XPC-5W76YFY91Q90K17YXU31FE664.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "XPC"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinFoundation1.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_AvailabilityInternal-AUZEELPKY475PA1YULPFVPMIL.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_AvailabilityInternal-5EFFEDDUM2J27ZGJ882TKP6N0.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_AvailabilityInternal"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_float-9WC68BCZ7EHX585HO8VOOJWBQ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_float-5OUHPJWVG24AWA8XR4N58B9DM.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_float"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_intrinsics-4IJMGPIH4YQIGMTJ55FKVI8YL.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_intrinsics-SU978Q8L6H9XAJQWM1C33PEK.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_intrinsics"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_inttypes-1Q73EYZQN9RJGPD3UBBT1VQ3C.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_inttypes-7AHG09PIB8BCCYEWUA9E0A7JE.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_inttypes"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_limits-AI1X0071601EY8IAXCWK84OUY.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_limits-XR19I91DBBBQ3LQX66I0IGS8.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_limits"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_stdarg-85ZAZ6BF04DOQG8YPT5QU9ORI.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_stdarg-5C7WMCMSMWKVDMVF5DRXOMGL5.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_stdarg"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_stdatomic-7RU4MNRXQ9QQEKS2W1JM7Z4IC.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_stdatomic-BJ3K9VRJR5Q3AH2W8B24IEMWR.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_stdatomic"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_stdbool-5AU224UABULS9VKNWXGIF98SH.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_stdbool-6X09EIMHK1R1AR474765LUBHP.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_stdbool"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_stddef-CS82RQ3JZV4I67V4N0O35EH2.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_stddef-85NWPS58PAZYI71W06PAY6HC7.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_stddef"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_stdint-22BVMXLDJZ2UH5R3QEJ0ZXTUO.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_stdint-EELHCMPASOQJ006AHLNDXFCRS.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_stdint"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_Builtin_tgmath-3XSZQ1VM757CIFQU9XARJN9QT.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_Builtin_tgmath-C1THJ11KQ0641A9V5Y9JXO7GY.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_Builtin_tgmath"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinFoundation1.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_DarwinFoundation1-D7A1B6NQQV1KWHZCCC4O61OWR.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_DarwinFoundation1-BQ7R46B38MM16PMM873ZCLM7T.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation1"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinFoundation2.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_DarwinFoundation2-AO2GUPEQ8OZVHGEZ0KB0LGIDH.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_DarwinFoundation2-761TIK9HJE81PZHL16AJEUVKS.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation2"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinFoundation3.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_DarwinFoundation3-A3Z6CZVM653LPH4S1OR1CBMQ.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_DarwinFoundation3-9US3REFHIXS9EJHQ6JZ8GD6SE.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_DarwinFoundation3"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/lib\/swift\/shims\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/_SwiftConcurrencyShims-67S1Z5GD9X0M0LGQ4EQZAN7JW.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/_SwiftConcurrencyShims-8PNNPPOR0DC3CS74FRDCYLPYU.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "_SwiftConcurrencyShims"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/launch.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/launch-4ZFLFKO19THYF5U64R8PT9T5.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/launch-9EAO4XMZT3YINDOLK3EFU6IIQ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "launch"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/libDER\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/libDER-3XSGOO32QGVC46VUONUNJ1VOT.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/libDER-99GM3QG1DD6MSILXDBB1AHKD0.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "libDER"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/libkern.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/libkern-6EFOIK1PJX24LV5TC983OR5JU.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/libkern-F16I4OH0HSB3P2AGZYCN9B6Z2.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "libkern"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/os.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/os-2AGWDZGRG03Q6KWXHDKRDBQNS.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/os-DV1KD2JW4G8PAM6RSSBZKQ53O.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "os"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/os.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/os_object-10FL7MJMK7LP7LW555VSKFR5N.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/os_object-BPLL2JL2890FRHX818KV47SUC.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "os_object"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/os.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/os_workgroup-AT6JUDU3EMJZIGPOWPTDBAQO3.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/os_workgroup-DH7QVL9T7YNS1AV5WCDOZ1N0A.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "os_workgroup"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ptrauth-30MKEGT7QH0MVJD8I761BMIWL.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ptrauth-2U4RYNZ1WFJ1UXKX8QZ6WJWRM.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ptrauth"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/ptrcheck-DLJVA52LGSZCICI96Q4EV1JGR.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/ptrcheck-DNPW5ZZXHXIWUSHI638UJ2YUV.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "ptrcheck"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/simd\/module.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/simd-D4004RGLNZ751QGXFC4B8XII6.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/simd-6BIAF49GO21NB8HB1IXJ1T0YW.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "simd"
   },
   {
     "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/MacOSX.platform\/Developer\/SDKs\/MacOSX.sdk\/usr\/include\/DarwinFoundation2.modulemap",
-    "clangModulePath" : "\/Users\/danekapoor\/Development\/WonderWhisper Mac\/WonderWhisper Mac\/build\/ModuleCache.noindex\/sys_types-3F0XYN7UYQH0E84MRGB9Y8CQ0.pcm",
+    "clangModulePath" : "\/Users\/danekapoor\/Development\/WWMac-lite\/build\/ModuleCache.noindex\/sys_types-4R0GBOE66GE9WXVB0VNVXHMIJ.pcm",
     "isBridgingHeaderDependency" : false,
     "isFramework" : false,
     "moduleName" : "sys_types"

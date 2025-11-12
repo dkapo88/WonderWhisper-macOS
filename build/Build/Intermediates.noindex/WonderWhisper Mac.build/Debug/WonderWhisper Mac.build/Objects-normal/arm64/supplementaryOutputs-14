@@ -1,30 +1,30 @@
 {
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/AudioRecorder.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/AudioRecorder.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/AudioRecorder.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ContentView.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/ClipboardContextMonitor.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ClipboardContextMonitor.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ClipboardContextMonitor.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ClipboardContextMonitor.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ClipboardContextMonitor.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ClipboardContextMonitor.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/DeepgramStreamingProvider.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DeepgramStreamingProvider.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/ContentView.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ContentView.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/DictationController.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DictationController.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DictationController.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DictationController.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DictationController.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/DictationController.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/ConversationHistoryStore.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ConversationHistoryStore.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ConversationHistoryStore.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ConversationHistoryStore.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ConversationHistoryStore.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/WonderWhisper Mac.build/Debug/WonderWhisper Mac.build/Objects-normal/arm64/ConversationHistoryStore.swiftdeps"
   }
 }

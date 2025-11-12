@@ -1,0 +1,248 @@
+{
+  "source": "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/SimplePromptEditorView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Prompt header",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 52
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rule list",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 159
+        }
+      },
+      {
+        "comment": "",
+        "key": "Prompt footer",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 191
+        }
+      },
+      {
+        "comment": "",
+        "key": "Context inputs",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 84
+        }
+      },
+      {
+        "comment": "",
+        "key": "Single-key shortcut",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 120
+        }
+      },
+      {
+        "comment": "",
+        "key": "Set the tone and scaffolding for the system prompt before any rules are injected.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 55
+        }
+      },
+      {
+        "comment": "",
+        "key": "Restore default",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 59
+        }
+      },
+      {
+        "comment": "",
+        "key": "Simple Mode uses on-device OCR to capture key names and terms from the active window when screen context is enabled.",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 86
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use screen context",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "When on, WonderWhisper OCRs the active window locally and sends the extracted keywords to the model.",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use clipboard",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 96
+        }
+      },
+      {
+        "comment": "",
+        "key": "Allow the mode to read recently copied text when available.",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use selected text",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 102
+        }
+      },
+      {
+        "comment": "",
+        "key": "Send highlighted text from the current app into the prompt.",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 106
+        }
+      },
+      {
+        "comment": "",
+        "key": "Attach screenshot to prompt",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 110
+        }
+      },
+      {
+        "comment": "",
+        "key": "Adds the active window screenshot alongside the OCR keywords for extra visual context.",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 111
+        }
+      },
+      {
+        "comment": "",
+        "key": "No shortcut assigned — use the dropdown to choose one.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 149
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pick a single modifier key to trigger Simple Dictation on press-and-hold.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 123
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pick a single modifier key to trigger Command Mode.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 124
+        }
+      },
+      {
+        "comment": "",
+        "key": "Activation key",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 128
+        }
+      },
+      {
+        "comment": "",
+        "key": "None",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 129
+        }
+      },
+      {
+        "comment": "",
+        "key": "Current: %@",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 139
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 143
+        }
+      },
+      {
+        "comment": "",
+        "key": "The list below feeds directly into the system prompt. Reorder, edit, or remove items to match your workflow.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 162
+        }
+      },
+      {
+        "comment": "",
+        "key": "Restore defaults",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 166
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add rule",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 181
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add final guardrails or context that should always trail the rules.",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 194
+        }
+      },
+      {
+        "comment": "",
+        "key": "Restore default",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 198
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rule %lld",
+        "location": {
+          "startingColumn": 14,
+          "startingLine": 225
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete this rule",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 234
+        }
+      }
+    ]
+  },
+  "version": 1
+}

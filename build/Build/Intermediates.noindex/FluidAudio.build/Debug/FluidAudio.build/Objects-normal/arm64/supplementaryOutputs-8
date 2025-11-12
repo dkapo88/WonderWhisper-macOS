@@ -1,23 +1,23 @@
 {
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/SlidingWindow.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SlidingWindow.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SlidingWindow.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SlidingWindow.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SlidingWindow.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SlidingWindow.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/SpeakerTypes.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerTypes.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerTypes.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerTypes.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerTypes.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerTypes.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/SpeakerManager.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerManager.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerManager.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerManager.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerManager.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerManager.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/DownloadUtils.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DownloadUtils.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DownloadUtils.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DownloadUtils.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DownloadUtils.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/DownloadUtils.swiftdeps"
   },
-  "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/Diarizer/SpeakerOperations.swift" : {
-    "const-values" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerOperations.swiftconstvalues",
-    "dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerOperations.d",
-    "diagnostics" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerOperations.dia",
-    "object" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerOperations.o",
-    "swift-dependencies" : "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/SpeakerOperations.swiftdeps"
+  "/Users/danekapoor/Development/WWMac-lite/build/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/FluidAudioSwift.swift" : {
+    "const-values" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.swiftconstvalues",
+    "dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.d",
+    "diagnostics" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.dia",
+    "object" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.o",
+    "swift-dependencies" : "/Users/danekapoor/Development/WWMac-lite/build/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/FluidAudioSwift.swiftdeps"
   }
 }

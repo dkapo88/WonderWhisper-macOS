@@ -1,29 +1,29 @@
 {
-  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/ShortcutRecorderView.swift",
+  "source": "/Users/danekapoor/Development/WWMac-lite/WonderWhisper Mac/ShortcutRecorderView.swift",
   "tables": {
     "Localizable": [
       {
         "comment": "",
         "key": "Press keys…",
         "location": {
-          "startingColumn": 34,
-          "startingLine": 16
+          "startingColumn": 38,
+          "startingLine": 18
         }
       },
       {
         "comment": "",
         "key": "Change…",
         "location": {
-          "startingColumn": 52,
-          "startingLine": 16
+          "startingColumn": 56,
+          "startingLine": 18
         }
       },
       {
         "comment": "",
         "key": "Reset",
         "location": {
-          "startingColumn": 20,
-          "startingLine": 23
+          "startingColumn": 24,
+          "startingLine": 19
         }
       }
     ]
