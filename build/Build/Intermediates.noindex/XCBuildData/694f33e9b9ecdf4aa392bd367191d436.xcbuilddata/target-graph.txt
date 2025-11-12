@@ -1,0 +1,6 @@
+Target dependency graph (3 targets)
+Target 'WonderWhisper Mac' in project 'WonderWhisper Mac'
+➜ Explicit dependency on target 'FluidAudio' in project 'FluidAudio'
+Target 'FluidAudio' in project 'FluidAudio'
+➜ Explicit dependency on target 'FluidAudio' in project 'FluidAudio'
+Target 'FluidAudio' in project 'FluidAudio' (no dependencies)

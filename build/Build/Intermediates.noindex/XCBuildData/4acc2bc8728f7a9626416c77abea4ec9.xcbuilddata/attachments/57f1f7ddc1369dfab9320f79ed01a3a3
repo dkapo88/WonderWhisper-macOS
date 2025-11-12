@@ -1,4 +1,0 @@
-module FluidAudio {
-header "FluidAudio-Swift.h"
-export *
-}
