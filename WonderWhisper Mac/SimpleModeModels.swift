@@ -417,7 +417,6 @@ enum SimplePromptComposer {
     prompt.clipboardContextOverride = settings.enableClipboardContext
     prompt.selectedTextOverride = settings.enableSelectedText
     prompt.screenContextCaptureOverride = settings.enableScreenContext ? .text : nil
-    prompt.screenContextPreprocessingOverride = settings.enableScreenContext ? .onDevice : nil
     prompt.includeScreenImageOverride = settings.includeScreenImage
 
     switch kind {

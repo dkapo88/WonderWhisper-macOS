@@ -99,19 +99,6 @@ final class DictationViewModel: ObservableObject {
         return .image
     }() { didSet { UserDefaults.standard.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode"); persistAndUpdate() } }
     @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
-    @Published var screenContextPreprocessingMode: ScreenContextPreprocessingMode = {
-        if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
-           let mode = ScreenContextPreprocessingMode(rawValue: raw) {
-            return mode
-        }
-        if UserDefaults.standard.object(forKey: "screenContext.organize") != nil {
-            let legacy = UserDefaults.standard.bool(forKey: "screenContext.organize")
-            return ScreenContextPreprocessingMode.fromLegacyOrganizeFlag(legacy)
-        }
-        return .off
-    }() { didSet { persistAndUpdate() } }
-
-    @Published var screenOrganizePrompt: String = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt { didSet { persistAndUpdate() } }
 
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // LLM provider selection: "groq" (default) or "openrouter"
@@ -245,21 +232,6 @@ final class DictationViewModel: ObservableObject {
 
     init() {
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
-        let persistedOrganizePrompt = UserDefaults.standard.string(forKey: "screenContext.organizePrompt") ?? AppConfig.defaultScreenOrganizePrompt
-
-        let persistedPreprocessMode: ScreenContextPreprocessingMode = {
-            if let raw = UserDefaults.standard.string(forKey: "screenContext.preprocessMode"),
-               let mode = ScreenContextPreprocessingMode(rawValue: raw) {
-                return mode
-            }
-            let hasLegacy = UserDefaults.standard.object(forKey: "screenContext.organize") != nil
-            if hasLegacy {
-                let legacy = UserDefaults.standard.bool(forKey: "screenContext.organize")
-                return ScreenContextPreprocessingMode.fromLegacyOrganizeFlag(legacy)
-            }
-            return .off
-        }()
-
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
@@ -338,8 +310,6 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
             await controller.updateClipboardContextEnabled(activeClipboardContextEnabled)
-            await controller.updateScreenContextPreprocessingMode(persistedPreprocessMode)
-            await controller.updateScreenOrganizePrompt(persistedOrganizePrompt)
         }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
@@ -843,7 +813,6 @@ final class DictationViewModel: ObservableObject {
         }
         updated.screenContextOverride = override
         if override == false {
-            updated.screenContextPreprocessingOverride = nil
             updated.screenContextCaptureOverride = nil
         }
         prompts[idx] = updated
@@ -865,19 +834,6 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    func updateScreenContextPreprocessingOverride(for id: UUID, to override: ScreenContextPreprocessingMode?) {
-        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
-        var updated = prompts[idx]
-        if updated.screenContextPreprocessingOverride == override {
-            return
-        }
-        updated.screenContextPreprocessingOverride = override
-        prompts[idx] = updated
-        if updated.id == selectedPromptID {
-            updateProviders()
-        }
-    }
-
     func updateScreenContextCaptureOverride(for id: UUID, to override: ScreenContextCaptureMode?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
@@ -885,9 +841,6 @@ final class DictationViewModel: ObservableObject {
             return
         }
         updated.screenContextCaptureOverride = override
-        if override == .image {
-            updated.screenContextPreprocessingOverride = nil
-        }
         prompts[idx] = updated
         if updated.id == selectedPromptID {
             updateProviders()
@@ -1053,14 +1006,11 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
         UserDefaults.standard.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode")
         UserDefaults.standard.set(clipboardContextEnabled, forKey: "clipboardContext.enabled")
-        UserDefaults.standard.set(screenContextPreprocessingMode.rawValue, forKey: "screenContext.preprocessMode")
-        UserDefaults.standard.set(screenContextPreprocessingMode == .llm, forKey: "screenContext.organize")
 
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
-        UserDefaults.standard.set(screenOrganizePrompt, forKey: "screenContext.organizePrompt")
         updateProviders()
     }
 
@@ -1329,9 +1279,6 @@ final class DictationViewModel: ObservableObject {
         if screenContextCaptureMode != .text {
             screenContextCaptureMode = .text
         }
-        if screenContextPreprocessingMode != .onDevice {
-            screenContextPreprocessingMode = .onDevice
-        }
         applySimplePrompts()
     }
 
@@ -1412,7 +1359,6 @@ final class DictationViewModel: ObservableObject {
         screenContextEnabled = simpleShouldEnableScreenContext()
         clipboardContextEnabled = simpleShouldEnableClipboard()
         screenContextCaptureMode = .text
-        screenContextPreprocessingMode = .onDevice
         applySimplePrompts(preferredKind: preferredKind)
     }
 
@@ -1631,9 +1577,7 @@ final class DictationViewModel: ObservableObject {
         let useClipboardContext = resolvedClipboardContext(for: prompt)
         let useSelectedText = resolvedSelectedText(for: prompt)
         let captureMode = resolvedScreenContextCaptureMode(for: prompt)
-        let preprocessingMode = resolvedScreenContextPreprocessingMode(for: prompt)
         let includeScreenImage = resolvedScreenImage(for: prompt)
-        let screenOrganizePromptToApply = screenOrganizePrompt
 
         return Task {
             if let providerToApply = provider {
@@ -1649,8 +1593,6 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextCaptureMode(captureMode)
             await controller.updateClipboardContextEnabled(useClipboardContext)
             await controller.updateSelectedTextEnabled(useSelectedText)
-            await controller.updateScreenContextPreprocessingMode(preprocessingMode)
-            await controller.updateScreenOrganizePrompt(screenOrganizePromptToApply)
             await controller.updateScreenImageEnabled(includeScreenImage)
         }
     }
@@ -1889,17 +1831,6 @@ private extension DictationViewModel {
             return override
         }
         return screenContextCaptureMode
-    }
-
-    func resolvedScreenContextPreprocessingMode(for prompt: PromptConfiguration?) -> ScreenContextPreprocessingMode {
-        guard resolvedScreenContext(for: prompt) else { return .off }
-        if resolvedScreenContextCaptureMode(for: prompt) != .text {
-            return .off
-        }
-        if let override = prompt?.screenContextPreprocessingOverride {
-            return override
-        }
-        return screenContextPreprocessingMode
     }
 
     func resolvedSelectedText(for prompt: PromptConfiguration?) -> Bool {

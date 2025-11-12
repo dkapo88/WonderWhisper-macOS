@@ -20,7 +20,6 @@ actor DictationController {
 
     private var llmEnabled: Bool = true
     private var screenContextEnabled: Bool = true
-    private var screenContextPreprocessingMode: ScreenContextPreprocessingMode = .off
     private var screenImageEnabled: Bool = false
     private var clipboardContextEnabled: Bool = false
     private var selectedTextEnabled: Bool = true
@@ -33,11 +32,7 @@ actor DictationController {
     private let clipboardMonitor = ClipboardContextMonitor()
     private let clipboardWindowSeconds: TimeInterval = 10
 
-
-
-    private var screenOrganizePrompt: String = AppConfig.defaultScreenOrganizePrompt
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
-    private let keywordExtractor = ScreenContentKeywordExtractor()
 
     // Removed memory recording feature due to unreliable output
 
@@ -177,36 +172,9 @@ actor DictationController {
                 let (name, _) = screenContext.frontmostAppNameAndBundle()
                 appNameForPrompt = name
                 if screenContextEnabled {
-                    switch captureModeForSession {
-                    case .image:
-                        if let snapshot = preCapturedScreenSnapshot {
-                            screenAttachment = snapshot.asAttachment()
-                            screenMethod = snapshot.method.rawValue
-                            screenContentsForPrompt = makeScreenInstruction(from: snapshot, appName: appNameForPrompt)
-                        }
-                    case .text:
-                        if let text = preCapturedScreenText?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines), !text.isEmpty {
-                            screenContentsForPrompt = text
-                            screenMethod = preCapturedScreenMethod
-                            let preprocessMode = screenContextPreprocessingMode
-                            if preprocessMode != .off,
-                               let processed = await preprocessScreenText(text, mode: preprocessMode, context: "pipeline") {
-                                screenContentsForPrompt = processed.0
-                                screenMethod = processed.1
-                            }
-                        }
-                    }
-                    if screenImageEnabled, let snapshot = preCapturedScreenSnapshot {
-                        screenAttachment = snapshot.asAttachment()
-                        if screenMethod == nil {
-                            screenMethod = snapshot.method.rawValue
-                        }
-                        let imageGuidance = makeScreenInstruction(from: snapshot, appName: appNameForPrompt)
-                        if let existing = screenContentsForPrompt, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            screenContentsForPrompt = existing + "\n\n" + imageGuidance
-                        } else {
-                            screenContentsForPrompt = imageGuidance
-                        }
+                    if let text = preCapturedScreenText?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines), !text.isEmpty {
+                        screenContentsForPrompt = text
+                        screenMethod = preCapturedScreenMethod
                     }
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
@@ -294,7 +262,7 @@ actor DictationController {
             appNameHist = pair.0
             bundleIDHist = screenContextEnabled ? pair.1 : nil
             let totalDT = Date().timeIntervalSince(overallStart)
-            let imageForHistory = (captureModeForSession == .image || (screenImageEnabled && preCapturedScreenSnapshot != nil)) ? preCapturedScreenSnapshot : nil
+            let imageForHistory: ScreenCaptureSnapshot? = nil
             await history?.append(
                 fileURL: recordingFileURL ?? currentRecordingURL,
                 appName: appNameHist,
@@ -323,7 +291,7 @@ actor DictationController {
             let pair = screenContext.frontmostAppNameAndBundle()
             appNameHist = pair.0
             bundleIDHist = screenContextEnabled ? pair.1 : nil
-            let imageForHistory = (captureModeForSession == .image || (screenImageEnabled && preCapturedScreenSnapshot != nil)) ? preCapturedScreenSnapshot : nil
+            let imageForHistory: ScreenCaptureSnapshot? = nil
             let textForHistory = (captureModeForSession == .text) ? preCapturedScreenText : nil
             // Capture selected text dynamically for error case (preCapturedSelectedText may not be set)
             let selectedTextForHistory = resolveSelectedTextForSession()
@@ -364,7 +332,6 @@ actor DictationController {
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateScreenContextEnabled(_ enabled: Bool) { self.screenContextEnabled = enabled }
     func updateScreenContextCaptureMode(_ mode: ScreenContextCaptureMode) { self.screenContextCaptureMode = mode }
-    func updateScreenContextPreprocessingMode(_ mode: ScreenContextPreprocessingMode) { self.screenContextPreprocessingMode = mode }
     func updateClipboardContextEnabled(_ enabled: Bool) {
         clipboardContextEnabled = enabled
         if !enabled {
@@ -372,7 +339,6 @@ actor DictationController {
             Task { await clipboardMonitor.clear() }
         }
     }
-    func updateScreenOrganizePrompt(_ prompt: String) { self.screenOrganizePrompt = prompt }
     func updateScreenImageEnabled(_ enabled: Bool) { self.screenImageEnabled = enabled }
 
     func clearConversationHistory(for promptID: UUID) {
@@ -541,112 +507,45 @@ extension DictationController {
             _ = resolveSelectedTextForSession()
         }
 
-        switch screenContextCaptureMode {
-        case .image:
-            let snapshot = await screenContext.captureActiveWindowImage()
-            self.preCapturedScreenSnapshot = snapshot
-            self.preCapturedScreenText = nil
-            self.preCapturedScreenMethod = snapshot?.method.rawValue
-        case .text:
-            self.preCapturedScreenSnapshot = nil
-            self.preCapturedScreenText = nil
-            self.preCapturedScreenMethod = nil
+        // Always capture screen text for OCR context
+        self.preCapturedScreenSnapshot = nil
+        self.preCapturedScreenText = nil
+        self.preCapturedScreenMethod = nil
 
-            if let focused = screenContext.focusedText(), !focused.isEmpty {
-                self.preCapturedScreenText = focused
-                self.preCapturedScreenMethod = "AX"
-                return
-            }
-
-            let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-            let isCodeEditor = [
-                "com.cursorai.cursor",
-                "com.todesktop.cursor",
-                "com.microsoft.VSCode",
-                "com.microsoft.VSCodeInsiders",
-                "com.apple.dt.Xcode",
-                "com.jetbrains"
-            ].contains(where: { frontBundle.hasPrefix($0) })
-            let isBrowser = [
-                "com.apple.Safari",
-                "com.google.Chrome",
-                "org.mozilla.firefox",
-                "com.microsoft.edgemac",
-                "com.operasoftware.Opera"
-            ].contains(where: { frontBundle.hasPrefix($0) })
-            let forceAccurate = UserDefaults.standard.bool(forKey: "ocr.forceAccurate")
-            let preferAccurate = forceAccurate || isCodeEditor || isBrowser
-
-            if let text = await screenContext.captureActiveWindowText(preferAccurate: preferAccurate) {
-                let trimmed = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    self.preCapturedScreenText = trimmed
-                    self.preCapturedScreenMethod = "OCR"
-                }
-            }
+        if let focused = screenContext.focusedText(), !focused.isEmpty {
+            self.preCapturedScreenText = focused
+            self.preCapturedScreenMethod = "AX"
+            return
         }
 
-        if screenImageEnabled && preCapturedScreenSnapshot == nil {
-            let snapshot = await screenContext.captureActiveWindowImage()
-            self.preCapturedScreenSnapshot = snapshot
-            if let method = snapshot?.method.rawValue {
-                self.preCapturedScreenMethod = method
+        let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let isCodeEditor = [
+            "com.cursorai.cursor",
+            "com.todesktop.cursor",
+            "com.microsoft.VSCode",
+            "com.microsoft.VSCodeInsiders",
+            "com.apple.dt.Xcode",
+            "com.jetbrains"
+        ].contains(where: { frontBundle.hasPrefix($0) })
+        let isBrowser = [
+            "com.apple.Safari",
+            "com.google.Chrome",
+            "org.mozilla.firefox",
+            "com.microsoft.edgemac",
+            "com.operasoftware.Opera"
+        ].contains(where: { frontBundle.hasPrefix($0) })
+        let forceAccurate = UserDefaults.standard.bool(forKey: "ocr.forceAccurate")
+        let preferAccurate = forceAccurate || isCodeEditor || isBrowser
+
+        if let text = await screenContext.captureActiveWindowText(preferAccurate: preferAccurate) {
+            let trimmed = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                self.preCapturedScreenText = trimmed
+                self.preCapturedScreenMethod = "OCR"
             }
         }
     }
 
-    private func makeScreenInstruction(from snapshot: ScreenCaptureSnapshot, appName: String?) -> String {
-        var intro = "Attached image captures the "
-        switch snapshot.method {
-        case .window:
-            intro += "active window"
-        case .display:
-            intro += "current screen"
-        }
-        if let appName, !appName.isEmpty {
-            intro += " in \(appName)."
-        } else {
-            intro += "."
-        }
-
-        let guidance = "Use it to match layout, correct names, and interpret on-screen context."
-        let resolution = "Resolution: \(snapshot.width)x\(snapshot.height) pixels."
-        return "\(intro) \(guidance) \(resolution)"
-    }
-
-    private func preprocessScreenText(_ text: String, mode: ScreenContextPreprocessingMode, context: String) async -> (String, String)? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        switch mode {
-        case .off:
-            return nil
-        case .onDevice:
-            guard let formatted = keywordExtractor.formattedKeywords(from: trimmed) else { return nil }
-            return (formatted, "OCR-Keywords")
-        case .llm:
-            let orgSettings = LLMSettings(
-                endpoint: llmSettings.endpoint,
-                model: llmSettings.model,
-                systemPrompt: nil,
-                timeout: llmSettings.timeout,
-                streaming: false,
-                temperature: llmSettings.temperature
-            )
-            do {
-                let organized = try await llm.process(text: trimmed, userPrompt: screenOrganizePrompt, settings: orgSettings)
-                let output = organized.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !output.isEmpty else { return nil }
-                return (output, "OCR-Organized")
-            } catch {
-                if error is CancellationError {
-                    AppLog.dictation.log("Screen preprocessing (\(context)) cancelled")
-                } else {
-                    AppLog.dictation.error("Screen preprocessing (\(context)) failed: \(error.localizedDescription)")
-                }
-                return nil
-            }
-        }
-    }
     func updateSelectedTextEnabled(_ enabled: Bool) async {
         selectedTextEnabled = enabled
         if !enabled {

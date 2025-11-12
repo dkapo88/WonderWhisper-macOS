@@ -4,21 +4,8 @@ import AppKit
 import Carbon.HIToolbox
 
 final class ScreenContextService {
-    // Cache for screen context results
-    private struct CachedScreenContext {
-        let text: String
-        let image: ScreenCaptureSnapshot?
-        let timestamp: Date
-    }
-    
-    private var screenTextCache: [String: CachedScreenContext] = [:]
-    private var screenImageCache: [String: CachedScreenContext] = [:]
-    private let cacheTimeout: TimeInterval = 30 // 30 seconds TTL
     private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.screencontext", qos: .utility)
     private let clipboardQueue = DispatchQueue(label: "com.wonderwhisper.screencontext.clipboard", qos: .userInitiated)
-    
-    // Performance optimization flag
-    private var performanceModeEnabled = false
     
     func frontmostAppNameAndBundle() -> (name: String?, bundleId: String?) {
         let app = NSWorkspace.shared.frontmostApplication
@@ -101,44 +88,10 @@ final class ScreenContextService {
         return nil
     }
 
-    func captureActiveWindowImage() async -> ScreenCaptureSnapshot? {
-        // Check cache first
-        let cacheKey = generateWindowCacheKey()
-        if let cached = getCachedImage(for: cacheKey) {
-            return cached.image
-        }
-        
-        // Skip capture if in performance mode
-        if performanceModeEnabled {
-            return nil
-        }
-        
-        let svc = ScreenCaptureService()
-        let snapshot = await svc.captureActiveWindowImage()
-        
-        // Cache the result
-        if let snapshot = snapshot {
-            cacheImage(snapshot, for: cacheKey)
-        }
-        
-        return snapshot
-    }
-
     func captureActiveWindowText(preferAccurate: Bool) async -> String? {
-        // Check cache first
-        let cacheKey = generateWindowCacheKey()
-        if let cached = getCachedText(for: cacheKey) {
-            return cached.text
-        }
-        
-        // Skip OCR if in performance mode
-        if performanceModeEnabled {
-            return nil
-        }
-        
         // Perform OCR in background
         return await withCheckedContinuation { continuation in
-            backgroundQueue.async { [weak self] in
+            backgroundQueue.async {
                 let svc = ScreenCaptureService()
                 Task {
                     guard let snapshot = await svc.captureActiveWindowImage() else {
@@ -147,104 +100,8 @@ final class ScreenContextService {
                     }
                     
                     let text = await svc.recognizeText(from: snapshot, preferAccurate: preferAccurate)
-                    
-                    // Cache the result
-                    if let text = text {
-                        self?.cacheText(text, image: snapshot, for: cacheKey)
-                    }
-                    
                     continuation.resume(returning: text)
                 }
-            }
-        }
-    }
-    
-    // MARK: - Cache Management
-    
-    private func generateWindowCacheKey() -> String {
-        let frontmostApp = NSWorkspace.shared.frontmostApplication
-        let bundleId = frontmostApp?.bundleIdentifier ?? "unknown"
-        let windowTitle = getFrontmostWindowTitle() ?? "unknown"
-        return "\(bundleId):\(windowTitle)"
-    }
-    
-    private func getFrontmostWindowTitle() -> String? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        let appAX = AXUIElementCreateApplication(app.processIdentifier)
-        var windowRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appAX, kAXFocusedWindowAttribute as CFString, &windowRef)
-        if result == .success, let window = windowRef {
-            var titleRef: CFTypeRef?
-            let titleResult = AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &titleRef)
-            if titleResult == .success, let title = titleRef {
-                return title as? String
-            }
-        }
-        return nil
-    }
-    
-    private func getCachedText(for key: String) -> CachedScreenContext? {
-        guard let cached = screenTextCache[key] else { return nil }
-        
-        // Check if cache entry is still valid
-        if Date().timeIntervalSince(cached.timestamp) > cacheTimeout {
-            screenTextCache.removeValue(forKey: key)
-            return nil
-        }
-        
-        return cached
-    }
-    
-    private func getCachedImage(for key: String) -> CachedScreenContext? {
-        guard let cached = screenImageCache[key] else { return nil }
-        
-        // Check if cache entry is still valid
-        if Date().timeIntervalSince(cached.timestamp) > cacheTimeout {
-            screenImageCache.removeValue(forKey: key)
-            return nil
-        }
-        
-        return cached
-    }
-    
-    private func cacheText(_ text: String, image: ScreenCaptureSnapshot?, for key: String) {
-        screenTextCache[key] = CachedScreenContext(text: text, image: image, timestamp: Date())
-    }
-    
-    private func cacheImage(_ image: ScreenCaptureSnapshot, for key: String) {
-        screenImageCache[key] = CachedScreenContext(text: "", image: image, timestamp: Date())
-    }
-    
-    // MARK: - Performance Optimization
-    
-    func setPerformanceMode(_ enabled: Bool) {
-        performanceModeEnabled = enabled
-        if enabled {
-            // Clear cache when entering performance mode
-            clearCache()
-        }
-    }
-    
-    func clearCache() {
-        screenTextCache.removeAll(keepingCapacity: false)
-        screenImageCache.removeAll(keepingCapacity: false)
-    }
-    
-    // Periodic cache cleanup
-    func performCacheCleanup() {
-        let now = Date()
-        
-        // Clean up text cache
-        for (key, cached) in screenTextCache {
-            if now.timeIntervalSince(cached.timestamp) > cacheTimeout {
-                screenTextCache.removeValue(forKey: key)
-            }
-        }
-        
-        // Clean up image cache
-        for (key, cached) in screenImageCache {
-            if now.timeIntervalSince(cached.timestamp) > cacheTimeout {
-                screenImageCache.removeValue(forKey: key)
             }
         }
     }
