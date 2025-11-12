@@ -1,1 +1,0 @@
-WonderWhisper Mac.debug.dylib
