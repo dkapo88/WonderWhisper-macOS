@@ -15,6 +15,7 @@ final class ScreenContextService {
     private var screenImageCache: [String: CachedScreenContext] = [:]
     private let cacheTimeout: TimeInterval = 30 // 30 seconds TTL
     private let backgroundQueue = DispatchQueue(label: "com.wonderwhisper.screencontext", qos: .utility)
+    private let clipboardQueue = DispatchQueue(label: "com.wonderwhisper.screencontext.clipboard", qos: .userInitiated)
     
     // Performance optimization flag
     private var performanceModeEnabled = false
@@ -38,7 +39,7 @@ final class ScreenContextService {
     }
 
     func selectedText() -> String? {
-        // Use only Accessibility APIs to capture highlighted/selected text
+        // Try Accessibility APIs first (fast, non-destructive)
         let sys = AXUIElementCreateSystemWide()
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
@@ -64,7 +65,10 @@ final class ScreenContextService {
                 if paramRes == .success, let s = strForRange as? String, !s.isEmpty { return s }
             }
         }
-        // No selected text found via Accessibility APIs
+        // AX APIs failed; try pasteboard fallback for better cross-app compatibility
+        if let pasteboardText = clipboardQueue.sync(execute: copySelectedTextNonDestructively) {
+            return pasteboardText
+        }
         return nil
     }
 
