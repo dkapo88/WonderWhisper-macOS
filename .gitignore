@@ -28,7 +28,10 @@
 
 # User-specific project files
 .xcuserstate
+*.xcuserstate
 .xcuserdata/
+xcuserdata/*.xcuserstate
+project.xcworkspace/xcuserdata/*.xcuserstate
 
 # Augment template rules
 .augment/rules/product-manager.md
