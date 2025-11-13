@@ -1335,7 +1335,9 @@ final class DictationViewModel: ObservableObject {
         if final == oldValue { return }
         UserDefaults.standard.set(final, forKey: SimpleDefaultsKey.selectedModel)
         llmModel = final
+        suppressSimpleSidebarSync = true
         applySimplePrompts()
+        suppressSimpleSidebarSync = false
     }
 
     private func simpleLLMEnabledDidChange(oldValue: Bool) {
@@ -1379,7 +1381,8 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistSimplePromptSelection() {
-        if !suppressSimpleSidebarSync,
+        if shouldSyncSidebar(),
+           !suppressSimpleSidebarSync,
            let sidebar = sidebarItem(forPromptID: selectedPromptID),
            simpleSidebarSelection != sidebar {
             isUpdatingSimpleSidebar = true
@@ -1389,6 +1392,10 @@ final class DictationViewModel: ObservableObject {
         persistSimpleSidebarSelection()
     }
 
+    private func shouldSyncSidebar() -> Bool {
+        return simpleSidebarSelection == .dictation || simpleSidebarSelection == .command
+    }
+    
     private func sidebarItem(forPromptID id: UUID?) -> SimpleSidebarItem? {
         guard let id else { return nil }
         if id == SimplePromptKind.dictation.promptID { return .dictation }
@@ -1437,7 +1444,7 @@ final class DictationViewModel: ObservableObject {
             userPrompt = active.userPrompt
         }
         isApplyingPromptFromSelection = false
-        if let sidebar = sidebarItem(forPromptID: targetID), !isUpdatingSimpleSidebar, simpleSidebarSelection != sidebar {
+        if let sidebar = sidebarItem(forPromptID: targetID), shouldSyncSidebar(), !isUpdatingSimpleSidebar, !suppressSimpleSidebarSync, simpleSidebarSelection != sidebar {
             isUpdatingSimpleSidebar = true
             simpleSidebarSelection = sidebar
             isUpdatingSimpleSidebar = false
@@ -1467,6 +1474,7 @@ final class DictationViewModel: ObservableObject {
         isApplyingPromptFromSelection = false
         if !isUpdatingSimpleSidebar,
            !suppressSimpleSidebarSync,
+           shouldSyncSidebar(),
            let sidebar = sidebarItem(forPromptID: prompt.id),
            simpleSidebarSelection != sidebar {
             isUpdatingSimpleSidebar = true
