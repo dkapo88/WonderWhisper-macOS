@@ -10,28 +10,44 @@ final class SystemAudioController {
   
   private init() {}
   
-  func muteSystemAudio() {
+  @discardableResult
+  func muteSystemAudioAndWait(settleMs: useconds_t = 100_000) -> Bool {
     guard let deviceID = getDefaultOutputDevice() else {
       AppLog.hotkeys.error("Failed to get default output device for muting")
-      return
+      return false
+    }
+    
+    guard isAutoMuteSafe(deviceID: deviceID) else {
+      AppLog.hotkeys.log("Auto-mute suppressed for current output device (BT/aggregate/linked IO)")
+      return false
     }
     
     volumeBeforeMute = getVolume(for: deviceID)
     wasMutedBeforeRecording = isMuted(for: deviceID)
     
-    setMuted(true, for: deviceID)
-    AppLog.hotkeys.log("System audio muted. Previous volume: \(self.volumeBeforeMute ?? 0.0), was muted: \(self.wasMutedBeforeRecording)")
+    let ok = setMuted(true, for: deviceID)
+    if ok {
+      waitForMute(true, deviceID: deviceID)
+      if settleMs > 0 {
+        usleep(settleMs)
+      }
+    }
+    AppLog.hotkeys.log("System audio muted. Prev vol: \(self.volumeBeforeMute ?? 0.0), wasMuted: \(self.wasMutedBeforeRecording), ok: \(ok)")
+    return ok
   }
   
-  func unmuteSystemAudio() {
+  func unmuteSystemAudioAndWait() {
     guard let deviceID = getDefaultOutputDevice() else {
       AppLog.hotkeys.error("Failed to get default output device for unmuting")
       return
     }
     
     if !wasMutedBeforeRecording {
-      setMuted(false, for: deviceID)
-      AppLog.hotkeys.log("System audio unmuted")
+      let ok = setMuted(false, for: deviceID)
+      if ok {
+        waitForMute(false, deviceID: deviceID)
+      }
+      AppLog.hotkeys.log("System audio unmuted ok: \(ok)")
     } else {
       AppLog.hotkeys.log("System audio was already muted before recording, keeping it muted")
     }
@@ -105,7 +121,8 @@ final class SystemAudioController {
     return mute != 0
   }
   
-  private func setMuted(_ muted: Bool, for deviceID: AudioDeviceID) {
+  @discardableResult
+  private func setMuted(_ muted: Bool, for deviceID: AudioDeviceID) -> Bool {
     var mute = UInt32(muted ? 1 : 0)
     let muteSize = UInt32(MemoryLayout<UInt32>.size)
     var address = AudioObjectPropertyAddress(
@@ -126,5 +143,41 @@ final class SystemAudioController {
     if status != noErr {
       AppLog.hotkeys.error("Failed to set mute state: \(status)")
     }
+    return status == noErr
+  }
+  
+  private func waitForMute(_ desired: Bool, deviceID: AudioDeviceID, timeoutMs: Int = 150) {
+    let start = Date()
+    while Date().timeIntervalSince(start) * 1000 < Double(timeoutMs) {
+      if isMuted(for: deviceID) == desired {
+        return
+      }
+      usleep(20_000)
+    }
+  }
+  
+  private func isAutoMuteSafe(deviceID: AudioDeviceID) -> Bool {
+    var transportType = UInt32(0)
+    var transportTypeSize = UInt32(MemoryLayout<UInt32>.size)
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyTransportType,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    let status = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &transportTypeSize,
+      &transportType
+    )
+    
+    if status == noErr && transportType == kAudioDeviceTransportTypeBluetooth {
+      return false
+    }
+    
+    return true
   }
 }

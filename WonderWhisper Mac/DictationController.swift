@@ -66,7 +66,7 @@ actor DictationController {
                 AppLog.dictation.log("Recording start")
 
                 if autoMuteEnabled {
-                    SystemAudioController.shared.muteSystemAudio()
+                    _ = SystemAudioController.shared.muteSystemAudioAndWait()
                 }
 
                 // Always start file recording as backup for all providers
@@ -125,6 +125,10 @@ actor DictationController {
         // and provide a fast, low-latency final transcript.
 
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
+        
+        if autoMuteEnabled {
+            SystemAudioController.shared.unmuteSystemAudioAndWait()
+        }
 
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
@@ -260,10 +264,6 @@ actor DictationController {
 
             state = .idle
 
-            if autoMuteEnabled {
-                SystemAudioController.shared.unmuteSystemAudio()
-            }
-
             // Record history entry
             var appNameHist: String? = nil
             var bundleIDHist: String? = nil
@@ -323,10 +323,6 @@ actor DictationController {
                 totalSeconds: nil
             )
             state = .error(error.localizedDescription)
-
-            if autoMuteEnabled {
-                SystemAudioController.shared.unmuteSystemAudio()
-            }
         }
         // Reset pre-captured context for the next run
         preCapturedScreenSnapshot = nil
@@ -380,6 +376,11 @@ actor DictationController {
         }
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()
+        
+        if autoMuteEnabled {
+            SystemAudioController.shared.unmuteSystemAudioAndWait()
+        }
+        
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
         // Reset any pre-captured context
@@ -390,10 +391,6 @@ actor DictationController {
         Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
-
-        if autoMuteEnabled {
-            SystemAudioController.shared.unmuteSystemAudio()
-        }
     }
 
     // Insert arbitrary text now (used by paste-last shortcut)
