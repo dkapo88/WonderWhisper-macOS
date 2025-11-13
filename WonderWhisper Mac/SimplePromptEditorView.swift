@@ -35,11 +35,11 @@ struct SimplePromptEditorView: View {
             .foregroundColor(.secondary)
         }
 
+        singleKeySection
+        captureSection
         promptHeaderSection
         rulesSection
         promptFooterSection
-        captureSection
-        singleKeySection
 
         Spacer(minLength: 0)
       }
@@ -105,12 +105,6 @@ struct SimplePromptEditorView: View {
         ))
         .help("Send highlighted text from the current app into the prompt.")
         .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
-
-        if kind == .command {
-          Toggle("Attach screenshot to prompt", isOn: includeImageBinding)
-            .help("Adds the active window screenshot alongside the OCR keywords for extra visual context.")
-            .disabled(!settings.enableScreenContext)
-        }
       }
       .padding(.top, 4)
     }
