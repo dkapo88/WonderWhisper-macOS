@@ -107,6 +107,15 @@ struct SimpleHistoryView: View {
               .frame(maxWidth: .infinity, alignment: .leading)
             HStack {
               Spacer()
+              if entry.audioFilename != nil {
+                Button {
+                  vm.history.revealInFinder(entry: entry)
+                } label: {
+                  Label("Reveal Audio", systemImage: "waveform")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+              }
               Button { copy(entry.transcript) } label: {
                 Label("Copy Transcript", systemImage: "doc.on.doc")
               }
@@ -160,6 +169,15 @@ struct SimpleHistoryView: View {
       RoundedRectangle(cornerRadius: 16)
         .stroke(Color.secondary.opacity(0.12))
     )
+    .contextMenu {
+      Button {
+        Task {
+          await vm.reprocessHistoryEntry(entry)
+        }
+      } label: {
+        Label("Reprocess", systemImage: "arrow.clockwise")
+      }
+    }
   }
 
   private func previewText(for entry: HistoryEntry) -> String {
