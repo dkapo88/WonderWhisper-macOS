@@ -9,6 +9,9 @@ Note to agents and contributors: Keep this document up to date with any changes.
 ## Project Structure & Module Organization
 WonderWhisper Mac stores SwiftUI sources under `WonderWhisper Mac/`, with views, view models, and helpers grouped by feature. Shared assets live in `Resources/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `WonderWhisper MacTests/`, and UI automation lives in `WonderWhisper MacUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
+### Microphone Selection
+The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
+
 ## Feature Scope & Providers
 - The app ships a single window with four tabs: Dictation, Command, History, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses either Groq Whisper Large V3 Turbo (`groq-streaming`) or local Parakeet V3 (`parakeet-local`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
@@ -39,5 +42,6 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 - When in doubt, link to source files/paths instead of duplicating long content.
 
 ## Changelog
+- 2025-11-13: Added microphone selection feature with persistent device override capability in sidebar menu.
 - 2025-11-11: Documented the slimmed-down Dictation/Command surface, Groq/Parakeet transcription engines, and OpenRouter-only LLM stack.
 - 2025-10-25: Linked `datamodel.md`, added maintenance notes and agent guidance.

@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var vm: DictationViewModel
-    private let simpleItems: [SimpleSidebarItem] = [.dictation, .command, .vocabulary, .history, .settings]
+    private let simpleItems: [SimpleSidebarItem] = [.dictation, .command, .vocabulary, .history, .microphone, .settings]
 
     var body: some View {
         NavigationSplitView {
@@ -42,6 +42,9 @@ struct ContentView: View {
             case .history:
                 SimpleHistoryView(vm: vm)
                     .navigationTitle("History")
+            case .microphone:
+                MicrophoneSelectionView(vm: vm)
+                    .navigationTitle("Microphone")
             case .settings:
                 SimpleModeSettingsView(vm: vm)
                     .navigationTitle("Settings")

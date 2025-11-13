@@ -27,6 +27,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case command
   case vocabulary
   case history
+  case microphone
   case settings
 
   var id: String { rawValue }
@@ -37,6 +38,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .command: return "Command"
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
+    case .microphone: return "Microphone"
     case .settings: return "Settings"
     }
   }
@@ -47,6 +49,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .command: return "wand.and.stars"
     case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
+    case .microphone: return "waveform"
     case .settings: return "gearshape.fill"
     }
   }
