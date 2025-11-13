@@ -366,7 +366,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         do {
             let cfg = VadConfig(
-                threshold: Float(desired),
+                defaultThreshold: Float(desired),
                 debugMode: false,
                 computeUnits: .cpuAndNeuralEngine
             )
