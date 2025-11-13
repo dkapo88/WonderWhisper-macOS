@@ -117,6 +117,14 @@ actor DictationController {
         }
     }
 
+    // Helper to detect effectively empty transcripts (empty or punctuation-only)
+    private func looksEmptyOrPunctuation(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return true }
+        // Treat strings like "...", "—", "…", etc. as empty
+        return t.rangeOfCharacter(from: .alphanumerics) == nil
+    }
+
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
         // Stop live streaming if active
@@ -150,8 +158,9 @@ actor DictationController {
             if let groq = transcriber as? GroqStreamingProvider {
                 // Prefer Groq chunked streaming transcript for speed
                 transcript = try await groq.endRealtime()
-                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Streaming fallback to file transcription")
+                // Fallback to file if streaming gave empty or punctuation-only result
+                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Streaming empty/punctuation-only; fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else {
@@ -166,6 +175,37 @@ actor DictationController {
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
+
+            // Skip LLM and insertion if transcript is still empty after all fallbacks
+            if looksEmptyOrPunctuation(transcript) {
+                AppLog.dictation.warning("Transcript empty or punctuation-only; skipping LLM and insertion")
+                state = .idle
+                // Record history entry with empty transcript
+                var appNameHist: String? = nil
+                var bundleIDHist: String? = nil
+                let pair = screenContext.frontmostAppNameAndBundle()
+                appNameHist = pair.0
+                bundleIDHist = screenContextEnabled ? pair.1 : nil
+                await history?.append(
+                    fileURL: recordingFileURL ?? currentRecordingURL,
+                    appName: appNameHist,
+                    bundleID: bundleIDHist,
+                    transcript: transcript,
+                    output: "",
+                    screenContext: nil,
+                    screenContextMethod: nil,
+                    screenImage: nil,
+                    selectedText: nil,
+                    llmSystemMessage: nil,
+                    llmUserMessage: nil,
+                    transcriptionModel: transcriberSettings.model,
+                    llmModel: nil,
+                    transcriptionSeconds: transcribeDT,
+                    llmSeconds: nil,
+                    totalSeconds: Date().timeIntervalSince(overallStart)
+                )
+                return
+            }
 
             var output = transcript
             var llmDT: TimeInterval = 0

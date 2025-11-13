@@ -17,6 +17,7 @@ final class AudioRecorder: NSObject {
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
     private var finishContinuation: CheckedContinuation<URL?, Never>?
+    private var previousDefaultInputUIDForStreaming: String?
     
     // Temporary file cleanup
     private static var lastCleanupTime: Date?
@@ -53,6 +54,65 @@ final class AudioRecorder: NSObject {
         // to handle 16kHz sample rate without real-time conversion.
         sessionConfigured = true
         print("✅ Audio session configured: 16kHz at engine level")
+    }
+
+    // MARK: - Microphone Selection Override
+    private func applyInputSelectionOverrideIfNeeded() {
+        let selection = AudioInputSelection.load()
+        switch selection {
+        case .systemDefault:
+            return
+        case .deviceUID(let uid):
+            let current = AudioDeviceManager.currentDefaultInputUID()
+            if current != uid {
+                previousDefaultInputUID = current
+                if AudioDeviceManager.setSystemDefaultInput(toUID: uid) {
+                    _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: uid, timeout: 1.0)
+                    print("🎙️ Default input set to \(uid)")
+                } else {
+                    print("⚠️ Failed to set default input to \(uid)")
+                }
+            }
+        }
+    }
+
+    private func restoreInputSelectionIfNeeded() {
+        guard let prev = previousDefaultInputUID else { return }
+        previousDefaultInputUID = nil
+        if AudioDeviceManager.currentDefaultInputUID() != prev {
+            _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+            _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 1.0)
+            print("🔁 Default input restored to \(prev)")
+        }
+    }
+
+    private func applyInputSelectionOverrideForStreaming() {
+        let selection = AudioInputSelection.load()
+        switch selection {
+        case .systemDefault:
+            return
+        case .deviceUID(let uid):
+            let current = AudioDeviceManager.currentDefaultInputUID()
+            if current != uid {
+                previousDefaultInputUIDForStreaming = current
+                if AudioDeviceManager.setSystemDefaultInput(toUID: uid) {
+                    _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: uid, timeout: 1.0)
+                    print("🎙️ [Streaming] Default input set to \(uid)")
+                } else {
+                    print("⚠️ [Streaming] Failed to set default input to \(uid)")
+                }
+            }
+        }
+    }
+
+    private func restoreInputSelectionForStreaming() {
+        guard let prev = previousDefaultInputUIDForStreaming else { return }
+        previousDefaultInputUIDForStreaming = nil
+        if AudioDeviceManager.currentDefaultInputUID() != prev {
+            _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+            _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 1.0)
+            print("🔁 [Streaming] Default input restored to \(prev)")
+        }
     }
 
     // MARK: - Audio Format Configuration
@@ -125,11 +185,8 @@ final class AudioRecorder: NSObject {
         let (filename, settings) = try audioFormatSettings(format: formatLower)
         let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
 
-        // Note: Device switching temporarily disabled to prevent audio engine crashes
-        // when using different input/output devices (e.g., Bluetooth headphones + Built-in mic).
-        // System default switching causes CoreAudio to reconfigure routing mid-stream,
-        // which leads to device ID conflicts and "reconfig pending" errors.
-        // TODO: Implement proper per-device recording using AVCaptureDevice APIs instead.
+        // Apply microphone selection override before starting recording
+        applyInputSelectionOverrideIfNeeded()
 
         recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder?.delegate = self
@@ -158,7 +215,8 @@ final class AudioRecorder: NSObject {
         isRecording = false
         stopLevelUpdates()
 
-        // Note: Device restoration disabled (see startRecording for details)
+        // Restore previous microphone selection
+        restoreInputSelectionIfNeeded()
 
         self.recorder = nil // release AudioQueue promptly to avoid device reconfig contention
         return url
@@ -174,7 +232,8 @@ final class AudioRecorder: NSObject {
             isRecording = false
             stopLevelUpdates()
 
-            // Note: Device restoration disabled (see startRecording for details)
+            // Restore previous microphone selection
+            restoreInputSelectionIfNeeded()
 
             // Release AudioQueue resources as early as possible
             self.recorder = nil
@@ -240,6 +299,9 @@ extension AudioRecorder {
         if !sessionConfigured {
             try setupAudioSession()
         }
+
+        // Apply microphone selection override before starting streaming
+        applyInputSelectionOverrideForStreaming()
 
         isStreaming = true
         self.onPCM16Frame = onFrame
@@ -336,8 +398,10 @@ extension AudioRecorder {
         }
         lastAudioTime = time
 
-        // Suppress low-energy buffers to reduce transmission of near-silence
-        if buffer.frameLength > 0, let floatChannels = buffer.floatChannelData {
+        // Suppress low-energy buffers to reduce transmission of near-silence (optional)
+        // Use user default to control RMS gate; default to 0 (disabled) for reliability
+        let rmsGate = UserDefaults.standard.float(forKey: "audio.streaming.rmsGate")
+        if rmsGate > 0, buffer.frameLength > 0, let floatChannels = buffer.floatChannelData {
             let frameCount = Int(buffer.frameLength)
             let channelPointer = floatChannels.pointee
             var energy: Float = 0
@@ -346,7 +410,7 @@ extension AudioRecorder {
                 energy += sample * sample
             }
             let rms = sqrtf(energy / Float(frameCount))
-            if rms < 0.0002 {
+            if rms < rmsGate {
                 return
             }
         }
@@ -449,6 +513,9 @@ extension AudioRecorder {
             self.logAudioHealth()
 
             print("🛑 Streaming stopped")
+
+            // Restore previous microphone selection
+            self.restoreInputSelectionForStreaming()
 
             // Clear all references (must be done after stopping engine)
             self.audioEngine = nil
