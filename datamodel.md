@@ -43,7 +43,6 @@ erDiagram
         Bool clipboardContextOverride "optional"
         Bool selectedTextOverride "optional"
         ScreenContextCaptureMode screenContextCaptureOverride "optional"
-        ScreenContextPreprocessingMode screenContextPreprocessingOverride "optional"
         Bool includeScreenImageOverride "optional"
         Bool triggerOnSelectedText
         Bool conversationModeEnabled
@@ -186,7 +185,7 @@ erDiagram
 
 **TranscriptionSettings**: Configuration for speech-to-text providers (Parakeet V3 local capture + Groq Whisper Turbo streaming)
 
-**LLMSettings**: Configuration for language model providers (Groq, OpenRouter, Cerebras, Ollama)
+**LLMSettings**: Configuration for language model providers (OpenRouter only; legacy Cerebras keychain support remains)
 
 ---
 
@@ -227,12 +226,8 @@ erDiagram
         String value "image or text"
     }
     
-    ScreenContextPreprocessingMode {
-        String value "off, onDevice, or cloud"
-    }
-    
     SimpleSidebarItem {
-        String value "dictation, command, history, settings"
+        String value "dictation, command, vocabulary, history, microphone, settings"
     }
     
     SimpleVoiceEngine {
@@ -417,9 +412,11 @@ struct AppConfig {
     static let defaultDictationPrompt: String
     static let defaultScreenOrganizePrompt: String
     
-    // Keychain Aliases
+    // Keychain Aliases (active)
     static let groqAPIKeyAlias: String = "GROQ_API_KEY"
     static let openrouterAPIKeyAlias: String = "OPENROUTER_API_KEY"
+    
+    // Legacy keychain aliases (preserved for backwards compatibility)
     static let cerebrasAPIKeyAlias: String = "CEREBRAS_API_KEY"
     static let assemblyAIAPIKeyAlias: String = "ASSEMBLYAI_API_KEY"
     static let sonioxAPIKeyAlias: String = "SONIOX_API_KEY"
@@ -436,6 +433,10 @@ struct AppConfig {
 - Update this document whenever you change entities, fields, relationships, storage locations, configuration keys, or persistence formats.
 - Record notable breaking changes inline near the affected section.
 - After updates: adjust migrations (if applicable), update tests, and verify any storage paths referenced in code and in AGENTS.md.
+
+### Changelog
+
+- **v1.1 (Nov 14, 2025)**: Removed non-existent `ScreenContextPreprocessingMode`, added vocabulary & microphone to `SimpleSidebarItem`, clarified legacy keychain aliases, updated LLM provider documentation to reflect OpenRouter-only architecture.
 
 ### Simple Mode Defaults
 
@@ -546,9 +547,10 @@ sequenceDiagram
 
 ### Legacy Compatibility
 
-- `organizeScreenContextOverride` (Bool) → `screenContextPreprocessingOverride` (enum)
-- Legacy prompts automatically migrate to new structure
+- `organizeScreenContextOverride` (Bool) field removed; legacy key ignored during decoding
+- `shortcut` field in `SimplePromptSettings` ignored during decoding (simple mode uses `selection` only)
 - Conversation history tracks provider changes to handle model switches
+- Legacy Cerebras, Ollama, AssemblyAI, Soniox keychain aliases preserved but unused in shipping build
 
 ---
 
@@ -656,6 +658,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: October 25, 2025  
+**Document Version**: 1.1  
+**Last Updated**: November 14, 2025  
 **Maintainer**: WonderWhisper Mac Development Team

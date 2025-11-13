@@ -23,10 +23,10 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
+  case history
   case dictation
   case command
   case vocabulary
-  case history
   case microphone
   case settings
 
