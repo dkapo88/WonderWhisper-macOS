@@ -193,6 +193,7 @@ private extension ScreenContextService {
 
     private func readStringFromPasteboard() -> String? {
         let pb = NSPasteboard.general
+        guard pb.pasteboardItems?.isEmpty == false else { return nil }
         if let s = pb.string(forType: .string), !s.isEmpty { return s }
         if let rtfData = pb.data(forType: .rtf),
            let attr = try? NSAttributedString(
