@@ -471,14 +471,21 @@ final class DictationViewModel: ObservableObject {
                     self.recordingStartInProgress = true
                 }
 
-                // Ensure selectedPromptID matches the active UI tab
+                // Determine which prompt to use based on the hotkey that was pressed,
+                // NOT based on the UI tab selection. Don't change the visible UI tab.
                 await MainActor.run {
-                    if let kind = self.promptKind(forSidebar: self.simpleSidebarSelection),
-                       self.selectedPromptID != kind.promptID {
-                        self.withSimpleSidebarSyncSuppressed {
-                            self.selectedPromptID = kind.promptID
-                        }
+                    let targetPromptID = self.determinePromptIDForCurrentHotkey()
+                    if self.selectedPromptID != targetPromptID {
+                        // Suppress sidebar sync to prevent UI navigation when using hotkeys
+                        self.suppressSimpleSidebarSync = true
+                        self.selectedPromptID = targetPromptID
                     }
+                }
+                
+                // Wait briefly for applySelection() to complete, then restore sync
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                await MainActor.run {
+                    self.suppressSimpleSidebarSync = false
                 }
 
                 // Now perform slower operations after UI is updated
@@ -1411,6 +1418,22 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// Determines which prompt should be activated based on the hotkey that was pressed.
+    /// Always defaults to dictation unless the command hotkey was explicitly pressed.
+    private func determinePromptIDForCurrentHotkey() -> UUID {
+        // Get the current hotkey selection
+        let currentHotkeySelection = hotkeys.selection
+        
+        // Check if the command mode's hotkey matches the current hotkey
+        if let commandHotkey = simpleCommandSettings.selection,
+           commandHotkey == currentHotkeySelection {
+            return SimplePromptKind.command.promptID
+        }
+        
+        // Default to dictation for all other cases
+        return SimplePromptKind.dictation.promptID
+    }
+
     private func buildSimplePromptConfigurations() -> [PromptConfiguration] {
         let dictation = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
         let command = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
@@ -1526,13 +1549,19 @@ final class DictationViewModel: ObservableObject {
                     self.recordingStartInProgress = true
                 }
 
-                // Select the prompt for this hotkey FIRST
+                // Select the prompt for this hotkey FIRST, without changing the visible UI tab
                 await MainActor.run {
-                    self.withSimpleSidebarSyncSuppressed {
-                        if self.selectedPromptID != id {
-                            self.selectedPromptID = id
-                        }
+                    if self.selectedPromptID != id {
+                        // Suppress sidebar sync to prevent UI navigation when using hotkeys
+                        self.suppressSimpleSidebarSync = true
+                        self.selectedPromptID = id
                     }
+                }
+                
+                // Wait briefly for applySelection() to complete, then restore sync
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                await MainActor.run {
+                    self.suppressSimpleSidebarSync = false
                 }
 
                 // Now update providers for the correct prompt immediately
