@@ -5,39 +5,67 @@ struct SimpleHistoryView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var expandedEntries: Set<UUID> = []
   @State private var selectedEntryForDebug: HistoryEntry?
-  @State private var showDebugModal = false
 
   private var entries: [HistoryEntry] { vm.history.entries }
 
   var body: some View {
-    ScrollView {
-      if entries.isEmpty {
-        VStack(spacing: 12) {
-          Image(systemName: "clock")
-            .font(.system(size: 32))
-            .foregroundColor(.secondary)
-          Text("No history yet")
-            .font(.headline)
-          Text("Run a dictation or command request to see it appear here.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 240)
-        .padding(.top, 40)
-      } else {
-        LazyVStack(alignment: .leading, spacing: 12, pinnedViews: []) {
-          ForEach(entries, id: \.id) { entry in
-            historyCard(for: entry)
+    VStack(spacing: 0) {
+      // History limit control at the top
+      HStack(spacing: 12) {
+        Text("Keep most recent")
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+        TextField("", value: Binding(
+          get: { vm.history.maxEntries },
+          set: { vm.history.maxEntries = $0 }
+        ), formatter: NumberFormatter())
+          .textFieldStyle(.roundedBorder)
+          .frame(width: 60)
+        Text(vm.history.maxEntries == 1 ? "entry" : "entries")
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+        
+        Spacer()
+        
+        Text("Older entries are permanently deleted")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.horizontal, 20)
+      .padding(.vertical, 12)
+      .background(Color(nsColor: .controlBackgroundColor))
+      .overlay(
+        Divider(),
+        alignment: .bottom
+      )
+      
+      ScrollView {
+        if entries.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "clock")
+              .font(.system(size: 32))
+              .foregroundColor(.secondary)
+            Text("No history yet")
+              .font(.headline)
+            Text("Run a dictation or command request to see it appear here.")
+              .font(.caption)
+              .foregroundColor(.secondary)
           }
+          .frame(maxWidth: .infinity, minHeight: 240)
+          .padding(.top, 40)
+        } else {
+          LazyVStack(alignment: .leading, spacing: 12, pinnedViews: []) {
+            ForEach(entries, id: \.id) { entry in
+              historyCard(for: entry)
+            }
+          }
+          .padding(.vertical, 12)
         }
-        .padding(.vertical, 12)
       }
+      .padding(.horizontal, 20)
     }
-    .padding(.horizontal, 20)
-    .sheet(isPresented: $showDebugModal) {
-      if let entry = selectedEntryForDebug {
-        PromptDebugView(entry: entry)
-      }
+    .sheet(item: $selectedEntryForDebug) { entry in
+      PromptDebugView(entry: entry)
     }
   }
 
@@ -95,7 +123,6 @@ struct SimpleHistoryView: View {
             Spacer()
             Button {
               selectedEntryForDebug = entry
-              showDebugModal = true
             } label: {
               Label("View Prompt", systemImage: "terminal")
             }
@@ -232,7 +259,7 @@ private struct PromptDebugView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .frame(minWidth: 800, maxWidth: 1200, minHeight: 600, maxHeight: 900)
+    .frame(width: 900, height: 700)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
