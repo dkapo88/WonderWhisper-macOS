@@ -125,29 +125,11 @@ final class AudioRecorder: NSObject {
         let (filename, settings) = try audioFormatSettings(format: formatLower)
         let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
 
-        // If a specific input device was selected, optionally switch system default temporarily.
-        // Avoid unnecessary reconfigs and wait until the system reports the new default to prevent IO thrash.
-        if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
-            switch AudioInputSelection.load() {
-            case .systemDefault:
-                break
-            case .deviceUID(let uid):
-                let current = AudioDeviceManager.currentDefaultInputUID()
-                previousDefaultInputUID = current
-                if current != uid {
-                    if AudioDeviceManager.setSystemDefaultInput(toUID: uid) {
-                        // Wait up to ~800ms for HAL to apply the change to avoid "reconfig pending" dropouts
-                        let ok = AudioDeviceManager.waitForDefaultInputSwitch(toUID: uid, timeout: 0.8)
-                        if !ok {
-                            AppLog.dictation.error("AudioRecorder: timed out waiting for default input switch to \(uid)")
-                        } else {
-                            // Give CoreAudio a brief moment to settle routing before starting capture
-                            usleep(50_000) // 50ms
-                        }
-                    }
-                }
-            }
-        }
+        // Note: Device switching temporarily disabled to prevent audio engine crashes
+        // when using different input/output devices (e.g., Bluetooth headphones + Built-in mic).
+        // System default switching causes CoreAudio to reconfigure routing mid-stream,
+        // which leads to device ID conflicts and "reconfig pending" errors.
+        // TODO: Implement proper per-device recording using AVCaptureDevice APIs instead.
 
         recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder?.delegate = self
@@ -176,17 +158,7 @@ final class AudioRecorder: NSObject {
         isRecording = false
         stopLevelUpdates()
 
-        // Restore previous default input device if we changed it
-        if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
-            if let prev = previousDefaultInputUID {
-                if AudioDeviceManager.setSystemDefaultInput(toUID: prev) {
-                    _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 0.6)
-                    // Allow a short settle delay to avoid impacting subsequent starts
-                    usleep(30_000)
-                }
-                previousDefaultInputUID = nil
-            }
-        }
+        // Note: Device restoration disabled (see startRecording for details)
 
         self.recorder = nil // release AudioQueue promptly to avoid device reconfig contention
         return url
@@ -202,16 +174,7 @@ final class AudioRecorder: NSObject {
             isRecording = false
             stopLevelUpdates()
 
-            // Restore previous default input device if we changed it
-            if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
-                if let prev = previousDefaultInputUID {
-                    if AudioDeviceManager.setSystemDefaultInput(toUID: prev) {
-                        _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 0.6)
-                        usleep(30_000)
-                    }
-                    previousDefaultInputUID = nil
-                }
-            }
+            // Note: Device restoration disabled (see startRecording for details)
 
             // Release AudioQueue resources as early as possible
             self.recorder = nil

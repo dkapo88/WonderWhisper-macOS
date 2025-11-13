@@ -40,39 +40,91 @@ final class DictationViewModel: ObservableObject {
     // Prompts
     @Published var prompts: [PromptConfiguration] = [] {
         didSet {
-            // Persist prompt library changes and refresh hotkeys only when the prompt list/assignments change.
-            // Avoid refreshing hotkeys on mere selection changes to prevent losing key-up events mid-press.
-            persistPromptLibrary()
-            refreshPromptHotkeys()
+            Task { @MainActor [weak self] in
+                self?.persistPromptLibrary()
+                self?.refreshPromptHotkeys()
+            }
         }
     }
-    @Published var selectedPromptID: UUID? { didSet { applySelection() } }
-    // System prompt is sent as the system role content
-    @Published var systemPrompt: String = "" { didSet { updateActivePrompt(systemText: systemPrompt) } }
-    // User prompt is an additional user message appended after the structured transcript context
-    @Published var userPrompt: String = "" { didSet { updateActivePrompt(userText: userPrompt) } }
+    @Published var selectedPromptID: UUID? {
+        didSet {
+            Task { @MainActor [weak self] in
+                self?.applySelection()
+            }
+        }
+    }
+    @Published var systemPrompt: String = "" {
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateActivePrompt(systemText: systemPrompt)
+            }
+        }
+    }
+    @Published var userPrompt: String = "" {
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateActivePrompt(userText: userPrompt)
+            }
+        }
+    }
 
 
     @Published private var simpleDictationSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .dictation) {
-        didSet { simpleSettingsDidChange(kind: .dictation, oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleSettingsDidChange(kind: .dictation, oldValue: oldValue)
+            }
+        }
     }
     @Published private var simpleCommandSettings: SimplePromptSettings = DictationViewModel.loadSimpleSettings(for: .command) {
-        didSet { simpleSettingsDidChange(kind: .command, oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleSettingsDidChange(kind: .command, oldValue: oldValue)
+            }
+        }
     }
     @Published var simpleSelectedModel: String = DictationViewModel.loadSimpleSelectedModel() {
-        didSet { simpleModelDidChange(oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleModelDidChange(oldValue: oldValue)
+            }
+        }
     }
     @Published var simpleCustomModels: [String] = DictationViewModel.loadSimpleCustomModels() {
-        didSet { persistSimpleCustomModels() }
+        didSet {
+            Task { @MainActor [weak self] in
+                self?.persistSimpleCustomModels()
+            }
+        }
     }
     @Published var simpleLLMEnabled: Bool = DictationViewModel.loadSimpleLLMEnabled() {
-        didSet { simpleLLMEnabledDidChange(oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleLLMEnabledDidChange(oldValue: oldValue)
+            }
+        }
     }
     @Published var simpleVoiceEngine: SimpleVoiceEngine = DictationViewModel.loadSimpleVoiceEngine() {
-        didSet { simpleVoiceEngineDidChange(oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleVoiceEngineDidChange(oldValue: oldValue)
+            }
+        }
     }
     @Published var simpleSidebarSelection: SimpleSidebarItem = DictationViewModel.loadSimpleSidebarSelection() {
-        didSet { simpleSidebarSelectionDidChange(oldValue: oldValue) }
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.simpleSidebarSelectionDidChange(oldValue: oldValue)
+            }
+        }
     }
 
     var simpleDictation: SimplePromptSettings { simpleDictationSettings }

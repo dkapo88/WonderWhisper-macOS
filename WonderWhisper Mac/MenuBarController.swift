@@ -25,13 +25,12 @@ final class MenuBarController: NSObject {
 
         // Observe recording state
         viewModel.$isRecording
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] recording in
                 guard let self, let button = self.statusItem.button else { return }
                 let color: NSColor = recording ? .systemRed : .labelColor
-                // Swap tint color only; avoid redrawing image
                 button.contentTintColor = color
                 button.toolTip = recording ? "WonderWhisper — Recording" : "WonderWhisper — Idle"
-                // Rebuild to update checkmarks etc. if needed
                 self.statusItem.menu = self.buildMenu()
                 self.statusItem.menu?.delegate = self
             }

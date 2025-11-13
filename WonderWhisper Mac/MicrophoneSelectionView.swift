@@ -206,7 +206,6 @@ struct MicrophoneSelectionView: View {
     print("🎤 Selected: System Default")
     currentSelection = .systemDefault
     currentSelection.persist()
-    UserDefaults.standard.set(false, forKey: "audio.switchSystemDefault")
     Task {
       let uid = await getSystemDefaultUID()
       await MainActor.run {
@@ -219,7 +218,6 @@ struct MicrophoneSelectionView: View {
     print("🎤 Selected device: \(device.name) (\(device.uid))")
     currentSelection = .deviceUID(device.uid)
     currentSelection.persist()
-    UserDefaults.standard.set(true, forKey: "audio.switchSystemDefault")
   }
 }
 
