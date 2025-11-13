@@ -170,6 +170,11 @@ final class DictationViewModel: ObservableObject {
             }
         }
     }
+    @Published var autoMuteEnabled: Bool = UserDefaults.standard.object(forKey: "recording.autoMute.enabled") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(autoMuteEnabled, forKey: "recording.autoMute.enabled")
+        }
+    }
 
     // Vocabulary
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
@@ -408,6 +413,16 @@ final class DictationViewModel: ObservableObject {
                     self.isRecording = true
                     self.recordingStartTimestamp = Date()
                     self.recordingStartInProgress = true
+                }
+
+                // Ensure selectedPromptID matches the active UI tab
+                await MainActor.run {
+                    if let kind = self.promptKind(forSidebar: self.simpleSidebarSelection),
+                       self.selectedPromptID != kind.promptID {
+                        self.withSimpleSidebarSyncSuppressed {
+                            self.selectedPromptID = kind.promptID
+                        }
+                    }
                 }
 
                 // Now perform slower operations after UI is updated
@@ -1422,10 +1437,7 @@ final class DictationViewModel: ObservableObject {
                     self.recordingStartInProgress = true
                 }
 
-                // Now perform slower operations after UI is updated
-                await waitForLatestProviderUpdate()
-
-                // Select the prompt for this hotkey
+                // Select the prompt for this hotkey FIRST
                 await MainActor.run {
                     self.withSimpleSidebarSyncSuppressed {
                         if self.selectedPromptID != id {
@@ -1433,6 +1445,10 @@ final class DictationViewModel: ObservableObject {
                         }
                     }
                 }
+
+                // Now update providers for the correct prompt immediately
+                await MainActor.run { self.updateProvidersImmediately() }
+                await waitForLatestProviderUpdate()
 
                 // Fast check for selected text (AX only, ~5ms)
                 await checkAndStoreSelectedTextPromptFast()
@@ -1594,6 +1610,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateClipboardContextEnabled(useClipboardContext)
             await controller.updateSelectedTextEnabled(useSelectedText)
             await controller.updateScreenImageEnabled(includeScreenImage)
+            await controller.updateAutoMuteEnabled(autoMuteEnabled)
         }
     }
 

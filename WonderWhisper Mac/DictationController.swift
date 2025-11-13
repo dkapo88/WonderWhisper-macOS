@@ -33,6 +33,7 @@ actor DictationController {
     private let clipboardWindowSeconds: TimeInterval = 10
 
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
+    private var autoMuteEnabled: Bool = false
 
     // Removed memory recording feature due to unreliable output
 
@@ -63,6 +64,10 @@ actor DictationController {
         case .idle, .error:
             do {
                 AppLog.dictation.log("Recording start")
+
+                if autoMuteEnabled {
+                    SystemAudioController.shared.muteSystemAudio()
+                }
 
                 // Always start file recording as backup for all providers
                 recorder.captureProfile = .standard16k
@@ -255,6 +260,10 @@ actor DictationController {
 
             state = .idle
 
+            if autoMuteEnabled {
+                SystemAudioController.shared.unmuteSystemAudio()
+            }
+
             // Record history entry
             var appNameHist: String? = nil
             var bundleIDHist: String? = nil
@@ -314,6 +323,10 @@ actor DictationController {
                 totalSeconds: nil
             )
             state = .error(error.localizedDescription)
+
+            if autoMuteEnabled {
+                SystemAudioController.shared.unmuteSystemAudio()
+            }
         }
         // Reset pre-captured context for the next run
         preCapturedScreenSnapshot = nil
@@ -340,6 +353,7 @@ actor DictationController {
         }
     }
     func updateScreenImageEnabled(_ enabled: Bool) { self.screenImageEnabled = enabled }
+    func updateAutoMuteEnabled(_ enabled: Bool) { self.autoMuteEnabled = enabled }
 
     func clearConversationHistory(for promptID: UUID) {
         conversationHistoryStore.clearHistory(for: promptID)
@@ -376,6 +390,10 @@ actor DictationController {
         Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
+
+        if autoMuteEnabled {
+            SystemAudioController.shared.unmuteSystemAudio()
+        }
     }
 
     // Insert arbitrary text now (used by paste-last shortcut)

@@ -30,6 +30,7 @@ struct SimpleModeSettingsView: View {
         groqSection
         parakeetSection
         audioSection
+        recordingSection
         Spacer(minLength: 0)
       }
       .padding(24)
@@ -214,6 +215,20 @@ struct SimpleModeSettingsView: View {
         Slider(value: $vm.chimeVolume, in: 0...1)
           .frame(maxWidth: 360)
         Text("Controls the start/stop chime loudness relative to system volume.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private var recordingSection: some View {
+    GroupBox("Recording") {
+      VStack(alignment: .leading, spacing: 12) {
+        Toggle("Auto-mute system audio during recording", isOn: $vm.autoMuteEnabled)
+          .help("Automatically mutes system audio when recording starts and unmutes when recording stops.")
+        
+        Text("When enabled, system audio will be muted before recording starts and unmuted after recording stops. This prevents music, video calls, or other audio from interfering with transcription.")
           .font(.caption)
           .foregroundColor(.secondary)
       }
