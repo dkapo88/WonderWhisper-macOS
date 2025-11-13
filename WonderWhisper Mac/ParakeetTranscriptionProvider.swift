@@ -11,41 +11,19 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var modelsDirectory: URL
     private let log = Logger(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
-    // UPDATED: Reduced from 10 minutes to 60 seconds to prevent state accumulation
     private var idleUnloadTask: Task<Void, Never>?
-    private let idleSeconds: TimeInterval = 60 // 1 minute
+    private let idleSeconds: TimeInterval = 300 // 5 minutes
     // Coalesce model loading to avoid duplicate work/logs
     private var loadTask: Task<Void, Error>?
     // Track which ASR model version is loaded to allow switching between v2 and v3
     private var loadedVersion: AsrModelVersion?
     // Track the loaded VAD threshold to allow dynamic updates for auto mode
     private var loadedVadThreshold: Double?
-    // Ephemeral auto-adjust overrides for the current transcription
-    private var autoOverrides: AutoOverrides?
     
     // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
     private var rawMode: Bool {
         (UserDefaults.standard.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
     }
-
-    // Auto-adjust container
-    private struct AutoOverrides {
-        let highPassHz: Int
-        let targetRMS: Double
-        let vadThreshold: Double
-        let minSpeech: Double
-        let minSilence: Double
-        let padding: Double
-        let profile: String // "quiet", "balanced", or "noisy"
-        let snrDb: Double
-        let lfReduction: Double
-    }
-
-    // Caching for auto-adjust parameters (reduces expensive computation from ~35-45ms to near-zero)
-    private var cachedAutoOverrides: AutoOverrides?
-    private var lastAutoAdjustTime: Date?
-    private let autoAdjustCacheDuration: TimeInterval = 600 // 10 minutes
-    private let autoAdjustCacheLock = NSLock()
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -186,9 +164,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         if let decoded = try? Self.decodeFastPCM16(url: inputURL), !decoded.isEmpty {
             AppLog.dictation.log("[Parakeet] Decode (FastPCM16): samples=\(decoded.count)")
             samples = decoded
-        } else if let alt = try? Self.decodeWithAssetReader(url: inputURL), !alt.isEmpty {
-            AppLog.dictation.log("[Parakeet] Decode (AssetReader): samples=\(alt.count)")
-            samples = alt
         } else {
             do {
                 AppLog.dictation.log("[Parakeet] Decode (AVAudioFile) begin")
@@ -200,83 +175,25 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 throw error
             }
         }
-        // Front-end conditioning (configurable via UserDefaults) with optional auto-adjust
+        // Front-end conditioning (configurable via UserDefaults)
         let defaults = UserDefaults.standard
-        let autoEnabled = (defaults.object(forKey: "parakeet.auto.enabled") as? Bool) ?? false
-        // Compute auto overrides with caching (reduces expensive computation from ~35-45ms to near-zero)
-        if autoEnabled {
-            // Lock protects entire check-and-compute operation to prevent race conditions
-            autoAdjustCacheLock.lock()
-            let shouldRecompute = shouldRecomputeAutoAdjust()
-            
-            if shouldRecompute {
-                // Cache miss or expired: compute new parameters
-                // Release lock during expensive computation to avoid blocking other threads
-                autoAdjustCacheLock.unlock()
-                let computeStart = Date()
-                if let overrides = Self.deriveAutoOverrides(from: samples) {
-                    let computeTime = Date().timeIntervalSince(computeStart)
-                    
-                    // Re-acquire lock to store results atomically
-                    autoAdjustCacheLock.lock()
-                    // Double-check: another thread may have computed while we were unlocked
-                    if shouldRecomputeAutoAdjust() {
-                        cachedAutoOverrides = overrides
-                        lastAutoAdjustTime = Date()
-                    }
-                    let storedOverrides = cachedAutoOverrides ?? overrides
-                    autoAdjustCacheLock.unlock()
-                    
-                    autoOverrides = storedOverrides
-                    
-                    // Update UserDefaults for UI display
-                    let d = UserDefaults.standard
-                    d.set(storedOverrides.profile, forKey: "parakeet.auto.lastProfile")
-                    d.set(storedOverrides.snrDb, forKey: "parakeet.auto.lastSnrDb")
-                    d.set(storedOverrides.lfReduction, forKey: "parakeet.auto.lastLFR")
-                    d.set(storedOverrides.highPassHz, forKey: "parakeet.auto.lastHP")
-                    d.set(storedOverrides.targetRMS, forKey: "parakeet.auto.lastRMS")
-                    d.set(storedOverrides.vadThreshold, forKey: "parakeet.auto.lastVadT")
-                    d.set(storedOverrides.minSpeech, forKey: "parakeet.auto.lastMinSpeech")
-                    d.set(storedOverrides.minSilence, forKey: "parakeet.auto.lastMinSilence")
-                    d.set(storedOverrides.padding, forKey: "parakeet.auto.lastPadding")
-                    
-                    AppLog.dictation.log("[Parakeet] Auto-adjust COMPUTED in \(computeTime * 1000, format: .fixed(precision: 1))ms: profile=\(storedOverrides.profile) snr=\(storedOverrides.snrDb, format: .fixed(precision: 1))dB lfr=\(storedOverrides.lfReduction, format: .fixed(precision: 3)) hp=\(storedOverrides.highPassHz) thr=\(String(format: "%.2f", storedOverrides.vadThreshold))")
-                } else {
-                    autoOverrides = nil
-                }
-            } else {
-                // Cache hit: use cached parameters
-                if let cached = cachedAutoOverrides {
-                    autoOverrides = cached
-                    let cacheAge = Date().timeIntervalSince(lastAutoAdjustTime!)
-                    AppLog.dictation.log("[Parakeet] Auto-adjust CACHED (age: \(cacheAge, format: .fixed(precision: 1))s): profile=\(cached.profile) hp=\(cached.highPassHz) thr=\(String(format: "%.2f", cached.vadThreshold))")
-                } else {
-                    autoOverrides = nil
-                }
-                autoAdjustCacheLock.unlock()
-            }
-        } else {
-            autoOverrides = nil
-        }
-
         // If app-level preprocessing already applied, skip internal steps to avoid double-processing
         if !preprocessingApplied {
-            let hpHz = autoOverrides?.highPassHz ?? (defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60)
+            let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
             if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
             let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
             if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
-            let targetRMS = autoOverrides?.targetRMS ?? (defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06)
+            let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
             samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
         }
         // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
         do {
             if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
                 let audioDurationSeconds = Double(samples.count) / 16_000.0
-                // Conditional VAD: only apply to audio longer than 3 seconds (like VoiceInk)
-                if audioDurationSeconds > 3.0 {
+                // Conditional VAD: only apply to audio longer than 20 seconds for long-form dictation
+                if audioDurationSeconds > 20.0 {
                     AppLog.dictation.log("[Parakeet] VAD begin (audio duration: \(String(format: "%.1f", audioDurationSeconds))s)")
-                    if let trimmed = try await applyVADIfAvailable(samples, overrides: autoOverrides), trimmed.count >= 16_000 {
+                    if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
                         samples = trimmed
                     }
                     AppLog.dictation.log("[Parakeet] VAD end")
@@ -297,14 +214,14 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
             throw err
         }
-        if stats.meanAbs < 0.002 && stats.peak < 0.01 {
+        if stats.meanAbs < 0.001 && stats.peak < 0.01 {
             let err = NSError(domain: "Parakeet", code: -1002, userInfo: [NSLocalizedDescriptionKey: "Audio appears near-silent; check microphone and input gain"])
             log.notice("[Parakeet] rejecting: \(err.localizedDescription, privacy: .public)")
             AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
             throw err
         }
         AppLog.dictation.log("[Parakeet] ASR begin")
-        var result: ASRResult
+        let result: ASRResult
         do {
             // Provide source hint per 0.6 API
             result = try await mgr.transcribe(samples, source: .microphone)
@@ -313,15 +230,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
             AppLog.dictation.error("[Parakeet] transcribe error domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
             throw error
-        }
-        // Defensive retry: if ASR returns an empty string despite non-silent audio, retry once
-        if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            AppLog.dictation.error("[Parakeet] Empty ASR result; retrying once")
-            do {
-                result = try await mgr.transcribe(samples, source: .microphone)
-            } catch {
-                // Keep original empty result if retry also fails
-            }
         }
         AppLog.dictation.log("[Parakeet] ASR done")
         let preview = result.text.prefix(120)
@@ -341,20 +249,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         let pref = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
         return (pref == "v2") ? .v2 : .v3
-    }
-
-    // Check if cached auto-adjust parameters are still valid (within 10-minute window)
-    private func shouldRecomputeAutoAdjust() -> Bool {
-        autoAdjustCacheLock.lock()
-        defer { autoAdjustCacheLock.unlock() }
-        
-        guard let lastTime = lastAutoAdjustTime,
-              cachedAutoOverrides != nil else {
-            return true // No cache exists, must compute
-        }
-        
-        let elapsed = Date().timeIntervalSince(lastTime)
-        return elapsed >= autoAdjustCacheDuration
     }
 
     // MARK: - VAD (Silero) integration
@@ -380,12 +274,10 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     // Returns trimmed samples if VAD finds speech; nil otherwise
-    private func applyVADIfAvailable(_ samples: [Float], overrides: AutoOverrides?) async throws -> [Float]? {
-        // Adaptive VAD threshold: use higher threshold for longer audio (like VoiceInk)
+    private func applyVADIfAvailable(_ samples: [Float]) async throws -> [Float]? {
+        // Adaptive VAD threshold: use higher threshold for longer audio
         let audioDurationSeconds = Double(samples.count) / 16_000.0
-        let baseThreshold = overrides?.vadThreshold 
-            ?? (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double) 
-            ?? 0.5
+        let baseThreshold = (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double) ?? 0.5
         
         let adaptiveThreshold: Double
         if audioDurationSeconds > 20.0 {
@@ -401,9 +293,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Use 0.6 segmentation API for robust trimming
         var segCfg = VadSegmentationConfig.default
         // Tunable parameters via UserDefaults with safe clamps
-        let minSpeech = max(0.05, min(1.0, overrides?.minSpeech ?? (UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25)))
-        let minSilence = max(0.10, min(1.5, overrides?.minSilence ?? (UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35)))
-        let padding = max(0.0, min(0.8, overrides?.padding ?? (UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10)))
+        let minSpeech = max(0.05, min(1.0, (UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25)))
+        let minSilence = max(0.10, min(1.5, (UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35)))
+        let padding = max(0.0, min(0.8, (UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10)))
         segCfg.minSpeechDuration = minSpeech
         segCfg.minSilenceDuration = minSilence
         segCfg.speechPadding = padding
@@ -554,97 +446,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return out
     }
 
-    // MARK: - Auto-adjust heuristics
-    private static func deriveAutoOverrides(from samples: [Float]) -> AutoOverrides? {
-        guard samples.count >= 16_000 else { return nil }
-        // Compute absolute amplitudes
-        var absVals = [Double]()
-        absVals.reserveCapacity(samples.count)
-        var peak: Double = 0
-        var sumAbs: Double = 0
-        for s in samples {
-            let a = abs(Double(s))
-            absVals.append(a)
-            sumAbs += a
-            if a > peak { peak = a }
-        }
-        let meanAbs = sumAbs / Double(absVals.count)
-        absVals.sort()
-        func percentile(_ p: Double) -> Double {
-            let idx = max(0, min(absVals.count - 1, Int(Double(absVals.count - 1) * p)))
-            return absVals[idx]
-        }
-        let p20 = percentile(0.20)
-        let p80 = percentile(0.80)
-        // Approximate SNR from amplitude distribution
-        let snrDb = 20.0 * log10(max(p80, 1e-6) / max(p20, 1e-6))
-        // Low-frequency rumble check via energy reduction after 120 Hz high-pass
-        let origRms = rms(samples)
-        let hp = highPass(samples, cutoffHz: 80.0, sampleRate: 16_000) // 80 Hz is more speech-safe
-        let hpRms = rms(hp)
-        let lfEnergyReduction = (origRms > 0) ? (origRms - hpRms) / origRms : 0
-
-        // Classify environment
-        let profile: String
-        if snrDb < 10.0 || lfEnergyReduction > 0.22 {
-            profile = "noisy"
-        } else if snrDb > 20.0 && lfEnergyReduction < 0.18 {
-            profile = "quiet"
-        } else {
-            profile = "balanced"
-        }
-
-        // Map to overrides (aligned with presets)
-        switch profile {
-        case "quiet":
-            return AutoOverrides(
-                highPassHz: 50,
-                targetRMS: 0.070,
-                vadThreshold: 0.35,
-                minSpeech: 0.20,
-                minSilence: 0.30,
-                padding: 0.10,
-                profile: profile,
-                snrDb: snrDb,
-                lfReduction: lfEnergyReduction
-            )
-        case "noisy":
-            return AutoOverrides(
-                highPassHz: lfEnergyReduction > 0.20 ? 80 : 60,
-                targetRMS: 0.060,
-                vadThreshold: 0.70,
-                minSpeech: 0.30,
-                minSilence: 0.50,
-                padding: 0.15,
-                profile: profile,
-                snrDb: snrDb,
-                lfReduction: lfEnergyReduction
-            )
-        default:
-            return AutoOverrides(
-                highPassHz: 60,
-                targetRMS: 0.065,
-                vadThreshold: 0.50,
-                minSpeech: 0.25,
-                minSilence: 0.35,
-                padding: 0.10,
-                profile: profile,
-                snrDb: snrDb,
-                lfReduction: lfEnergyReduction
-            )
-        }
-    }
-
-    private static func rms(_ input: [Float]) -> Double {
-        guard !input.isEmpty else { return 0 }
-        var sumSq: Double = 0
-        for s in input {
-            let d = Double(s)
-            sumSq += d * d
-        }
-        return sqrt(sumSq / Double(input.count))
-    }
-
     // Simple pre-emphasis
     private static func preEmphasis(_ input: [Float], coeff: Float) -> [Float] {
         guard !input.isEmpty else { return input }
@@ -783,50 +584,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         guard endIdx > startIdx else { return nil }
         
         return Array(samples[startIdx..<endIdx])
-    }
-    
-    // MARK: - Asset Reader Decoder
-    
-    // Robust decode path using AVAssetReader
-    private static func decodeWithAssetReader(url: URL) throws -> [Float] {
-        let asset = AVURLAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .audio).first else {
-            throw NSError(domain: "Parakeet", code: -2, userInfo: [NSLocalizedDescriptionKey: "No audio track found"])
-        }
-        let reader = try AVAssetReader(asset: asset)
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
-        output.alwaysCopiesSampleData = false
-        reader.add(output)
-        guard reader.startReading() else {
-            throw NSError(domain: "Parakeet", code: -3, userInfo: [NSLocalizedDescriptionKey: "AssetReader failed to start: \(String(describing: reader.error))"])
-        }
-        var samples: [Float] = []
-        while reader.status == .reading {
-            if let sbuf = output.copyNextSampleBuffer(), let bbuf = CMSampleBufferGetDataBuffer(sbuf) {
-                var length: Int = 0
-                var dataPointer: UnsafeMutablePointer<Int8>?
-                if CMBlockBufferGetDataPointer(bbuf, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer) == kCMBlockBufferNoErr, let dataPointer {
-                    let count = length / MemoryLayout<Float>.size
-                    let ptr = dataPointer.withMemoryRebound(to: Float.self, capacity: count) { $0 }
-                    samples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: count))
-                }
-                CMSampleBufferInvalidate(sbuf)
-            } else {
-                break
-            }
-        }
-        if reader.status == .failed {
-            throw reader.error ?? NSError(domain: "Parakeet", code: -4, userInfo: [NSLocalizedDescriptionKey: "AssetReader failed"])
-        }
-        return samples
     }
 }
 #else
