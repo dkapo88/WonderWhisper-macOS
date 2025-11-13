@@ -172,6 +172,10 @@ final class DictationViewModel: ObservableObject {
     @Published var favoriteLLMModels: [FavoriteLLMModel] = DictationViewModel.loadFavoriteLLMModels() {
         didSet { persistFavoriteLLMModels() }
     }
+    
+    @Published var favoriteOpenRouterModels: [FavoriteOpenRouterModel] = DictationViewModel.loadFavoriteOpenRouterModels() {
+        didSet { persistFavoriteOpenRouterModels() }
+    }
 
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
@@ -1262,6 +1266,31 @@ final class DictationViewModel: ObservableObject {
             simpleSelectedModel = SimpleModeDefaults.defaultModelID
         }
     }
+    
+    func addFavoriteOpenRouterModel(id: String, name: String) {
+        guard !favoriteOpenRouterModels.contains(where: { $0.id.lowercased() == id.lowercased() }) else { return }
+        let favorite = FavoriteOpenRouterModel(id: id, name: name)
+        favoriteOpenRouterModels.append(favorite)
+    }
+    
+    func removeFavoriteOpenRouterModel(id: String) {
+        favoriteOpenRouterModels.removeAll { $0.id.lowercased() == id.lowercased() }
+        if simpleSelectedModel.lowercased() == id.lowercased(), let first = favoriteOpenRouterModels.first {
+            simpleSelectedModel = first.id
+        } else if favoriteOpenRouterModels.isEmpty {
+            simpleSelectedModel = SimpleModeDefaults.defaultModelID
+        }
+    }
+    
+    func setActiveOpenRouterModel(id: String) {
+        simpleSelectedModel = id
+    }
+    
+    private func persistFavoriteOpenRouterModels() {
+        if let data = try? JSONEncoder().encode(favoriteOpenRouterModels) {
+            UserDefaults.standard.set(data, forKey: Self.favoriteOpenRouterModelsKey)
+        }
+    }
 
     private func persistSimpleSettings(kind: SimplePromptKind, settings: SimplePromptSettings) {
         let sanitized = sanitizedSimpleSettings(settings, for: kind)
@@ -1798,6 +1827,7 @@ private extension DictationViewModel {
 private extension DictationViewModel {
     static let favoritesDataKey = "llm.models.favorites.data"
     static let favoritesLegacyKey = "llm.models.favorites"
+    static let favoriteOpenRouterModelsKey = "simple.openrouter.favorites"
 
     static func loadFavoriteLLMModels() -> [FavoriteLLMModel] {
         let defaults = UserDefaults.standard
@@ -1823,6 +1853,22 @@ private extension DictationViewModel {
                 let entry = FavoriteLLMModel(provider: provider, model: trimmed)
                 if seen.insert(entry.key).inserted {
                     result.append(entry)
+                }
+            }
+            return result
+        }
+        return []
+    }
+    
+    static func loadFavoriteOpenRouterModels() -> [FavoriteOpenRouterModel] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: favoriteOpenRouterModelsKey),
+           let decoded = try? JSONDecoder().decode([FavoriteOpenRouterModel].self, from: data) {
+            var seen: Set<String> = []
+            var result: [FavoriteOpenRouterModel] = []
+            for item in decoded {
+                if seen.insert(item.id.lowercased()).inserted {
+                    result.append(item)
                 }
             }
             return result

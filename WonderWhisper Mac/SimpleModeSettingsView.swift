@@ -10,6 +10,7 @@ struct SimpleModeSettingsView: View {
   @State private var groqKeyInput: String = ""
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
+  @State private var showModelBrowser: Bool = false
 
   private let keychain = KeychainService()
 
@@ -23,9 +24,8 @@ struct SimpleModeSettingsView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        llmSection
         voiceEngineSection
-        customModelSection
+        combinedLLMSection
         openRouterSection
         groqSection
         parakeetSection
@@ -35,6 +35,9 @@ struct SimpleModeSettingsView: View {
       }
       .padding(24)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .sheet(isPresented: $showModelBrowser) {
+      OpenRouterModelBrowserView(vm: vm)
     }
   }
 
@@ -57,69 +60,83 @@ struct SimpleModeSettingsView: View {
     }
   }
 
-  private var llmSection: some View {
+  private var combinedLLMSection: some View {
     GroupBox("Language model") {
-      VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: 16) {
         Toggle("Enable LLM post-processing", isOn: $vm.simpleLLMEnabled)
           .help("Turn this off to use raw transcription without additional formatting.")
-
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Default OpenRouter model")
-            .font(.callout.weight(.semibold))
-          Picker("Model", selection: $vm.simpleSelectedModel) {
-            ForEach(vm.simpleModelOptions) { option in
-              Text(option.displayName).tag(option.modelID)
+        
+        Divider()
+        
+        HStack {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Favorite Models")
+              .font(.callout.weight(.semibold))
+            Text("Manage your OpenRouter models. Click a model to set it as active.")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+          Spacer()
+          Button(action: { showModelBrowser = true }) {
+            HStack(spacing: 4) {
+              Image(systemName: "magnifyingglass")
+              Text("Browse Models")
             }
           }
-          .labelsHidden()
-          .frame(maxWidth: 360)
-          Text("Applies to Dictate and Command modes when LLM output is enabled.")
-            .font(.caption)
-            .foregroundColor(.secondary)
         }
-      }
-      .padding(.top, 4)
-    }
-  }
 
-  private var customModelSection: some View {
-    GroupBox("Custom models") {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Add additional OpenRouter model IDs to the picker above.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        HStack(spacing: 8) {
-          TextField("provider/model-id", text: $customModelDraft)
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 320)
-          Button("Add") {
-            vm.addCustomSimpleModel(id: customModelDraft)
-            customModelDraft = ""
+        if vm.favoriteOpenRouterModels.isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("No favorites yet. Browse the OpenRouter catalog to add models.")
+              .font(.callout)
+              .foregroundColor(.secondary)
           }
-          .disabled(customModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-
-        if vm.simpleCustomModels.isEmpty {
-          Text("No additional models added yet.")
-            .font(.caption)
-            .foregroundColor(.secondary)
+          .padding(.vertical, 8)
         } else {
-          VStack(alignment: .leading, spacing: 6) {
-            ForEach(vm.simpleCustomModels, id: \.self) { model in
-              HStack {
-                Text(model)
-                  .font(.callout)
-                Spacer()
-                Button(role: .destructive) {
-                  vm.removeCustomSimpleModel(id: model)
-                } label: {
-                  Image(systemName: "minus.circle")
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(vm.favoriteOpenRouterModels) { favorite in
+              Button(action: {
+                if vm.simpleSelectedModel != favorite.id {
+                  vm.setActiveOpenRouterModel(id: favorite.id)
                 }
-                .buttonStyle(.borderless)
+              }) {
+                HStack(spacing: 8) {
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(favorite.name)
+                      .font(.callout.weight(.medium))
+                      .foregroundColor(.primary)
+                    Text(favorite.id)
+                      .font(.caption2)
+                      .foregroundColor(.secondary)
+                  }
+                  
+                  Spacer()
+                  
+                  if vm.simpleSelectedModel == favorite.id {
+                    Label("Active", systemImage: "checkmark.circle.fill")
+                      .font(.caption.weight(.semibold))
+                      .foregroundColor(.green)
+                  }
+                  
+                  Button(role: .destructive, action: {
+                    vm.removeFavoriteOpenRouterModel(id: favorite.id)
+                  }) {
+                    Image(systemName: "trash")
+                      .foregroundColor(.red)
+                  }
+                  .buttonStyle(.borderless)
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 8)
+                .padding(.horizontal, 8)
+                .background(vm.simpleSelectedModel == favorite.id ? Color.green.opacity(0.1) : Color.clear)
+                .cornerRadius(6)
               }
-              .padding(.vertical, 4)
-              Divider()
+              .buttonStyle(.plain)
+              
+              if favorite.id != vm.favoriteOpenRouterModels.last?.id {
+                Divider()
+              }
             }
           }
         }

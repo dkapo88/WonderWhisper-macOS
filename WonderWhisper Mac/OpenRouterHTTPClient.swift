@@ -16,8 +16,14 @@ struct OpenRouterHTTPClient {
         return "Bearer \(key)"
     }
 
-    // Fetch available model IDs from OpenRouter
+    // Fetch available model IDs from OpenRouter (legacy method)
     func fetchModelIDs() async throws -> [String] {
+        let models = try await fetchModels()
+        return models.map { $0.id }
+    }
+    
+    // Fetch full model information from OpenRouter
+    func fetchModels() async throws -> [OpenRouterModel] {
         var req = URLRequest(url: AppConfig.openrouterModels, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         req.httpMethod = "GET"
         // Authorization is optional for /models; include if we have a key
@@ -30,12 +36,10 @@ struct OpenRouterHTTPClient {
         let (data, resp) = try await Self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw ProviderError.networkError("No HTTP response") }
         guard (200...299).contains(http.statusCode) else { throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>") }
-        // Response shape: { data: [ { id: String, ... }, ... ] }
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let arr = obj["data"] as? [[String: Any]] {
-            let ids = arr.compactMap { $0["id"] as? String }
-            return ids
-        }
-        throw ProviderError.decodingFailed
+        
+        let decoder = JSONDecoder()
+        let response = try decoder.decode(OpenRouterModelsResponse.self, from: data)
+        return response.data
     }
 
     struct ChatRequest: Encodable {
