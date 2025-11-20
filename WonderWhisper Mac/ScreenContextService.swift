@@ -17,9 +17,19 @@ final class ScreenContextService {
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         guard err == .success, let element = focused,
-              CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+              CFGetTypeID(element) == AXUIElementGetTypeID() else {
+            return nil
+        }
 
         let axElement = element as! AXUIElement
+        // Avoid reading from secure inputs
+        if isSecureTextElement(axElement) { return nil }
+
+        // If there is already a selection, prefer that and avoid altering selection state
+        if let existingSelection = selectedTextFast(), !existingSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AppLog.dictation.log("Active text field: skipping because selected text exists (\(existingSelection.count) chars)")
+            return nil
+        }
 
         if let direct = copyValueAttribute(from: axElement) {
             return direct
@@ -29,10 +39,40 @@ final class ScreenContextService {
             return entireRange
         }
 
-        if let selection = copySelectedValue(from: axElement) {
+        if let childValue = copyValueFromChildren(from: axElement) {
+            return childValue
+        }
+
+        if let selection = copySelectedValue(from: axElement), !selection.isEmpty {
             return selection
         }
 
+        return nil
+    }
+
+    private func copyValueFromChildren(from element: AXUIElement, depth: Int = 0) -> String? {
+        if depth > 1 { return nil }
+
+        var childrenObj: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenObj)
+        guard err == .success, let children = childrenObj as? [AXUIElement] else { return nil }
+
+        for child in children {
+            if let val = copyValueAttribute(from: child), !val.isEmpty {
+                return val
+            }
+            if let val = copyEntireRangeValue(from: child), !val.isEmpty {
+                return val
+            }
+        }
+
+        if depth == 0 {
+            for child in children {
+                if let val = copyValueFromChildren(from: child, depth: depth + 1) {
+                    return val
+                }
+            }
+        }
         return nil
     }
 
@@ -44,10 +84,7 @@ final class ScreenContextService {
     }
 
     private func copyEntireRangeValue(from element: AXUIElement) -> String? {
-        var lengthValue: AnyObject?
-        let lenErr = AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &lengthValue)
-        guard lenErr == .success else { return nil }
-        let lengthNumber = (lengthValue as? NSNumber)?.intValue ?? 0
+        guard let lengthNumber = numberOfCharacters(in: element) else { return nil }
         if lengthNumber <= 0 { return "" }
 
         var range = CFRange(location: 0, length: CFIndex(lengthNumber))
@@ -68,6 +105,36 @@ final class ScreenContextService {
         let err = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected)
         guard err == .success else { return nil }
         return extractString(from: selected)
+    }
+
+    private func copySelectedRangeValue(from element: AXUIElement) -> AXValue? {
+        var rangeValue: AnyObject?
+        let res = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
+        guard res == .success,
+              let rangeValue,
+              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
+        return (rangeValue as! AXValue)
+    }
+
+    private func numberOfCharacters(in element: AXUIElement) -> Int? {
+        var lengthValue: AnyObject?
+        let lenErr = AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &lengthValue)
+        guard lenErr == .success else { return nil }
+        return (lengthValue as? NSNumber)?.intValue
+    }
+
+    private func isSecureTextElement(_ element: AXUIElement) -> Bool {
+        var roleObj: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleObj)
+        let role = roleObj as? String ?? ""
+        if role == "AXSecureTextField" { return true }
+
+        var subroleObj: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleObj) == .success {
+            let subrole = subroleObj as? String ?? ""
+            if subrole.localizedCaseInsensitiveContains("secure") { return true }
+        }
+        return false
     }
 
     private func extractString(from value: AnyObject?) -> String? {
@@ -198,8 +265,7 @@ private extension ScreenContextService {
         let pb = NSPasteboard.general
         let snap = snapshotPasteboard()
 
-        // Record changeCount and clear to isolate next copy
-        let beforeClear = pb.changeCount
+        // Clear to isolate next copy
         pb.clearContents()
         let afterClear = pb.changeCount
 
@@ -233,6 +299,23 @@ private extension ScreenContextService {
         let observedFinal = pb.changeCount
         restorePasteboard(snap, ifChangeCountEquals: observedFinal)
         return nil
+    }
+
+    func copyActiveTextFieldViaClipboard(from element: AXUIElement) -> String? {
+        return nil
+    }
+
+    func copyFrontmostTextFieldViaClipboard() -> String? {
+        return nil
+    }
+
+    func synthesizeArrowRight() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        let key: CGKeyCode = CGKeyCode(kVK_RightArrow)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false)
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 
     private func waitForPasteboardChange(since base: Int, timeout: TimeInterval) -> Int? {
@@ -305,6 +388,17 @@ private extension ScreenContextService {
         let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
         down?.flags = .maskCommand
         let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    func synthesizeCmdA() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        let keyA: CGKeyCode = CGKeyCode(kVK_ANSI_A)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyA, keyDown: true)
+        down?.flags = .maskCommand
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyA, keyDown: false)
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)

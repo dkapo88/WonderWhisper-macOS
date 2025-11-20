@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+ - 2025-11-20: Active text field capture now skips when selected text exists (to preserve selection), still falls back to clipboard with selection collapse, and logs app/bundle when capture fails.
 - 2025-11-14: Added architecture overview, updated testing framework to Swift Testing, clarified import conventions and error handling, corrected sidebar tab count (six tabs), added single-test command.
 - 2025-11-13: Added microphone selection feature with persistent device override capability in sidebar menu.
 - 2025-11-11: Documented the slimmed-down Dictation/Command surface, Groq/Parakeet transcription engines, and OpenRouter-only LLM stack.

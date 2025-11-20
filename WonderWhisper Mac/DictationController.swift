@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ApplicationServices
 import OSLog
 import os.signpost
 
@@ -244,6 +245,7 @@ actor DictationController {
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
                     clipboardText: clipboardSnapshotForSession
                 )
+                AppLog.dictation.log("Prompt context lengths: transcript=\(transcript.count) selected=\(selected?.count ?? 0) activeField=\(activeTextField?.count ?? 0) screen=\(screenContentsForPrompt?.count ?? 0) clipboard=\(self.clipboardSnapshotForSession?.count ?? 0)")
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 AppLog.dictation.log("LLM processing start")
@@ -572,13 +574,22 @@ extension DictationController {
 
     private func resolveActiveTextFieldForSession() -> String? {
         guard activeTextFieldEnabled else { return nil }
+        if let selected = preCapturedSelectedText?.trimmingCharacters(in: .whitespacesAndNewlines), !selected.isEmpty {
+            AppLog.dictation.log("Active text field: skipped because selected text present (\(selected.count) chars)")
+            return nil
+        }
         if let cached = preCapturedActiveTextField {
+            AppLog.dictation.log("Active text field: using pre-captured (\(cached.count) chars)")
             return cached
         }
         if let live = screenContext.activeTextField() {
             preCapturedActiveTextField = live
+            AppLog.dictation.log("Active text field: captured live (\(live.count) chars)")
             return live
         }
+        let pair = screenContext.frontmostAppNameAndBundle()
+        let trusted = AXIsProcessTrusted()
+        AppLog.dictation.log("Active text field: unavailable (nil) app=\(pair.1 ?? pair.0 ?? "unknown") axTrusted=\(trusted)")
         return nil
     }
 
@@ -587,6 +598,12 @@ extension DictationController {
 
         if selectedTextEnabled {
             _ = resolveSelectedTextForSession()
+        }
+
+        // If user already has selection, do not touch active text field (avoid select-all side effects)
+        if let selected = preCapturedSelectedText?.trimmingCharacters(in: .whitespacesAndNewlines), !selected.isEmpty {
+            preCapturedActiveTextField = nil
+            return
         }
 
         // Always capture screen text for OCR context
