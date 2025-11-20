@@ -7,6 +7,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import CoreMedia
 import Vision
+import NaturalLanguage
 
 struct ScreenCaptureSnapshot {
   enum Method: String, Codable {
@@ -268,7 +269,7 @@ private extension ScreenCaptureService {
 }
 
 extension ScreenCaptureService {
-  func recognizeText(from snapshot: ScreenCaptureSnapshot, preferAccurate: Bool) async -> String? {
+    func recognizeText(from snapshot: ScreenCaptureSnapshot, preferAccurate: Bool) async -> String? {
     await Task.detached(priority: .userInitiated) {
       guard let source = CGImageSourceCreateWithData(snapshot.data as CFData, nil),
             let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -286,15 +287,305 @@ extension ScreenCaptureService {
       let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
       do {
         try handler.perform([request])
-        let observations = request.results ?? []
-        let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-        let joined = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return joined.isEmpty ? nil : joined
+        guard let observations = request.results else { return nil }
+
+        let blocks: [ScreenTextBlock] = observations.compactMap { observation in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            let trimmed = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return ScreenTextBlock(text: trimmed, boundingBox: observation.boundingBox)
+        }
+
+        let formatter = StructuredScreenTextBuilder(blocks: blocks)
+        return formatter.build()
       } catch {
         AppLog.screen.error("Text recognition failed: \(error.localizedDescription)")
         return nil
       }
     }.value
+  }
+}
+
+struct ScreenTextBlock {
+  let text: String
+  let boundingBox: CGRect
+}
+
+struct StructuredScreenTextBuilder {
+  private let blocks: [ScreenTextBlock]
+
+  init(blocks: [ScreenTextBlock]) {
+    self.blocks = blocks
+  }
+
+  func build() -> String? {
+    let lines = normalize(blocks: blocks)
+    guard !lines.isEmpty else { return nil }
+    let paragraphs = buildParagraphs(from: lines)
+    guard !paragraphs.isEmpty else { return nil }
+
+    var sections = paragraphs.map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+
+    let aggregateRaw = paragraphs.map { $0.rawText }.joined(separator: " ")
+    let keyTerms = extractKeyTerms(from: aggregateRaw)
+    if !keyTerms.isEmpty {
+      sections.append("Key Terms: " + keyTerms.joined(separator: ", "))
+    }
+
+    let output = sections.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    return output.isEmpty ? nil : output
+  }
+
+  private func normalize(blocks: [ScreenTextBlock]) -> [ScreenTextLine] {
+    return blocks.compactMap { block in
+      let trimmed = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { return nil }
+      return ScreenTextLine(text: trimmed, boundingBox: block.boundingBox)
+    }.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+  }
+
+  private func buildParagraphs(from lines: [ScreenTextLine]) -> [StructuredParagraph] {
+    guard !lines.isEmpty else { return [] }
+    let heights = lines.map { max($0.height, 0.005) }
+    let medianHeight = heights.medianValue ?? 0.02
+    let paragraphGap = medianHeight * 1.8
+    let columnThreshold: CGFloat = 0.33
+
+    var groups: [[ScreenTextLine]] = []
+    var current: [ScreenTextLine] = []
+    var previous: ScreenTextLine?
+
+    for line in lines {
+      defer { previous = line }
+      guard let prev = previous else {
+        current.append(line)
+        continue
+      }
+
+      let gap = max(0, prev.minY - line.maxY)
+      let headingBreak = line.isHeading && !prev.isHeading
+      let columnBreak = abs(prev.minX - line.minX) > columnThreshold &&
+        prev.listContent == nil && line.listContent == nil
+      if (gap > paragraphGap || headingBreak || columnBreak), !current.isEmpty {
+        groups.append(current)
+        current = []
+      }
+
+      current.append(line)
+    }
+
+    if !current.isEmpty { groups.append(current) }
+    return groups.compactMap { renderParagraph(from: $0) }
+  }
+
+  private func renderParagraph(from lines: [ScreenTextLine]) -> StructuredParagraph? {
+    let meaningful = lines.filter { !$0.trimmed.isEmpty }
+    guard !meaningful.isEmpty else { return nil }
+
+    var working = meaningful
+    var heading: String? = nil
+    if let first = working.first, first.isHeading {
+      heading = first.trimmed
+      working.removeFirst()
+    }
+
+    var sections: [String] = []
+    var rawPieces: [String] = []
+    var plainAccumulator = ""
+    var bulletAccumulator: [String] = []
+
+    func flushPlain() {
+      let collapsed = plainAccumulator.collapsingWhitespace()
+      if !collapsed.isEmpty {
+        sections.append(collapsed)
+        rawPieces.append(collapsed)
+      }
+      plainAccumulator = ""
+    }
+
+    func flushBullets() {
+      guard !bulletAccumulator.isEmpty else { return }
+      let bulletSection = bulletAccumulator.joined(separator: "\n")
+      sections.append(bulletSection)
+      rawPieces.append(bulletAccumulator.joined(separator: " "))
+      bulletAccumulator.removeAll()
+    }
+
+    for line in working {
+      if let bullet = line.listContent {
+        flushPlain()
+        bulletAccumulator.append("• \(bullet.body)")
+        continue
+      }
+
+      flushBullets()
+      let text = line.trimmed
+      guard !text.isEmpty else { continue }
+      if plainAccumulator.isEmpty {
+        plainAccumulator = text
+      } else if plainAccumulator.hasSuffix("-") {
+        plainAccumulator.removeLast()
+        plainAccumulator += text
+      } else if [",", ".", ":", ";"].contains(text.first) {
+        plainAccumulator += text
+      } else {
+        plainAccumulator += " " + text
+      }
+    }
+
+    flushPlain()
+    flushBullets()
+
+    var displayComponents: [String] = []
+    var rawComponents: [String] = []
+    if let heading {
+      displayComponents.append(heading)
+      rawComponents.append(heading)
+    }
+    displayComponents.append(contentsOf: sections)
+    rawComponents.append(contentsOf: rawPieces)
+
+    let display = displayComponents.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    let raw = rawComponents.joined(separator: " ").collapsingWhitespace()
+    guard !display.isEmpty else { return nil }
+    return StructuredParagraph(displayText: display, rawText: raw)
+  }
+
+  private func extractKeyTerms(from text: String) -> [String] {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return [] }
+
+    let tagger = NLTagger(tagSchemes: [.nameType])
+    tagger.string = trimmed
+    var counts: [String: Int] = [:]
+    let options: NLTagger.Options = [.omitWhitespace, .omitPunctuation, .omitOther, .joinNames]
+    tagger.enumerateTags(in: trimmed.startIndex..<trimmed.endIndex, unit: .word, scheme: .nameType, options: options) { tag, range in
+      guard let tag, tag != .other else { return true }
+      let token = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !token.isEmpty else { return true }
+      counts[token, default: 0] += 1
+      return true
+    }
+
+    var ordered = counts.sorted { lhs, rhs in
+      if lhs.value == rhs.value { return lhs.key.lowercased() < rhs.key.lowercased() }
+      return lhs.value > rhs.value
+    }.map(\.key)
+
+    if ordered.count < 6 {
+      let fallback = fallbackKeyTerms(from: trimmed)
+      for term in fallback where !ordered.contains(term) {
+        ordered.append(term)
+        if ordered.count >= 6 { break }
+      }
+    }
+
+    return Array(ordered.prefix(6))
+  }
+
+  private func fallbackKeyTerms(from text: String) -> [String] {
+    var seen = Set<String>()
+    var terms: [String] = []
+    let separators = CharacterSet.whitespacesAndNewlines
+    for raw in text.components(separatedBy: separators) {
+      let token = raw.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+      guard token.count >= 3, let first = token.first, first.isUppercase else { continue }
+      let canonical = token.lowercased()
+      if seen.insert(canonical).inserted {
+        terms.append(token)
+      }
+    }
+    return terms
+  }
+}
+
+private struct ScreenTextLine {
+  let text: String
+  let boundingBox: CGRect
+
+  var trimmed: String {
+    text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  var minX: CGFloat { boundingBox.minX }
+  var minY: CGFloat { boundingBox.minY }
+  var maxY: CGFloat { boundingBox.maxY }
+  var height: CGFloat { max(boundingBox.height, 0) }
+
+  var isHeading: Bool {
+    guard listContent == nil else { return false }
+    let value = trimmed
+    guard value.count >= 3, value.count <= 70 else { return false }
+    if value.hasSuffix(":") { return true }
+    let letters = value.filter { $0.isLetter }
+    guard !letters.isEmpty else { return false }
+    let upperCount = letters.filter { $0.isUppercase }.count
+    return Double(upperCount) / Double(letters.count) > 0.75
+  }
+
+  var listContent: (marker: String, body: String)? {
+    let value = trimmed
+    guard !value.isEmpty else { return nil }
+    let bulletChars: Set<Character> = ["-", "–", "—", "•", "*", "·", "▪", "◦"]
+    if let first = value.first, bulletChars.contains(first) {
+      let remainder = value.dropFirst().trimmingCharacters(in: .whitespaces)
+      guard !remainder.isEmpty else { return nil }
+      return (String(first), remainder)
+    }
+
+    var idx = value.startIndex
+    var prefix = ""
+    while idx < value.endIndex, value[idx].isNumber {
+      prefix.append(value[idx])
+      idx = value.index(after: idx)
+    }
+    if !prefix.isEmpty, idx < value.endIndex, [".", ")", "]"].contains(value[idx]) {
+      let marker = prefix + String(value[idx])
+      idx = value.index(after: idx)
+      let remainder = value[idx...].trimmingCharacters(in: .whitespaces)
+      guard !remainder.isEmpty else { return nil }
+      return (marker, remainder)
+    }
+
+    idx = value.startIndex
+    if idx < value.endIndex, value[idx].isLetter {
+      let letter = value[idx]
+      let next = value.index(after: idx)
+      if next < value.endIndex, [".", ")"].contains(value[next]) {
+        let marker = "\(letter)\(value[next])"
+        let remainderIndex = value.index(after: next)
+        let remainder = value[remainderIndex...].trimmingCharacters(in: .whitespaces)
+        guard !remainder.isEmpty else { return nil }
+        return (marker, remainder)
+      }
+    }
+
+    return nil
+  }
+}
+
+private struct StructuredParagraph {
+  let displayText: String
+  let rawText: String
+}
+
+private extension Array where Element == CGFloat {
+  var medianValue: CGFloat? {
+    guard !isEmpty else { return nil }
+    let sorted = self.sorted()
+    if sorted.count % 2 == 1 {
+      return sorted[sorted.count / 2]
+    }
+    let upperIndex = sorted.count / 2
+    return (sorted[upperIndex - 1] + sorted[upperIndex]) / 2.0
+  }
+}
+
+private extension String {
+  func collapsingWhitespace() -> String {
+    let pieces = components(separatedBy: CharacterSet.whitespacesAndNewlines).filter { !$0.isEmpty }
+    return pieces.joined(separator: " ")
   }
 }
 

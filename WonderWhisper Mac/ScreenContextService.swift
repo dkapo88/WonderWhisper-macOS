@@ -12,16 +12,71 @@ final class ScreenContextService {
         return (app?.localizedName, app?.bundleIdentifier)
     }
 
-    func focusedText() -> String? {
+    func activeTextField() -> String? {
         let sys = AXUIElementCreateSystemWide()
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
-        guard err == .success, let element = focused else { return nil }
-        var value: AnyObject?
-        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        guard err == .success, let element = focused,
+              CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+
         let axElement = element as! AXUIElement
-        let err2 = AXUIElementCopyAttributeValue(axElement, kAXValueAttribute as CFString, &value)
-        if err2 == .success, let str = value as? String { return str }
+
+        if let direct = copyValueAttribute(from: axElement) {
+            return direct
+        }
+
+        if let entireRange = copyEntireRangeValue(from: axElement) {
+            return entireRange
+        }
+
+        if let selection = copySelectedValue(from: axElement) {
+            return selection
+        }
+
+        return nil
+    }
+
+    private func copyValueAttribute(from element: AXUIElement) -> String? {
+        var value: AnyObject?
+        let err = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+        guard err == .success else { return nil }
+        return extractString(from: value)
+    }
+
+    private func copyEntireRangeValue(from element: AXUIElement) -> String? {
+        var lengthValue: AnyObject?
+        let lenErr = AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &lengthValue)
+        guard lenErr == .success else { return nil }
+        let lengthNumber = (lengthValue as? NSNumber)?.intValue ?? 0
+        if lengthNumber <= 0 { return "" }
+
+        var range = CFRange(location: 0, length: CFIndex(lengthNumber))
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: AnyObject?
+        let err = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &value
+        )
+        guard err == .success else { return nil }
+        return extractString(from: value)
+    }
+
+    private func copySelectedValue(from element: AXUIElement) -> String? {
+        var selected: AnyObject?
+        let err = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected)
+        guard err == .success else { return nil }
+        return extractString(from: selected)
+    }
+
+    private func extractString(from value: AnyObject?) -> String? {
+        if let string = value as? String {
+            return string
+        }
+        if let attributed = value as? NSAttributedString {
+            return attributed.string
+        }
         return nil
     }
 

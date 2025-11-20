@@ -18,6 +18,7 @@ struct HistoryEntry: Identifiable, Codable, Hashable {
     var screenImageWidth: Int?
     var screenImageHeight: Int?
     var selectedText: String?
+    var activeTextField: String?
     // LLM prompts captured at time of processing (for transparency)
     var llmSystemMessage: String?
     var llmUserMessage: String?

@@ -28,6 +28,7 @@ actor DictationController {
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
     private var preCapturedSelectedText: String?
+    private var preCapturedActiveTextField: String?
     private var clipboardSnapshotForSession: String?
     private let clipboardMonitor = ClipboardContextMonitor()
     private let clipboardWindowSeconds: TimeInterval = 10
@@ -97,6 +98,7 @@ actor DictationController {
                 preCapturedScreenText = nil
                 preCapturedScreenMethod = nil
                 preCapturedSelectedText = nil
+                preCapturedActiveTextField = nil
                 clipboardSnapshotForSession = nil
 
                 if llmEnabled && screenContextEnabled {
@@ -196,6 +198,7 @@ actor DictationController {
                     screenContextMethod: nil,
                     screenImage: nil,
                     selectedText: nil,
+                    activeTextField: nil,
                     llmSystemMessage: nil,
                     llmUserMessage: nil,
                     transcriptionModel: transcriberSettings.model,
@@ -229,6 +232,7 @@ actor DictationController {
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
+                    activeTextField: preCapturedActiveTextField,
                     appName: appNameForPrompt,
                     screenContents: screenContentsForPrompt,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
@@ -322,6 +326,7 @@ actor DictationController {
                 screenContextMethod: screenMethod,
                 screenImage: imageForHistory,
                 selectedText: selected,
+                activeTextField: preCapturedActiveTextField,
                 llmSystemMessage: systemForHistory,
                 llmUserMessage: userMsgForHistory,
                 transcriptionModel: transcriberSettings.model,
@@ -354,6 +359,7 @@ actor DictationController {
                 screenContextMethod: (captureModeForSession == .text) ? preCapturedScreenMethod : imageForHistory?.method.rawValue,
                 screenImage: imageForHistory,
                 selectedText: selectedTextForHistory,
+                activeTextField: preCapturedActiveTextField,
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,
@@ -368,6 +374,7 @@ actor DictationController {
         preCapturedScreenSnapshot = nil
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        preCapturedActiveTextField = nil
         clipboardSnapshotForSession = nil
         // Restore capture profile to default for subsequent runs
         recorder.captureProfile = .standard16k
@@ -427,6 +434,7 @@ actor DictationController {
         preCapturedScreenSnapshot = nil
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        preCapturedActiveTextField = nil
         clipboardSnapshotForSession = nil
         Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
@@ -497,6 +505,7 @@ actor DictationController {
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
+                    activeTextField: entry.activeTextField,
                     appName: appNameForPrompt,
                     screenContents: screenInstruction,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
@@ -566,12 +575,14 @@ extension DictationController {
         self.preCapturedScreenSnapshot = nil
         self.preCapturedScreenText = nil
         self.preCapturedScreenMethod = nil
+        self.preCapturedActiveTextField = nil
 
-        if let focused = screenContext.focusedText(), !focused.isEmpty {
-            self.preCapturedScreenText = focused
-            self.preCapturedScreenMethod = "AX"
-            return
+        // Capture active text field
+        if let focused = screenContext.activeTextField(), !focused.isEmpty {
+            self.preCapturedActiveTextField = focused
         }
+
+        // Continue to capture OCR if needed (don't return early)
 
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let isCodeEditor = [

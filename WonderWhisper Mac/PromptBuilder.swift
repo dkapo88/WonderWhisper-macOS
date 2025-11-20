@@ -43,6 +43,7 @@ struct PromptBuilder {
     // Now includes <VOCABULARY> in the user message alongside other dynamic content.
     static func buildUserMessage(transcription: String,
                                  selectedText: String?,
+                                 activeTextField: String?,
                                  appName: String?,
                                  screenContents: String?,
                                  customVocabulary: String?,
@@ -55,6 +56,10 @@ struct PromptBuilder {
         out += "<ACTIVE_APPLICATION>\n"
         out += (appName?.isEmpty == false) ? (appName ?? "Unknown") : "Unknown"
         out += "\n</ACTIVE_APPLICATION>\n\n"
+
+        out += "<ACTIVE_TEXT_FIELD>\n"
+        out += (activeTextField ?? "")
+        out += "\n</ACTIVE_TEXT_FIELD>\n\n"
 
         out += "<SCREEN_CONTENTS>\n"
         out += (screenContents ?? "")
