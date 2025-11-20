@@ -146,7 +146,7 @@ struct SimpleModeSettingsView: View {
   }
 
   private var openRouterSection: some View {
-    GroupBox("OpenRouter API key") {
+    GroupBox("OpenRouter") {
       VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 6) {
           Text(hasOpenRouterKey ? "Status: Saved" : "Status: Missing")
@@ -166,6 +166,26 @@ struct SimpleModeSettingsView: View {
           openRouterKeyInput = ""
         }
         .disabled(openRouterKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Divider()
+
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Routing Priority")
+            .font(.callout.weight(.semibold))
+
+          Picker("Priority", selection: $vm.openrouterRouting) {
+            Text("Auto (Default)").tag("auto")
+            Text("Latency").tag("latency")
+            Text("Throughput").tag("throughput")
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .frame(maxWidth: 360)
+
+          Text("Optimize for speed (latency) or volume (throughput). Auto lets OpenRouter decide.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
       }
       .padding(.top, 4)
     }

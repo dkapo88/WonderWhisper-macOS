@@ -156,7 +156,7 @@ final class DictationViewModel: ObservableObject {
     // LLM provider selection: "groq" (default) or "openrouter"
     let llmProvider: String = "openrouter"
     // OpenRouter routing preference: "latency" or "throughput"
-    @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "latency" { didSet { persistAndUpdate() } }
+    @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "auto" { didSet { persistAndUpdate() } }
     @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(llmStreaming, forKey: "llm.streaming")

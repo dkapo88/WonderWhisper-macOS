@@ -34,14 +34,18 @@ final class OpenRouterLLMProvider: LLMProvider {
         }
 
         // Apply routing preference via provider.sort per OpenRouter docs (latency|throughput|price)
+        // "auto" (default) sends no provider preferences
         let pref = routingPrefProvider().lowercased()
-        let sort: String
+        let provider: OpenRouterHTTPClient.ChatRequest.ProviderOptions?
+        
         switch pref {
-        case "throughput": sort = "throughput"
-        case "price": sort = "price"
-        default: sort = "latency"
+        case "throughput": 
+            provider = .init(sort: "throughput")
+        case "latency": 
+            provider = .init(sort: "latency")
+        default: 
+            provider = nil
         }
-        let provider = OpenRouterHTTPClient.ChatRequest.ProviderOptions(sort: sort)
 
         let req = OpenRouterHTTPClient.ChatRequest(model: settings.model, messages: typed, temperature: settings.temperature, stream: settings.streaming ? true : nil, provider: provider)
 
