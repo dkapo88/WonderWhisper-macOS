@@ -13,6 +13,7 @@ struct PromptBuilder {
         out += "Your task is to work ONLY with the content within the '<TRANSCRIPT>' tags.\n\n"
         out += "IMPORTANT: The following context information is ONLY for reference:\n"
         out += "- '<ACTIVE_APPLICATION>': The application currently in focus\n"
+        out += "- '<ACTIVE_TEXT_FIELD>': The full contents of the focused text field\n"
         out += "- '<SCREEN_CONTENTS>': Guidance for interpreting the attached screen capture\n"
         out += "- '<SELECTED_TEXT>': Text that was selected when recording started\n"
         out += "- '<VOCABULARY>': Important words that should be recognized correctly\n\n"

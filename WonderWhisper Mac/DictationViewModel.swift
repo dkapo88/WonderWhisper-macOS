@@ -371,6 +371,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
             await controller.updateClipboardContextEnabled(activeClipboardContextEnabled)
+            await controller.updateActiveTextFieldEnabled(resolvedActiveTextField(for: nil))
         }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
@@ -1185,6 +1186,13 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
+    func setSimpleActiveTextField(_ value: Bool, for kind: SimplePromptKind) {
+        var settings = simpleSettings(for: kind)
+        guard settings.enableActiveTextField != value else { return }
+        settings.enableActiveTextField = value
+        applySimpleSettings(settings, for: kind)
+    }
+
     func setSimpleSelection(_ selection: HotkeyManager.Selection?, for kind: SimplePromptKind) {
         var settings = simpleSettings(for: kind)
         guard settings.selection != selection else { return }
@@ -1710,6 +1718,7 @@ final class DictationViewModel: ObservableObject {
         let useScreenContext = resolvedScreenContext(for: prompt)
         let useClipboardContext = resolvedClipboardContext(for: prompt)
         let useSelectedText = resolvedSelectedText(for: prompt)
+        let useActiveTextField = resolvedActiveTextField(for: prompt)
         let captureMode = resolvedScreenContextCaptureMode(for: prompt)
         let includeScreenImage = resolvedScreenImage(for: prompt)
 
@@ -1727,6 +1736,7 @@ final class DictationViewModel: ObservableObject {
             await controller.updateScreenContextCaptureMode(captureMode)
             await controller.updateClipboardContextEnabled(useClipboardContext)
             await controller.updateSelectedTextEnabled(useSelectedText)
+            await controller.updateActiveTextFieldEnabled(useActiveTextField)
             await controller.updateScreenImageEnabled(includeScreenImage)
             await controller.updateAutoMuteEnabled(autoMuteEnabled)
         }
@@ -1987,6 +1997,13 @@ private extension DictationViewModel {
 
     func resolvedSelectedText(for prompt: PromptConfiguration?) -> Bool {
         if let override = prompt?.selectedTextOverride {
+            return override
+        }
+        return true
+    }
+
+    func resolvedActiveTextField(for prompt: PromptConfiguration?) -> Bool {
+        if let override = prompt?.activeTextFieldOverride {
             return override
         }
         return true

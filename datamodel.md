@@ -42,6 +42,7 @@ erDiagram
         Bool screenContextOverride "optional"
         Bool clipboardContextOverride "optional"
         Bool selectedTextOverride "optional"
+        Bool activeTextFieldOverride "optional"
         ScreenContextCaptureMode screenContextCaptureOverride "optional"
         Bool includeScreenImageOverride "optional"
         Bool triggerOnSelectedText
@@ -99,6 +100,7 @@ erDiagram
         Int screenImageWidth "optional"
         Int screenImageHeight "optional"
         String selectedText "optional"
+        String activeTextField "optional"
         String llmSystemMessage "optional"
         String llmUserMessage "optional"
         String transcriptionModel "optional"
@@ -114,6 +116,7 @@ erDiagram
 - Application context (where dictation occurred)
 - Audio recording reference
 - Screen context and captures
+- Focused text field contents
 - Performance metrics
 - LLM prompts used (for transparency)
 
@@ -133,6 +136,7 @@ erDiagram
         Bool enableScreenContext
         Bool enableClipboardContext
         Bool enableSelectedText
+        Bool enableActiveTextField
         Selection selection "optional hotkey"
         Bool includeScreenImage
     }
@@ -145,7 +149,7 @@ erDiagram
     SimplePromptSettings ||--|{ SimplePromptRule : "contains"
 ```
 
-**SimplePromptSettings**: Simplified configuration for the two user-facing modes:
+**SimplePromptSettings**: Simplified configuration for the two user-facing modes. Each mode can independently toggle OCR screen context, clipboard history, selected text, and the full active text field payload.
 - **Dictation**: Voice-to-text formatting
 - **Command**: Selected-text/OCR aware assistant mode
 

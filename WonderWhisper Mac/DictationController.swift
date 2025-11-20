@@ -23,6 +23,7 @@ actor DictationController {
     private var screenImageEnabled: Bool = false
     private var clipboardContextEnabled: Bool = false
     private var selectedTextEnabled: Bool = true
+    private var activeTextFieldEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var preCapturedScreenSnapshot: ScreenCaptureSnapshot?
     private var preCapturedScreenText: String?
@@ -148,6 +149,7 @@ actor DictationController {
             if preCapturedScreenText != nil { return .text }
             return screenContextCaptureMode
         }()
+        var activeTextFieldForHistory: String? = nil
 
         do {
             let overallStart = Date()
@@ -178,6 +180,10 @@ actor DictationController {
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
 
+            let selected = resolveSelectedTextForSession()
+            let activeTextField = resolveActiveTextFieldForSession()
+            activeTextFieldForHistory = activeTextField
+
             // Skip LLM and insertion if transcript is still empty after all fallbacks
             if looksEmptyOrPunctuation(transcript) {
                 AppLog.dictation.warning("Transcript empty or punctuation-only; skipping LLM and insertion")
@@ -197,8 +203,8 @@ actor DictationController {
                     screenContext: nil,
                     screenContextMethod: nil,
                     screenImage: nil,
-                    selectedText: nil,
-                    activeTextField: nil,
+                    selectedText: selected,
+                    activeTextField: activeTextFieldForHistory,
                     llmSystemMessage: nil,
                     llmUserMessage: nil,
                     transcriptionModel: transcriberSettings.model,
@@ -212,7 +218,7 @@ actor DictationController {
 
             var output = transcript
             var llmDT: TimeInterval = 0
-            let selected = resolveSelectedTextForSession()
+            
             var screenContentsForPrompt: String? = nil
             var screenMethod: String? = nil
             var screenAttachment: LLMImageAttachment? = nil
@@ -232,7 +238,7 @@ actor DictationController {
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
-                    activeTextField: preCapturedActiveTextField,
+                    activeTextField: activeTextField,
                     appName: appNameForPrompt,
                     screenContents: screenContentsForPrompt,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
@@ -326,7 +332,7 @@ actor DictationController {
                 screenContextMethod: screenMethod,
                 screenImage: imageForHistory,
                 selectedText: selected,
-                activeTextField: preCapturedActiveTextField,
+                activeTextField: activeTextFieldForHistory,
                 llmSystemMessage: systemForHistory,
                 llmUserMessage: userMsgForHistory,
                 transcriptionModel: transcriberSettings.model,
@@ -359,7 +365,7 @@ actor DictationController {
                 screenContextMethod: (captureModeForSession == .text) ? preCapturedScreenMethod : imageForHistory?.method.rawValue,
                 screenImage: imageForHistory,
                 selectedText: selectedTextForHistory,
-                activeTextField: preCapturedActiveTextField,
+                activeTextField: activeTextFieldForHistory ?? resolveActiveTextFieldForSession(),
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,
@@ -564,6 +570,18 @@ extension DictationController {
         return nil
     }
 
+    private func resolveActiveTextFieldForSession() -> String? {
+        guard activeTextFieldEnabled else { return nil }
+        if let cached = preCapturedActiveTextField {
+            return cached
+        }
+        if let live = screenContext.activeTextField() {
+            preCapturedActiveTextField = live
+            return live
+        }
+        return nil
+    }
+
     private func preCaptureScreenContext() async {
         if !screenContextEnabled { return }
 
@@ -578,7 +596,7 @@ extension DictationController {
         self.preCapturedActiveTextField = nil
 
         // Capture active text field
-        if let focused = screenContext.activeTextField(), !focused.isEmpty {
+        if activeTextFieldEnabled, let focused = screenContext.activeTextField(), !focused.isEmpty {
             self.preCapturedActiveTextField = focused
         }
 
@@ -616,6 +634,13 @@ extension DictationController {
         selectedTextEnabled = enabled
         if !enabled {
             preCapturedSelectedText = nil
+        }
+    }
+
+    func updateActiveTextFieldEnabled(_ enabled: Bool) async {
+        activeTextFieldEnabled = enabled
+        if !enabled {
+            preCapturedActiveTextField = nil
         }
     }
 }

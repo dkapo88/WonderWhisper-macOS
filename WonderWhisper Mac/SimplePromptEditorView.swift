@@ -105,6 +105,12 @@ struct SimplePromptEditorView: View {
         ))
         .help("Send highlighted text from the current app into the prompt.")
         .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
+
+        Toggle("Include active text field", isOn: Binding(
+          get: { settings.enableActiveTextField },
+          set: { vm.setSimpleActiveTextField($0, for: kind) }
+        ))
+        .help("Also send the full contents of the text field you're typing in, even if nothing is selected.")
       }
       .padding(.top, 4)
     }

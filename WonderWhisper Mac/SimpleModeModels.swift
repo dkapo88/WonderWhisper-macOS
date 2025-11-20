@@ -106,6 +106,7 @@ struct SimplePromptSettings: Codable, Equatable {
   var enableScreenContext: Bool
   var enableClipboardContext: Bool
   var enableSelectedText: Bool
+  var enableActiveTextField: Bool
   var selection: HotkeyManager.Selection?
   var includeScreenImage: Bool
 
@@ -115,6 +116,7 @@ struct SimplePromptSettings: Codable, Equatable {
        enableScreenContext: Bool,
        enableClipboardContext: Bool,
        enableSelectedText: Bool,
+       enableActiveTextField: Bool,
        selection: HotkeyManager.Selection?,
        includeScreenImage: Bool) {
     self.rules = rules
@@ -123,6 +125,7 @@ struct SimplePromptSettings: Codable, Equatable {
     self.enableScreenContext = enableScreenContext
     self.enableClipboardContext = enableClipboardContext
     self.enableSelectedText = enableSelectedText
+    self.enableActiveTextField = enableActiveTextField
     self.selection = selection
     self.includeScreenImage = includeScreenImage
   }
@@ -134,6 +137,7 @@ struct SimplePromptSettings: Codable, Equatable {
     case enableScreenContext
     case enableClipboardContext
     case enableSelectedText
+    case enableActiveTextField
     case selection
     case legacyShortcut = "shortcut"
     case includeScreenImage
@@ -147,6 +151,7 @@ struct SimplePromptSettings: Codable, Equatable {
     enableScreenContext = try container.decode(Bool.self, forKey: .enableScreenContext)
     enableClipboardContext = try container.decode(Bool.self, forKey: .enableClipboardContext)
     enableSelectedText = try container.decode(Bool.self, forKey: .enableSelectedText)
+    enableActiveTextField = try container.decodeIfPresent(Bool.self, forKey: .enableActiveTextField) ?? true
     selection = try container.decodeIfPresent(HotkeyManager.Selection.self, forKey: .selection)
     includeScreenImage = try container.decodeIfPresent(Bool.self, forKey: .includeScreenImage) ?? false
     // Ignore legacy shortcut combos; simple mode now uses single-key selections only.
@@ -160,6 +165,7 @@ struct SimplePromptSettings: Codable, Equatable {
     try container.encode(enableScreenContext, forKey: .enableScreenContext)
     try container.encode(enableClipboardContext, forKey: .enableClipboardContext)
     try container.encode(enableSelectedText, forKey: .enableSelectedText)
+    try container.encode(enableActiveTextField, forKey: .enableActiveTextField)
     try container.encodeIfPresent(selection, forKey: .selection)
     try container.encode(includeScreenImage, forKey: .includeScreenImage)
   }
@@ -175,6 +181,7 @@ struct SimplePromptSettings: Codable, Equatable {
       enableScreenContext: enableScreenContext,
       enableClipboardContext: enableClipboardContext,
       enableSelectedText: enableSelectedText,
+      enableActiveTextField: enableActiveTextField,
       selection: selection,
       includeScreenImage: includeScreenImage
     )
@@ -240,6 +247,7 @@ enum SimpleModeDefaults {
         enableScreenContext: true,
         enableClipboardContext: false,
         enableSelectedText: true,
+        enableActiveTextField: true,
         selection: .fnGlobe,
         includeScreenImage: false
       )
@@ -251,6 +259,7 @@ enum SimpleModeDefaults {
         enableScreenContext: true,
         enableClipboardContext: true,
         enableSelectedText: true,
+        enableActiveTextField: true,
         selection: .rightCommand,
         includeScreenImage: false
       )
@@ -431,6 +440,7 @@ enum SimplePromptComposer {
     prompt.screenContextOverride = settings.enableScreenContext
     prompt.clipboardContextOverride = settings.enableClipboardContext
     prompt.selectedTextOverride = settings.enableSelectedText
+    prompt.activeTextFieldOverride = settings.enableActiveTextField
     prompt.screenContextCaptureOverride = settings.enableScreenContext ? .text : nil
     prompt.includeScreenImageOverride = settings.includeScreenImage
 

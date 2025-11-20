@@ -15,6 +15,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var screenContextOverride: Bool?
   var clipboardContextOverride: Bool?
   var selectedTextOverride: Bool?
+  var activeTextFieldOverride: Bool?
   var screenContextCaptureOverride: ScreenContextCaptureMode?
   var includeScreenImageOverride: Bool?
   var triggerOnSelectedText: Bool
@@ -34,6 +35,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        screenContextOverride: Bool? = nil,
        clipboardContextOverride: Bool? = nil,
        selectedTextOverride: Bool? = nil,
+       activeTextFieldOverride: Bool? = nil,
        screenContextCaptureOverride: ScreenContextCaptureMode? = nil,
        includeScreenImageOverride: Bool? = nil,
        triggerOnSelectedText: Bool = false,
@@ -52,6 +54,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.screenContextOverride = screenContextOverride
     self.clipboardContextOverride = clipboardContextOverride
     self.selectedTextOverride = selectedTextOverride
+    self.activeTextFieldOverride = activeTextFieldOverride
     self.screenContextCaptureOverride = screenContextCaptureOverride
     self.includeScreenImageOverride = includeScreenImageOverride
     self.triggerOnSelectedText = triggerOnSelectedText
@@ -74,6 +77,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case screenContextOverride
     case clipboardContextOverride
     case selectedTextOverride
+    case activeTextFieldOverride
     case screenContextCaptureOverride
     case includeScreenImageOverride
     case triggerOnSelectedText
@@ -97,6 +101,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     screenContextOverride = try container.decodeIfPresent(Bool.self, forKey: .screenContextOverride)
     clipboardContextOverride = try container.decodeIfPresent(Bool.self, forKey: .clipboardContextOverride)
     selectedTextOverride = try container.decodeIfPresent(Bool.self, forKey: .selectedTextOverride)
+    activeTextFieldOverride = try container.decodeIfPresent(Bool.self, forKey: .activeTextFieldOverride)
     screenContextCaptureOverride = try container.decodeIfPresent(ScreenContextCaptureMode.self, forKey: .screenContextCaptureOverride)
     triggerOnSelectedText = try container.decodeIfPresent(Bool.self, forKey: .triggerOnSelectedText) ?? false
     conversationModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .conversationModeEnabled) ?? false
@@ -120,6 +125,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)
     try container.encodeIfPresent(clipboardContextOverride, forKey: .clipboardContextOverride)
     try container.encodeIfPresent(selectedTextOverride, forKey: .selectedTextOverride)
+    try container.encodeIfPresent(activeTextFieldOverride, forKey: .activeTextFieldOverride)
     try container.encodeIfPresent(screenContextCaptureOverride, forKey: .screenContextCaptureOverride)
     try container.encodeIfPresent(includeScreenImageOverride, forKey: .includeScreenImageOverride)
     try container.encode(triggerOnSelectedText, forKey: .triggerOnSelectedText)
