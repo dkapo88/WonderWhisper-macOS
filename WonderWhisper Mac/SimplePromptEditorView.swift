@@ -156,10 +156,10 @@ struct SimplePromptEditorView: View {
   }
 
   private var rulesSection: some View {
-    GroupBox("Rule list") {
+    GroupBox("Rules") {
       VStack(alignment: .leading, spacing: 12) {
-        HStack {
-          Text("The list below feeds directly into the system prompt. Reorder, edit, or remove items to match your workflow.")
+        HStack(alignment: .firstTextBaseline) {
+          Text("These rules feed directly into the system prompt between the header and footer. Edit freely to match your workflow.")
             .font(.caption)
             .foregroundColor(.secondary)
           Spacer()
@@ -170,18 +170,18 @@ struct SimplePromptEditorView: View {
           .controlSize(.small)
         }
 
-        VStack(alignment: .leading, spacing: 12) {
-          ForEach(Array(settings.rules.enumerated()), id: \.element.id) { index, rule in
-            ruleCard(index: index, rule: rule)
-          }
-
-          Button {
-            vm.addSimpleRule(for: kind)
-          } label: {
-            Label("Add rule", systemImage: "plus")
-          }
-          .buttonStyle(.bordered)
-        }
+        TextEditor(text: rulesBinding)
+          .font(.body)
+          .frame(minHeight: 300)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 10)
+              .fill(Color(nsColor: .textBackgroundColor))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.secondary.opacity(0.2))
+          )
       }
       .padding(.top, 4)
     }
@@ -219,46 +219,6 @@ struct SimplePromptEditorView: View {
     }
   }
 
-  private func ruleCard(index: Int, rule: SimplePromptRule) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .center) {
-        Text("Rule \(index + 1)")
-          .font(.callout.weight(.semibold))
-        Spacer()
-        Button(role: .destructive) {
-          vm.removeSimpleRule(kind: kind, ruleID: rule.id)
-        } label: {
-          Image(systemName: "trash")
-        }
-        .buttonStyle(.borderless)
-        .help("Delete this rule")
-      }
-
-      TextEditor(text: Binding(
-        get: {
-          let currentRules = kind == .dictation ? vm.simpleDictation.rules : vm.simpleCommand.rules
-          return currentRules.first(where: { $0.id == rule.id })?.text ?? ""
-        },
-        set: { vm.updateSimpleRule(kind: kind, ruleID: rule.id, text: $0) }
-      ))
-      .font(.body)
-      .frame(minHeight: 88)
-      .padding(8)
-      .background(
-        RoundedRectangle(cornerRadius: 10)
-          .fill(Color(nsColor: .textBackgroundColor))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 10)
-          .stroke(Color.secondary.opacity(0.2))
-      )
-    }
-    .padding(12)
-    .background(
-      RoundedRectangle(cornerRadius: 14)
-        .fill(Color(nsColor: .controlBackgroundColor))
-    )
-  }
 }
 
 #Preview {
@@ -288,6 +248,13 @@ private extension SimplePromptEditorView {
     Binding(
       get: { settings.header },
       set: { vm.updateSimpleHeader(kind: kind, text: $0) }
+    )
+  }
+
+  var rulesBinding: Binding<String> {
+    Binding(
+      get: { settings.rules },
+      set: { vm.updateSimpleRules(kind: kind, text: $0) }
     )
   }
 

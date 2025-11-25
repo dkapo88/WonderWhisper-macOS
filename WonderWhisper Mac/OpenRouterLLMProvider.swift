@@ -98,6 +98,13 @@ final class OpenRouterLLMProvider: LLMProvider {
     }
 
     private static func extractFormattedText(from response: String) -> String {
+        // Try OUTPUT tag first
+        if let o = response.range(of: "<OUTPUT>", options: .caseInsensitive),
+           let c = response.range(of: "</OUTPUT>", options: .caseInsensitive) {
+            let inner = response[o.upperBound..<c.lowerBound]
+            return String(inner).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // Fallback to legacy FORMATTED_TEXT tag for backward compatibility
         if let o = response.range(of: "<FORMATTED_TEXT>", options: .caseInsensitive),
            let c = response.range(of: "</FORMATTED_TEXT>", options: .caseInsensitive) {
             let inner = response[o.upperBound..<c.lowerBound]

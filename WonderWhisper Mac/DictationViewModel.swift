@@ -1142,7 +1142,7 @@ final class DictationViewModel: ObservableObject {
     private func sanitizedSimpleSettings(_ settings: SimplePromptSettings, for kind: SimplePromptKind) -> SimplePromptSettings {
         var sanitized = settings.sanitized()
         if sanitized.rules.isEmpty {
-            sanitized.rules = SimpleModeDefaults.rules(for: kind)
+            sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
         }
         if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
@@ -1234,36 +1234,16 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
-    func addSimpleRule(for kind: SimplePromptKind) {
+    func updateSimpleRules(kind: SimplePromptKind, text: String) {
         var settings = simpleSettings(for: kind)
-        settings.rules.append(SimplePromptRule(text: ""))
+        if settings.rules == text { return }
+        settings.rules = text
         applySimpleSettings(settings, for: kind)
     }
 
     func restoreSimpleRules(for kind: SimplePromptKind) {
         var settings = simpleSettings(for: kind)
-        settings.rules = SimpleModeDefaults.rules(for: kind)
-        applySimpleSettings(settings, for: kind)
-    }
-
-    func updateSimpleRule(kind: SimplePromptKind, ruleID: UUID, text: String) {
-        var settings = simpleSettings(for: kind)
-        guard let idx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
-        if settings.rules[idx].text == text { return }
-        settings.rules[idx].text = text
-        applySimpleSettings(settings, for: kind)
-    }
-
-    func removeSimpleRule(kind: SimplePromptKind, ruleID: UUID) {
-        var settings = simpleSettings(for: kind)
-        guard let idx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
-        settings.rules.remove(at: idx)
-        applySimpleSettings(settings, for: kind)
-    }
-
-    func moveSimpleRule(kind: SimplePromptKind, from offsets: IndexSet, to destination: Int) {
-        var settings = simpleSettings(for: kind)
-        settings.rules.move(fromOffsets: offsets, toOffset: destination)
+        settings.rules = SimpleModeDefaults.defaultRules(for: kind)
         applySimpleSettings(settings, for: kind)
     }
 
@@ -1831,7 +1811,7 @@ private extension DictationViewModel {
            let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
             var sanitized = decoded.sanitized()
             if sanitized.rules.isEmpty {
-                sanitized.rules = SimpleModeDefaults.rules(for: kind)
+                sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
             }
             if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
