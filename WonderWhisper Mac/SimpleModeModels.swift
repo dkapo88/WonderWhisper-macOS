@@ -58,6 +58,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
 enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   case parakeetLocal
   case groqStreaming
+  case sonioxStreaming
 
   var id: String { rawValue }
 
@@ -65,6 +66,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     switch self {
     case .parakeetLocal: return "Parakeet V3 (On-device)"
     case .groqStreaming: return "Groq Whisper Turbo (Cloud)"
+    case .sonioxStreaming: return "Soniox V3 (Real-time Cloud)"
     }
   }
 
@@ -74,6 +76,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
       return "Runs fully on your Mac for the lowest latency and maximum privacy."
     case .groqStreaming:
       return "Streams audio to Groq for Whisper Large V3 Turbo accuracy."
+    case .sonioxStreaming:
+      return "Real-time streaming with live preview. Ultra-low latency transcription."
     }
   }
 
@@ -81,6 +85,15 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     switch self {
     case .parakeetLocal: return "parakeet-local"
     case .groqStreaming: return "groq-streaming"
+    case .sonioxStreaming: return "soniox-streaming"
+    }
+  }
+
+  /// Whether this engine shows a live transcript overlay instead of waveform
+  var showsLiveTranscript: Bool {
+    switch self {
+    case .sonioxStreaming: return true
+    default: return false
     }
   }
 }

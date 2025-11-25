@@ -95,6 +95,17 @@ actor DictationController {
                     }
                 }
 
+                if let soniox = transcriber as? SonioxStreamingProvider {
+                    soniox.updateSettings(transcriberSettings)
+                    // Start recorder first to discover actual input sample rate
+                    try? recorder.startStreamingPCM16 { data in
+                        Task { try? await soniox.feedPCM16(data) }
+                    }
+                    // Set the actual input sample rate on the provider for correct resampling
+                    soniox.setInputSampleRate(recorder.actualInputSampleRate)
+                    try await soniox.beginRealtime()
+                }
+
                 // Pre-capture screen context early so it is ready once recording stops
                 preCapturedScreenSnapshot = nil
                 preCapturedScreenText = nil
@@ -167,6 +178,14 @@ actor DictationController {
                 if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
                     AppLog.dictation.log("Streaming empty/punctuation-only; fallback to file transcription")
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else if let soniox = transcriber as? SonioxStreamingProvider {
+                // Soniox real-time streaming - use preview text immediately
+                transcript = try await soniox.endRealtime()
+                // Fallback to Groq file transcription if Soniox gave empty result
+                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Soniox streaming empty; no file fallback available")
+                    // Soniox doesn't support file transcription, so just use empty
                 }
             } else {
                 // Standard file-based transcription for non-streaming providers
@@ -428,6 +447,9 @@ actor DictationController {
         // Abort any active streaming provider sessions immediately (best-effort)
         if let groq = transcriber as? GroqStreamingProvider {
             await groq.abort()
+        }
+        if let soniox = transcriber as? SonioxStreamingProvider {
+            await soniox.abort()
         }
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()

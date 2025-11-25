@@ -35,6 +35,8 @@ struct AppConfig {
     static let groqAPIKeyAlias = "GROQ_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
+    // Keychain alias for the Soniox API key
+    static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
     // OpenRouter header defaults
     static let openrouterTitle = "WonderWhisper Mac"
     static let openrouterReferer = "https://wonderwhisper.app"

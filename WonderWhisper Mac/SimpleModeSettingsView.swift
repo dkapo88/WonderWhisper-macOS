@@ -8,6 +8,7 @@ struct SimpleModeSettingsView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var openRouterKeyInput: String = ""
   @State private var groqKeyInput: String = ""
+  @State private var sonioxKeyInput: String = ""
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
   @State private var showModelBrowser: Bool = false
@@ -20,6 +21,9 @@ struct SimpleModeSettingsView: View {
   private var hasGroqKey: Bool {
     keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) != nil
   }
+  private var hasSonioxKey: Bool {
+    keychain.getSecret(forKey: AppConfig.sonioxAPIKeyAlias) != nil
+  }
 
   var body: some View {
     ScrollView {
@@ -28,6 +32,7 @@ struct SimpleModeSettingsView: View {
         combinedLLMSection
         openRouterSection
         groqSection
+        sonioxSection
         parakeetSection
         audioSection
         recordingSection
@@ -212,6 +217,36 @@ struct SimpleModeSettingsView: View {
           groqKeyInput = ""
         }
         .disabled(groqKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private var sonioxSection: some View {
+    GroupBox("Soniox API key") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 6) {
+          Text(hasSonioxKey ? "Status: Saved" : "Status: Missing")
+            .font(.callout.weight(.semibold))
+            .foregroundColor(hasSonioxKey ? .green : .red)
+          if hasSonioxKey {
+            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+          }
+        }
+
+        SecureField("Paste Soniox API key", text: $sonioxKeyInput)
+          .textFieldStyle(.roundedBorder)
+          .frame(maxWidth: 360)
+
+        Button("Save key") {
+          vm.saveSonioxApiKey(sonioxKeyInput)
+          sonioxKeyInput = ""
+        }
+        .disabled(sonioxKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Text("Required for Soniox V3 real-time streaming. Get your API key at soniox.com")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
       .padding(.top, 4)
     }

@@ -7,6 +7,7 @@ public enum ProviderError: Error, LocalizedError {
     case decodingFailed
     case notImplemented
     case networkError(String)
+    case connectionFailed
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ public enum ProviderError: Error, LocalizedError {
         case .decodingFailed: return "Response decoding failed"
         case .notImplemented: return "Not implemented"
         case .networkError(let message): return "Network error: \(message)"
+        case .connectionFailed: return "WebSocket connection failed"
         }
     }
 }

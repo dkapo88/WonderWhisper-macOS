@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "brave-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "BSAyuAtsLGZldAajC6_tRON4kQLAcii"
+      }
+    },
+    "exa": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "exa-mcp-server"
+      ],
+      "env": {
+        "EXA_API_KEY": "aaa1c0b3-f958-4a02-b02b-b8f46c1a34ca"
+      }
+    }
+  }
+}
