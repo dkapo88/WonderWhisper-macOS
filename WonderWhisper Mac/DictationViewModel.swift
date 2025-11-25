@@ -1778,9 +1778,11 @@ final class DictationViewModel: ObservableObject {
                 languageProvider: { [weak self] in self?.transcriptionLanguage }
             )
             // Wire up preview callback for live transcript overlay
-            sonioxProvider.onPreviewUpdate = { [weak self] text in
-                Task { @MainActor in
-                    self?.sonioxPreviewText = text
+            Task {
+                await sonioxProvider.setOnPreviewUpdate { [weak self] text in
+                    Task { @MainActor in
+                        self?.sonioxPreviewText = text
+                    }
                 }
             }
             provider = sonioxProvider

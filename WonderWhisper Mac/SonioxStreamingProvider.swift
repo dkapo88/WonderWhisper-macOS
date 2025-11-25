@@ -12,14 +12,14 @@ import OSLog
 /// - On stop: returns preview text immediately (no waiting for full finalization)
 /// - Supports vocabulary terms via context.terms
 /// - Supports language hints for improved accuracy
-final class SonioxStreamingProvider: TranscriptionProvider {
+actor SonioxStreamingProvider: TranscriptionProvider {
   private let apiKeyProvider: () -> String?
   private let vocabularyProvider: () -> String?
   private let languageProvider: () -> String?
 
   private var webSocketTask: URLSessionWebSocketTask?
   private var urlSession: URLSession?
-  private var sessionDelegate = SonioxSessionDelegate()
+  private var sessionDelegate: SonioxSessionDelegate?
 
   // Streaming state
   private var isStreaming: Bool = false
@@ -27,17 +27,14 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   private var pendingAudioBuffer: [Data] = []  // Buffer audio until config is sent
   private let accumulator = SonioxTokenAccumulator()
 
-  // Audio format conversion - dynamically set based on actual input
-  private var inputSampleRate: Double = 48_000
-  private let outputSampleRate: Double = 16_000
-  private var resampleBuffer: [Int16] = []
-  private var resampleRatio: Double = 3.0  // Will be recalculated based on actual input rate
+  // Audio format - dynamically set based on actual input
+  private var inputSampleRate: Double = 16_000 // Default to 16k, but will be updated
 
   // Configuration - use the active V3 model per Soniox documentation
   private var currentModel: String = "stt-rt-v3"
 
   // Callback for live transcript updates
-  var onPreviewUpdate: ((String) -> Void)?
+  private var onPreviewUpdate: ((String) -> Void)?
 
   // Keepalive timer to prevent WebSocket timeout during silence
   private var keepaliveTask: Task<Void, Never>?
@@ -52,13 +49,17 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
   // MARK: - TranscriptionProvider (file-based fallback)
 
-  func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
+  nonisolated func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
     // For file-based transcription, we don't use streaming - just return empty
     // The streaming interface should be used instead
     throw ProviderError.notImplemented
   }
 
   // MARK: - Streaming Interface
+
+  func setOnPreviewUpdate(_ callback: @escaping (String) -> Void) {
+    self.onPreviewUpdate = callback
+  }
 
   /// Update the model to use for streaming
   func updateSettings(_ settings: TranscriptionSettings) {
@@ -70,8 +71,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   /// Must be called before beginRealtime() or feedPCM16()
   func setInputSampleRate(_ rate: Double) {
     inputSampleRate = rate
-    resampleRatio = rate / outputSampleRate
-    AppLog.dictation.log("SonioxStreaming: Input sample rate set to \(rate) Hz (resample ratio: \(String(format: "%.2f", self.resampleRatio)):1)")
+    AppLog.dictation.log("SonioxStreaming: Input sample rate set to \(rate) Hz")
   }
 
   /// Begin a streaming transcription session
@@ -92,7 +92,6 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
     // Reset state
     await accumulator.reset()
-    resampleBuffer.removeAll()
     pendingAudioBuffer.removeAll()
     totalBytesSent = 0
     lastLogTime = Date()
@@ -104,8 +103,10 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     let config = URLSessionConfiguration.default
     config.timeoutIntervalForRequest = 300 // 5 minutes max
     config.timeoutIntervalForResource = 300
-    sessionDelegate = SonioxSessionDelegate()
-    urlSession = URLSession(configuration: config, delegate: sessionDelegate, delegateQueue: nil)
+    
+    let delegate = SonioxSessionDelegate()
+    self.sessionDelegate = delegate
+    urlSession = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
 
     // Connect to Soniox WebSocket
     guard let url = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket") else {
@@ -117,16 +118,15 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
     // Wait for WebSocket to actually connect (with timeout)
     AppLog.dictation.log("SonioxStreaming: Waiting for WebSocket connection...")
+    
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-      sessionDelegate.onOpen = continuation
+      delegate.setOpenContinuation(continuation)
       
       // Set a timeout for connection
       Task {
         try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 second timeout
-        if sessionDelegate.onOpen != nil {
-          sessionDelegate.onOpen?.resume(throwing: ProviderError.connectionFailed)
-          sessionDelegate.onOpen = nil
-        }
+        // Check if we are still waiting (delegate handles thread safety internally)
+        delegate.resumeOpenContinuation(throwing: ProviderError.connectionFailed)
       }
     }
     AppLog.dictation.log("SonioxStreaming: WebSocket connected successfully")
@@ -135,8 +135,9 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     try await sendConfiguration(apiKey: apiKey)
 
     // Start receiving messages
-    Task {
-      await receiveMessages()
+    Task { [weak self] in
+      guard let self = self else { return }
+      await self.receiveMessages()
     }
 
     // Start keepalive timer to prevent timeout during silence (every 15 seconds)
@@ -154,21 +155,14 @@ final class SonioxStreamingProvider: TranscriptionProvider {
   private var firstAudioSent: Bool = false
 
   /// Feed PCM16 audio data to the streaming session
-  /// Audio is resampled from input sample rate to 16kHz
   func feedPCM16(_ data: Data) async throws {
-    guard isStreaming else {
-      return
-    }
+    guard isStreaming else { return }
     guard !data.isEmpty else { return }
-
-    // Resample to 16kHz
-    let downsampled = downsample48kTo16k(data)
-    guard !downsampled.isEmpty else { return }
 
     // If config hasn't been sent yet, buffer the audio
     // Soniox requires the text config message BEFORE any binary audio
     if !isConfigSent {
-      pendingAudioBuffer.append(downsampled)
+      pendingAudioBuffer.append(data)
       if pendingAudioBuffer.count == 1 {
         AppLog.dictation.log("SonioxStreaming: Buffering audio until config is sent...")
       }
@@ -181,21 +175,22 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     }
 
     // Send as binary WebSocket frame
-    let message = URLSessionWebSocketTask.Message.data(downsampled)
+    let message = URLSessionWebSocketTask.Message.data(data)
     do {
       try await task.send(message)
-      totalBytesSent += downsampled.count
+      totalBytesSent += data.count
 
       // Log first audio chunk for debugging
       if !firstAudioSent {
         firstAudioSent = true
-        AppLog.dictation.log("SonioxStreaming: First audio chunk sent (\(downsampled.count) bytes at 16kHz)")
+        AppLog.dictation.log("SonioxStreaming: First audio chunk sent (\(data.count) bytes)")
       }
 
       // Log every second to avoid spam
       let now = Date()
       if now.timeIntervalSince(lastLogTime) >= 1.0 {
-        let durationSec = Double(totalBytesSent) / (16000.0 * 2.0) // 16kHz, 16-bit = 32000 bytes/sec
+        let bytesPerSec = inputSampleRate * 2.0 // 16-bit = 2 bytes/sample
+        let durationSec = Double(totalBytesSent) / bytesPerSec
         AppLog.dictation.log("SonioxStreaming: Sent \(self.totalBytesSent) bytes total (~\(String(format: "%.1f", durationSec))s of audio)")
         lastLogTime = now
       }
@@ -218,18 +213,13 @@ final class SonioxStreamingProvider: TranscriptionProvider {
 
     // Send finalize message to get any pending tokens
     if let task = webSocketTask {
-      let finalizeMsg = ["type": "finalize"]
-      if let data = try? JSONSerialization.data(withJSONObject: finalizeMsg) {
-        let message = URLSessionWebSocketTask.Message.string(String(data: data, encoding: .utf8) ?? "")
-        try? await task.send(message)
-      }
-
-      // Brief wait for final tokens to arrive
-      try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
-
-      // Send empty frame to close gracefully
+      // Soniox V3 protocol: just close the connection or send empty frame
+      // We'll send an empty frame to signal end of stream
       try? await task.send(.data(Data()))
-
+      
+      // We used to send "finalize" JSON message but standard practice is just to close/send empty data
+      // For immediate preview, we don't strictly need to wait for server finalization
+      
       // Close the connection
       task.cancel(with: .normalClosure, reason: nil)
     }
@@ -237,6 +227,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     webSocketTask = nil
     urlSession?.invalidateAndCancel()
     urlSession = nil
+    sessionDelegate = nil
 
     // Get the accumulated preview text (fast path)
     let transcript = await accumulator.getPreviewTranscript()
@@ -255,9 +246,10 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     webSocketTask = nil
     urlSession?.invalidateAndCancel()
     urlSession = nil
+    sessionDelegate = nil
 
     await accumulator.reset()
-    resampleBuffer.removeAll()
+    pendingAudioBuffer.removeAll()
   }
 
   // MARK: - Keepalive Timer
@@ -296,7 +288,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
       "api_key": apiKey,
       "model": currentModel,
       "audio_format": "pcm_s16le",  // 16-bit signed little-endian PCM
-      "sample_rate": 16000,  // Required for PCM formats
+      "sample_rate": Int(inputSampleRate),  // Use actual input sample rate!
       "num_channels": 1  // Mono audio (not num_audio_channels)
     ]
 
@@ -386,27 +378,21 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     // Check for error response and surface to UI
     if let error = json["error"] as? String {
       AppLog.dictation.error("SonioxStreaming: Server error: \(error, privacy: .public)")
-      await MainActor.run {
-        onPreviewUpdate?("[Error: \(error)]")
-      }
+      onPreviewUpdate?("[Error: \(error)]")
       return
     }
 
     // Check for error in different format
     if let errorObj = json["error"] as? [String: Any], let message = errorObj["message"] as? String {
       AppLog.dictation.error("SonioxStreaming: Server error: \(message, privacy: .public)")
-      await MainActor.run {
-        onPreviewUpdate?("[Error: \(message)]")
-      }
+      onPreviewUpdate?("[Error: \(message)]")
       return
     }
 
     // Check for status field indicating error
     if let status = json["status"] as? String, status != "ok" {
       AppLog.dictation.error("SonioxStreaming: Status not ok: \(status, privacy: .public), full response: \(truncated, privacy: .public)")
-      await MainActor.run {
-        onPreviewUpdate?("[Status: \(status)]")
-      }
+      onPreviewUpdate?("[Status: \(status)]")
       return
     }
 
@@ -414,9 +400,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     if let errorCode = json["error_code"] as? Int, errorCode != 0 {
       let errorMessage = json["error_message"] as? String ?? "Unknown error"
       AppLog.dictation.error("SonioxStreaming: API error \(errorCode): \(errorMessage, privacy: .public)")
-      await MainActor.run {
-        onPreviewUpdate?("[API Error \(errorCode): \(errorMessage)]")
-      }
+      onPreviewUpdate?("[API Error \(errorCode): \(errorMessage)]")
       return
     }
 
@@ -475,56 +459,7 @@ final class SonioxStreamingProvider: TranscriptionProvider {
     if !preview.isEmpty {
       AppLog.dictation.log("SonioxStreaming: Current transcript (\(preview.count) chars): \"\(preview.prefix(100), privacy: .public)\"...")
     }
-    await MainActor.run {
-      onPreviewUpdate?(preview)
-    }
-  }
-
-  /// Resample PCM16 mono from input sample rate to 16kHz
-  /// Uses simple decimation with averaging - optimized for real-time
-  private func downsample48kTo16k(_ data: Data) -> Data {
-    let sampleCount = data.count / 2
-    guard sampleCount > 0 else { return Data() }
-
-    let ratio = Int(resampleRatio.rounded())
-    guard ratio > 1 else { return data } // No resampling needed
-
-    // Convert input Data to Int16 array
-    var samples = [Int16](repeating: 0, count: sampleCount)
-    _ = samples.withUnsafeMutableBytes { ptr in
-      data.copyBytes(to: ptr)
-    }
-
-    // Prepend any leftover samples from previous buffer (maintains order)
-    if !resampleBuffer.isEmpty {
-      samples = resampleBuffer + samples
-      resampleBuffer.removeAll(keepingCapacity: true)
-    }
-
-    // Simple decimation with averaging
-    var output: [Int16] = []
-    output.reserveCapacity(samples.count / ratio + 1)
-
-    var i = 0
-    while i + ratio <= samples.count {
-      // Average 'ratio' samples
-      var sum: Int32 = 0
-      for j in 0..<ratio {
-        sum += Int32(samples[i + j])
-      }
-      output.append(Int16(clamping: sum / Int32(ratio)))
-      i += ratio
-    }
-
-    // Save remaining samples for next buffer
-    if i < samples.count {
-      resampleBuffer = Array(samples.suffix(from: i))
-    }
-
-    // Convert back to Data
-    return output.withUnsafeBufferPointer { ptr in
-      Data(buffer: ptr)
-    }
+    onPreviewUpdate?(preview)
   }
 }
 
@@ -584,16 +519,35 @@ private actor SonioxTokenAccumulator {
 
 private class SonioxSessionDelegate: NSObject, URLSessionWebSocketDelegate {
   /// Continuation to signal when WebSocket opens
-  var onOpen: CheckedContinuation<Void, Error>?
+  private var onOpen: CheckedContinuation<Void, Error>?
+  private let lock = NSLock()
   
   /// Track connection state
   private(set) var isConnected: Bool = false
   
+  func setOpenContinuation(_ continuation: CheckedContinuation<Void, Error>) {
+    lock.lock()
+    defer { lock.unlock() }
+    self.onOpen = continuation
+  }
+  
+  func resumeOpenContinuation(throwing error: Error? = nil) {
+    lock.lock()
+    defer { lock.unlock() }
+    if let continuation = onOpen {
+      if let error = error {
+        continuation.resume(throwing: error)
+      } else {
+        continuation.resume()
+      }
+      onOpen = nil
+    }
+  }
+  
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
     AppLog.dictation.log("SonioxStreaming: WebSocket opened")
     isConnected = true
-    onOpen?.resume()
-    onOpen = nil
+    resumeOpenContinuation()
   }
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
@@ -601,16 +555,14 @@ private class SonioxSessionDelegate: NSObject, URLSessionWebSocketDelegate {
     AppLog.dictation.log("SonioxStreaming: WebSocket closed - code: \(closeCode.rawValue), reason: \(reasonStr)")
     isConnected = false
     // If we were waiting for connection and it closed, report error
-    onOpen?.resume(throwing: ProviderError.connectionFailed)
-    onOpen = nil
+    resumeOpenContinuation(throwing: ProviderError.connectionFailed)
   }
   
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     if let error = error {
       AppLog.dictation.error("SonioxStreaming: Connection error: \(error.localizedDescription)")
       isConnected = false
-      onOpen?.resume(throwing: error)
-      onOpen = nil
+      resumeOpenContinuation(throwing: error)
     }
   }
 }

@@ -96,13 +96,13 @@ actor DictationController {
                 }
 
                 if let soniox = transcriber as? SonioxStreamingProvider {
-                    soniox.updateSettings(transcriberSettings)
+                    await soniox.updateSettings(transcriberSettings)
                     // Start recorder first to discover actual input sample rate
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await soniox.feedPCM16(data) }
                     }
                     // Set the actual input sample rate on the provider for correct resampling
-                    soniox.setInputSampleRate(recorder.actualInputSampleRate)
+                    await soniox.setInputSampleRate(recorder.actualInputSampleRate)
                     try await soniox.beginRealtime()
                 }
 
