@@ -101,7 +101,7 @@ actor DictationController {
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await soniox.feedPCM16(data) }
                     }
-                    // Set the actual input sample rate on the provider for correct resampling
+                    // Set the actual input sample rate on the provider (no resampling)
                     await soniox.setInputSampleRate(recorder.actualInputSampleRate)
                     try await soniox.beginRealtime()
                 }

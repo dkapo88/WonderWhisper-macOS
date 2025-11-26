@@ -24,8 +24,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   // Streaming state
   private var isStreaming: Bool = false
   private var isConfigSent: Bool = false  // Track if config has been sent (audio must wait)
+  private var isServerFinished: Bool = false // Track if server signaled end of stream
   private var pendingAudioBuffer: [Data] = []  // Buffer audio until config is sent
   private let accumulator = SonioxTokenAccumulator()
+
+  // Audio progress tracking for smart end-of-stream waiting
+  private var lastTotalAudioProcMs: Int = 0  // Last reported total_audio_proc_ms from server
 
   // Audio format - dynamically set based on actual input
   private var inputSampleRate: Double = 16_000 // Default to 16k, but will be updated
@@ -97,6 +101,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     lastLogTime = Date()
     firstAudioSent = false
     isConfigSent = false
+    isServerFinished = false
+    lastTotalAudioProcMs = 0
     isStreaming = true
 
     // Create URLSession with delegate for WebSocket
@@ -114,37 +120,23 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     }
 
     webSocketTask = urlSession?.webSocketTask(with: url)
+    // Start connection - messages sent before open are queued by URLSession
     webSocketTask?.resume()
 
-    // Wait for WebSocket to actually connect (with timeout)
-    AppLog.dictation.log("SonioxStreaming: Waiting for WebSocket connection...")
-    
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-      delegate.setOpenContinuation(continuation)
-      
-      // Set a timeout for connection
-      Task {
-        try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 second timeout
-        // Check if we are still waiting (delegate handles thread safety internally)
-        delegate.resumeOpenContinuation(throwing: ProviderError.connectionFailed)
-      }
-    }
-    AppLog.dictation.log("SonioxStreaming: WebSocket connected successfully")
+    AppLog.dictation.log("SonioxStreaming: WebSocket task started (optimistic connection)")
 
-    // Send initial configuration
-    try await sendConfiguration(apiKey: apiKey)
-
-    // Start receiving messages
+    // Start receiving messages immediately (this will handle the open event implicitly via messages)
     Task { [weak self] in
       guard let self = self else { return }
       await self.receiveMessages()
     }
 
+    // Send initial configuration immediately (will be queued if connection is pending)
+    // Note: This might throw if connection fails instantly, which is what we want.
+    try await sendConfiguration(apiKey: apiKey)
+
     // Start keepalive timer to prevent timeout during silence (every 15 seconds)
     startKeepaliveTimer()
-
-    // Brief wait for any initial response
-    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
 
     AppLog.dictation.log("SonioxStreaming: Session initialized")
   }
@@ -200,27 +192,64 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   }
 
   /// End the streaming session and return the transcript
-  /// Returns preview text immediately without waiting for full finalization
+  /// Waits for preview tokens to finish processing before returning
   func endRealtime() async throws -> String {
     guard isStreaming else {
       AppLog.dictation.log("SonioxStreaming: Not streaming, returning empty")
       return ""
     }
 
-    AppLog.dictation.log("SonioxStreaming: Ending session")
-    isStreaming = false
+    AppLog.dictation.log("SonioxStreaming: Ending session - waiting for preview tokens to complete")
     stopKeepaliveTimer()
 
-    // Send finalize message to get any pending tokens
+    // Calculate how much audio we sent (in milliseconds)
+    let bytesPerMs = inputSampleRate * 2.0 / 1000.0  // 16-bit = 2 bytes/sample
+    let audioSentMs = Int(Double(totalBytesSent) / bytesPerMs)
+    AppLog.dictation.log("SonioxStreaming: Audio sent: \(audioSentMs)ms, server processed: \(self.lastTotalAudioProcMs)ms")
+
+    // Signal end of audio stream by sending empty frame
     if let task = webSocketTask {
-      // Soniox V3 protocol: just close the connection or send empty frame
-      // We'll send an empty frame to signal end of stream
       try? await task.send(.data(Data()))
-      
-      // We used to send "finalize" JSON message but standard practice is just to close/send empty data
-      // For immediate preview, we don't strictly need to wait for server finalization
-      
-      // Close the connection
+    }
+
+    // Wait for server to finish processing our audio
+    // Keep checking status until total_audio_proc_ms catches up or finished signal received
+    let tolerance = 200  // Allow 200ms tolerance for processing lag
+    let maxWaitMs = 2000  // Reduced max wait to 2 seconds for better latency
+    let startTime = Date()
+
+    while lastTotalAudioProcMs < (audioSentMs - tolerance) && !isServerFinished {
+      // Check timeout
+      let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
+      if elapsed > maxWaitMs {
+        AppLog.dictation.log("SonioxStreaming: Timeout waiting for processing (waited \(elapsed)ms)")
+        break
+      }
+
+      // Check if connection is still valid
+      guard webSocketTask != nil, isStreaming else { break }
+
+      // Wait briefly to allow receiveMessages Task to process incoming frames
+      // We must yield here to allow the actor to process handleTextMessage calls
+      try? await Task.sleep(nanoseconds: 20_000_000) // 20ms poll
+    }
+
+    let finalProcMs = lastTotalAudioProcMs
+    AppLog.dictation.log("SonioxStreaming: Processing complete - sent: \(audioSentMs)ms, processed: \(finalProcMs)ms")
+    
+    // Send explicit finalize message just in case
+    if !isServerFinished, let task = webSocketTask {
+         let finalizeMsg = ["type": "finalize"]
+         if let data = try? JSONSerialization.data(withJSONObject: finalizeMsg),
+            let str = String(data: data, encoding: .utf8) {
+             try? await task.send(.string(str))
+         }
+    }
+
+    isStreaming = false
+
+    // Close the connection
+    if let task = webSocketTask {
       task.cancel(with: .normalClosure, reason: nil)
     }
 
@@ -229,7 +258,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     urlSession = nil
     sessionDelegate = nil
 
-    // Get the accumulated preview text (fast path)
+    // Get the accumulated preview text
     let transcript = await accumulator.getPreviewTranscript()
     await accumulator.reset()
 
@@ -296,10 +325,17 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     if let language = languageProvider(), !language.isEmpty {
       // Soniox expects an array of language codes
       config["language_hints"] = [language]
+      // Also enable language identification to be robust
+      config["enable_language_identification"] = true
     } else {
       // Default to English
       config["language_hints"] = ["en"]
+      // Enable ID to support auto-switching if user speaks something else (model supports it)
+      config["enable_language_identification"] = true
     }
+    
+    // Enable endpoint detection for faster finalization per docs
+    config["enable_endpoint_detection"] = true
 
     // Add vocabulary terms as context
     if let vocab = vocabularyProvider(), !vocab.isEmpty {
@@ -413,6 +449,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     // Handle finished response (stream complete)
     if let finished = json["finished"] as? Bool, finished {
       AppLog.dictation.log("SonioxStreaming: Received finished signal")
+      isServerFinished = true
       return
     }
 
@@ -428,10 +465,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       return
     }
 
-    // Log audio processing progress for debugging
-    if let finalMs = json["final_audio_proc_ms"] as? Int,
-       let totalMs = json["total_audio_proc_ms"] as? Int {
-      AppLog.dictation.log("SonioxStreaming: Audio progress - final: \(finalMs)ms, total: \(totalMs)ms")
+    // Track audio processing progress for smart end-of-stream detection
+    if let totalMs = json["total_audio_proc_ms"] as? Int {
+      lastTotalAudioProcMs = totalMs
+      if let finalMs = json["final_audio_proc_ms"] as? Int {
+        AppLog.dictation.log("SonioxStreaming: Audio progress - final: \(finalMs)ms, total: \(totalMs)ms")
+      }
     }
 
     // Clear non-final tokens before processing - each response gives us a fresh view
@@ -478,8 +517,8 @@ private actor SonioxTokenAccumulator {
   private var currentNonFinal: String = ""
 
   func addToken(text: String, isFinal: Bool) {
-    // Skip the <fin> marker token from manual finalization
-    if text == "<fin>" { return }
+    // Skip the <fin> marker token or any xml tags that might appear due to hallucinations
+    if text == "<fin>" || text.contains("<") || text.contains(">") { return }
     
     if isFinal {
       // Final token - append to finalized text
@@ -518,51 +557,20 @@ private actor SonioxTokenAccumulator {
 // MARK: - URLSession Delegate
 
 private class SonioxSessionDelegate: NSObject, URLSessionWebSocketDelegate {
-  /// Continuation to signal when WebSocket opens
-  private var onOpen: CheckedContinuation<Void, Error>?
-  private let lock = NSLock()
-  
-  /// Track connection state
-  private(set) var isConnected: Bool = false
-  
-  func setOpenContinuation(_ continuation: CheckedContinuation<Void, Error>) {
-    lock.lock()
-    defer { lock.unlock() }
-    self.onOpen = continuation
-  }
-  
-  func resumeOpenContinuation(throwing error: Error? = nil) {
-    lock.lock()
-    defer { lock.unlock() }
-    if let continuation = onOpen {
-      if let error = error {
-        continuation.resume(throwing: error)
-      } else {
-        continuation.resume()
-      }
-      onOpen = nil
-    }
-  }
+  // Simplified delegate - no manual continuation needed as we use optimistic connection
   
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
     AppLog.dictation.log("SonioxStreaming: WebSocket opened")
-    isConnected = true
-    resumeOpenContinuation()
   }
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
     let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "none"
     AppLog.dictation.log("SonioxStreaming: WebSocket closed - code: \(closeCode.rawValue), reason: \(reasonStr)")
-    isConnected = false
-    // If we were waiting for connection and it closed, report error
-    resumeOpenContinuation(throwing: ProviderError.connectionFailed)
   }
   
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     if let error = error {
       AppLog.dictation.error("SonioxStreaming: Connection error: \(error.localizedDescription)")
-      isConnected = false
-      resumeOpenContinuation(throwing: error)
     }
   }
 }
