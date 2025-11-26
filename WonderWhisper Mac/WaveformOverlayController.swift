@@ -26,10 +26,9 @@ final class WaveformOverlayController {
         w.contentView = waveformView
         self.window = w
 
-        // Start hidden
+        // Start hidden and off-screen (not ordered)
         window.alphaValue = 0
         positionAtTopCenter()
-        window.orderFrontRegardless()
 
         // React to recording state
         viewModel.$isRecording
@@ -89,14 +88,17 @@ final class WaveformOverlayController {
     }
 
     private func animateOut() {
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 0
             // Subtle scale down
             waveformView.layer?.transform = CATransform3DMakeScale(0.92, 0.92, 1)
-        }
+        }, completionHandler: { [weak self] in
+            // Order window out after animation to stop blocking mouse events
+            self?.window.orderOut(nil)
+        })
     }
 }
 
