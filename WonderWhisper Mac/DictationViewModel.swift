@@ -23,8 +23,8 @@ struct FavoriteLLMModel: Identifiable, Codable, Hashable {
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
-    @Published var isRecording: Bool = false { 
-        didSet { 
+    @Published var isRecording: Bool = false {
+        didSet {
             updateEscapeMonitor(isRecording: isRecording)
             // Play chime sounds for recording start/stop
             if isRecording {
@@ -36,6 +36,7 @@ final class DictationViewModel: ObservableObject {
         }
     }
     @Published var audioLevel: Float = 0
+    @Published var sonioxPreviewText: String = ""  // Live transcript preview for Soniox streaming
 
     // Prompts
     @Published var prompts: [PromptConfiguration] = [] {
@@ -693,6 +694,17 @@ final class DictationViewModel: ObservableObject {
             print("Keychain error: \(error)")
             #endif
         }
+    }
+
+    func saveSonioxApiKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.sonioxAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+        // Clear the cached provider so it gets recreated with the new key
+        transcriptionProviderCache.removeValue(forKey: "soniox-streaming")
     }
 
     private func updateHotkeys() {
@@ -1759,6 +1771,21 @@ final class DictationViewModel: ObservableObject {
             provider = ParakeetTranscriptionProvider()
         } else if model == "groq-streaming" {
             provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        } else if model == "soniox-streaming" {
+            let sonioxProvider = SonioxStreamingProvider(
+                apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) },
+                vocabularyProvider: { [weak self] in self?.vocabCustom },
+                languageProvider: { [weak self] in self?.transcriptionLanguage }
+            )
+            // Wire up preview callback for live transcript overlay
+            Task {
+                await sonioxProvider.setOnPreviewUpdate { [weak self] text in
+                    Task { @MainActor in
+                        self?.sonioxPreviewText = text
+                    }
+                }
+            }
+            provider = sonioxProvider
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }

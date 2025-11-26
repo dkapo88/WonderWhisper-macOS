@@ -48,6 +48,9 @@ final class AudioRecorder: NSObject {
     // Current capture profile (selected by controller based on active provider)
     var captureProfile: CaptureProfile = .standard16k
 
+    // Track actual input sample rate (hardware)
+    private(set) var actualInputSampleRate: Double = 16000.0
+    
     // MARK: - Audio Session Setup (CRITICAL FIX)
     private func setupAudioSession() throws {
         // On macOS, AVAudioSession is not available. We configure the audio engine directly
@@ -343,9 +346,14 @@ extension AudioRecorder {
             return
         }
 
-        // Create target format (48kHz, mono, 16-bit) to match macOS default input
+        // Store actual input sample rate for downstream processing
+        actualInputSampleRate = inputFormat.sampleRate
+        print("🎤 Actual input sample rate: \(actualInputSampleRate) Hz")
+
+        // Create target format: Match Input Rate, Mono, 16-bit PCM
+        // We avoid resampling here to prevent drift/artifacts. Soniox supports arbitrary rates.
         guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: 48000.0,
+                                         sampleRate: inputFormat.sampleRate,
                                          channels: 1,
                                          interleaved: false) else {
             print("❌ Failed to create audio format")
@@ -353,9 +361,9 @@ extension AudioRecorder {
         }
         audioFormat = format
 
-        // Optimize buffer size for 48kHz (shorter buffers reduce perceived dropouts)
-        let bufferSize: AVAudioFrameCount = 480 // ~10ms at 48kHz
-
+        // Buffer size: ~50ms of audio
+        let bufferSize: AVAudioFrameCount = AVAudioFrameCount(inputFormat.sampleRate / 20)
+        
         // Prepare audio buffers
         for _ in 0..<maxBuffers {
             guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat,
@@ -366,7 +374,7 @@ extension AudioRecorder {
             audioBufferList.append(buffer)
         }
 
-        // Install audio tap with optimized settings
+        // Install audio tap
         inputNode.installTap(onBus: 0,
                             bufferSize: bufferSize,
                             format: inputFormat) { [weak self] buffer, audioTime in
@@ -377,7 +385,7 @@ extension AudioRecorder {
             }
         }
 
-        print("✅ Audio engine configured with \(maxBuffers) buffers")
+        print("✅ Audio engine configured with \(maxBuffers) buffers at \(inputFormat.sampleRate) Hz")
     }
 
     // MARK: - Audio Processing (NEW)
@@ -390,7 +398,8 @@ extension AudioRecorder {
 
             if sampleRate > 0 {
                 let gap = Double(sampleTime - lastSampleTime) / sampleRate
-                if gap > 0.05 { // More than 50ms gap
+                // With 50ms buffers, gaps > 100ms indicate actual frame drops
+                if gap > 0.15 {
                     framesDropped += 1
                     print("⚠️ Audio gap: \(String(format: "%.3f", gap))s")
                 }
@@ -434,63 +443,78 @@ extension AudioRecorder {
             return nil
         }
 
-        // If input format matches target format, return as-is
-        if inputBuffer.format.sampleRate == 48000.0 &&
-           inputBuffer.format.channelCount == 1 {
-            return inputBuffer
-        }
-
-        // Convert to target format (thread-safe buffer access)
-        bufferLock.lock()
-        defer { bufferLock.unlock() }
-        guard bufferIndex < audioBufferList.count else {
-            return nil
-        }
-        let outputBuffer = audioBufferList[bufferIndex]
-        bufferIndex = (bufferIndex + 1) % maxBuffers
-
         guard let format = audioFormat else {
             print("❌ Audio format is nil during conversion")
             return nil
         }
-        if audioConverter == nil || audioConverter?.inputFormat != inputBuffer.format || audioConverter?.outputFormat != format {
-            audioConverter = AVAudioConverter(from: inputBuffer.format, to: format)
-            if audioConverter == nil {
-                print("❌ Failed to create reusable audio converter from \(inputBuffer.format) to \(format)")
+
+        // Fast Path: If input format matches target format EXACTLY (sample rate + type), return as-is
+        // Note: We must check commonFormat because input is typically Float32 but we need Int16
+        if inputBuffer.format.sampleRate == format.sampleRate &&
+           inputBuffer.format.channelCount == 1 &&
+           inputBuffer.format.commonFormat == .pcmFormatInt16 {
+            return inputBuffer
+        }
+
+        // Manual Conversion Path: Float32 -> Int16 (Sample Rates Match)
+        // This is the primary path since we set audioFormat sampleRate == input sampleRate
+        if inputBuffer.format.sampleRate == format.sampleRate &&
+           inputBuffer.format.commonFormat == .pcmFormatFloat32,
+           let floatData = inputBuffer.floatChannelData {
+            
+            let frameCount = Int(inputBuffer.frameLength)
+            
+            // Get thread-safe output buffer
+            bufferLock.lock()
+            defer { bufferLock.unlock() }
+            guard bufferIndex < audioBufferList.count else {
                 return nil
             }
-        }
-        guard let converter = audioConverter else {
-            return nil
+            let outputBuffer = audioBufferList[bufferIndex]
+            bufferIndex = (bufferIndex + 1) % maxBuffers
+            
+            guard let int16Data = outputBuffer.int16ChannelData else {
+                print("❌ Output buffer has no int16 channel data")
+                return nil
+            }
+            
+            // Convert Float32 [-1.0, 1.0] to Int16 [-32768, 32767]
+            // Only use first channel for mono output (avoid averaging for safety)
+            let floatChannel = floatData.pointee
+            let int16Channel = int16Data.pointee
+            
+            // Optimize loop with Accelerate if possible, but this scalar loop is fast enough for audio
+            for i in 0..<min(frameCount, Int(outputBuffer.frameCapacity)) {
+                let sample = floatChannel[i]
+                let clamped = max(-1.0, min(1.0, sample))
+                int16Channel[i] = Int16(clamped * 32767.0)
+            }
+            
+            outputBuffer.frameLength = AVAudioFrameCount(min(frameCount, Int(outputBuffer.frameCapacity)))
+            return outputBuffer
         }
 
-        var error: NSError?
-        let status = converter.convert(to: outputBuffer, error: &error, withInputFrom: { _, outStatus in
-            outStatus.pointee = .haveData
-            return inputBuffer
-        })
-
-        if status != .haveData {
-            print("❌ Audio conversion failed: \(error?.localizedDescription ?? "Unknown")")
-            return nil
-        }
-
-        return outputBuffer
+        // Fallback: If sample rates somehow don't match (shouldn't happen with current setup), return nil
+        // We removed the AVAudioConverter resampling path to avoid complexity/drift.
+        print("❌ Unsupported format conversion: \(inputBuffer.format) -> \(format)")
+        return nil
     }
 
     private func bufferToData(_ buffer: AVAudioPCMBuffer) -> Data {
         guard let channelData = buffer.int16ChannelData else {
+            print("⚠️ bufferToData: no int16ChannelData available")
             return Data()
         }
 
         guard buffer.frameLength > 0 else {
+            print("⚠️ bufferToData: frameLength is 0")
             return Data()
         }
 
         let channelPointer = channelData.pointee
         let bytesPerChannel = Int(buffer.frameLength) * MemoryLayout<Int16>.size
-        let totalBytes = bytesPerChannel * Int(buffer.format.channelCount)
-        return Data(bytes: channelPointer, count: totalBytes)
+        // For mono output, only use first channel
+        return Data(bytes: channelPointer, count: bytesPerChannel)
     }
 
     func stopStreamingPCM16() {
