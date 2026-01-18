@@ -190,13 +190,22 @@ final class AudioRecorder: NSObject {
 
         // Apply microphone selection override before starting recording
         applyInputSelectionOverrideIfNeeded()
+        var shouldRestoreInputOverride = true
+        defer {
+            if shouldRestoreInputOverride {
+                restoreInputSelectionIfNeeded()
+            }
+        }
 
         recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder?.delegate = self
         recorder?.isMeteringEnabled = true
         guard recorder?.prepareToRecord() == true else {
-            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "prepareToRecord failed"])
+            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "prepareToRecord failed"
+            ])
         }
+        shouldRestoreInputOverride = false
         recorder?.record()
         isRecording = true
         startLevelUpdates()

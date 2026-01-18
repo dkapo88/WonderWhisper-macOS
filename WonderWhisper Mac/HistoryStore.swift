@@ -189,97 +189,100 @@ final class HistoryStore: ObservableObject {
                 copyFileOnly: Bool = false) async {
         let id = UUID()
         let date = Date()
-        var audioFilename: String? = nil
+        backgroundQueue.async { [weak self] in
+            guard let self else { return }
+            var audioFilename: String? = nil
 
-        // Move/copy audio into persistent store
-        if let src = fileURL {
-            let dest = audioDir.appendingPathComponent("\(id).\(src.pathExtension.isEmpty ? "m4a" : src.pathExtension)")
-            do {
-                if FileManager.default.fileExists(atPath: dest.path) {
-                    try FileManager.default.removeItem(at: dest)
-                }
-                
-                if copyFileOnly {
-                    // For file transcription benchmarking, copy instead of move
-                    try FileManager.default.copyItem(at: src, to: dest)
-                    audioFilename = dest.lastPathComponent
-                } else {
-                    // For dictation recordings, try move first (faster), fall back to copy
-                    try FileManager.default.moveItem(at: src, to: dest)
-                    audioFilename = dest.lastPathComponent
-                }
-            } catch {
-                // If move fails (e.g., permission), try copy
-                if !copyFileOnly {
-                    do {
+            // Move/copy audio into persistent store
+            if let src = fileURL {
+                let dest = self.audioDir.appendingPathComponent(
+                    "\(id).\(src.pathExtension.isEmpty ? "m4a" : src.pathExtension)"
+                )
+                do {
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try FileManager.default.removeItem(at: dest)
+                    }
+                    
+                    if copyFileOnly {
+                        // For file transcription benchmarking, copy instead of move
                         try FileManager.default.copyItem(at: src, to: dest)
                         audioFilename = dest.lastPathComponent
-                    } catch {
+                    } else {
+                        // For dictation recordings, try move first (faster), fall back to copy
+                        try FileManager.default.moveItem(at: src, to: dest)
+                        audioFilename = dest.lastPathComponent
+                    }
+                } catch {
+                    // If move fails (e.g., permission), try copy
+                    if !copyFileOnly {
+                        do {
+                            try FileManager.default.copyItem(at: src, to: dest)
+                            audioFilename = dest.lastPathComponent
+                        } catch {
+                            audioFilename = nil
+                        }
+                    } else {
                         audioFilename = nil
                     }
-                } else {
-                    audioFilename = nil
                 }
             }
-        }
 
-        var screenImageFilename: String? = nil
-        var screenImageMimeType: String? = nil
-        var screenImageWidth: Int? = nil
-        var screenImageHeight: Int? = nil
+            var screenImageFilename: String? = nil
+            var screenImageMimeType: String? = nil
+            var screenImageWidth: Int? = nil
+            var screenImageHeight: Int? = nil
 
-        if let snapshot = screenImage {
-            let ext = Self.fileExtension(forMimeType: snapshot.mimeType)
-            let dest = imageDir.appendingPathComponent("\(id).\(ext)")
-            do {
-                try snapshot.data.write(to: dest, options: .atomic)
-                screenImageFilename = dest.lastPathComponent
-                screenImageMimeType = snapshot.mimeType
-                screenImageWidth = snapshot.width
-                screenImageHeight = snapshot.height
-            } catch {
-                AppLog.dictation.error("Failed to persist screen image: \(error.localizedDescription)")
+            if let snapshot = screenImage {
+                let ext = Self.fileExtension(forMimeType: snapshot.mimeType)
+                let dest = self.imageDir.appendingPathComponent("\(id).\(ext)")
+                do {
+                    try snapshot.data.write(to: dest, options: .atomic)
+                    screenImageFilename = dest.lastPathComponent
+                    screenImageMimeType = snapshot.mimeType
+                    screenImageWidth = snapshot.width
+                    screenImageHeight = snapshot.height
+                } catch {
+                    AppLog.dictation.error("Failed to persist screen image: \(error.localizedDescription)")
+                }
             }
-        }
 
-        let entry = HistoryEntry(
-            id: id,
-            date: date,
-            appName: appName,
-            bundleID: bundleID,
-            transcript: transcript,
-            output: output,
-            audioFilename: audioFilename,
-            screenContext: screenContext,
-            screenContextMethod: screenContextMethod,
-            screenImageFilename: screenImageFilename,
-            screenImageMimeType: screenImageMimeType,
-            screenImageWidth: screenImageWidth,
-            screenImageHeight: screenImageHeight,
-            selectedText: selectedText,
-            activeTextField: activeTextField,
-            llmSystemMessage: llmSystemMessage,
-            llmUserMessage: llmUserMessage,
-            transcriptionModel: transcriptionModel,
-            llmModel: llmModel,
-            transcriptionSeconds: transcriptionSeconds,
-            llmSeconds: llmSeconds,
-            totalSeconds: totalSeconds
-        )
-        
-        // Save to disk in background
-        let path = entriesDir.appendingPathComponent("\(id).json")
-        backgroundQueue.async { [weak self] in
+            let entry = HistoryEntry(
+                id: id,
+                date: date,
+                appName: appName,
+                bundleID: bundleID,
+                transcript: transcript,
+                output: output,
+                audioFilename: audioFilename,
+                screenContext: screenContext,
+                screenContextMethod: screenContextMethod,
+                screenImageFilename: screenImageFilename,
+                screenImageMimeType: screenImageMimeType,
+                screenImageWidth: screenImageWidth,
+                screenImageHeight: screenImageHeight,
+                selectedText: selectedText,
+                activeTextField: activeTextField,
+                llmSystemMessage: llmSystemMessage,
+                llmUserMessage: llmUserMessage,
+                transcriptionModel: transcriptionModel,
+                llmModel: llmModel,
+                transcriptionSeconds: transcriptionSeconds,
+                llmSeconds: llmSeconds,
+                totalSeconds: totalSeconds
+            )
+            
+            // Save to disk in background
+            let path = self.entriesDir.appendingPathComponent("\(id).json")
             do {
-                let data = try self?.encoder.encode(entry)
-                try data?.write(to: path, options: .atomic)
+                let data = try self.encoder.encode(entry)
+                try data.write(to: path, options: .atomic)
                 
                 // Update in-memory state on main thread
                 DispatchQueue.main.async {
-                    self?.entries.insert(entry, at: 0)
-                    self?.allEntryFiles.insert(path, at: 0)
-                    self?.currentIndex += 1
-                    self?.enforceMaxEntries()
+                    self.entries.insert(entry, at: 0)
+                    self.allEntryFiles.insert(path, at: 0)
+                    self.currentIndex += 1
+                    self.enforceMaxEntries()
                 }
             } catch {
                 AppLog.dictation.error("Failed to save history entry: \(error.localizedDescription)")

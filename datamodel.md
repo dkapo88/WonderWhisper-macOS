@@ -133,6 +133,8 @@ erDiagram
 erDiagram
     SimplePromptSettings {
         SimplePromptRule[] rules
+        String header
+        String footer
         Bool enableScreenContext
         Bool enableClipboardContext
         Bool enableSelectedText
@@ -329,6 +331,7 @@ erDiagram
 | `llm.temperature` | Double | LLM temperature (0.0-1.0) |
 | `llm.systemPrompt` | String | Last-selected system prompt text |
 | `llm.userMessage` | String | Last-selected user prompt text |
+| `llm.openrouter.routing` | String | OpenRouter routing priority (auto/latency/throughput) |
 | `screenContext.enabled` | Bool | Screen context capture enabled |
 | `screenContext.captureMode` | String | Capture mode (image/text) |
 | `screenContext.preprocessMode` | String | Preprocessing mode |
@@ -336,6 +339,7 @@ erDiagram
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
+| `audio.input.uid` | String | Selected microphone UID |
 | `hotkey.selection` | String | Hotkey selection mode |
 | `pasteShortcut.keyCode` | Int | Paste shortcut key code |
 | `pasteShortcut.modifiers` | Int | Paste shortcut modifiers |
@@ -344,13 +348,13 @@ erDiagram
 | `audio.preprocess.enabled` | Bool | Audio preprocessing enabled |
 | `audio.voiceProcessing.enabled` | Bool | Voice processing enabled |
 | `history.maxEntries` | Int | Maximum history entries to keep |
-| `simpleMode.llmEnabled` | Bool | LLM enabled in simple mode |
-| `simpleMode.selectedModel` | String | Selected OpenRouter model |
-| `simpleMode.customModels` | Array<String> | Custom OpenRouter model IDs |
-| `simpleMode.voiceEngine` | String | Selected transcription engine (`parakeet-local` or `groq-streaming`) |
-| `simpleMode.dictation` | Data | Dictation prompt settings |
-| `simpleMode.command` | Data | Command prompt settings |
-| `simpleMode.sidebarSelection` | String | Selected sidebar item |
+| `simple.llm.enabled` | Bool | LLM enabled in simple mode |
+| `simple.model.selected` | String | Selected OpenRouter model |
+| `simple.model.custom` | Array<String> | Custom OpenRouter model IDs |
+| `simple.voice.engine` | String | Selected transcription engine (`parakeet-local` or `groq-streaming`) |
+| `simple.dictation.settings` | Data | Dictation prompt settings |
+| `simple.command.settings` | Data | Command prompt settings |
+| `simple.sidebar.selection` | String | Selected sidebar item |
 | `audio.stream.eq.enabled` | Bool | Stream EQ enabled |
 | `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
 | `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
@@ -403,9 +407,7 @@ struct AppConfig {
     static let groqAudioTranscriptions: URL
     static let groqChatCompletions: URL
     static let openrouterChatCompletions: URL
-    static let cerebrasChatCompletions: URL
-    static let openAIAudioTranscriptions: URL
-    static let sonioxRealtime: URL
+    static let openrouterModels: URL
     
     // Default Models
     static let defaultTranscriptionModel: String = "whisper-large-v3-turbo"
@@ -419,11 +421,6 @@ struct AppConfig {
     // Keychain Aliases (active)
     static let groqAPIKeyAlias: String = "GROQ_API_KEY"
     static let openrouterAPIKeyAlias: String = "OPENROUTER_API_KEY"
-    
-    // Legacy keychain aliases (preserved for backwards compatibility)
-    static let cerebrasAPIKeyAlias: String = "CEREBRAS_API_KEY"
-    static let assemblyAIAPIKeyAlias: String = "ASSEMBLYAI_API_KEY"
-    static let sonioxAPIKeyAlias: String = "SONIOX_API_KEY"
     
     // Network
     static let httpProtocolPreference: HTTPProtocolPreference
@@ -662,6 +659,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.1  
-**Last Updated**: November 14, 2025  
+**Document Version**: 1.2  
+**Last Updated**: November 20, 2025  
 **Maintainer**: WonderWhisper Mac Development Team

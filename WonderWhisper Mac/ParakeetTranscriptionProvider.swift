@@ -313,17 +313,34 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private static func decodeAudioToFloatMono16k(url: URL) throws -> [Float] {
         let inputFile = try AVAudioFile(forReading: url)
         let inFormat = inputFile.processingFormat
-        let outFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        guard let outFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to create output audio format"
+            ])
+        }
         var samples: [Float] = []
         if inFormat == outFormat {
             // Fast path: read directly
             let capacity: AVAudioFrameCount = 4096
             while true {
-                let buf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity)!
+                guard let buf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
+                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: "Failed to allocate PCM buffer"
+                    ])
+                }
                 try inputFile.read(into: buf, frameCount: capacity)
                 if buf.frameLength == 0 { break }
-                let ptr = buf.floatChannelData![0]
-                samples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: Int(buf.frameLength)))
+                guard let channelData = buf.floatChannelData else {
+                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing float channel data"
+                    ])
+                }
+                samples.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: Int(buf.frameLength)))
             }
         } else {
             // Convert
@@ -331,12 +348,26 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 throw NSError(domain: "Parakeet", code: -1, userInfo: [NSLocalizedDescriptionKey: "Audio format conversion failed"])
             }
             let inputFrameCapacity: AVAudioFrameCount = 4096
-            let inputBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: inputFrameCapacity)!
+            guard let inputBuffer = AVAudioPCMBuffer(
+                pcmFormat: inFormat,
+                frameCapacity: inputFrameCapacity
+            ) else {
+                throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to allocate input PCM buffer"
+                ])
+            }
             while true {
                 try inputFile.read(into: inputBuffer, frameCount: inputFrameCapacity)
                 if inputBuffer.frameLength == 0 { break }
                 var inputDone = false
-                let outputBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: 8192)!
+                guard let outputBuffer = AVAudioPCMBuffer(
+                    pcmFormat: outFormat,
+                    frameCapacity: 8192
+                ) else {
+                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: "Failed to allocate output PCM buffer"
+                    ])
+                }
                 let status = converter.convert(to: outputBuffer, error: nil, withInputFrom: { inNumPackets, outStatus in
                     if inputDone {
                         outStatus.pointee = .noDataNow
@@ -346,8 +377,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                     inputDone = true
                     return inputBuffer
                 })
-                if status == .haveData, let ptr = outputBuffer.floatChannelData?[0] {
-                    samples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: Int(outputBuffer.frameLength)))
+                if status == .haveData {
+                    guard let channelData = outputBuffer.floatChannelData else {
+                        throw NSError(domain: "Parakeet", code: -1, userInfo: [
+                            NSLocalizedDescriptionKey: "Missing converted float channel data"
+                        ])
+                    }
+                    samples.append(contentsOf: UnsafeBufferPointer(
+                        start: channelData[0],
+                        count: Int(outputBuffer.frameLength)
+                    ))
                 }
                 inputBuffer.frameLength = 0
             }

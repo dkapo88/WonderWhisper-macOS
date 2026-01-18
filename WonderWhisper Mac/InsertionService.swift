@@ -99,10 +99,17 @@ final class InsertionService {
 
     private func insertIntoFirstResponder(_ text: String) -> Bool {
         var success = false
-        DispatchQueue.main.sync {
+        let insertBlock = {
             if let responder = NSApp.keyWindow?.firstResponder as? NSTextView {
                 responder.insertText(text, replacementRange: responder.selectedRange())
                 success = true
+            }
+        }
+        if Thread.isMainThread {
+            insertBlock()
+        } else {
+            DispatchQueue.main.sync {
+                insertBlock()
             }
         }
         return success

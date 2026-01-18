@@ -3,8 +3,21 @@ import Foundation
 enum ParakeetManager {
     // Preferred location to place/download models
     static var modelsDirectory: URL {
-        let appSupport = try! FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        return appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+        let fm = FileManager.default
+        do {
+            let appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            return appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+        } catch {
+            AppLog.dictation.error("Failed to access Application Support directory for Parakeet models: \(error.localizedDescription)")
+            let fallbackBase = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+            let fallbackDir = fallbackBase.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+            do {
+                try fm.createDirectory(at: fallbackDir, withIntermediateDirectories: true)
+            } catch {
+                AppLog.dictation.error("Failed to create fallback Parakeet models directory: \(error.localizedDescription)")
+            }
+            return fallbackDir
+        }
     }
 
     // Detect existing installs that may have landed in a different folder
