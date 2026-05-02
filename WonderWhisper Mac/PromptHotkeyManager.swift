@@ -206,7 +206,11 @@ final class PromptHotkeyManager {
             let wasActive = selectionActiveStates[selection] ?? false
             let isPending = pendingSelectionWorkItems[selection] != nil
             if isActive && !wasActive && !isPending {
-                scheduleSelectionActivation(selection, promptIDs: promptIDs)
+                if selection.needsChordGuard {
+                    scheduleSelectionActivation(selection, promptIDs: promptIDs)
+                } else {
+                    fireSelectionActivation(selection, promptIDs: promptIDs)
+                }
             } else if !isActive && wasActive {
                 cancelPendingSelectionActivation(selection)
                 selectionActiveStates[selection] = false
@@ -226,16 +230,20 @@ final class PromptHotkeyManager {
         cancelAllPendingSelectionActivations()
     }
 
+    private func fireSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {
+        selectionActiveStates[selection] = true
+        for id in promptIDs {
+            onPromptEvent?(id, .down)
+        }
+    }
+
     private func scheduleSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard !HotkeyManager.isActivationSuppressed else { return }
             guard self.isSelectionCurrentlyActive(selection) else { return }
             self.pendingSelectionWorkItems[selection] = nil
-            self.selectionActiveStates[selection] = true
-            for id in promptIDs {
-                self.onPromptEvent?(id, .down)
-            }
+            self.fireSelectionActivation(selection, promptIDs: promptIDs)
         }
         pendingSelectionWorkItems[selection] = item
         DispatchQueue.main.asyncAfter(deadline: .now() + modifierActivationDelay, execute: item)

@@ -56,6 +56,15 @@ final class HotkeyManager {
             default: return true
             }
         }
+
+        var needsChordGuard: Bool {
+            switch self {
+            case .leftCommand, .leftOption, .control, .rightCommand, .rightOption:
+                return true
+            case .fnGlobe, .commandRightShift, .optionRightShift, .f5:
+                return false
+            }
+        }
     }
     struct Shortcut: Equatable, Codable, Hashable {
         var keyCode: UInt32 // kVK_ constants (e.g., 49 for Space)
@@ -327,6 +336,11 @@ final class HotkeyManager {
 
     private func scheduleHotkeyDown() {
         guard !Self.isActivationSuppressed else { return }
+        guard selection?.needsChordGuard == true else {
+            handleHotkeyDown()
+            return
+        }
+
         cancelPendingActivation()
         let start = Date()
         hotkeyPressStart = start
