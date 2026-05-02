@@ -20,6 +20,8 @@ final class PromptHotkeyManager {
 
     private var selectionBindings: [HotkeyManager.Selection: Set<UUID>] = [:]
     private var selectionActiveStates: [HotkeyManager.Selection: Bool] = [:]
+    private var pendingSelectionWorkItems: [HotkeyManager.Selection: DispatchWorkItem] = [:]
+    private let modifierActivationDelay: TimeInterval = 0.16
 
     private var selectionTap: CFMachPort?
     private var selectionSource: CFRunLoopSource?
@@ -110,6 +112,7 @@ final class PromptHotkeyManager {
             var hotKeyID = EventHotKeyID()
             var size = MemoryLayout<EventHotKeyID>.size
             let status = GetEventParameter(evt, UInt32(kEventParamDirectObject), UInt32(typeEventHotKeyID), nil, size, &size, &hotKeyID)
+            guard !HotkeyManager.isActivationSuppressed else { return noErr }
             guard status == noErr, let entry = manager.shortcutEntries[hotKeyID.id] else { return noErr }
             let phase: TriggerPhase = (GetEventKind(evt) == UInt32(kEventHotKeyPressed)) ? .down : .up
             manager.onPromptEvent?(entry.promptID, phase)
@@ -123,10 +126,15 @@ final class PromptHotkeyManager {
     private func ensureSelectionTap() {
         guard selectionTap == nil else { return }
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+            | CGEventMask(1 << CGEventType.keyDown.rawValue)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (_, type, event, userInfo) -> Unmanaged<CGEvent>? in
-            guard type == .flagsChanged, let userInfo = userInfo else { return Unmanaged.passUnretained(event) }
+            guard let userInfo = userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<PromptHotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            manager.handleFlagsChanged(event: event)
+            if type == .flagsChanged {
+                manager.handleFlagsChanged(event: event)
+            } else if type == .keyDown {
+                manager.handleKeyDown(event: event)
+            }
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
             return
@@ -148,6 +156,7 @@ final class PromptHotkeyManager {
         }
         selectionTap = nil
         selectionSource = nil
+        cancelAllPendingSelectionActivations()
         leftCmdDown = false
         rightCmdDown = false
         leftOptDown = false
@@ -161,6 +170,20 @@ final class PromptHotkeyManager {
     }
 
     private func handleFlagsChanged(event: CGEvent) {
+        if HotkeyManager.isActivationSuppressed {
+            leftCmdDown = false
+            rightCmdDown = false
+            leftOptDown = false
+            rightOptDown = false
+            leftCtrlDown = false
+            rightCtrlDown = false
+            leftShiftDown = false
+            rightShiftDown = false
+            fnDown = false
+            selectionActiveStates = selectionActiveStates.mapValues { _ in false }
+            cancelAllPendingSelectionActivations()
+            return
+        }
         guard !selectionBindings.isEmpty else { return }
         let flags = event.flags
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -179,39 +202,77 @@ final class PromptHotkeyManager {
         fnDown = flags.contains(.maskSecondaryFn)
 
         for (selection, promptIDs) in selectionBindings {
-            let isActive: Bool
-            switch selection {
-            case .fnGlobe:
-                isActive = fnDown
-            case .leftCommand:
-                isActive = leftCmdDown
-            case .leftOption:
-                isActive = leftOptDown
-            case .control:
-                isActive = leftCtrlDown || rightCtrlDown
-            case .rightCommand:
-                isActive = rightCmdDown
-            case .rightOption:
-                isActive = rightOptDown
-            case .commandRightShift:
-                isActive = (leftCmdDown || rightCmdDown) && rightShiftDown
-            case .optionRightShift:
-                isActive = (leftOptDown || rightOptDown) && rightShiftDown
-            case .f5:
-                isActive = false
-            }
+            let isActive = isSelectionCurrentlyActive(selection)
             let wasActive = selectionActiveStates[selection] ?? false
-            if isActive && !wasActive {
-                selectionActiveStates[selection] = true
-                for id in promptIDs {
-                    onPromptEvent?(id, .down)
-                }
+            let isPending = pendingSelectionWorkItems[selection] != nil
+            if isActive && !wasActive && !isPending {
+                scheduleSelectionActivation(selection, promptIDs: promptIDs)
             } else if !isActive && wasActive {
+                cancelPendingSelectionActivation(selection)
                 selectionActiveStates[selection] = false
                 for id in promptIDs {
                     onPromptEvent?(id, .up)
                 }
+            } else if !isActive {
+                cancelPendingSelectionActivation(selection)
             }
+        }
+    }
+
+    private func handleKeyDown(event: CGEvent) {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        guard !HotkeyManager.isModifierKey(keyCode) else { return }
+        guard !pendingSelectionWorkItems.isEmpty else { return }
+        cancelAllPendingSelectionActivations()
+    }
+
+    private func scheduleSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard !HotkeyManager.isActivationSuppressed else { return }
+            guard self.isSelectionCurrentlyActive(selection) else { return }
+            self.pendingSelectionWorkItems[selection] = nil
+            self.selectionActiveStates[selection] = true
+            for id in promptIDs {
+                self.onPromptEvent?(id, .down)
+            }
+        }
+        pendingSelectionWorkItems[selection] = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + modifierActivationDelay, execute: item)
+    }
+
+    private func cancelPendingSelectionActivation(_ selection: HotkeyManager.Selection) {
+        pendingSelectionWorkItems[selection]?.cancel()
+        pendingSelectionWorkItems[selection] = nil
+    }
+
+    private func cancelAllPendingSelectionActivations() {
+        for item in pendingSelectionWorkItems.values {
+            item.cancel()
+        }
+        pendingSelectionWorkItems.removeAll()
+    }
+
+    private func isSelectionCurrentlyActive(_ selection: HotkeyManager.Selection) -> Bool {
+        switch selection {
+        case .fnGlobe:
+            return fnDown
+        case .leftCommand:
+            return leftCmdDown
+        case .leftOption:
+            return leftOptDown
+        case .control:
+            return leftCtrlDown || rightCtrlDown
+        case .rightCommand:
+            return rightCmdDown
+        case .rightOption:
+            return rightOptDown
+        case .commandRightShift:
+            return (leftCmdDown || rightCmdDown) && rightShiftDown
+        case .optionRightShift:
+            return (leftOptDown || rightOptDown) && rightShiftDown
+        case .f5:
+            return false
         }
     }
 }

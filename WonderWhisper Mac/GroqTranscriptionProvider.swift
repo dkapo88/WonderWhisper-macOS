@@ -52,11 +52,17 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             mimeType = self.mimeType(for: ext)
         }
 
+        let apiModel = Self.apiModel(for: settings.model)
         return try await transcribeData(
             data: fileData,
             filename: filename,
             mimeType: mimeType,
-            settings: settings,
+            settings: TranscriptionSettings(
+                endpoint: settings.endpoint,
+                model: apiModel,
+                timeout: settings.timeout,
+                context: settings.context
+            ),
             cacheKey: cacheKey
         )
     }
@@ -84,6 +90,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         // Signpost around upload+response to measure wall-clock
         let signpostID = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "filename=%{public}s model=%{public}s bytes=%{public}lu", filename, settings.model, UInt(data.count))
+        AppLog.dictation.log("Groq file upload start model=\(settings.model, privacy: .public) filename=\(filename, privacy: .public) bytes=\(data.count, privacy: .public) mime=\(mimeType, privacy: .public)")
         let t0 = Date()
         let responseData = try await client.postMultipart(
             to: settings.endpoint,
@@ -94,6 +101,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         )
         let dt = Date().timeIntervalSince(t0)
         os_signpost(.end, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "elapsed=%.3f", dt)
+        AppLog.dictation.log("Groq file upload response bytes=\(responseData.count, privacy: .public) elapsed=\(dt, format: .fixed(precision: 3), privacy: .public)s")
 
         if UserDefaults.standard.bool(forKey: "groq.file.debugResponse"),
            let snippet = String(data: responseData.prefix(2048), encoding: .utf8) {
@@ -120,6 +128,13 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         }
         
         throw ProviderError.decodingFailed
+    }
+
+    private static func apiModel(for storedModel: String) -> String {
+        if storedModel == "groq-streaming" {
+            return AppConfig.defaultTranscriptionModel
+        }
+        return storedModel
     }
 
     // Groq hallucination filter: strip exact trailing "Thank you." if present

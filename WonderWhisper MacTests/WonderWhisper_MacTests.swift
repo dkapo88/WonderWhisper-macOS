@@ -49,6 +49,14 @@ struct WonderWhisper_MacTests {
         #expect(priorityConfig.timeoutIntervalForRequest == 8)
     }
 
+    @Test func keychainSecretNormalizationRejectsMalformedGroqKeys() {
+        #expect(KeychainService.normalizedSecret("  gsk_test_key_1234567890\n") == "gsk_test_key_1234567890")
+        #expect(KeychainService.isPlausibleGroqAPIKey("gsk_test_key_1234567890"))
+        #expect(!KeychainService.isPlausibleGroqAPIKey("Bearer gsk_test_key_1234567890"))
+        #expect(!KeychainService.isPlausibleGroqAPIKey("gsk_test key 1234567890"))
+        #expect(!KeychainService.isPlausibleGroqAPIKey("sk-not-a-groq-key"))
+    }
+
     private func writeSineWave(to url: URL, frames: Int, amplitude: Float, frequency: Double = 440.0) throws {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else {

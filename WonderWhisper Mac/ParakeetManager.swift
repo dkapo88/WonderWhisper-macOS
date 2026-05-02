@@ -34,7 +34,10 @@ enum ParakeetManager {
         #endif
     }
 
-    static func modelsPresent() -> Bool { discoverInstalledModelDirectory() != nil }
+    static func modelsPresent() -> Bool {
+        guard let dir = discoverInstalledModelDirectory() else { return false }
+        return validateModels(at: dir).ok
+    }
 
     // MARK: - Discovery
     private static func discoverInstalledModelDirectory() -> URL? {
@@ -42,8 +45,19 @@ enum ParakeetManager {
         let appSupport = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         // Candidates we know about
         var candidates: [URL] = []
-        // FluidAudio default cache path
-        if let appSupport { candidates.append(appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)) }
+        // FluidAudio default cache path and known nested model roots
+        if let appSupport {
+            let fluidModels = appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+            candidates.append(fluidModels.appendingPathComponent("parakeet-tdt-0.6b-v3-coreml", isDirectory: true))
+            candidates.append(fluidModels.appendingPathComponent("parakeet-tdt-0.6b-v2-coreml", isDirectory: true))
+            candidates.append(fluidModels.appendingPathComponent("parakeet-tdt-0.6b", isDirectory: true))
+            if let items = try? fm.contentsOfDirectory(at: fluidModels, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+                for url in items where url.lastPathComponent.lowercased().hasPrefix("parakeet-tdt") {
+                    candidates.append(url)
+                }
+            }
+            candidates.append(fluidModels)
+        }
         // Legacy paths supported previously
         if let appSupport { candidates.append(appSupport.appendingPathComponent("ParakeetModels", isDirectory: true)) }
         if let appSupport { candidates.append(appSupport.appendingPathComponent("parakeet-tdt-0.6b-v3-coreml", isDirectory: true)) }
@@ -57,14 +71,19 @@ enum ParakeetManager {
                 }
             }
         }
-        // First candidate that exists and is non-empty wins
+        // Prefer a candidate that validates as a model root; keep a non-empty
+        // fallback only so diagnostics can point at partially downloaded models.
+        var firstNonEmpty: URL?
         for dir in candidates {
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue {
-                if let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil), !contents.isEmpty { return dir }
+                if let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil), !contents.isEmpty {
+                    if validateModels(at: dir).ok { return dir }
+                    if firstNonEmpty == nil { firstNonEmpty = dir }
+                }
             }
         }
-        return nil
+        return firstNonEmpty
     }
 
     // MARK: - Validation / Diagnostics
@@ -87,8 +106,9 @@ enum ParakeetManager {
 
     static func validateModels(at dir: URL) -> (ok: Bool, missing: [String]) {
         let inv = inventory(at: dir)
-        // Heuristics: expect at least encoder/decoder/melspectrogram/joint models
-        let needed = ["encoder", "decoder", "melspectrogram", "joint"]
+        // Current FluidAudio Parakeet packages use Preprocessor.mlmodelc for
+        // mel feature extraction. Older builds/logs referred to it as melspectrogram.
+        let needed = ["encoder", "decoder", "preprocessor", "joint"]
         let present = Set(inv.mlmodelc.map { $0.lowercased() })
         var missing: [String] = []
         for key in needed {

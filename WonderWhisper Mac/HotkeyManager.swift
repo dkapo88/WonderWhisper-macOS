@@ -4,6 +4,26 @@ import Cocoa
 import ApplicationServices
 
 final class HotkeyManager {
+    private static let suppressionLock = NSLock()
+    private static var suppressedUntil: Date?
+
+    static func suppressActivation(for duration: TimeInterval) {
+        suppressionLock.lock()
+        suppressedUntil = Date().addingTimeInterval(duration)
+        suppressionLock.unlock()
+    }
+
+    static var isActivationSuppressed: Bool {
+        suppressionLock.lock()
+        let deadline = suppressedUntil
+        if let deadline, deadline <= Date() {
+            suppressedUntil = nil
+        }
+        let suppressed = suppressedUntil.map { $0 > Date() } ?? false
+        suppressionLock.unlock()
+        return suppressed
+    }
+
     enum Selection: String, CaseIterable, Codable {
         case fnGlobe
         case leftCommand
@@ -68,8 +88,10 @@ final class HotkeyManager {
     // Push-to-talk timing
     private var hotkeyPressStart: Date?
     private let briefPressThreshold: TimeInterval = 0.8
+    private let modifierActivationDelay: TimeInterval = 0.16
     private var lastPasteTrigger: Date?
     private var activateCalledOnThisPress: Bool = false  // Prevent double-trigger
+    private var pendingActivationWorkItem: DispatchWorkItem?
 
     // Settings (single source of truth)
     var selection: Selection? { didSet { applySelection() } }
@@ -182,10 +204,15 @@ final class HotkeyManager {
     private func startFnTap(for sel: Selection) {
         if eventTap != nil { return }
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+            | CGEventMask(1 << CGEventType.keyDown.rawValue)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
-            guard type == .flagsChanged, let userInfo else { return Unmanaged.passUnretained(event) }
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            manager.handleFlagsChanged(event: event)
+            if type == .flagsChanged {
+                manager.handleFlagsChanged(event: event)
+            } else if type == .keyDown {
+                manager.handleKeyDown(event: event)
+            }
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
             // Likely missing Accessibility permission
@@ -210,11 +237,13 @@ final class HotkeyManager {
         eventTap = nil
         lastFnFlagsOn = false
         selectionActive = false
+        cancelPendingActivation()
         activateCalledOnThisPress = false
     }
 
     // MARK: - Helpers
     private func resetModifierState() {
+        cancelPendingActivation()
         leftCmdDown = false; rightCmdDown = false
         leftOptDown = false; rightOptDown = false
         leftCtrlDown = false; rightCtrlDown = false
@@ -224,6 +253,10 @@ final class HotkeyManager {
     }
 
     private func handleFlagsChanged(event: CGEvent) {
+        if Self.isActivationSuppressed {
+            resetModifierState()
+            return
+        }
         guard let sel = selection else { return }
         let flags = event.flags
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -272,22 +305,59 @@ final class HotkeyManager {
         let stateChanged = newActive != selectionActive
         if stateChanged {
             if newActive {
-                handleHotkeyDown()
+                scheduleHotkeyDown()
             } else {
+                cancelPendingActivation()
                 handleHotkeyUp()
             }
         }
         selectionActive = newActive
     }
 
+    private func handleKeyDown(event: CGEvent) {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        guard !Self.isModifierKey(keyCode) else { return }
+        guard pendingActivationWorkItem != nil else { return }
+
+        AppLog.hotkeys.log("Cancelled modifier hotkey activation because keyCode=\(keyCode) followed the modifier")
+        cancelPendingActivation()
+        hotkeyPressStart = nil
+        activateCalledOnThisPress = false
+    }
+
+    private func scheduleHotkeyDown() {
+        guard !Self.isActivationSuppressed else { return }
+        cancelPendingActivation()
+        let start = Date()
+        hotkeyPressStart = start
+        activateCalledOnThisPress = false
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard !Self.isActivationSuppressed else { return }
+            guard self.selectionActive, self.hotkeyPressStart == start else { return }
+            self.pendingActivationWorkItem = nil
+            self.onActivate?()
+            self.activateCalledOnThisPress = true
+        }
+        pendingActivationWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + modifierActivationDelay, execute: item)
+    }
+
     private func handleHotkeyDown() {
+        guard !Self.isActivationSuppressed else { return }
+        cancelPendingActivation()
         hotkeyPressStart = Date()
         activateCalledOnThisPress = false
-        onActivate?() // Start recording immediately or toggle if already recording
+        onActivate?()
         activateCalledOnThisPress = true
     }
 
     private func handleHotkeyUp() {
+        guard !Self.isActivationSuppressed else {
+            hotkeyPressStart = nil
+            activateCalledOnThisPress = false
+            return
+        }
         guard let start = hotkeyPressStart else { return }
         hotkeyPressStart = nil
         let duration = Date().timeIntervalSince(start)
@@ -303,8 +373,14 @@ final class HotkeyManager {
         activateCalledOnThisPress = false
     }
 
+    private func cancelPendingActivation() {
+        pendingActivationWorkItem?.cancel()
+        pendingActivationWorkItem = nil
+    }
+
 
     private func handlePasteUp() {
+        guard !Self.isActivationSuppressed else { return }
         // Fire on key up with a slight delay to let user release modifiers
         // Debounce in case we receive spurious duplicate key-up events
         let now = Date()
@@ -326,6 +402,19 @@ final class HotkeyManager {
         if flags.contains(.control) { carbon |= UInt32(controlKey) }
         if flags.contains(.shift)   { carbon |= UInt32(shiftKey) }
         return carbon
+    }
+
+    static func isModifierKey(_ keyCode: CGKeyCode) -> Bool {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand,
+             kVK_Option, kVK_RightOption,
+             kVK_Control, kVK_RightControl,
+             kVK_Shift, kVK_RightShift,
+             kVK_Function:
+            return true
+        default:
+            return false
+        }
     }
 
     deinit {

@@ -355,7 +355,11 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       throw ProviderError.decodingFailed
     }
 
-    AppLog.dictation.log("SonioxStreaming: Sending config: \(jsonString, privacy: .public)")
+    var diagnosticConfig = config
+    diagnosticConfig["api_key"] = "<redacted>"
+    let diagnosticData = try? JSONSerialization.data(withJSONObject: diagnosticConfig)
+    let diagnosticString = diagnosticData.flatMap { String(data: $0, encoding: .utf8) } ?? "<unavailable>"
+    AppLog.dictation.log("SonioxStreaming: Sending config: \(diagnosticString, privacy: .public)")
     let message = URLSessionWebSocketTask.Message.string(jsonString)
     try await task.send(message)
 

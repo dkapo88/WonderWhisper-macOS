@@ -8,6 +8,7 @@ public enum ProviderError: Error, LocalizedError {
     case notImplemented
     case networkError(String)
     case connectionFailed
+    case invalidAPIKey(String)
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +19,28 @@ public enum ProviderError: Error, LocalizedError {
         case .notImplemented: return "Not implemented"
         case .networkError(let message): return "Network error: \(message)"
         case .connectionFailed: return "WebSocket connection failed"
+        case .invalidAPIKey(let message): return "Invalid API key: \(message)"
+        }
+    }
+
+    public var diagnosticDescription: String {
+        switch self {
+        case .missingAPIKey:
+            return "missingAPIKey"
+        case .invalidURL:
+            return "invalidURL"
+        case .http(let status, let body):
+            return "http status=\(status) body=\(body.prefix(1000))"
+        case .decodingFailed:
+            return "decodingFailed"
+        case .notImplemented:
+            return "notImplemented"
+        case .networkError(let message):
+            return "networkError message=\(message)"
+        case .connectionFailed:
+            return "connectionFailed"
+        case .invalidAPIKey(let message):
+            return "invalidAPIKey message=\(message)"
         }
     }
 }

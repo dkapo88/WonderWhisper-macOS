@@ -14,6 +14,7 @@ final class ScreenContextService {
 
     func activeTextField() -> String? {
         let sys = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(sys, 0.25)
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         guard err == .success, let element = focused,
@@ -21,7 +22,9 @@ final class ScreenContextService {
             return nil
         }
 
-        let axElement = element as! AXUIElement
+        // CFGetTypeID check above ensures this is an AXUIElement
+        let axElement = (element as! AXUIElement)
+        AXUIElementSetMessagingTimeout(axElement, 0.25)
         // Avoid reading from secure inputs
         if isSecureTextElement(axElement) { return nil }
 
@@ -53,6 +56,7 @@ final class ScreenContextService {
     private func copyValueFromChildren(from element: AXUIElement, depth: Int = 0) -> String? {
         if depth > 1 { return nil }
 
+        AXUIElementSetMessagingTimeout(element, 0.25)
         var childrenObj: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenObj)
         guard err == .success, let children = childrenObj as? [AXUIElement] else { return nil }
@@ -150,13 +154,15 @@ final class ScreenContextService {
     func selectedText() -> String? {
         // Try Accessibility APIs first (fast, non-destructive)
         let sys = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(sys, 0.25)
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         if err == .success, let element = focused {
             // Direct selected text
             var sel: AnyObject?
             guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
-            let axElement = element as! AXUIElement
+            let axElement = (element as! AXUIElement)
+            AXUIElementSetMessagingTimeout(axElement, 0.25)
             let res = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextAttribute as CFString, &sel)
             if res == .success, let s = sel as? String, !s.isEmpty { return s }
             // Range-based selected text
@@ -185,15 +191,17 @@ final class ScreenContextService {
         // Fast path: AX only, no 600ms pasteboard fallback
         // Used during recording start for minimal latency
         let sys = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(sys, 0.25)
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         if err == .success, let element = focused {
             var sel: AnyObject?
             guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
-            let axElement = element as! AXUIElement
+            let axElement = (element as! AXUIElement)
+            AXUIElementSetMessagingTimeout(axElement, 0.25)
             let res = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextAttribute as CFString, &sel)
             if res == .success, let s = sel as? String, !s.isEmpty { return s }
-            
+
             var rangeValue: AnyObject?
             let res2 = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
             if res2 == .success, let axRange = rangeValue {
@@ -348,6 +356,7 @@ private extension ScreenContextService {
     func axPressCopyInFrontApp() -> Bool {
         guard let app = NSWorkspace.shared.frontmostApplication else { return false }
         let appAX = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appAX, 0.25)
         var menubarObj: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appAX, kAXMenuBarAttribute as CFString, &menubarObj) == .success,
               let menubarCF = menubarObj else { return false }
@@ -362,6 +371,7 @@ private extension ScreenContextService {
 
     func findMenuItem(in element: AXUIElement, titled title: String, depth: Int = 0) -> AXUIElement? {
         if depth > 6 { return nil }
+        AXUIElementSetMessagingTimeout(element, 0.25)
         var childrenObj: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenObj) != .success { return nil }
         guard let children = childrenObj as? [AXUIElement] else { return nil }

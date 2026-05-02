@@ -24,11 +24,12 @@ final class AudioRecorder: NSObject {
     private static let cleanupInterval: TimeInterval = 300  // 5 minutes
 
     // Live streaming support (NEW IMPLEMENTATION)
-    private var audioEngine: AVAudioEngine!
-    private var inputNode: AVAudioInputNode!
-    private var audioFormat: AVAudioFormat!
+    private var audioEngine: AVAudioEngine?
+    private var inputNode: AVAudioInputNode?
+    private var audioFormat: AVAudioFormat?
     private var audioConverter: AVAudioConverter?
     private let audioQueue = DispatchQueue(label: "com.wonderwhisper.audio.recording", qos: .userInitiated)
+    private let audioQueueKey = DispatchSpecificKey<Void>()
     private var audioBufferList = [AVAudioPCMBuffer]()
     private var bufferIndex = 0
     private let maxBuffers = 10
@@ -48,8 +49,13 @@ final class AudioRecorder: NSObject {
     // Current capture profile (selected by controller based on active provider)
     var captureProfile: CaptureProfile = .standard16k
 
-    // Track actual input sample rate (hardware)
+    // Track sample rate emitted to streaming providers.
     private(set) var actualInputSampleRate: Double = 16000.0
+
+    override init() {
+        super.init()
+        audioQueue.setSpecific(key: audioQueueKey, value: ())
+    }
     
     // MARK: - Audio Session Setup (CRITICAL FIX)
     private func setupAudioSession() throws {
@@ -300,11 +306,6 @@ extension AudioRecorder {
         // Force cleanup of any existing streaming session first and WAIT for it to complete
         if isStreaming {
             stopStreamingPCM16()
-            // Wait for cleanup to complete (with timeout to prevent hanging)
-            let cleanupTimeout = DispatchTime.now() + .milliseconds(500)
-            if cleanupComplete.wait(timeout: cleanupTimeout) == .timedOut {
-                AppLog.dictation.warning("Audio engine cleanup timeout - continuing anyway")
-            }
         }
 
         // Ensure audio session is properly configured for streaming
@@ -327,64 +328,92 @@ extension AudioRecorder {
 
         setupAudioEngine()
 
-        audioQueue.async { [weak self] in
-            guard let self = self else { return }
+        // Validate engine was set up successfully before starting
+        guard let engine = audioEngine else {
+            print("❌ Audio engine setup failed - cannot start streaming")
+            isStreaming = false
+            onPCM16Frame = nil
+            restoreInputSelectionForStreaming()
+            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "Audio engine setup failed"
+            ])
+        }
 
-            do {
-                try self.audioEngine.start()
-                print("🎙 Streaming started at \(Date())")
-            } catch {
-                print("❌ Failed to start audio engine: \(error)")
-                self.isStreaming = false
-            }
+        do {
+            try engine.start()
+            print("🎙 Streaming started at \(Date())")
+        } catch {
+            print("❌ Failed to start audio engine: \(error)")
+            isStreaming = false
+            teardownStreamingResources(logHealth: false)
+            throw error
         }
     }
 
     // MARK: - Audio Engine Setup (NEW)
     private func setupAudioEngine() {
-        audioEngine = AVAudioEngine()
-        inputNode = audioEngine.inputNode
+        let engine = AVAudioEngine()
+        audioEngine = engine
+        let node = engine.inputNode
+        inputNode = node
 
         // Get input format and validate it
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+        let inputFormat = node.outputFormat(forBus: 0)
         print("🎤 Input format: \(inputFormat)")
 
         // Validate input format
         guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
             print("❌ Invalid input audio format")
+            audioEngine = nil
+            inputNode = nil
             return
         }
 
-        // Store actual input sample rate for downstream processing
-        actualInputSampleRate = inputFormat.sampleRate
-        print("🎤 Actual input sample rate: \(actualInputSampleRate) Hz")
+        print("🎤 Hardware input sample rate: \(inputFormat.sampleRate) Hz")
 
-        // Create target format: Match Input Rate, Mono, 16-bit PCM
-        // We avoid resampling here to prevent drift/artifacts. Soniox supports arbitrary rates.
+        // Streaming providers expect stable PCM16 mono audio. Groq chunking and WAV headers
+        // are built around 16 kHz, and Soniox accepts 16 kHz PCM directly.
+        let targetSampleRate = 16_000.0
         guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: inputFormat.sampleRate,
+                                         sampleRate: targetSampleRate,
                                          channels: 1,
                                          interleaved: false) else {
             print("❌ Failed to create audio format")
+            audioEngine = nil
+            inputNode = nil
             return
         }
         audioFormat = format
+        actualInputSampleRate = format.sampleRate
+        audioConverter = AVAudioConverter(from: inputFormat, to: format)
+        print("🎤 Streaming output sample rate: \(actualInputSampleRate) Hz")
 
-        // Buffer size: ~50ms of audio
+        // Tap buffer size: ~50ms of hardware audio. Output buffers are sized for the
+        // converted 16 kHz stream with margin for converter rounding.
         let bufferSize: AVAudioFrameCount = AVAudioFrameCount(inputFormat.sampleRate / 20)
-        
+        let outputBufferSize = AVAudioFrameCount(
+            max(1, Int(ceil(Double(bufferSize) * targetSampleRate / inputFormat.sampleRate))) + 32
+        )
+
         // Prepare audio buffers
+        bufferLock.lock()
+        audioBufferList.removeAll()
         for _ in 0..<maxBuffers {
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat,
-                                         frameCapacity: bufferSize) else {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                         frameCapacity: outputBufferSize) else {
                 print("❌ Failed to create audio buffer")
+                bufferLock.unlock()
+                audioEngine = nil
+                inputNode = nil
+                audioFormat = nil
                 return
             }
             audioBufferList.append(buffer)
         }
+        bufferLock.unlock()
 
         // Install audio tap
-        inputNode.installTap(onBus: 0,
+        node.installTap(onBus: 0,
                             bufferSize: bufferSize,
                             format: inputFormat) { [weak self] buffer, audioTime in
             guard let self = self, self.isStreaming else { return }
@@ -394,7 +423,7 @@ extension AudioRecorder {
             }
         }
 
-        print("✅ Audio engine configured with \(maxBuffers) buffers at \(inputFormat.sampleRate) Hz")
+        print("✅ Audio engine configured with \(maxBuffers) buffers at \(format.sampleRate) Hz")
     }
 
     // MARK: - Audio Processing (NEW)
@@ -457,56 +486,48 @@ extension AudioRecorder {
             return nil
         }
 
-        // Fast Path: If input format matches target format EXACTLY (sample rate + type), return as-is
-        // Note: We must check commonFormat because input is typically Float32 but we need Int16
+        // Fast Path: If input format matches target format EXACTLY, return as-is.
         if inputBuffer.format.sampleRate == format.sampleRate &&
            inputBuffer.format.channelCount == 1 &&
            inputBuffer.format.commonFormat == .pcmFormatInt16 {
             return inputBuffer
         }
 
-        // Manual Conversion Path: Float32 -> Int16 (Sample Rates Match)
-        // This is the primary path since we set audioFormat sampleRate == input sampleRate
-        if inputBuffer.format.sampleRate == format.sampleRate &&
-           inputBuffer.format.commonFormat == .pcmFormatFloat32,
-           let floatData = inputBuffer.floatChannelData {
-            
-            let frameCount = Int(inputBuffer.frameLength)
-            
-            // Get thread-safe output buffer
-            bufferLock.lock()
-            defer { bufferLock.unlock() }
-            guard bufferIndex < audioBufferList.count else {
-                return nil
-            }
-            let outputBuffer = audioBufferList[bufferIndex]
-            bufferIndex = (bufferIndex + 1) % maxBuffers
-            
-            guard let int16Data = outputBuffer.int16ChannelData else {
-                print("❌ Output buffer has no int16 channel data")
-                return nil
-            }
-            
-            // Convert Float32 [-1.0, 1.0] to Int16 [-32768, 32767]
-            // Only use first channel for mono output (avoid averaging for safety)
-            let floatChannel = floatData.pointee
-            let int16Channel = int16Data.pointee
-            
-            // Optimize loop with Accelerate if possible, but this scalar loop is fast enough for audio
-            for i in 0..<min(frameCount, Int(outputBuffer.frameCapacity)) {
-                let sample = floatChannel[i]
-                let clamped = max(-1.0, min(1.0, sample))
-                int16Channel[i] = Int16(clamped * 32767.0)
-            }
-            
-            outputBuffer.frameLength = AVAudioFrameCount(min(frameCount, Int(outputBuffer.frameCapacity)))
-            return outputBuffer
+        guard let converter = audioConverter else {
+            print("❌ Audio converter is nil during conversion")
+            return nil
         }
 
-        // Fallback: If sample rates somehow don't match (shouldn't happen with current setup), return nil
-        // We removed the AVAudioConverter resampling path to avoid complexity/drift.
-        print("❌ Unsupported format conversion: \(inputBuffer.format) -> \(format)")
-        return nil
+        bufferLock.lock()
+        defer { bufferLock.unlock() }
+        guard !audioBufferList.isEmpty else { return nil }
+
+        let outputBuffer = audioBufferList[bufferIndex % audioBufferList.count]
+        bufferIndex = (bufferIndex + 1) % audioBufferList.count
+        outputBuffer.frameLength = 0
+
+        var didProvideInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+            if didProvideInput {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return inputBuffer
+        }
+
+        if status == .error {
+            print("❌ Buffer conversion failed: \(conversionError?.localizedDescription ?? "unknown error")")
+            return nil
+        }
+
+        guard outputBuffer.frameLength > 0 else {
+            return nil
+        }
+
+        return outputBuffer
     }
 
     private func bufferToData(_ buffer: AVAudioPCMBuffer) -> Data {
@@ -527,43 +548,48 @@ extension AudioRecorder {
     }
 
     func stopStreamingPCM16() {
-        guard isStreaming else { return }
+        guard isStreaming || audioEngine != nil || inputNode != nil else { return }
 
-        // Mark cleanup as in-progress (acquire the semaphore)
         cleanupComplete.wait()
+        defer { cleanupComplete.signal() }
 
-        audioQueue.async { [weak self] in
-            guard let self = self else { return }
-            defer { self.cleanupComplete.signal() }  // Signal when done
-
-            self.isStreaming = false
-
-            // Stop audio engine
-            self.audioEngine.stop()
-            self.inputNode.removeTap(onBus: 0)
-
-            // Log health metrics
-            self.logAudioHealth()
-
-            print("🛑 Streaming stopped")
-
-            // Restore previous microphone selection
-            self.restoreInputSelectionForStreaming()
-
-            // Clear all references (must be done after stopping engine)
-            self.audioEngine = nil
-            self.inputNode = nil
-            self.audioFormat = nil
-            self.audioConverter = nil
-            self.audioBufferList.removeAll(keepingCapacity: false)  // Release capacity to free memory
-            self.onPCM16Frame = nil
-
-            // Reset health monitoring state
-            self.lastAudioTime = nil
-            self.totalFramesProcessed = 0
-            self.framesDropped = 0
-            self.recordingStartTime = nil
+        let cleanup = { [weak self] in
+            self?.teardownStreamingResources(logHealth: true)
         }
+
+        if DispatchQueue.getSpecific(key: audioQueueKey) != nil {
+            cleanup()
+        } else {
+            audioQueue.sync(execute: cleanup)
+        }
+    }
+
+    private func teardownStreamingResources(logHealth: Bool) {
+        isStreaming = false
+
+        audioEngine?.stop()
+        inputNode?.removeTap(onBus: 0)
+
+        if logHealth {
+            logAudioHealth()
+            print("🛑 Streaming stopped")
+        }
+
+        restoreInputSelectionForStreaming()
+
+        audioEngine = nil
+        inputNode = nil
+        audioFormat = nil
+        audioConverter = nil
+        bufferLock.lock()
+        audioBufferList.removeAll(keepingCapacity: false)
+        bufferLock.unlock()
+        onPCM16Frame = nil
+
+        lastAudioTime = nil
+        totalFramesProcessed = 0
+        framesDropped = 0
+        recordingStartTime = nil
     }
 
     // MARK: - Health Monitoring (NEW)

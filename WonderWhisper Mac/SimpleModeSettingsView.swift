@@ -19,7 +19,8 @@ struct SimpleModeSettingsView: View {
     keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias) != nil
   }
   private var hasGroqKey: Bool {
-    keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) != nil
+    guard let key = keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) else { return false }
+    return KeychainService.isPlausibleGroqAPIKey(key)
   }
   private var hasSonioxKey: Bool {
     keychain.getSecret(forKey: AppConfig.sonioxAPIKeyAlias) != nil
@@ -30,6 +31,7 @@ struct SimpleModeSettingsView: View {
       VStack(alignment: .leading, spacing: 24) {
         voiceEngineSection
         combinedLLMSection
+        settingsNotice
         openRouterSection
         groqSection
         sonioxSection
@@ -43,6 +45,17 @@ struct SimpleModeSettingsView: View {
     }
     .sheet(isPresented: $showModelBrowser) {
       OpenRouterModelBrowserView(vm: vm)
+    }
+  }
+
+  private var settingsNotice: some View {
+    Group {
+      if let notice = vm.settingsNotice {
+        Text(notice)
+          .font(.callout)
+          .foregroundColor(notice.localizedCaseInsensitiveContains("saved") ? .green : .red)
+          .textSelection(.enabled)
+      }
     }
   }
 
@@ -200,7 +213,7 @@ struct SimpleModeSettingsView: View {
     GroupBox("Groq API key") {
       VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 6) {
-          Text(hasGroqKey ? "Status: Saved" : "Status: Missing")
+          Text(hasGroqKey ? "Status: Saved" : "Status: Missing or invalid")
             .font(.callout.weight(.semibold))
             .foregroundColor(hasGroqKey ? .green : .red)
           if hasGroqKey {
@@ -211,6 +224,12 @@ struct SimpleModeSettingsView: View {
         SecureField("Paste Groq API key", text: $groqKeyInput)
           .textFieldStyle(.roundedBorder)
           .frame(maxWidth: 360)
+          .onChange(of: groqKeyInput) { _, newValue in
+            let trimmed = KeychainService.normalizedSecret(newValue)
+            if trimmed != newValue {
+              groqKeyInput = trimmed
+            }
+          }
 
         Button("Save key") {
           vm.saveGroqApiKey(groqKeyInput)

@@ -5,15 +5,28 @@ import Carbon.HIToolbox
 final class InsertionService {
     var useAXInsertion: Bool = false
 
-    func insert(_ text: String) {
+    func insert(_ text: String, targetProcessIdentifier: pid_t? = nil) {
+        HotkeyManager.suppressActivation(for: 2.0)
+        let initialFront = NSWorkspace.shared.frontmostApplication
+        AppLog.insertion.log("Insertion start targetPid=\(targetProcessIdentifier ?? -1, privacy: .public) frontmost=\(initialFront?.bundleIdentifier ?? "?", privacy: .public) textChars=\(text.count, privacy: .public)")
+        let activatedTarget = activateTargetApplicationIfNeeded(processIdentifier: targetProcessIdentifier)
+        let activeFront = NSWorkspace.shared.frontmostApplication
+        AppLog.insertion.log("Insertion active target=\(activatedTarget, privacy: .public) frontmost=\(activeFront?.bundleIdentifier ?? "?", privacy: .public)")
+        if activatedTarget {
+            Thread.sleep(forTimeInterval: 0.08)
+        }
+
         // Special-case: if our app is frontmost, insert directly into the first responder text view
         if let bundleID = Bundle.main.bundleIdentifier,
            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID,
+           targetProcessIdentifier == nil || activatedTarget,
            insertIntoFirstResponder(text) {
+            AppLog.dictation.log("Insertion: inserted into WonderWhisper first responder")
             return
         }
         // Strategy 1: AX direct insertion when enabled
         if useAXInsertion, setFocusedAXValue(text) {
+            AppLog.dictation.log("Insertion: AX direct value set succeeded")
             return
         }
         // Fallback: write to pasteboard (optionally as rich text) + Command-V with clipboard restore
@@ -48,15 +61,30 @@ final class InsertionService {
         // - Otherwise try AX menu Paste first
         // - Always fall back to synthesized Command+V if the chosen method fails
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+        AppLog.insertion.log("Insertion pasteboard prepared changeCount=\(ourChange, privacy: .public) frontBundle=\(frontBundle, privacy: .public)")
         let preferAppleScript = shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste")
         if preferAppleScript {
             if !pasteUsingAppleScript() {
                 // Try AX paste, then CGEvent as last resort
-                if !axPressPasteInFrontApp() { synthesizeCmdV() }
+                if !axPressPasteInFrontApp() {
+                    synthesizeCmdV()
+                    AppLog.dictation.log("Insertion: AppleScript and AX paste failed; synthesized Cmd+V")
+                } else {
+                    AppLog.dictation.log("Insertion: AX menu paste succeeded after AppleScript failed")
+                }
+            } else {
+                AppLog.dictation.log("Insertion: AppleScript paste succeeded")
             }
         } else {
             if !axPressPasteInFrontApp() {
-                if !pasteUsingAppleScript() { synthesizeCmdV() }
+                if !pasteUsingAppleScript() {
+                    synthesizeCmdV()
+                    AppLog.dictation.log("Insertion: AX and AppleScript paste failed; synthesized Cmd+V")
+                } else {
+                    AppLog.dictation.log("Insertion: AppleScript paste succeeded after AX failed")
+                }
+            } else {
+                AppLog.dictation.log("Insertion: AX menu paste succeeded")
             }
         }
         let fast = UserDefaults.standard.bool(forKey: "insertion.fastMode")
@@ -64,6 +92,37 @@ final class InsertionService {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.restorePasteboard(snapshot, ifChangeCountEquals: ourChange, orContentMatches: text)
         }
+    }
+
+    private func activateTargetApplicationIfNeeded(processIdentifier: pid_t?) -> Bool {
+        guard let processIdentifier else { return false }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier { return true }
+        guard let app = NSRunningApplication(processIdentifier: processIdentifier) else {
+            AppLog.insertion.warning("Insertion: target app no longer running pid=\(processIdentifier, privacy: .public)")
+            return false
+        }
+        if let bundleID = Bundle.main.bundleIdentifier, app.bundleIdentifier == bundleID { return false }
+
+        let activate = {
+            _ = app.activate(options: [])
+        }
+
+        if Thread.isMainThread {
+            activate()
+        } else {
+            DispatchQueue.main.sync { activate() }
+        }
+
+        let deadline = Date().addingTimeInterval(0.6)
+        while Date() < deadline {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier {
+                AppLog.insertion.log("Insertion: reactivated target app \(app.bundleIdentifier ?? "?", privacy: .public) pid=\(processIdentifier, privacy: .public)")
+                return true
+            }
+            usleep(20_000)
+        }
+        AppLog.insertion.warning("Insertion: target app did not become frontmost \(app.bundleIdentifier ?? "?", privacy: .public) pid=\(processIdentifier, privacy: .public)")
+        return false
     }
 
     private func shouldPreferAppleScript(for bundleID: String) -> Bool {
@@ -74,7 +133,9 @@ final class InsertionService {
             "com.brave.Browser",             // Brave
             "com.microsoft.edgemac",         // Edge
             "org.mozilla.firefox",           // Firefox
-            "com.getupnote.desktop"          // UpNote (Electron)
+            "com.getupnote.desktop",         // UpNote (Electron)
+            "com.todesktop.230313mzl4w4u92", // Cursor
+            "com.microsoft.VSCode"           // VS Code
         ]
         if prefer.contains(bundleID) { return true }
         // Heuristic: Electron-based apps often have bundle IDs containing "electron"
@@ -92,7 +153,7 @@ final class InsertionService {
         let ok = NSAppleScript(source: script)?.executeAndReturnError(&err) != nil
         if !ok {
             let msg = (err?[NSAppleScript.errorMessage as String] as? String) ?? "unknown error"
-            AppLog.insertion.error("AppleScript paste error: \(msg)")
+            AppLog.insertion.error("AppleScript paste error: \(msg, privacy: .public)")
         }
         return ok
     }
@@ -117,15 +178,20 @@ final class InsertionService {
 
     private func setFocusedAXValue(_ text: String) -> Bool {
         let sys = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(sys, 0.25)
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
-        guard err == .success, let element = focused else { return false }
-        let res = AXUIElementSetAttributeValue(element as! AXUIElement, kAXValueAttribute as CFString, text as CFTypeRef)
+        guard err == .success,
+              let element = focused,
+              CFGetTypeID(element) == AXUIElementGetTypeID() else { return false }
+        let axElement = (element as! AXUIElement)
+        AXUIElementSetMessagingTimeout(axElement, 0.25)
+        let res = AXUIElementSetAttributeValue(axElement, kAXValueAttribute as CFString, text as CFTypeRef)
         return res == .success
     }
 
     private func synthesizeCmdV() {
-        // Use HID system state to mimic real keyboard
+        AppLog.insertion.log("Insertion: synthesizing Cmd+V")
         let src = CGEventSource(stateID: .hidSystemState)
         let keyV: CGKeyCode = CGKeyCode(kVK_ANSI_V)
         let keyCmd: CGKeyCode = 0x37 // left Command virtual key
@@ -172,9 +238,11 @@ final class InsertionService {
         let ws = NSWorkspace.shared
         guard let app = ws.frontmostApplication else { return false }
         let appAX = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appAX, 0.25)
         var menubarObj: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appAX, kAXMenuBarAttribute as CFString, &menubarObj) == .success,
-              let menubarCF = menubarObj else { return false }
+              let menubarCF = menubarObj,
+              CFGetTypeID(menubarCF) == AXUIElementGetTypeID() else { return false }
         let menubar = menubarCF as! AXUIElement
         if let item = findPasteMenuItem(in: menubar) {
             let res = AXUIElementPerformAction(item, kAXPressAction as CFString)
@@ -185,6 +253,7 @@ final class InsertionService {
 
     private func findPasteMenuItem(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
         if depth > 6 { return nil } // avoid runaway recursion
+        AXUIElementSetMessagingTimeout(element, 0.25)
         var childrenObj: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenObj) != .success { return nil }
         guard let children = childrenObj as? [AXUIElement] else { return nil }

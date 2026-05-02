@@ -220,11 +220,19 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
             throw err
         }
+        // Match the stable part of VoiceInk's FluidAudio pattern that applies to
+        // this pinned FluidAudio API: pad the end of the utterance before ASR.
+        var speechAudio = samples
+        let trailingSilenceSamples = 16_000
+        let maxSingleChunkSamples = 240_000
+        if speechAudio.count + trailingSilenceSamples <= maxSingleChunkSamples {
+            speechAudio += [Float](repeating: 0, count: trailingSilenceSamples)
+        }
+
         AppLog.dictation.log("[Parakeet] ASR begin")
         let result: ASRResult
         do {
-            // Provide source hint per 0.6 API
-            result = try await mgr.transcribe(samples, source: .microphone)
+            result = try await mgr.transcribe(speechAudio)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -399,11 +407,21 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         guard data.count >= 44 else { return nil }
         guard data[0...3] == Data([82, 73, 70, 70]) else { return nil }
         guard data[8...11] == Data([87, 65, 86, 69]) else { return nil }
-        let audioFormat = readUInt16(data, offset: 20)
-        let channels = readUInt16(data, offset: 22)
-        let sampleRate = readUInt32(data, offset: 24)
-        let bitsPerSample = readUInt16(data, offset: 34)
-        guard audioFormat == 1, channels == 1, sampleRate == 16_000, bitsPerSample == 16 else { return nil }
+        let fmtOffset = findChunkOffset(in: data, id: Data([102, 109, 116, 32]))
+        guard fmtOffset >= 0 else { return nil }
+        let fmtSize = Int(readUInt32(data, offset: fmtOffset + 4))
+        guard fmtSize >= 16, fmtOffset + 8 + fmtSize <= data.count else { return nil }
+        let fmtDataOffset = fmtOffset + 8
+        let audioFormat = readUInt16(data, offset: fmtDataOffset)
+        let channels = readUInt16(data, offset: fmtDataOffset + 2)
+        let sampleRate = readUInt32(data, offset: fmtDataOffset + 4)
+        let bitsPerSample = readUInt16(data, offset: fmtDataOffset + 14)
+        // Accept standard PCM and WAVE_FORMAT_EXTENSIBLE when the packed payload is
+        // mono 16-bit 16 kHz PCM. The subtype is omitted because this is only a fast path.
+        guard (audioFormat == 1 || audioFormat == 0xFFFE),
+              channels == 1,
+              sampleRate == 16_000,
+              bitsPerSample == 16 else { return nil }
         let dataOffset = findDataChunkOffset(in: data)
         guard dataOffset >= 0 else { return nil }
         let start = dataOffset + 8
@@ -430,12 +448,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     private static func findDataChunkOffset(in data: Data) -> Int {
+        findChunkOffset(in: data, id: Data([100, 97, 116, 97]))
+    }
+
+    private static func findChunkOffset(in data: Data, id: Data) -> Int {
         var offset = 12
         while offset + 8 <= data.count {
             let chunkID = data[offset..<(offset + 4)]
             let size = Int(readUInt32(data, offset: offset + 4))
-            if chunkID == Data([100, 97, 116, 97]) { return offset }
-            offset += 8 + size
+            if chunkID == id { return offset }
+            offset += 8 + size + (size % 2)
         }
         return -1
     }
@@ -556,7 +578,11 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let audioDurationSeconds = Double(samples.count) / 16_000.0
         AppLog.dictation.log("[Parakeet] Raw mode: skipping VAD (duration: \(String(format: "%.1f", audioDurationSeconds))s)")
         
-        // Transcribe WITHOUT source hint (VoiceInk-style)
+        if finalSamples.count + 16_000 <= 240_000 {
+            finalSamples += [Float](repeating: 0, count: 16_000)
+        }
+
+        // Transcribe without source hint (VoiceInk-style for this pinned API)
         AppLog.dictation.log("[Parakeet] Raw mode: transcribing (no source hint)")
         let result: ASRResult
         do {

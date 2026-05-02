@@ -23,6 +23,7 @@ struct FavoriteLLMModel: Identifiable, Codable, Hashable {
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
+    @Published var settingsNotice: String?
     @Published var isRecording: Bool = false {
         didSet {
             updateEscapeMonitor(isRecording: isRecording)
@@ -523,9 +524,6 @@ final class DictationViewModel: ObservableObject {
     func finish() {
         persistPromptLibrary()
         Task {
-            // Use immediate provider update for critical operations
-            await MainActor.run { self.updateProvidersImmediately() }
-
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
                 self.isRecording = false
@@ -545,8 +543,6 @@ final class DictationViewModel: ObservableObject {
                     }
                 }
                 await updateProvidersWithSelectedTextOverride()
-            } else {
-                await waitForLatestProviderUpdate()
             }
 
             let prompt = await MainActor.run { self.userPrompt }
@@ -607,7 +603,7 @@ final class DictationViewModel: ObservableObject {
     // Request Accessibility permission (AX) so we can install a non-listen-only event tap.
     // Returns true if trusted (either already or after prompting), false otherwise.
     private func requestAccessibilityTrustIfNeeded() -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeRetainedValue() as String
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let opts: CFDictionary = [key: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(opts)
         return trusted
@@ -679,29 +675,41 @@ final class DictationViewModel: ObservableObject {
     }
 
     func saveGroqApiKey(_ value: String) {
+        guard KeychainService.isPlausibleGroqAPIKey(value) else {
+            settingsNotice = KeychainServiceError.invalidGroqKey.localizedDescription
+            return
+        }
+
         let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
+        do {
+            try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias)
+            settingsNotice = "Groq API key saved."
+            transcriptionProviderCache.removeValue(forKey: "groq-streaming")
+            transcriptionProviderCache.removeValue(forKey: AppConfig.defaultTranscriptionModel)
+        } catch {
+            settingsNotice = "Could not save Groq API key: \(error.localizedDescription)"
         }
     }
 
     func saveOpenRouterKey(_ value: String) {
         let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
+        do {
+            try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias)
+            settingsNotice = "OpenRouter API key saved."
+            llmProviderCache.removeAll()
+        } catch {
+            settingsNotice = "Could not save OpenRouter API key: \(error.localizedDescription)"
         }
     }
 
     func saveSonioxApiKey(_ value: String) {
         let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.sonioxAPIKeyAlias) } catch {
-            #if DEBUG
-            print("Keychain error: \(error)")
-            #endif
+        do {
+            try kc.setSecret(value, forKey: AppConfig.sonioxAPIKeyAlias)
+            settingsNotice = "Soniox API key saved."
+        } catch {
+            settingsNotice = "Could not save Soniox API key: \(error.localizedDescription)"
+            return
         }
         // Clear the cached provider so it gets recreated with the new key
         transcriptionProviderCache.removeValue(forKey: "soniox-streaming")
@@ -1595,8 +1603,6 @@ final class DictationViewModel: ObservableObject {
                         }
                     }
                     await updateProvidersWithSelectedTextOverride()
-                } else {
-                    await waitForLatestProviderUpdate()
                 }
 
                 let promptText = await MainActor.run { self.userPrompt }
@@ -1631,8 +1637,6 @@ final class DictationViewModel: ObservableObject {
                             }
                         }
                         await updateProvidersWithSelectedTextOverride()
-                    } else {
-                        await waitForLatestProviderUpdate()
                     }
 
                     let promptText = await MainActor.run { self.userPrompt }
@@ -1770,7 +1774,9 @@ final class DictationViewModel: ObservableObject {
         if model.lowercased().contains("parakeet") {
             provider = ParakeetTranscriptionProvider()
         } else if model == "groq-streaming" {
-            provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+            // Keep the existing engine identifier for settings compatibility, but use
+            // Groq's stable file upload path. Soniox is the real-time streaming engine.
+            provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         } else if model == "soniox-streaming" {
             let sonioxProvider = SonioxStreamingProvider(
                 apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) },

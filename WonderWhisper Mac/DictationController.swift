@@ -26,6 +26,7 @@ actor DictationController {
     private var selectedTextEnabled: Bool = true
     private var activeTextFieldEnabled: Bool = true
     private var currentRecordingURL: URL?
+    private var insertionTargetProcessIdentifier: pid_t?
     private var preCapturedScreenSnapshot: ScreenCaptureSnapshot?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
@@ -67,6 +68,7 @@ actor DictationController {
         case .idle, .error:
             do {
                 AppLog.dictation.log("Recording start")
+                insertionTargetProcessIdentifier = Self.currentExternalFrontmostProcessIdentifier()
 
                 if autoMuteEnabled {
                     _ = SystemAudioController.shared.muteSystemAudioAndWait()
@@ -90,20 +92,23 @@ actor DictationController {
                 if let groq = transcriber as? GroqStreamingProvider {
                     groq.updateSettings(transcriberSettings)
                     try await groq.beginRealtime()
-                    try? recorder.startStreamingPCM16 { data in
-                        Task { try? await groq.feedPCM16(data) }
+                    do {
+                        try recorder.startStreamingPCM16 { data in
+                            Task { try? await groq.feedPCM16(data) }
+                        }
+                    } catch {
+                        AppLog.dictation.error("Groq streaming audio start failed; continuing with file fallback: \(error.localizedDescription)")
+                        await groq.abort()
                     }
                 }
 
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.updateSettings(transcriberSettings)
-                    // Start recorder first to discover actual input sample rate
-                    try? recorder.startStreamingPCM16 { data in
+                    await soniox.setInputSampleRate(16_000)
+                    try await soniox.beginRealtime()
+                    try recorder.startStreamingPCM16 { data in
                         Task { try? await soniox.feedPCM16(data) }
                     }
-                    // Set the actual input sample rate on the provider (no resampling)
-                    await soniox.setInputSampleRate(recorder.actualInputSampleRate)
-                    try await soniox.beginRealtime()
                 }
 
                 // Pre-capture screen context early so it is ready once recording stops
@@ -123,6 +128,18 @@ actor DictationController {
                 }
             } catch {
                 AppLog.dictation.error("Recording start failed: \(error.localizedDescription)")
+                recorder.stopStreamingPCM16()
+                if let groq = transcriber as? GroqStreamingProvider {
+                    await groq.abort()
+                }
+                if let soniox = transcriber as? SonioxStreamingProvider {
+                    await soniox.abort()
+                }
+                _ = recorder.stopRecording()
+                if autoMuteEnabled {
+                    SystemAudioController.shared.unmuteSystemAudioAndWait()
+                }
+                resetTransientSessionState()
                 state = .error("Recording start failed: \(error.localizedDescription)")
             }
         case .recording:
@@ -142,12 +159,20 @@ actor DictationController {
 
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
+        AppLog.dictation.log("Stop requested provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         // Stop live streaming if active
+        AppLog.dictation.log("Stopping streaming recorder")
         recorder.stopStreamingPCM16()
         // Do NOT abort streaming providers here; we want them to finalize
         // and provide a fast, low-latency final transcript.
 
+        AppLog.dictation.log("Stopping file recorder")
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
+        if let recordingFileURL {
+            AppLog.dictation.log("File recorder finalized file=\(recordingFileURL.lastPathComponent, privacy: .public)")
+        } else {
+            AppLog.dictation.warning("File recorder returned nil URL")
+        }
         
         if autoMuteEnabled {
             SystemAudioController.shared.unmuteSystemAudioAndWait()
@@ -155,6 +180,10 @@ actor DictationController {
 
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
+        defer {
+            resetTransientSessionState()
+            os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
+        }
 
         let captureModeForSession: ScreenContextCaptureMode = {
             if preCapturedScreenSnapshot != nil { return .image }
@@ -173,6 +202,7 @@ actor DictationController {
             os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
             if let groq = transcriber as? GroqStreamingProvider {
                 // Prefer Groq chunked streaming transcript for speed
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 transcript = try await groq.endRealtime()
                 // Fallback to file if streaming gave empty or punctuation-only result
                 if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
@@ -181,9 +211,10 @@ actor DictationController {
                 }
             } else if let soniox = transcriber as? SonioxStreamingProvider {
                 // Soniox real-time streaming - use preview text immediately
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 transcript = try await soniox.endRealtime()
                 // Fallback to Groq file transcription if Soniox gave empty result
-                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                if looksEmptyOrPunctuation(transcript), recordingFileURL != nil {
                     AppLog.dictation.log("Soniox streaming empty; no file fallback available")
                     // Soniox doesn't support file transcription, so just use empty
                 }
@@ -192,8 +223,9 @@ actor DictationController {
                 guard let fileURL = recordingFileURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
                 // Ensure the recorded file is fully finalized before reading to avoid rare
                 // issues on some systems where the file appears complete but is still being flushed.
+                AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
                 await Self.waitUntilFileIsStable(fileURL)
-                AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber))) file=\(fileURL.lastPathComponent)")
+                AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(hotkeySettings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
                 transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
             }
             let transcribeDT = Date().timeIntervalSince(t0)
@@ -330,7 +362,7 @@ actor DictationController {
 
             state = .inserting
             os_signpost(.begin, log: spLog, name: "WW.insert.total", signpostID: pipeId)
-            inserter.insert(output)
+            inserter.insert(output, targetProcessIdentifier: insertionTargetProcessIdentifier)
             os_signpost(.end, log: spLog, name: "WW.insert.total", signpostID: pipeId)
 
             state = .idle
@@ -364,8 +396,8 @@ actor DictationController {
             )
         } catch {
             let ns = error as NSError
-            AppLog.dictation.error("Pipeline error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
-            os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
+            let diagnostic = (error as? ProviderError)?.diagnosticDescription ?? "\(ns.domain) code=\(ns.code) \(ns.localizedDescription)"
+            AppLog.dictation.error("Pipeline error: \(diagnostic, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
             // Persist audio so the user can reprocess later even on failure
             var appNameHist: String? = nil
             var bundleIDHist: String? = nil
@@ -397,15 +429,6 @@ actor DictationController {
             )
             state = .error(error.localizedDescription)
         }
-        // Reset pre-captured context for the next run
-        preCapturedScreenSnapshot = nil
-        preCapturedScreenText = nil
-        preCapturedScreenMethod = nil
-        preCapturedActiveTextField = nil
-        clipboardSnapshotForSession = nil
-        // Restore capture profile to default for subsequent runs
-        recorder.captureProfile = .standard16k
-        os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
     }
 
     func currentState() -> State { state }
@@ -432,6 +455,18 @@ actor DictationController {
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
+
+    private func resetTransientSessionState() {
+        currentRecordingURL = nil
+        insertionTargetProcessIdentifier = nil
+        preCapturedScreenSnapshot = nil
+        preCapturedScreenText = nil
+        preCapturedScreenMethod = nil
+        preCapturedSelectedText = nil
+        preCapturedActiveTextField = nil
+        clipboardSnapshotForSession = nil
+        recorder.captureProfile = .standard16k
+    }
 
     // Explicit controls for UI actions
     func finish(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
@@ -484,6 +519,14 @@ actor DictationController {
         output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
         inserter.insert(output)
         state = .idle
+    }
+
+    private static func currentExternalFrontmostProcessIdentifier() -> pid_t? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        if let ownBundleID = Bundle.main.bundleIdentifier, app.bundleIdentifier == ownBundleID {
+            return nil
+        }
+        return app.processIdentifier
     }
 
     func runLLM(text: String,

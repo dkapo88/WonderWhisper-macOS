@@ -40,7 +40,7 @@ struct PromptBuilder {
         var contextParts: [String] = []
 
         // App name (always include if available)
-        let effectiveAppName = (appName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? appName! : nil
+        let effectiveAppName = appName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? appName : nil
         if let app = effectiveAppName {
             contextParts.append("<ACTIVE_APPLICATION>\(app)</ACTIVE_APPLICATION>")
         }

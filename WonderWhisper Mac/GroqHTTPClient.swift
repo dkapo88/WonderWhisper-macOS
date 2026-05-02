@@ -71,7 +71,12 @@ struct GroqHTTPClient {
     }
 
     private func authHeader() throws -> String {
-        guard let key = apiKeyProvider(), !key.isEmpty else { throw ProviderError.missingAPIKey }
+        guard let rawKey = apiKeyProvider() else { throw ProviderError.missingAPIKey }
+        let key = KeychainService.normalizedSecret(rawKey)
+        guard !key.isEmpty else { throw ProviderError.missingAPIKey }
+        guard KeychainService.isPlausibleGroqAPIKey(key) else {
+            throw ProviderError.invalidAPIKey("Expected a Groq key beginning with gsk_ and no whitespace.")
+        }
         return "Bearer \(key)"
     }
 
@@ -204,7 +209,7 @@ struct GroqHTTPClient {
     func postMultipart(to url: URL, fields: [String: String], files: [MultipartFile], timeout: TimeInterval, context: String? = nil) async throws -> Data {
         let start = Date()
         let reqId = UUID().uuidString
-        AppLog.network.log("POST Multipart [\(context ?? "-")] to \(url.absoluteString, privacy: .public) with \(files.count) file(s) req=\(reqId)")
+        AppLog.network.log("POST Multipart [\(context ?? "-", privacy: .public)] to \(url.absoluteString, privacy: .public) with \(files.count, privacy: .public) file(s) req=\(reqId, privacy: .public)")
         let totalBytes = files.reduce(0) { $0 + $1.data.count }
         os_signpost(.event, log: Self.spLog, name: "WW.net.upload.prepare", "req=%{public}@ bytes=%{public}ld files=%{public}ld", reqId, totalBytes, files.count)
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -261,10 +266,6 @@ struct GroqHTTPClient {
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .voice
 
-        // All sessions now respect global protocol preference via NetworkConfiguration
-        let baseSession = Self.session
-        let prioritySession = Self.prioritySession
-
         // Set compression headers if body was compressed
         if shouldCompress {
             request.setValue("lzfse", forHTTPHeaderField: "Content-Encoding")
@@ -272,59 +273,8 @@ struct GroqHTTPClient {
 
         request.httpBody = finalBody
 
-        // Parallel upload strategy with retries: race priority/standard (and optional curl/h2), retry on transient failures
-        var attempt = 0
-        var lastError: Error?
-        while attempt < 3 {
-            attempt += 1
-            do {
-                let result: Data = try await withThrowingTaskGroup(of: Data.self) { group in
-                    // Task 1: URLSession with priority session for maximum speed
-                    group.addTask {
-                        var priorityRequest = request
-                        priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
-                        priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
-                        let (data, response) = try await prioritySession.data(for: priorityRequest)
-                        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                            throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
-                        }
-                        return data
-                    }
-                    // Task 2: Standard URLSession as fallback
-                    group.addTask {
-                        try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
-                        let (data, response) = try await dataWithAttemptTimeout(for: request, session: baseSession)
-                        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                            throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
-                        }
-                        return data
-                    }
-                    guard let result = try await group.next() else {
-                        throw ProviderError.notImplemented
-                    }
-                    group.cancelAll()
-                    return result
-                }
-                let elapsed = Date().timeIntervalSince(start)
-                AppLog.network.log("Parallel upload completed req=\(reqId) attempt=\(attempt) in \(elapsed, format: .fixed(precision: 3))s")
-                return result
-            } catch {
-                lastError = error
-                let nsErr = error as NSError
-                // Retry only on transient network errors and timeouts
-                let shouldRetry = nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorTimedOut || nsErr.code == NSURLErrorNetworkConnectionLost || nsErr.code == NSURLErrorCannotFindHost || nsErr.code == NSURLErrorCannotConnectToHost)
-                if attempt >= 3 || !shouldRetry { throw error }
-                // Exponential backoff with jitter (mirrors performWithRetry)
-                let base: Double = 0.5
-                let backoff = pow(2.0, Double(attempt - 1)) * base
-                let jitter = Double.random(in: 0...(base * 0.5))
-                let delay = backoff + jitter
-                AppLog.network.log("Retrying multipart req=\(reqId) in \(String(format: "%.2f", delay))s (attempt \(attempt+1)/3)")
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                continue
-            }
-        }
-        throw lastError ?? ProviderError.notImplemented
+        AppLog.network.log("Multipart body ready req=\(reqId, privacy: .public) bytes=\(finalBody.count, privacy: .public) timeout=\(timeout, format: .fixed(precision: 1), privacy: .public)s")
+        return try await performWithRetry(request: request, start: start, context: context)
     }
 }
 
@@ -370,15 +320,16 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
                     if let ra = http.value(forHTTPHeaderField: "Retry-After"), let seconds = Double(ra) {
                         delay = max(0.1, min(10.0, seconds))
                     }
-                    AppLog.network.error("HTTP 429 for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) retrying in \(delay, format: .fixed(precision: 2))s")
+                    AppLog.network.error("HTTP 429 for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt, privacy: .public) retrying in \(delay, format: .fixed(precision: 2), privacy: .public)s")
                     os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     continue
                 }
-                AppLog.network.error("HTTP \(status) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                throw ProviderError.http(status: status, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                let body = String(data: data, encoding: .utf8) ?? "<no body>"
+                AppLog.network.error("HTTP \(status, privacy: .public) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt, privacy: .public) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3), privacy: .public)s body=\(body.prefix(1000), privacy: .public)")
+                throw ProviderError.http(status: status, body: body)
             }
-            AppLog.network.log("OK \(((response as? HTTPURLResponse)?.statusCode ?? -1)) for \(request.url?.lastPathComponent ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+            AppLog.network.log("OK \(((response as? HTTPURLResponse)?.statusCode ?? -1), privacy: .public) for \(request.url?.lastPathComponent ?? "<url>", privacy: .public) attempt=\(attempt, privacy: .public) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3), privacy: .public)s")
             os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
             return data
         } catch {
@@ -386,7 +337,8 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
             let nsErr = error as NSError
             let code = nsErr.code
             let domain = nsErr.domain
-            AppLog.network.error("Attempt \(attempt) failed req=\(request.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?") ctx=\(context ?? "-") error=\(nsErr.localizedDescription)")
+            let diagnostic = (error as? ProviderError)?.diagnosticDescription ?? "\(nsErr.domain) code=\(nsErr.code) \(nsErr.localizedDescription)"
+            AppLog.network.error("Attempt \(attempt, privacy: .public) failed req=\(request.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?", privacy: .public) ctx=\(context ?? "-", privacy: .public) error=\(diagnostic, privacy: .public)")
             let shouldRetry = (domain == NSURLErrorDomain) && (code == NSURLErrorTimedOut || code == NSURLErrorNetworkConnectionLost || code == NSURLErrorCannotFindHost || code == NSURLErrorCannotConnectToHost)
             os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
             if attempt >= maxAttempts || !shouldRetry { break }

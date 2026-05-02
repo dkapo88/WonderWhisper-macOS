@@ -75,7 +75,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     case .parakeetLocal:
       return "Runs fully on your Mac for the lowest latency and maximum privacy."
     case .groqStreaming:
-      return "Streams audio to Groq for Whisper Large V3 Turbo accuracy."
+      return "Uploads finalized audio to Groq Whisper Large V3 Turbo for reliable cloud transcription."
     case .sonioxStreaming:
       return "Real-time streaming with live preview. Ultra-low latency transcription."
     }
