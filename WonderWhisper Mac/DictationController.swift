@@ -197,7 +197,13 @@ actor DictationController {
             state = .transcribing
             let t0 = Date()
             var transcript: String = ""
-            let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
+            let hotkeySettings = TranscriptionSettings(
+                endpoint: transcriberSettings.endpoint,
+                model: transcriberSettings.model,
+                timeout: transcriberSettings.timeout,
+                language: transcriberSettings.language,
+                context: "hotkey"
+            )
 
             os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
             if let groq = transcriber as? GroqStreamingProvider {
@@ -554,7 +560,13 @@ actor DictationController {
             state = .transcribing
             let overallStart = Date()
             let t0 = Date()
-            let reprocSettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "reprocess")
+            let reprocSettings = TranscriptionSettings(
+                endpoint: transcriberSettings.endpoint,
+                model: transcriberSettings.model,
+                timeout: transcriberSettings.timeout,
+                language: transcriberSettings.language,
+                context: "reprocess"
+            )
             let transcript = try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             var output = transcript

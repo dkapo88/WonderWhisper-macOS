@@ -8,7 +8,11 @@ struct SimpleModeSettingsView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var openRouterKeyInput: String = ""
   @State private var groqKeyInput: String = ""
+  @State private var xaiKeyInput: String = ""
   @State private var sonioxKeyInput: String = ""
+  @State private var openRouterTranscriptionModels: [OpenRouterModel] = []
+  @State private var isLoadingOpenRouterTranscriptionModels: Bool = false
+  @State private var openRouterTranscriptionModelError: String?
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
   @State private var showModelBrowser: Bool = false
@@ -22,6 +26,9 @@ struct SimpleModeSettingsView: View {
     guard let key = keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) else { return false }
     return KeychainService.isPlausibleGroqAPIKey(key)
   }
+  private var hasXaiKey: Bool {
+    keychain.getSecret(forKey: AppConfig.xaiAPIKeyAlias) != nil
+  }
   private var hasSonioxKey: Bool {
     keychain.getSecret(forKey: AppConfig.sonioxAPIKeyAlias) != nil
   }
@@ -34,6 +41,7 @@ struct SimpleModeSettingsView: View {
         settingsNotice
         openRouterSection
         groqSection
+        xaiSection
         sonioxSection
         parakeetSection
         audioSection
@@ -45,6 +53,9 @@ struct SimpleModeSettingsView: View {
     }
     .sheet(isPresented: $showModelBrowser) {
       OpenRouterModelBrowserView(vm: vm)
+    }
+    .task {
+      await loadOpenRouterTranscriptionModelsIfNeeded()
     }
   }
 
@@ -73,8 +84,63 @@ struct SimpleModeSettingsView: View {
         Text(vm.simpleVoiceEngine.detail)
           .font(.caption)
           .foregroundColor(.secondary)
+
+        if vm.simpleVoiceEngine == .openRouterTranscription {
+          Divider()
+            .padding(.vertical, 2)
+
+          openRouterVoiceModelSelector
+        }
       }
       .padding(.top, 4)
+    }
+  }
+
+  private var openRouterVoiceModelSelector: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("OpenRouter voice model")
+          .font(.callout.weight(.semibold))
+        Spacer()
+        Button(action: {
+          Task { await refreshOpenRouterTranscriptionModels() }
+        }) {
+          if isLoadingOpenRouterTranscriptionModels {
+            ProgressView()
+              .controlSize(.small)
+          } else {
+            Label("Refresh", systemImage: "arrow.clockwise")
+          }
+        }
+        .buttonStyle(.borderless)
+        .disabled(isLoadingOpenRouterTranscriptionModels)
+      }
+      .frame(maxWidth: 420)
+
+      if !openRouterTranscriptionModels.isEmpty {
+        Picker("OpenRouter voice model", selection: $vm.openRouterTranscriptionModel) {
+          ForEach(openRouterTranscriptionModels) { model in
+            Text(model.displayName).tag(model.id)
+          }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 420)
+      }
+
+      TextField(AppConfig.defaultOpenRouterTranscriptionModel, text: $vm.openRouterTranscriptionModel)
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: 420)
+
+      if let openRouterTranscriptionModelError {
+        Text(openRouterTranscriptionModelError)
+          .font(.caption)
+          .foregroundColor(.red)
+          .textSelection(.enabled)
+      } else {
+        Text("Loaded from OpenRouter's current speech-to-text model list. The field allows manual model IDs.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
     }
   }
 
@@ -204,8 +270,32 @@ struct SimpleModeSettingsView: View {
             .font(.caption)
             .foregroundColor(.secondary)
         }
+
       }
       .padding(.top, 4)
+    }
+  }
+
+  @MainActor
+  private func loadOpenRouterTranscriptionModelsIfNeeded() async {
+    guard openRouterTranscriptionModels.isEmpty else { return }
+    await refreshOpenRouterTranscriptionModels()
+  }
+
+  @MainActor
+  private func refreshOpenRouterTranscriptionModels() async {
+    guard !isLoadingOpenRouterTranscriptionModels else { return }
+    isLoadingOpenRouterTranscriptionModels = true
+    openRouterTranscriptionModelError = nil
+    defer { isLoadingOpenRouterTranscriptionModels = false }
+
+    do {
+      let client = OpenRouterHTTPClient(
+        apiKeyProvider: { keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }
+      )
+      openRouterTranscriptionModels = try await client.fetchTranscriptionModels()
+    } catch {
+      openRouterTranscriptionModelError = "Could not load OpenRouter voice models: \(error.localizedDescription)"
     }
   }
 
@@ -236,6 +326,42 @@ struct SimpleModeSettingsView: View {
           groqKeyInput = ""
         }
         .disabled(groqKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private var xaiSection: some View {
+    GroupBox("xAI API key") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 6) {
+          Text(hasXaiKey ? "Status: Saved" : "Status: Missing")
+            .font(.callout.weight(.semibold))
+            .foregroundColor(hasXaiKey ? .green : .red)
+          if hasXaiKey {
+            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+          }
+        }
+
+        SecureField("Paste xAI API key", text: $xaiKeyInput)
+          .textFieldStyle(.roundedBorder)
+          .frame(maxWidth: 360)
+          .onChange(of: xaiKeyInput) { _, newValue in
+            let trimmed = KeychainService.normalizedSecret(newValue)
+            if trimmed != newValue {
+              xaiKeyInput = trimmed
+            }
+          }
+
+        Button("Save key") {
+          vm.saveXaiApiKey(xaiKeyInput)
+          xaiKeyInput = ""
+        }
+        .disabled(xaiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Text("Required for Grok STT / xAI cloud transcription.")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
       .padding(.top, 4)
     }

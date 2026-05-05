@@ -163,6 +163,9 @@ erDiagram
 |------|-------------|------------------|
 | `parakeet-local` | On-device Parakeet V3 for maximum privacy/latency | `parakeet-local` |
 | `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
+| `openrouter-transcription` | OpenRouter speech-to-text endpoint for cloud voice models | `openai/gpt-4o-mini-transcribe` by default |
+| `xai-stt` | xAI Grok Speech-to-Text over HTTPS multipart upload | `xai-stt` service endpoint |
+| `soniox-streaming` | Soniox V3 real-time streaming with live preview | `soniox-streaming` |
 
 ---
 
@@ -176,6 +179,7 @@ erDiagram
         URL endpoint
         String model
         TimeInterval timeout
+        String language "optional ISO-639-1 or auto"
         String context "optional - request origin label"
     }
     
@@ -189,7 +193,7 @@ erDiagram
     }
 ```
 
-**TranscriptionSettings**: Configuration for speech-to-text providers (Parakeet V3 local capture + Groq Whisper Turbo streaming)
+**TranscriptionSettings**: Configuration for speech-to-text providers (Parakeet V3 local capture, Groq Whisper Turbo, OpenRouter speech-to-text, xAI Grok Speech-to-Text, and Soniox streaming)
 
 **LLMSettings**: Configuration for language model providers (OpenRouter only; legacy Cerebras keychain support remains)
 
@@ -351,7 +355,8 @@ erDiagram
 | `simple.llm.enabled` | Bool | LLM enabled in simple mode |
 | `simple.model.selected` | String | Selected OpenRouter model |
 | `simple.model.custom` | Array<String> | Custom OpenRouter model IDs |
-| `simple.voice.engine` | String | Selected transcription engine (`parakeet-local` or `groq-streaming`) |
+| `simple.voice.engine` | String | Selected transcription engine (`parakeet-local`, `groq-streaming`, `openrouter-transcription`, `xai-stt`, or `soniox-streaming`) |
+| `transcription.openrouter.model` | String | Selected OpenRouter speech-to-text model ID |
 | `simple.dictation.settings` | Data | Dictation prompt settings |
 | `simple.command.settings` | Data | Command prompt settings |
 | `simple.sidebar.selection` | String | Selected sidebar item |
@@ -368,6 +373,8 @@ Secure storage via `KeychainService` for API keys:
 |-----------|---------|
 | `GROQ_API_KEY` | Groq API authentication (Whisper Turbo) |
 | `OPENROUTER_API_KEY` | OpenRouter API authentication |
+| `XAI_API_KEY` | xAI API authentication (Grok Speech-to-Text) |
+| `SONIOX_API_KEY` | Soniox API authentication |
 
 ---
 
@@ -638,7 +645,10 @@ protocol LLMProvider {
 - **TranscriptionProvider**:
   - `GroqTranscriptionProvider` (Groq Whisper API - batch)
   - `GroqStreamingProvider` (Groq chunked streaming)
+  - `OpenRouterTranscriptionProvider` (OpenRouter speech-to-text JSON API)
+  - `XAITranscriptionProvider` (xAI Grok Speech-to-Text REST API)
   - `ParakeetTranscriptionProvider` (local V3 on-device)
+  - `SonioxStreamingProvider` (Soniox V3 real-time streaming)
 
 - **LLMProvider**:
   - `OpenRouterLLMProvider` (OpenRouter multiplexed models)

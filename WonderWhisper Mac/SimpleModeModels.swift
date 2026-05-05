@@ -59,6 +59,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   case parakeetLocal
   case groqStreaming
   case sonioxStreaming
+  case openRouterTranscription
+  case xaiSpeechToText
 
   var id: String { rawValue }
 
@@ -67,6 +69,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     case .parakeetLocal: return "Parakeet V3 (On-device)"
     case .groqStreaming: return "Groq Whisper Turbo (Cloud)"
     case .sonioxStreaming: return "Soniox V3 (Real-time Cloud)"
+    case .openRouterTranscription: return "OpenRouter Voice (Cloud)"
+    case .xaiSpeechToText: return "Grok STT / xAI (Cloud)"
     }
   }
 
@@ -78,6 +82,10 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
       return "Uploads finalized audio to Groq Whisper Large V3 Turbo for reliable cloud transcription."
     case .sonioxStreaming:
       return "Real-time streaming with live preview. Ultra-low latency transcription."
+    case .openRouterTranscription:
+      return "Uploads finalized audio to OpenRouter's speech-to-text endpoint using the selected voice model."
+    case .xaiSpeechToText:
+      return "Uploads finalized audio to xAI's Grok Speech-to-Text API with optional formatting."
     }
   }
 
@@ -86,6 +94,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     case .parakeetLocal: return "parakeet-local"
     case .groqStreaming: return "groq-streaming"
     case .sonioxStreaming: return "soniox-streaming"
+    case .openRouterTranscription: return "openrouter-transcription"
+    case .xaiSpeechToText: return "xai-stt"
     }
   }
 

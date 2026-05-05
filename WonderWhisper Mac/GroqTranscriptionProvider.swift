@@ -61,6 +61,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
                 endpoint: settings.endpoint,
                 model: apiModel,
                 timeout: settings.timeout,
+                language: settings.language,
                 context: settings.context
             ),
             cacheKey: cacheKey
@@ -80,7 +81,9 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         )
         var fields: [String: String] = ["model": settings.model]
         // Optional: tighten decoding by providing language if known (prefer explicit override)
-        if let forced = UserDefaults.standard.string(forKey: "transcription.language"), !forced.isEmpty {
+        if let forced = settings.language?.trimmingCharacters(in: .whitespacesAndNewlines), !forced.isEmpty {
+            fields["language"] = forced
+        } else if let forced = UserDefaults.standard.string(forKey: "transcription.language"), !forced.isEmpty {
             fields["language"] = forced
         } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
             fields["language"] = String(lang)

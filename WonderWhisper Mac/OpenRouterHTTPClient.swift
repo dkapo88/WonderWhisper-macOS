@@ -42,6 +42,37 @@ struct OpenRouterHTTPClient {
         return response.data
     }
 
+    func fetchTranscriptionModels() async throws -> [OpenRouterModel] {
+        guard var components = URLComponents(url: AppConfig.openrouterModels, resolvingAgainstBaseURL: false) else {
+            throw ProviderError.invalidURL
+        }
+        components.queryItems = [URLQueryItem(name: "output_modalities", value: "transcription")]
+        guard let url = components.url else { throw ProviderError.invalidURL }
+
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        req.httpMethod = "GET"
+        if let key = apiKeyProvider(), !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        req.setValue(AppConfig.openrouterTitle, forHTTPHeaderField: "X-Title")
+        req.setValue(AppConfig.openrouterReferer, forHTTPHeaderField: "Referer")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, resp) = try await Self.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else {
+            throw ProviderError.networkError("No HTTP response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw ProviderError.http(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "<no body>"
+            )
+        }
+
+        let response = try JSONDecoder().decode(OpenRouterModelsResponse.self, from: data)
+        return response.data
+    }
+
     struct ChatRequest: Encodable {
         struct Message: Encodable {
             struct ContentBlock: Encodable {
@@ -108,6 +139,38 @@ struct OpenRouterHTTPClient {
         let (data, resp) = try await Self.session.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+        }
+        return data
+    }
+
+    struct TranscriptionRequest: Encodable {
+        struct InputAudio: Encodable {
+            let data: String
+            let format: String
+        }
+
+        let input_audio: InputAudio
+        let model: String
+        let language: String?
+        let temperature: Double?
+    }
+
+    func postTranscription(to url: URL, body: TranscriptionRequest, timeout: TimeInterval) async throws -> Data {
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
+        req.setValue(AppConfig.openrouterTitle, forHTTPHeaderField: "X-Title")
+        req.setValue(AppConfig.openrouterReferer, forHTTPHeaderField: "Referer")
+        req.httpBody = try JSONEncoder().encode(body)
+
+        let (data, resp) = try await Self.session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw ProviderError.http(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "<no body>"
+            )
         }
         return data
     }

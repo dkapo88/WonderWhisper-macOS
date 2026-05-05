@@ -142,6 +142,23 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
+    @Published var openRouterTranscriptionModel: String = DictationViewModel.loadOpenRouterTranscriptionModel() {
+        didSet {
+            let trimmed = openRouterTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            let final = trimmed.isEmpty ? AppConfig.defaultOpenRouterTranscriptionModel : trimmed
+            if final != openRouterTranscriptionModel {
+                openRouterTranscriptionModel = final
+                return
+            }
+            UserDefaults.standard.set(final, forKey: "transcription.openrouter.model")
+            if simpleVoiceEngine == .openRouterTranscription {
+                transcriptionModel = final
+                applySimplePrompts()
+            }
+            transcriptionProviderCache.removeValue(forKey: oldValue)
+            transcriptionProviderCache.removeValue(forKey: final)
+        }
+    }
 
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
@@ -304,7 +321,10 @@ final class DictationViewModel: ObservableObject {
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
 
-        let activeTranscriptionModel = simpleVoiceEngine.transcriptionModel
+        let activeTranscriptionModel = Self.voiceModel(
+            for: simpleVoiceEngine,
+            openRouterModel: openRouterTranscriptionModel
+        )
         let activeLLMEnabled = simpleLLMEnabled
         let activeScreenContextEnabled = simpleShouldEnableScreenContext()
         let activeClipboardContextEnabled = simpleShouldEnableClipboard()
@@ -315,13 +335,42 @@ final class DictationViewModel: ObservableObject {
         let transcriberSettings: TranscriptionSettings
         if activeTranscriptionModel.lowercased().contains("parakeet") {
             transcriber = ParakeetTranscriptionProvider()
-            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: activeTranscriptionModel)
+            transcriberSettings = TranscriptionSettings(
+                endpoint: URL(string: "https://localhost")!,
+                model: activeTranscriptionModel,
+                language: transcriptionLanguage
+            )
+        } else if Self.isOpenRouterTranscriptionModel(activeTranscriptionModel) {
+            transcriber = OpenRouterTranscriptionProvider(
+                client: OpenRouterHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                })
+            )
+            transcriberSettings = TranscriptionSettings(
+                endpoint: AppConfig.openrouterAudioTranscriptions,
+                model: activeTranscriptionModel,
+                timeout: transcriptionTimeout,
+                language: transcriptionLanguage
+            )
+        } else if activeTranscriptionModel == AppConfig.defaultXAITranscriptionModel {
+            transcriber = XAITranscriptionProvider(
+                client: XAIHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias)
+                })
+            )
+            transcriberSettings = TranscriptionSettings(
+                endpoint: AppConfig.xaiSpeechToText,
+                model: activeTranscriptionModel,
+                timeout: transcriptionTimeout,
+                language: transcriptionLanguage
+            )
         } else {
             transcriber = GroqTranscriptionProvider(client: http)
             transcriberSettings = TranscriptionSettings(
                 endpoint: AppConfig.groqAudioTranscriptions,
                 model: activeTranscriptionModel,
-                timeout: transcriptionTimeout
+                timeout: transcriptionTimeout,
+                language: transcriptionLanguage
             )
         }
 
@@ -713,6 +762,17 @@ final class DictationViewModel: ObservableObject {
         }
         // Clear the cached provider so it gets recreated with the new key
         transcriptionProviderCache.removeValue(forKey: "soniox-streaming")
+    }
+
+    func saveXaiApiKey(_ value: String) {
+        let kc = KeychainService()
+        do {
+            try kc.setSecret(value, forKey: AppConfig.xaiAPIKeyAlias)
+            settingsNotice = "xAI API key saved."
+            transcriptionProviderCache.removeValue(forKey: AppConfig.defaultXAITranscriptionModel)
+        } catch {
+            settingsNotice = "Could not save xAI API key: \(error.localizedDescription)"
+        }
     }
 
     private func updateHotkeys() {
@@ -1336,7 +1396,10 @@ final class DictationViewModel: ObservableObject {
     private func simpleVoiceEngineDidChange(oldValue: SimpleVoiceEngine) {
         if simpleVoiceEngine == oldValue { return }
         UserDefaults.standard.set(simpleVoiceEngine.rawValue, forKey: SimpleDefaultsKey.voiceEngine)
-        transcriptionModel = simpleVoiceEngine.transcriptionModel
+        transcriptionModel = Self.voiceModel(
+            for: simpleVoiceEngine,
+            openRouterModel: openRouterTranscriptionModel
+        )
         applySimplePrompts()
     }
 
@@ -1445,7 +1508,10 @@ final class DictationViewModel: ObservableObject {
     private func buildSimplePromptConfigurations() -> [PromptConfiguration] {
         let dictation = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
         let command = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
-        let voiceModel = simpleVoiceEngine.transcriptionModel
+        let voiceModel = Self.voiceModel(
+            for: simpleVoiceEngine,
+            openRouterModel: openRouterTranscriptionModel
+        )
         return [
             SimplePromptComposer.configuration(for: .dictation, settings: dictation, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel),
             SimplePromptComposer.configuration(for: .command, settings: command, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel)
@@ -1489,7 +1555,10 @@ final class DictationViewModel: ObservableObject {
         simpleCommandSettings = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
         llmEnabled = simpleLLMEnabled
         llmModel = simpleSelectedModel
-        transcriptionModel = simpleVoiceEngine.transcriptionModel
+        transcriptionModel = Self.voiceModel(
+            for: simpleVoiceEngine,
+            openRouterModel: openRouterTranscriptionModel
+        )
         screenContextEnabled = simpleShouldEnableScreenContext()
         clipboardContextEnabled = simpleShouldEnableClipboard()
         screenContextCaptureMode = .text
@@ -1681,7 +1750,12 @@ final class DictationViewModel: ObservableObject {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         let voiceModel = resolvedVoiceModel(for: prompt)
         let voiceLanguage = resolvedVoiceLanguage(for: prompt)
-        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+        var tSettings = TranscriptionSettings(
+            endpoint: AppConfig.groqAudioTranscriptions,
+            model: voiceModel,
+            timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+            language: voiceLanguage
+        )
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
         let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt)
@@ -1690,12 +1764,40 @@ final class DictationViewModel: ObservableObject {
         let provider = getCachedTranscriptionProvider(for: voiceModel)
 
         if voiceModel.lowercased().contains("parakeet") {
-            tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: voiceModel)
+            tSettings = TranscriptionSettings(
+                endpoint: URL(string: "https://localhost")!,
+                model: voiceModel,
+                language: voiceLanguage
+            )
         } else if voiceModel == "groq-streaming" {
             let actualModel = AppConfig.defaultTranscriptionModel
-            tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+            tSettings = TranscriptionSettings(
+                endpoint: AppConfig.groqAudioTranscriptions,
+                model: actualModel,
+                timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+                language: voiceLanguage
+            )
+        } else if Self.isOpenRouterTranscriptionModel(voiceModel) {
+            tSettings = TranscriptionSettings(
+                endpoint: AppConfig.openrouterAudioTranscriptions,
+                model: voiceModel,
+                timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+                language: voiceLanguage
+            )
+        } else if voiceModel == AppConfig.defaultXAITranscriptionModel {
+            tSettings = TranscriptionSettings(
+                endpoint: AppConfig.xaiSpeechToText,
+                model: voiceModel,
+                timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+                language: voiceLanguage
+            )
         } else {
-            tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: voiceModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
+            tSettings = TranscriptionSettings(
+                endpoint: AppConfig.groqAudioTranscriptions,
+                model: voiceModel,
+                timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+                language: voiceLanguage
+            )
         }
 
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
@@ -1792,6 +1894,18 @@ final class DictationViewModel: ObservableObject {
                 }
             }
             provider = sonioxProvider
+        } else if Self.isOpenRouterTranscriptionModel(model) {
+            provider = OpenRouterTranscriptionProvider(
+                client: OpenRouterHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                })
+            )
+        } else if model == AppConfig.defaultXAITranscriptionModel {
+            provider = XAITranscriptionProvider(
+                client: XAIHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias)
+                })
+            )
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
@@ -1834,6 +1948,7 @@ private enum SimpleDefaultsKey {
     static let customModels = "simple.model.custom"
     static let llmEnabled = "simple.llm.enabled"
     static let voiceEngine = "simple.voice.engine"
+    static let openRouterTranscriptionModel = "transcription.openrouter.model"
     static let sidebar = "simple.sidebar.selection"
 }
 
@@ -1876,6 +1991,27 @@ private extension DictationViewModel {
     static func loadSimpleVoiceEngine() -> SimpleVoiceEngine {
         let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.voiceEngine) ?? SimpleVoiceEngine.parakeetLocal.rawValue
         return SimpleVoiceEngine(rawValue: raw) ?? .parakeetLocal
+    }
+
+    static func loadOpenRouterTranscriptionModel() -> String {
+        let stored = UserDefaults.standard.string(forKey: SimpleDefaultsKey.openRouterTranscriptionModel)
+        let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? AppConfig.defaultOpenRouterTranscriptionModel : trimmed
+    }
+
+    static func voiceModel(for engine: SimpleVoiceEngine, openRouterModel: String) -> String {
+        if engine == .openRouterTranscription {
+            let trimmed = openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? AppConfig.defaultOpenRouterTranscriptionModel : trimmed
+        }
+        return engine.transcriptionModel
+    }
+
+    static func isOpenRouterTranscriptionModel(_ model: String) -> Bool {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed == SimpleVoiceEngine.openRouterTranscription.transcriptionModel
+            || trimmed == AppConfig.defaultOpenRouterTranscriptionModel
+            || trimmed.contains("/")
     }
 
     static func loadSimpleSidebarSelection() -> SimpleSidebarItem {
@@ -2032,9 +2168,21 @@ private extension DictationViewModel {
 
     func resolvedVoiceModel(for prompt: PromptConfiguration?) -> String {
         if let override = prompt?.voiceModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            if override == SimpleVoiceEngine.openRouterTranscription.transcriptionModel {
+                return Self.voiceModel(
+                    for: .openRouterTranscription,
+                    openRouterModel: openRouterTranscriptionModel
+                )
+            }
             return override
         }
         let fallback = transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fallback == SimpleVoiceEngine.openRouterTranscription.transcriptionModel {
+            return Self.voiceModel(
+                for: .openRouterTranscription,
+                openRouterModel: openRouterTranscriptionModel
+            )
+        }
         return fallback.isEmpty ? AppConfig.defaultTranscriptionModel : fallback
     }
 

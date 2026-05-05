@@ -21,11 +21,24 @@ struct AppConfig {
         return url
     }()
     static let openrouterChatCompletions = openrouterBase.appendingPathComponent("chat/completions")
+    static let openrouterAudioTranscriptions = openrouterBase.appendingPathComponent("audio/transcriptions")
     static let openrouterModels = openrouterBase.appendingPathComponent("models")
+
+    // xAI voice endpoints
+    private static let xaiBaseString = "https://api.x.ai/v1"
+    static let xaiBase: URL = {
+        guard let url = URL(string: xaiBaseString) else {
+            fatalError("Invalid xAI base URL")
+        }
+        return url
+    }()
+    static let xaiSpeechToText = xaiBase.appendingPathComponent("stt")
 
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
+    static let defaultOpenRouterTranscriptionModel = "openai/gpt-4o-mini-transcribe"
+    static let defaultXAITranscriptionModel = "xai-stt"
     static let defaultLLMModel = "moonshotai/kimi-k2-instruct"          // Kimi K2 Instruct (per Android config)
 
     // Legacy prompt previously used for OCR screen content organization
@@ -35,6 +48,8 @@ struct AppConfig {
     static let groqAPIKeyAlias = "GROQ_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
+    // Keychain alias for the xAI API key
+    static let xaiAPIKeyAlias = "XAI_API_KEY"
     // Keychain alias for the Soniox API key
     static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
     // OpenRouter header defaults
