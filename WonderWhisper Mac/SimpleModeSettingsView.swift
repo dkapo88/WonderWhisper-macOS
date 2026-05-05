@@ -389,7 +389,7 @@ struct SimpleModeSettingsView: View {
         }
         .disabled(sonioxKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-        Text("Required for Soniox V3 real-time streaming. Get your API key at soniox.com")
+        Text("Required for Soniox V4 real-time streaming. Get your API key at soniox.com")
           .font(.caption)
           .foregroundColor(.secondary)
       }
