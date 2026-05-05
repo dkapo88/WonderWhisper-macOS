@@ -56,22 +56,21 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             if let mgr = self.asrManager {
                 self.log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
                 AppLog.dictation.log("[Parakeet] idle unload")
-                mgr.cleanup()
+                await mgr.cleanup()
                 self.asrManager = nil
             }
         }
     }
 
     private func ensureModelsLoaded(version: AsrModelVersion) async throws {
-        if let mgr = asrManager, loadedVersion == version {
+        if asrManager != nil, loadedVersion == version {
             // Already loaded with the requested version
-            _ = mgr // silence
             return
         }
         if let t = loadTask {
             // If a load is in-flight, await it then re-check
             try await t.value
-            if let mgr = asrManager, loadedVersion == version { return }
+            if asrManager != nil, loadedVersion == version { return }
         }
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -99,28 +98,15 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
             AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
         }
-        // Use selected model version (v2 or v3)
-        var models = try await AsrModels.downloadAndLoad(version: version)
-
-        #if canImport(FluidAudio)
-        // Detect legacy preprocessor outputs and force a re-download once
-        let outputKeys = Set(models.preprocessor.modelDescription.outputDescriptionsByName.keys)
-        if !outputKeys.contains("length"), outputKeys.contains("melspectrogram_length") {
-            log.notice("[Parakeet] Detected legacy Parakeet models (missing 'length'); forcing re-download")
-            AppLog.dictation.log("[Parakeet] Legacy models detected; forcing re-download")
-            models = try await AsrModels.downloadAndLoad()
-        }
-        #endif
+        // Use selected model version (v2 or v3). FluidAudio 0.14.x defaults to the
+        // stable int8 encoder; keep that for reliability over the newer int4 option.
+        let models = try await AsrModels.downloadAndLoad(version: version)
         let mgr = AsrManager(config: .default)
-        try await mgr.initialize(models: models)
+        try await mgr.loadModels(models)
         self.loadedVersion = version
-        #if compiler(>=5.9)
-        // Best-effort signal
-        if let available = Mirror(reflecting: mgr).descendant("isAvailable") as? Bool {
-            log.notice("[Parakeet] manager available=\(available, privacy: .public)")
-            AppLog.dictation.log("[Parakeet] manager available=\(available)")
-        }
-        #endif
+        let available = await mgr.isAvailable
+        log.notice("[Parakeet] manager available=\(available, privacy: .public)")
+        AppLog.dictation.log("[Parakeet] manager available=\(available)")
         asrManager = mgr
         scheduleIdleUnload()
     }
@@ -139,7 +125,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Optional smart preprocessing (shared with Groq path)
         var cleanupURLs: [URL] = []
         var inputURL = fileURL
-        var preprocessingApplied = false
         // For Parakeet, external file-based preprocessing can compete with CoreAudio file finalization.
         // Keep it disabled by default; allow opt-in via UserDefaults key "parakeet.externalPreprocess".
         let allowExternalPreprocess = (UserDefaults.standard.object(forKey: "parakeet.externalPreprocess") as? Bool) ?? false
@@ -148,7 +133,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             let processed = AudioPreprocessor.processIfEnabled(fileURL)
             if processed != fileURL {
                 inputURL = processed
-                preprocessingApplied = true
                 cleanupURLs.append(processed)
             }
             AppLog.dictation.log("[Parakeet] External preprocess end -> \(inputURL.lastPathComponent)")
@@ -159,80 +143,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 try? FileManager.default.removeItem(at: url)
             }
         }
-        var samples: [Float] = []
-        AppLog.dictation.log("[Parakeet] Decode begin for \(inputURL.lastPathComponent)")
-        if let decoded = try? Self.decodeFastPCM16(url: inputURL), !decoded.isEmpty {
-            AppLog.dictation.log("[Parakeet] Decode (FastPCM16): samples=\(decoded.count)")
-            samples = decoded
-        } else {
-            do {
-                AppLog.dictation.log("[Parakeet] Decode (AVAudioFile) begin")
-                samples = try Self.decodeAudioToFloatMono16k(url: inputURL)
-                AppLog.dictation.log("[Parakeet] Decode (AVAudioFile) end: samples=\(samples.count)")
-            } catch {
-                let ns = error as NSError
-                AppLog.dictation.error("[Parakeet] AVAudioFile decode failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
-                throw error
-            }
-        }
-        // Front-end conditioning (configurable via UserDefaults)
-        let defaults = UserDefaults.standard
-        // If app-level preprocessing already applied, skip internal steps to avoid double-processing
-        if !preprocessingApplied {
-            let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
-            if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
-            let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
-            if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
-            let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
-            samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
-        }
-        // Optional VAD pre-segmentation using FluidAudio Silero VAD (v0.4+)
-        do {
-            if (UserDefaults.standard.object(forKey: "parakeet.vad.enabled") as? Bool) ?? true {
-                let audioDurationSeconds = Double(samples.count) / 16_000.0
-                // Conditional VAD: only apply to audio longer than 20 seconds for long-form dictation
-                if audioDurationSeconds > 20.0 {
-                    AppLog.dictation.log("[Parakeet] VAD begin (audio duration: \(String(format: "%.1f", audioDurationSeconds))s)")
-                    if let trimmed = try await applyVADIfAvailable(samples), trimmed.count >= 16_000 {
-                        samples = trimmed
-                    }
-                    AppLog.dictation.log("[Parakeet] VAD end")
-                } else {
-                    AppLog.dictation.log("[Parakeet] VAD skipped for short audio (\(String(format: "%.1f", audioDurationSeconds))s)")
-                }
-            }
-        } catch {
-            AppLog.dictation.error("[Parakeet] VAD failed: \(error.localizedDescription)")
-            // Non-fatal: proceed without VAD
-        }
-        let stats = Self.stats(samples: samples)
-        log.notice("[Parakeet] transcribe samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
-        AppLog.dictation.log("[Parakeet] samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")
-        if samples.count < 16_000 {
-            let err = NSError(domain: "Parakeet", code: -1001, userInfo: [NSLocalizedDescriptionKey: "Audio too short for ASR (need >= 1s)"])
-            log.notice("[Parakeet] rejecting: \(err.localizedDescription, privacy: .public)")
-            AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
-            throw err
-        }
-        if stats.meanAbs < 0.001 && stats.peak < 0.01 {
-            let err = NSError(domain: "Parakeet", code: -1002, userInfo: [NSLocalizedDescriptionKey: "Audio appears near-silent; check microphone and input gain"])
-            log.notice("[Parakeet] rejecting: \(err.localizedDescription, privacy: .public)")
-            AppLog.dictation.error("[Parakeet] \(err.localizedDescription)")
-            throw err
-        }
-        // Match the stable part of VoiceInk's FluidAudio pattern that applies to
-        // this pinned FluidAudio API: pad the end of the utterance before ASR.
-        var speechAudio = samples
-        let trailingSilenceSamples = 16_000
-        let maxSingleChunkSamples = 240_000
-        if speechAudio.count + trailingSilenceSamples <= maxSingleChunkSamples {
-            speechAudio += [Float](repeating: 0, count: trailingSilenceSamples)
-        }
-
-        AppLog.dictation.log("[Parakeet] ASR begin")
+        AppLog.dictation.log("[Parakeet] ASR begin file=\(inputURL.lastPathComponent)")
         let result: ASRResult
         do {
-            result = try await mgr.transcribe(speechAudio)
+            let decoderLayers = await mgr.decoderLayerCount
+            var decoderState = TdtDecoderState.make(decoderLayers: decoderLayers)
+            result = try await mgr.transcribe(
+                inputURL,
+                decoderState: &decoderState,
+                language: Self.fluidLanguage(for: settings.language)
+            )
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -247,6 +167,17 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let text = result.text
         scheduleIdleUnload()
         return text
+    }
+
+    private static func fluidLanguage(for code: String?) -> Language? {
+        guard let code else { return nil }
+        let normalized = code
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard !normalized.isEmpty, normalized != "auto" else { return nil }
+        let primary = normalized.split(separator: "-").first.map(String.init) ?? normalized
+        return Language(rawValue: primary)
     }
 
     // Determine preferred ASR model version from settings or user defaults
@@ -586,7 +517,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         AppLog.dictation.log("[Parakeet] Raw mode: transcribing (no source hint)")
         let result: ASRResult
         do {
-            result = try await mgr.transcribe(finalSamples)
+            let decoderLayers = await mgr.decoderLayerCount
+            var decoderState = TdtDecoderState.make(decoderLayers: decoderLayers)
+            result = try await mgr.transcribe(finalSamples, decoderState: &decoderState)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] Raw mode transcribe error=\(ns.localizedDescription, privacy: .public)")
