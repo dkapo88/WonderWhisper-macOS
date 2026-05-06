@@ -1,7 +1,7 @@
 import Foundation
 
-struct HermesChatMessage: Identifiable, Equatable {
-  enum Role: String, Equatable {
+struct HermesChatMessage: Identifiable, Codable, Equatable {
+  enum Role: String, Codable, Equatable {
     case user
     case assistant
     case error

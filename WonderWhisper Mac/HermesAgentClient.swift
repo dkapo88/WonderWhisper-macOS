@@ -2,10 +2,18 @@ import Foundation
 import Network
 
 struct HermesAgentSettings: Equatable {
+  static let minimumTimeout: TimeInterval = 15
+  static let maximumTimeout: TimeInterval = 1_800
+  static let defaultTimeout: TimeInterval = 180
+
   var baseURLString: String
   var model: String
   var conversationName: String
   var timeout: TimeInterval
+
+  static func clampedTimeout(_ value: TimeInterval) -> TimeInterval {
+    max(minimumTimeout, min(maximumTimeout, value))
+  }
 
   var normalizedBaseURLString: String {
     let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -20,6 +28,10 @@ struct HermesAgentSettings: Equatable {
   var normalizedConversationName: String {
     let trimmed = conversationName.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? AppConfig.defaultHermesConversationName : trimmed
+  }
+
+  var normalizedTimeout: TimeInterval {
+    Self.clampedTimeout(timeout)
   }
 }
 
@@ -113,7 +125,7 @@ final class HermesAgentAPIClient {
 
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
-    request.timeoutInterval = settings.timeout
+    request.timeoutInterval = settings.normalizedTimeout
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     applyAuthorization(to: &request)
     request.httpBody = try Self.requestBodyData(
@@ -145,7 +157,7 @@ final class HermesAgentAPIClient {
     let url = try healthEndpoint(settings: settings)
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
-    request.timeoutInterval = min(settings.timeout, 10)
+    request.timeoutInterval = min(settings.normalizedTimeout, 10)
     applyAuthorization(to: &request)
 
     let response = try await perform(request)
@@ -153,7 +165,7 @@ final class HermesAgentAPIClient {
 
     var authProbe = URLRequest(url: try v1Endpoint(path: "models", settings: settings))
     authProbe.httpMethod = "GET"
-    authProbe.timeoutInterval = min(settings.timeout, 10)
+    authProbe.timeoutInterval = min(settings.normalizedTimeout, 10)
     applyAuthorization(to: &authProbe)
 
     let probeResponse = try await perform(authProbe)

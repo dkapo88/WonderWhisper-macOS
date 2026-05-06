@@ -127,7 +127,7 @@ erDiagram
 
 ---
 
-### 3. Hermes Current-Session Chat System
+### 3. Hermes Persistent Chat System
 
 ```mermaid
 erDiagram
@@ -140,13 +140,13 @@ erDiagram
     }
 ```
 
-**HermesChatMessage**: In-memory messages shown on the Hermes sidebar Chat section for the current app session. Messages are appended from the dedicated Hermes voice loop:
+**HermesChatMessage**: Messages shown on the Hermes sidebar Chat section. Messages are appended from the dedicated Hermes voice loop:
 - User messages show the clean spoken transcript, not the enriched payload sent to the API.
 - Assistant messages show the Hermes response with Markdown rendering.
 - Error messages preserve failed transcription or API turn feedback.
 - Context labels indicate which optional payloads were sent with the user turn.
 
-**Persistence**: Hermes chat messages are not persisted across app launches. Completed Hermes turns still write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
+**Persistence**: `HermesChatHistoryStore` persists the latest Hermes chat messages in `~/Library/Application Support/WonderWhisper/HermesChat/messages.json`. The default retention limit is 50 messages, controlled by `hermes.chat.maxMessages`. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
 
 ---
 
@@ -281,12 +281,15 @@ erDiagram
     DictationViewModel ||--|| ConversationHistoryStore : "uses"
     DictationViewModel ||--|{ FavoriteLLMModel : "tracks"
     DictationViewModel ||--|| HermesAgentSettings : "uses when enabled"
-    DictationViewModel ||--o{ HermesChatMessage : "tracks current Hermes chat"
+    DictationViewModel ||--|| HermesChatHistoryStore : "loads and saves"
+    DictationViewModel ||--o{ HermesChatMessage : "tracks Hermes chat"
     
     HistoryStore ||--|{ HistoryEntry : "stores"
     
     ConversationHistoryStore ||--|{ PromptConversationMessage : "stores"
     ConversationHistoryStore ||--|{ ConversationHistoryMetadata : "tracks"
+
+    HermesChatHistoryStore ||--o{ HermesChatMessage : "persists"
     
     PromptConfiguration ||--o| Shortcut : "has shortcut"
     PromptConfiguration ||--o| Selection : "has selection"
@@ -313,6 +316,11 @@ erDiagram
         Int maxEntries
         Bool hasMoreEntries
         Bool isLoadingMore
+    }
+
+    HermesChatHistoryStore {
+        Int maxMessages
+        URL fileURL
     }
     
     FavoriteLLMModel {
@@ -347,10 +355,12 @@ erDiagram
 │   └── images/            # PNG/JPG screen captures
 │       ├── <uuid>.png
 │       └── ...
-└── ConversationHistory/
-    └── conversations/
-        ├── <promptID>_messages.json    # PromptConversationMessage[]
-        └── <promptID>_metadata.json    # ConversationHistoryMetadata
+├── ConversationHistory/
+│   └── conversations/
+│       ├── <promptID>_messages.json    # PromptConversationMessage[]
+│       └── <promptID>_metadata.json    # ConversationHistoryMetadata
+└── HermesChat/
+    └── messages.json      # Last retained HermesChatMessage[] rows
 ```
 
 ### UserDefaults Keys
@@ -401,11 +411,12 @@ erDiagram
 | `hermes.api.baseURL` | String | Hermes API server URL; root and `/v1` URLs are both accepted |
 | `hermes.conversation.name` | String | Named Hermes conversation for continuous voice sessions |
 | `hermes.model` | String | Cosmetic Hermes API model field |
-| `hermes.timeout` | Double | Hermes request timeout (seconds) |
+| `hermes.timeout` | Double | Hermes request timeout (seconds), clamped from 15 seconds to 1,800 seconds |
 | `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
 | `hermes.context.screenText.enabled` | Bool | Include Hermes OCR/screen text context |
 | `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
 | `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
+| `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 
 ### Keychain Storage
 
@@ -497,6 +508,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.4 (May 6, 2026)**: Added persistent Hermes chat history storage capped to the latest 50 messages by default.
+- **v1.3 (May 6, 2026)**: Raised the Hermes request timeout maximum from 600 to 1,800 seconds.
 - **v1.2 (May 6, 2026)**: Added `HermesChatMessage` as the current-session Hermes chat UI model and documented Hermes as a first-class sidebar item.
 - **v1.1 (Nov 14, 2025)**: Removed non-existent `ScreenContextPreprocessingMode`, added vocabulary & microphone to `SimpleSidebarItem`, clarified legacy keychain aliases, updated LLM provider documentation to reflect OpenRouter-only architecture.
 
@@ -745,6 +758,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.2  
-**Last Updated**: November 20, 2025  
+**Document Version**: 1.4
+**Last Updated**: May 6, 2026
 **Maintainer**: WonderWhisper Mac Development Team

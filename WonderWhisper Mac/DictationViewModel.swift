@@ -212,10 +212,16 @@ final class DictationViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(hermesModel, forKey: "hermes.model") }
     }
     @Published var hermesTimeoutSeconds: Double = {
-        let value = UserDefaults.standard.object(forKey: "hermes.timeout") as? Double ?? 180
-        return max(15, min(600, value))
+        let value = UserDefaults.standard.object(forKey: "hermes.timeout") as? Double
+            ?? HermesAgentSettings.defaultTimeout
+        return HermesAgentSettings.clampedTimeout(value)
     }() {
-        didSet { UserDefaults.standard.set(max(15, min(600, hermesTimeoutSeconds)), forKey: "hermes.timeout") }
+        didSet {
+            UserDefaults.standard.set(
+                HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds),
+                forKey: "hermes.timeout"
+            )
+        }
     }
     @Published var hermesSelection: HotkeyManager.Selection? = DictationViewModel.loadHermesSelection() {
         didSet {
@@ -330,6 +336,7 @@ final class DictationViewModel: ObservableObject {
     private var idleSkipCounter: Int = 0
     private var timer: Timer?
     let history = HistoryStore()
+    private let hermesChatHistoryStore = HermesChatHistoryStore()
     private let promptHotkeyManager = PromptHotkeyManager()
     private var controller: DictationController!
     private var isApplyingPromptFromSelection = false
@@ -504,6 +511,7 @@ final class DictationViewModel: ObservableObject {
         refreshPromptHotkeys()
 
         configureSimpleModeState()
+        hermesChatMessages = hermesChatHistoryStore.loadMessages()
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -1732,6 +1740,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     func clearHermesChat() {
+        hermesChatHistoryStore.clear()
         hermesChatMessages.removeAll()
     }
 
@@ -1787,7 +1796,7 @@ final class DictationViewModel: ObservableObject {
             baseURLString: hermesBaseURLString,
             model: hermesModel,
             conversationName: hermesConversationName,
-            timeout: max(15, min(600, hermesTimeoutSeconds))
+            timeout: HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds)
         )
     }
 
@@ -1988,11 +1997,12 @@ final class DictationViewModel: ObservableObject {
                                          contextLabels: [String] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        hermesChatMessages.append(HermesChatMessage(
+        let message = HermesChatMessage(
             role: role,
             text: trimmed,
             contextLabels: contextLabels
-        ))
+        )
+        hermesChatMessages = hermesChatHistoryStore.save(hermesChatMessages + [message])
     }
 
     private func hermesContextLabels(screenContext: String?,

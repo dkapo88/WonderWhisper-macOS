@@ -109,7 +109,7 @@ struct HermesAgentView: View {
         .font(.system(size: 34, weight: .regular))
         .foregroundColor(.secondary)
 
-      Text("No Hermes messages in this session.")
+      Text("No Hermes messages yet.")
         .font(.callout.weight(.medium))
         .foregroundColor(.secondary)
     }
@@ -291,8 +291,12 @@ struct HermesAgentView: View {
             .frame(maxWidth: 170)
         }
 
-        Stepper(value: $vm.hermesTimeoutSeconds, in: 15...600, step: 15) {
-          Text("Timeout: \(Int(vm.hermesTimeoutSeconds))s")
+        Stepper(
+          value: $vm.hermesTimeoutSeconds,
+          in: HermesAgentSettings.minimumTimeout...HermesAgentSettings.maximumTimeout,
+          step: 15
+        ) {
+          Text("Timeout: \(timeoutDisplay(vm.hermesTimeoutSeconds))")
             .font(.callout)
         }
         .frame(maxWidth: 240, alignment: .leading)
@@ -494,6 +498,22 @@ struct HermesAgentView: View {
         isTestingHermes = false
       }
     }
+  }
+
+  private func timeoutDisplay(_ seconds: Double) -> String {
+    let value = Int(HermesAgentSettings.clampedTimeout(seconds))
+    let minutes = value / 60
+    let remainingSeconds = value % 60
+
+    if remainingSeconds == 0, minutes > 0 {
+      return minutes == 1 ? "1 min" : "\(minutes) min"
+    }
+
+    if minutes > 0 {
+      return "\(minutes)m \(remainingSeconds)s"
+    }
+
+    return "\(remainingSeconds)s"
   }
 
   private static let timeFormatter: DateFormatter = {

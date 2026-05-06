@@ -46,6 +46,14 @@ struct HermesAgentClientTests {
     #expect(settings.normalizedConversationName == AppConfig.defaultHermesConversationName)
   }
 
+  @Test func hermesTimeoutLimitsAllowThirtyMinutes() {
+    #expect(HermesAgentSettings.minimumTimeout == 15)
+    #expect(HermesAgentSettings.maximumTimeout == 1_800)
+    #expect(HermesAgentSettings.defaultTimeout == 180)
+    #expect(HermesAgentSettings.clampedTimeout(5) == 15)
+    #expect(HermesAgentSettings.clampedTimeout(2_400) == 1_800)
+  }
+
   @Test func hermesEndpointsAcceptRootOrV1BaseURLs() throws {
     #expect(
       try HermesAgentAPIClient.endpointURL(

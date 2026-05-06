@@ -48,6 +48,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-06: Added persistent Hermes chat history capped to the latest 50 messages by default.
+- 2026-05-06: Raised the Hermes request timeout cap to 30 minutes.
 - 2026-05-06: Added a Copy button to Hermes response windows.
 - 2026-05-06: Added a Hermes Chat/Settings split with current-session chat history in the Hermes tab.
 - 2026-05-06: Made Hermes response windows activate independently above other apps.
