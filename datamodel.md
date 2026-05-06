@@ -127,7 +127,30 @@ erDiagram
 
 ---
 
-### 3. Simple Mode System
+### 3. Hermes Current-Session Chat System
+
+```mermaid
+erDiagram
+    HermesChatMessage {
+        UUID id PK
+        String role "user, assistant, or error"
+        String text
+        Date createdAt
+        String[] contextLabels "screen text, screenshot, clipboard"
+    }
+```
+
+**HermesChatMessage**: In-memory messages shown on the Hermes sidebar Chat section for the current app session. Messages are appended from the dedicated Hermes voice loop:
+- User messages show the clean spoken transcript, not the enriched payload sent to the API.
+- Assistant messages show the Hermes response with Markdown rendering.
+- Error messages preserve failed transcription or API turn feedback.
+- Context labels indicate which optional payloads were sent with the user turn.
+
+**Persistence**: Hermes chat messages are not persisted across app launches. Completed Hermes turns still write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
+
+---
+
+### 4. Simple Mode System
 
 ```mermaid
 erDiagram
@@ -237,7 +260,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "dictation, command, vocabulary, history, microphone, settings"
+        String value "dictation, command, hermes, vocabulary, history, microphone, settings"
     }
     
     SimpleVoiceEngine {
@@ -258,6 +281,7 @@ erDiagram
     DictationViewModel ||--|| ConversationHistoryStore : "uses"
     DictationViewModel ||--|{ FavoriteLLMModel : "tracks"
     DictationViewModel ||--|| HermesAgentSettings : "uses when enabled"
+    DictationViewModel ||--o{ HermesChatMessage : "tracks current Hermes chat"
     
     HistoryStore ||--|{ HistoryEntry : "stores"
     
@@ -282,6 +306,7 @@ erDiagram
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
         Bool hermesAgentEnabled
+        HermesChatMessage[] hermesChatMessages
     }
     
     HistoryStore {
@@ -421,6 +446,7 @@ erDiagram
         Bool hermesScreenContextEnabled
         Bool hermesScreenshotEnabled
         Bool hermesClipboardContextEnabled
+        HermesChatMessage[] hermesChatMessages
         HermesResponseWindowState hermesResponseWindowState "optional"
     }
 ```
@@ -471,6 +497,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.2 (May 6, 2026)**: Added `HermesChatMessage` as the current-session Hermes chat UI model and documented Hermes as a first-class sidebar item.
 - **v1.1 (Nov 14, 2025)**: Removed non-existent `ScreenContextPreprocessingMode`, added vocabulary & microphone to `SimpleSidebarItem`, clarified legacy keychain aliases, updated LLM provider documentation to reflect OpenRouter-only architecture.
 
 ### Simple Mode Defaults

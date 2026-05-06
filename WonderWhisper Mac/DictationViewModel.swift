@@ -260,6 +260,7 @@ final class DictationViewModel: ObservableObject {
     @Published var hermesConnectionSucceeded: Bool?
     @Published var hermesResponseWindowState: HermesResponseWindowState?
     @Published var hermesIsSending: Bool = false
+    @Published var hermesChatMessages: [HermesChatMessage] = []
 
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
@@ -1730,6 +1731,10 @@ final class DictationViewModel: ObservableObject {
         hermesResponseWindowState = nil
     }
 
+    func clearHermesChat() {
+        hermesChatMessages.removeAll()
+    }
+
     func saveHermesApiKey(_ value: String) {
         let kc = KeychainService()
         do {
@@ -1878,6 +1883,10 @@ final class DictationViewModel: ObservableObject {
             await MainActor.run {
                 self.activeHermesPromptID = nil
                 self.clearHermesContextCapture(cancel: true)
+                self.appendHermesChatMessage(
+                    role: .error,
+                    text: error.localizedDescription
+                )
                 self.hermesResponseWindowState = HermesResponseWindowState(
                     title: "Hermes Error",
                     text: error.localizedDescription,
@@ -1891,6 +1900,10 @@ final class DictationViewModel: ObservableObject {
     private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult) async {
         let transcript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
+            appendHermesChatMessage(
+                role: .error,
+                text: HermesAgentClientError.emptyInput.localizedDescription
+            )
             hermesResponseWindowState = HermesResponseWindowState(
                 title: "Hermes",
                 text: HermesAgentClientError.emptyInput.localizedDescription,
@@ -1910,6 +1923,15 @@ final class DictationViewModel: ObservableObject {
             let imageAttachment = screenshot.map(HermesAgentImageAttachment.init(snapshot:))
             let screenContext = hermesScreenContextEnabled ? turn.screenContext : nil
             let screenContextMethod = hermesScreenContextEnabled ? turn.screenContextMethod : nil
+            appendHermesChatMessage(
+                role: .user,
+                text: transcript,
+                contextLabels: hermesContextLabels(
+                    screenContext: screenContext,
+                    screenshot: screenshot,
+                    clipboardText: clipboardText
+                )
+            )
             let userMessageForHistory = HermesAgentAPIClient.enrichedInputText(
                 input: transcript,
                 imageAttachment: imageAttachment,
@@ -1949,7 +1971,9 @@ final class DictationViewModel: ObservableObject {
                 text: response.text,
                 isError: false
             )
+            appendHermesChatMessage(role: .assistant, text: response.text)
         } catch {
+            appendHermesChatMessage(role: .error, text: error.localizedDescription)
             hermesResponseWindowState = HermesResponseWindowState(
                 title: "Hermes Error",
                 text: error.localizedDescription,
@@ -1957,6 +1981,35 @@ final class DictationViewModel: ObservableObject {
             )
             clearHermesContextCapture(cancel: true)
         }
+    }
+
+    private func appendHermesChatMessage(role: HermesChatMessage.Role,
+                                         text: String,
+                                         contextLabels: [String] = []) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        hermesChatMessages.append(HermesChatMessage(
+            role: role,
+            text: trimmed,
+            contextLabels: contextLabels
+        ))
+    }
+
+    private func hermesContextLabels(screenContext: String?,
+                                     screenshot: ScreenCaptureSnapshot?,
+                                     clipboardText: String?) -> [String] {
+        var labels: [String] = []
+        if let screenContext,
+           !screenContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            labels.append("Screen text")
+        }
+        if screenshot != nil {
+            labels.append("Screenshot")
+        }
+        if HermesAgentAPIClient.normalizedClipboardText(clipboardText) != nil {
+            labels.append("Clipboard")
+        }
+        return labels
     }
 
     private func prepareHermesContextCapture() {
