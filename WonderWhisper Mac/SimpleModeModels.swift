@@ -26,6 +26,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case history
   case dictation
   case command
+  case hermes
   case vocabulary
   case microphone
   case settings
@@ -36,6 +37,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "Dictation"
     case .command: return "Command"
+    case .hermes: return "Hermes"
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
     case .microphone: return "Microphone"
@@ -47,12 +49,17 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "mic.fill"
     case .command: return "wand.and.stars"
+    case .hermes: return "sparkles"
     case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
     case .microphone: return "waveform"
     case .settings: return "gearshape.fill"
     }
   }
+}
+
+enum HermesAgentHotkey {
+  static let promptID = UUID(uuidString: "0A613210-344E-4B5C-9515-F0E9CA54A5D2")!
 }
 
 enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {

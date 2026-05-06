@@ -196,6 +196,38 @@ final class DictationViewModel: ObservableObject {
         didSet { persistFavoriteOpenRouterModels() }
     }
 
+    @Published var hermesAgentEnabled: Bool = UserDefaults.standard.object(forKey: "hermes.agent.enabled") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(hermesAgentEnabled, forKey: "hermes.agent.enabled")
+            refreshPromptHotkeys()
+        }
+    }
+    @Published var hermesBaseURLString: String = UserDefaults.standard.string(forKey: "hermes.api.baseURL") ?? AppConfig.defaultHermesBaseURLString {
+        didSet { UserDefaults.standard.set(hermesBaseURLString, forKey: "hermes.api.baseURL") }
+    }
+    @Published var hermesConversationName: String = UserDefaults.standard.string(forKey: "hermes.conversation.name") ?? AppConfig.defaultHermesConversationName {
+        didSet { UserDefaults.standard.set(hermesConversationName, forKey: "hermes.conversation.name") }
+    }
+    @Published var hermesModel: String = UserDefaults.standard.string(forKey: "hermes.model") ?? AppConfig.defaultHermesModel {
+        didSet { UserDefaults.standard.set(hermesModel, forKey: "hermes.model") }
+    }
+    @Published var hermesTimeoutSeconds: Double = {
+        let value = UserDefaults.standard.object(forKey: "hermes.timeout") as? Double ?? 180
+        return max(15, min(600, value))
+    }() {
+        didSet { UserDefaults.standard.set(max(15, min(600, hermesTimeoutSeconds)), forKey: "hermes.timeout") }
+    }
+    @Published var hermesSelection: HotkeyManager.Selection? = DictationViewModel.loadHermesSelection() {
+        didSet {
+            persistHermesSelection()
+            refreshPromptHotkeys()
+        }
+    }
+    @Published var hermesConnectionStatus: String?
+    @Published var hermesConnectionSucceeded: Bool?
+    @Published var hermesResponseWindowState: HermesResponseWindowState?
+    @Published var hermesIsSending: Bool = false
+
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
         return UserDefaults.standard.bool(forKey: "audio.stream.eq.enabled")
@@ -260,6 +292,7 @@ final class DictationViewModel: ObservableObject {
     private var suppressSimpleSidebarSync: Bool = false
     private var recordingStartTimestamp: Date? = nil  // Track optimistic recording start to prevent timer race
     private var recordingStartInProgress: Bool = false
+    private var recordingStopInProgress: Bool = false
     private var idleSkipCounter: Int = 0
     private var timer: Timer?
     let history = HistoryStore()
@@ -269,6 +302,11 @@ final class DictationViewModel: ObservableObject {
     private var providerUpdateTask: Task<Void, Never>?
     private var selectedTextPromptOverride: PromptConfiguration?
     private var selectedTextFallbackTaskID: UUID?
+    private lazy var hermesClient = HermesAgentAPIClient(
+        apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.hermesAPIKeyAlias) }
+    )
+    private var activeHermesPromptID: UUID?
+    private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
 
     // Debouncing for provider updates
     private var providerUpdateTimer: Timer?
@@ -443,42 +481,51 @@ final class DictationViewModel: ObservableObject {
 
         // Poll state periodically for a simple UI reflection
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            // Throttle polling when idle to reduce wakeups
-            let isActive = self.isRecording || self.status == "Transcribing" || self.status == "Processing" || self.status == "Inserting"
-            if !isActive {
-                idleSkipCounter = (idleSkipCounter + 1) % 2 // ~2.5 Hz when idle
-                if idleSkipCounter != 0 { return }
-            } else {
-                idleSkipCounter = 0
-            }
-            Task { [weak self] in
-                guard let self = self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Throttle polling when idle to reduce wakeups
+                let isActive = self.isRecording || self.hermesIsSending || self.status == "Transcribing" || self.status == "Processing" || self.status == "Inserting"
+                if !isActive {
+                    self.idleSkipCounter = (self.idleSkipCounter + 1) % 2 // ~2.5 Hz when idle
+                    if self.idleSkipCounter != 0 { return }
+                } else {
+                    self.idleSkipCounter = 0
+                }
                 let s = await self.controllerState()
-                await MainActor.run {
-                    if self.status != s { self.status = s }
-                    let rec = (s == "Recording")
-                    
-                    // Prevent race condition: Don't reset isRecording to false while startup is still in progress
-                    if !rec && self.isRecording {
-                        if self.recordingStartInProgress {
-                            return
-                        }
-                        if let startTime = self.recordingStartTimestamp,
-                           Date().timeIntervalSince(startTime) < 1.5 {
-                            // Within grace period after optimistic start - don't reset yet
-                            return
-                        }
+                if self.hermesIsSending {
+                    if self.status != "Waiting for Hermes" { self.status = "Waiting for Hermes" }
+                    return
+                }
+                if self.status != s { self.status = s }
+                let rec = (s == "Recording")
+
+                // Prevent race condition: Don't reset isRecording to false while startup is still in progress
+                if !rec && self.isRecording {
+                    if self.recordingStartInProgress {
+                        return
                     }
-                    
-                    if self.isRecording != rec {
-                        self.isRecording = rec
-                        if rec {
-                            self.recordingStartInProgress = false
-                        } else {
-                            self.recordingStartTimestamp = nil
-                            self.recordingStartInProgress = false
-                        }
+                    if let startTime = self.recordingStartTimestamp,
+                       Date().timeIntervalSince(startTime) < 1.5 {
+                        // Within grace period after optimistic start - don't reset yet
+                        return
+                    }
+                }
+                if rec && !self.isRecording && self.recordingStopInProgress {
+                    return
+                }
+                if !rec {
+                    self.recordingStopInProgress = false
+                }
+
+                if self.isRecording != rec {
+                    self.isRecording = rec
+                    if rec {
+                        self.recordingStartInProgress = false
+                        self.recordingStopInProgress = false
+                    } else {
+                        self.recordingStartTimestamp = nil
+                        self.recordingStartInProgress = false
+                        self.recordingStopInProgress = false
                     }
                 }
             }
@@ -513,20 +560,26 @@ final class DictationViewModel: ObservableObject {
     func toggle() {
         Task {
             let currentState = await controller.currentState()
+            if case .recording = currentState, let hermesPromptID = activeHermesPromptID {
+                await finishHermesRecording(promptID: hermesPromptID)
+                return
+            }
 
             switch currentState {
             case .idle, .error:
+                let targetPromptID = await MainActor.run { self.determinePromptIDForCurrentHotkey() }
+
                 // Update UI IMMEDIATELY for instant feedback
                 await MainActor.run { 
                     self.isRecording = true
                     self.recordingStartTimestamp = Date()
                     self.recordingStartInProgress = true
+                    self.recordingStopInProgress = false
                 }
 
                 // Determine which prompt to use based on the hotkey that was pressed,
                 // NOT based on the UI tab selection. Don't change the visible UI tab.
                 await MainActor.run {
-                    let targetPromptID = self.determinePromptIDForCurrentHotkey()
                     if self.selectedPromptID != targetPromptID {
                         // Suppress sidebar sync to prevent UI navigation when using hotkeys
                         self.suppressSimpleSidebarSync = true
@@ -555,6 +608,7 @@ final class DictationViewModel: ObservableObject {
 
             case .recording:
                 await MainActor.run { 
+                    self.recordingStopInProgress = true
                     self.isRecording = false
                     self.recordingStartTimestamp = nil
                     self.recordingStartInProgress = false
@@ -573,8 +627,14 @@ final class DictationViewModel: ObservableObject {
     func finish() {
         persistPromptLibrary()
         Task {
+            if let hermesPromptID = activeHermesPromptID {
+                await finishHermesRecording(promptID: hermesPromptID)
+                return
+            }
+
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
+                self.recordingStopInProgress = true
                 self.isRecording = false
                 self.recordingStartTimestamp = nil
                 self.recordingStartInProgress = false
@@ -607,9 +667,11 @@ final class DictationViewModel: ObservableObject {
         Task {
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
+                self.recordingStopInProgress = true
                 self.isRecording = false
                 self.recordingStartTimestamp = nil
                 self.recordingStartInProgress = false
+                self.activeHermesPromptID = nil
             }
             await controller.cancel()
 
@@ -776,8 +838,11 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateHotkeys() {
-        UserDefaults.standard.set(hotkeySelection.rawValue, forKey: "hotkey.selection")
-        hotkeys.selection = hotkeySelection
+        // Simple mode registers dictation/command activation through PromptHotkeyManager.
+        // Keep this legacy manager available for paste-last only, so stale hotkey.selection
+        // values cannot trigger recording behind the visible prompt shortcut settings.
+        UserDefaults.standard.removeObject(forKey: "hotkey.selection")
+        hotkeys.selection = nil
     }
 
     private func updatePasteShortcut() {
@@ -1274,6 +1339,10 @@ final class DictationViewModel: ObservableObject {
     }
 
     func setSimpleSelection(_ selection: HotkeyManager.Selection?, for kind: SimplePromptKind) {
+        if let selection, selection == hermesSelection {
+            settingsNotice = "That shortcut is already assigned to Hermes."
+            return
+        }
         var settings = simpleSettings(for: kind)
         guard settings.selection != selection else { return }
         settings.selection = selection
@@ -1485,7 +1554,7 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .microphone, .settings: return nil
+        case .vocabulary, .history, .hermes, .microphone, .settings: return nil
         }
     }
 
@@ -1606,16 +1675,298 @@ final class DictationViewModel: ObservableObject {
                 promptHotkeyManager.register(shortcut: shortcut, for: prompt.id)
             }
         }
+        if hermesAgentEnabled, let hermesSelection {
+            promptHotkeyManager.register(selection: hermesSelection, for: HermesAgentHotkey.promptID)
+        }
     }
 
     private var promptPressTimes: [UUID: Date] = [:]
     private let promptPressThreshold: TimeInterval = 0.8
 
-    private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
+    func startHermesReply() {
+        hermesResponseWindowState = nil
+        Task {
+            let state = await controller.currentState()
+            guard isIdleOrError(state) else { return }
+            await beginHermesRecording(promptID: SimplePromptKind.command.promptID)
+        }
+    }
+
+    func dismissHermesResponse() {
+        hermesResponseWindowState = nil
+    }
+
+    func saveHermesApiKey(_ value: String) {
+        let kc = KeychainService()
+        do {
+            try kc.setSecret(value, forKey: AppConfig.hermesAPIKeyAlias)
+            hermesConnectionStatus = "Hermes API key saved."
+            hermesConnectionSucceeded = nil
+            settingsNotice = "Hermes API key saved."
+        } catch {
+            let message = "Could not save Hermes API key: \(error.localizedDescription)"
+            hermesConnectionStatus = message
+            hermesConnectionSucceeded = false
+            settingsNotice = message
+        }
+    }
+
+    func testHermesConnection() async {
+        hermesConnectionStatus = "Testing Hermes connection..."
+        hermesConnectionSucceeded = nil
+        do {
+            try await hermesClient.checkHealth(settings: currentHermesSettings())
+            hermesConnectionStatus = "Hermes API server reachable and bearer key accepted."
+            hermesConnectionSucceeded = true
+            settingsNotice = hermesConnectionStatus
+        } catch {
+            hermesConnectionStatus = "Hermes connection failed: \(error.localizedDescription)"
+            hermesConnectionSucceeded = false
+            settingsNotice = hermesConnectionStatus
+        }
+    }
+
+    func setHermesSelection(_ selection: HotkeyManager.Selection?) {
+        if let selection,
+           selection == simpleDictationSettings.selection || selection == simpleCommandSettings.selection {
+            hermesConnectionStatus = "That shortcut is already assigned to Dictation or Command."
+            hermesConnectionSucceeded = false
+            return
+        }
+        guard hermesSelection != selection else { return }
+        hermesSelection = selection
+    }
+
+    private func isIdleOrError(_ state: DictationController.State) -> Bool {
+        if state == .idle { return true }
+        if case .error = state { return true }
+        return false
+    }
+
+    private func currentHermesSettings() -> HermesAgentSettings {
+        HermesAgentSettings(
+            baseURLString: hermesBaseURLString,
+            model: hermesModel,
+            conversationName: hermesConversationName,
+            timeout: max(15, min(600, hermesTimeoutSeconds))
+        )
+    }
+
+    private func handleHermesPromptHotkey(id: UUID,
+                                          phase: PromptHotkeyManager.TriggerPhase,
+                                          currentState: DictationController.State) async {
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
+            switch currentState {
+            case .idle, .error:
+                await beginHermesRecording(promptID: id)
+            case .recording:
+                await finishHermesRecording(promptID: activeHermesPromptID ?? id)
+            default:
+                break
+            }
+        case .up:
+            guard let start = promptPressTimes.removeValue(forKey: id) else { return }
+            let duration = Date().timeIntervalSince(start)
+            guard duration >= promptPressThreshold else { return }
             let state = await controller.currentState()
+            if case .recording = state {
+                await finishHermesRecording(promptID: activeHermesPromptID ?? id)
+            }
+        }
+    }
+
+    private func beginHermesRecording(promptID: UUID) async {
+        prepareHermesScreenshotCapture()
+
+        await MainActor.run {
+            self.hermesResponseWindowState = nil
+            self.isRecording = true
+            self.recordingStartTimestamp = Date()
+            self.recordingStartInProgress = true
+            self.recordingStopInProgress = false
+            self.activeHermesPromptID = promptID
+        }
+
+        await MainActor.run {
+            if self.selectedPromptID != promptID {
+                self.suppressSimpleSidebarSync = true
+                self.selectedPromptID = promptID
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await MainActor.run {
+            self.suppressSimpleSidebarSync = false
+            self.updateProvidersImmediately()
+        }
+        await waitForLatestProviderUpdate()
+        await checkAndStoreSelectedTextPromptFast()
+
+        let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        let state = await controller.currentState()
+        await MainActor.run {
+            self.recordingStartInProgress = false
+            if case .error = state {
+                self.activeHermesPromptID = nil
+                self.isRecording = false
+                self.clearHermesScreenshotCapture(cancel: true)
+            }
+        }
+    }
+
+    private func finishHermesRecording(promptID: UUID) async {
+        await MainActor.run {
+            self.recordingStopInProgress = true
+            self.isRecording = false
+            self.recordingStartTimestamp = nil
+            self.recordingStartInProgress = false
+        }
+
+        let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
+        do {
+            guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
+                await MainActor.run {
+                    self.activeHermesPromptID = nil
+                    self.clearHermesScreenshotCapture(cancel: true)
+                }
+                return
+            }
+            await MainActor.run { self.activeHermesPromptID = nil }
+            await restoreOriginalPromptIfNeeded()
+            await submitHermesTurn(result)
+        } catch {
+            await MainActor.run {
+                self.activeHermesPromptID = nil
+                self.clearHermesScreenshotCapture(cancel: true)
+                self.hermesResponseWindowState = HermesResponseWindowState(
+                    title: "Hermes Error",
+                    text: error.localizedDescription,
+                    isError: true
+                )
+            }
+            await restoreOriginalPromptIfNeeded()
+        }
+    }
+
+    private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult) async {
+        let transcript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
+            hermesResponseWindowState = HermesResponseWindowState(
+                title: "Hermes",
+                text: HermesAgentClientError.emptyInput.localizedDescription,
+                isError: true
+            )
+            clearHermesScreenshotCapture(cancel: true)
+            return
+        }
+
+        let settings = currentHermesSettings()
+        hermesIsSending = true
+        defer { hermesIsSending = false }
+
+        do {
+            let screenshot = await consumeHermesScreenshot()
+            let imageAttachment = screenshot.map(HermesAgentImageAttachment.init(snapshot:))
+            let userMessageForHistory = imageAttachment == nil
+                ? transcript
+                : "\(transcript)\n\nFootnote: \(HermesAgentAPIClient.screenshotFootnote)"
+            let start = Date()
+            let response = try await hermesClient.send(
+                input: transcript,
+                settings: settings,
+                imageAttachment: imageAttachment
+            )
+            let hermesSeconds = Date().timeIntervalSince(start)
+
+            await history.append(
+                fileURL: turn.fileURL,
+                appName: turn.appName,
+                bundleID: turn.bundleID,
+                transcript: transcript,
+                output: response.text,
+                screenContext: turn.screenContext,
+                screenContextMethod: turn.screenContextMethod,
+                screenImage: screenshot,
+                selectedText: turn.selectedText,
+                activeTextField: turn.activeTextField,
+                llmSystemMessage: nil,
+                llmUserMessage: userMessageForHistory,
+                transcriptionModel: turn.transcriptionModel,
+                llmModel: "Hermes \(response.model)",
+                transcriptionSeconds: turn.transcriptionSeconds,
+                llmSeconds: hermesSeconds,
+                totalSeconds: turn.totalSeconds + hermesSeconds
+            )
+
+            hermesResponseWindowState = HermesResponseWindowState(
+                title: "Hermes",
+                text: response.text,
+                isError: false
+            )
+        } catch {
+            hermesResponseWindowState = HermesResponseWindowState(
+                title: "Hermes Error",
+                text: error.localizedDescription,
+                isError: true
+            )
+            clearHermesScreenshotCapture(cancel: true)
+        }
+    }
+
+    private func prepareHermesScreenshotCapture() {
+        clearHermesScreenshotCapture(cancel: true)
+        hermesScreenshotTask = Task.detached(priority: .userInitiated) {
+            await DictationViewModel.captureHermesContextScreenshot()
+        }
+    }
+
+    private func consumeHermesScreenshot() async -> ScreenCaptureSnapshot? {
+        let task = hermesScreenshotTask
+        hermesScreenshotTask = nil
+        return await task?.value
+    }
+
+    private func clearHermesScreenshotCapture(cancel: Bool) {
+        if cancel {
+            hermesScreenshotTask?.cancel()
+        }
+        hermesScreenshotTask = nil
+    }
+
+    private nonisolated static func captureHermesContextScreenshot() async -> ScreenCaptureSnapshot? {
+        let service = ScreenCaptureService()
+        let snapshot = await service.captureActiveWindowImage(maxDimension: 1920, lossless: false)
+        if let snapshot {
+            AppLog.screen.info(
+                "Hermes context screenshot captured method=\(snapshot.method.rawValue, privacy: .public) width=\(snapshot.width) height=\(snapshot.height)"
+            )
+        } else {
+            AppLog.screen.warning("Hermes context screenshot unavailable; sending text-only turn")
+        }
+        return snapshot
+    }
+
+    private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
+        let state = await controller.currentState()
+        if id == HermesAgentHotkey.promptID {
+            guard hermesAgentEnabled else { return }
+            await handleHermesPromptHotkey(
+                id: SimplePromptKind.command.promptID,
+                phase: phase,
+                currentState: state
+            )
+            return
+        }
+        if activeHermesPromptID != nil {
+            return
+        }
+
+        switch phase {
+        case .down:
+            promptPressTimes[id] = Date()
 
             switch state {
             case .idle, .error:
@@ -1624,6 +1975,7 @@ final class DictationViewModel: ObservableObject {
                     self.isRecording = true
                     self.recordingStartTimestamp = Date()
                     self.recordingStartInProgress = true
+                    self.recordingStopInProgress = false
                 }
 
                 // Select the prompt for this hotkey FIRST, without changing the visible UI tab
@@ -1655,6 +2007,7 @@ final class DictationViewModel: ObservableObject {
 
             case .recording:
                 await MainActor.run { 
+                    self.recordingStopInProgress = true
                     self.isRecording = false
                     self.recordingStartTimestamp = nil
                     self.recordingStartInProgress = false
@@ -1689,6 +2042,7 @@ final class DictationViewModel: ObservableObject {
                 let state = await controller.currentState()
                 if case .recording = state {
                     await MainActor.run { 
+                        self.recordingStopInProgress = true
                         self.isRecording = false
                         self.recordingStartTimestamp = nil
                         self.recordingStartInProgress = false
@@ -1950,6 +2304,7 @@ private enum SimpleDefaultsKey {
     static let voiceEngine = "simple.voice.engine"
     static let openRouterTranscriptionModel = "transcription.openrouter.model"
     static let sidebar = "simple.sidebar.selection"
+    static let hermesSelection = "hermes.shortcut.selection"
 }
 
 private extension DictationViewModel {
@@ -2017,6 +2372,24 @@ private extension DictationViewModel {
     static func loadSimpleSidebarSelection() -> SimpleSidebarItem {
         let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.dictation.rawValue
         return SimpleSidebarItem(rawValue: raw) ?? .dictation
+    }
+
+    static func loadHermesSelection() -> HotkeyManager.Selection? {
+        if let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.hermesSelection) {
+            return HotkeyManager.Selection(rawValue: raw)
+        }
+        let fallback: HotkeyManager.Selection = .f5
+        let dictation = loadSimpleSettings(for: .dictation).selection
+        let command = loadSimpleSettings(for: .command).selection
+        return fallback == dictation || fallback == command ? nil : fallback
+    }
+
+    func persistHermesSelection() {
+        if let hermesSelection {
+            UserDefaults.standard.set(hermesSelection.rawValue, forKey: SimpleDefaultsKey.hermesSelection)
+        } else {
+            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.hermesSelection)
+        }
     }
 }
 

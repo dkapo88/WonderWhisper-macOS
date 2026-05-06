@@ -9,8 +9,8 @@ import CoreMedia
 import Vision
 import NaturalLanguage
 
-struct ScreenCaptureSnapshot {
-  enum Method: String, Codable {
+struct ScreenCaptureSnapshot: Sendable {
+  enum Method: String, Codable, Sendable {
     case window = "Image-Window"
     case display = "Image-Display"
   }

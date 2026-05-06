@@ -257,6 +257,7 @@ erDiagram
     DictationViewModel ||--|| HistoryStore : "uses"
     DictationViewModel ||--|| ConversationHistoryStore : "uses"
     DictationViewModel ||--|{ FavoriteLLMModel : "tracks"
+    DictationViewModel ||--|| HermesAgentSettings : "uses when enabled"
     
     HistoryStore ||--|{ HistoryEntry : "stores"
     
@@ -280,6 +281,7 @@ erDiagram
         String llmModel
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
+        Bool hermesAgentEnabled
     }
     
     HistoryStore {
@@ -292,6 +294,13 @@ erDiagram
         UUID id PK
         String provider
         String model
+    }
+
+    HermesAgentSettings {
+        String baseURLString
+        String model
+        String conversationName
+        TimeInterval timeout
     }
 ```
 
@@ -363,6 +372,12 @@ erDiagram
 | `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
 | `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
 | `network.http_protocol_preference` | String | HTTP protocol preference |
+| `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
+| `hermes.api.baseURL` | String | Hermes API server URL; root and `/v1` URLs are both accepted |
+| `hermes.conversation.name` | String | Named Hermes conversation for continuous voice sessions |
+| `hermes.model` | String | Cosmetic Hermes API model field |
+| `hermes.timeout` | Double | Hermes request timeout (seconds) |
+| `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
 
 ### Keychain Storage
 
@@ -374,6 +389,7 @@ Secure storage via `KeychainService` for API keys:
 | `OPENROUTER_API_KEY` | OpenRouter API authentication |
 | `XAI_API_KEY` | xAI API authentication (Grok Speech-to-Text) |
 | `SONIOX_API_KEY` | Soniox API authentication |
+| `HERMES_API_SERVER_KEY` | Hermes API server bearer token |
 
 ---
 
@@ -398,6 +414,8 @@ erDiagram
         String[] simpleCustomModels
         Bool simpleLLMEnabled
         SimpleSidebarItem simpleSidebarSelection
+        Bool hermesAgentEnabled
+        HermesResponseWindowState hermesResponseWindowState "optional"
     }
 ```
 
@@ -427,6 +445,10 @@ struct AppConfig {
     // Keychain Aliases (active)
     static let groqAPIKeyAlias: String = "GROQ_API_KEY"
     static let openrouterAPIKeyAlias: String = "OPENROUTER_API_KEY"
+    static let hermesAPIKeyAlias: String = "HERMES_API_SERVER_KEY"
+    static let defaultHermesBaseURLString: String = "http://127.0.0.1:8642"
+    static let defaultHermesModel: String = "hermes-agent"
+    static let defaultHermesConversationName: String = "wonderwhisper-mac"
     
     // Network
     static let httpProtocolPreference: HTTPProtocolPreference
@@ -518,6 +540,28 @@ sequenceDiagram
     
     DictationViewModel->>ConversationHistoryStore: addMessage(user)
     DictationViewModel->>ConversationHistoryStore: addMessage(assistant)
+```
+
+### Hermes Voice Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant DictationViewModel
+    participant DictationController
+    participant HermesAPI
+    participant HistoryStore
+
+    User->>DictationViewModel: Trigger Hermes hotkey
+    DictationViewModel->>DictationViewModel: Start active-window screenshot capture
+    DictationViewModel->>DictationController: Start recording
+    User->>DictationViewModel: Trigger Hermes hotkey again
+    DictationViewModel->>DictationController: Finish transcription-only turn
+    DictationController-->>DictationViewModel: Transcript + audio/context metadata
+    DictationViewModel->>HermesAPI: POST /v1/responses with conversation name and screenshot input_image when available
+    HermesAPI-->>DictationViewModel: Assistant response
+    DictationViewModel->>HistoryStore: append transcript/response entry and screenshot metadata
+    DictationViewModel-->>User: Show Hermes response window
 ```
 
 ---

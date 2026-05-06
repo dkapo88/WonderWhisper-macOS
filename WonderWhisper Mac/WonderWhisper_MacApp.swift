@@ -16,6 +16,7 @@ struct WonderWhisper_MacApp: App {
     @State private var notchIndicator: NotchIndicatorController? = nil
     @State private var waveformOverlay: WaveformOverlayController? = nil
     @State private var streamingTranscriptOverlay: StreamingTranscriptOverlay? = nil
+    @State private var hermesResponseWindow: HermesResponseWindowController? = nil
     var body: some Scene {
         WindowGroup {
             ContentView(vm: vm)
@@ -25,6 +26,7 @@ struct WonderWhisper_MacApp: App {
                     if waveformOverlay == nil { waveformOverlay = WaveformOverlayController(viewModel: vm) }
                     // Streaming transcript overlay for Soniox
                     if streamingTranscriptOverlay == nil { streamingTranscriptOverlay = StreamingTranscriptOverlay(viewModel: vm) }
+                    if hermesResponseWindow == nil { hermesResponseWindow = HermesResponseWindowController(viewModel: vm) }
                     // Keep the notch indicator optional; comment out if undesired
                     // if notchIndicator == nil { notchIndicator = NotchIndicatorController(viewModel: vm, side: .right) }
                 }

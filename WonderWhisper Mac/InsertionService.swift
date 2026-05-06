@@ -4,9 +4,9 @@ import Carbon.HIToolbox
 
 final class InsertionService {
     var useAXInsertion: Bool = false
+    private static let syntheticPasteSuppressionDuration: TimeInterval = 0.35
 
     func insert(_ text: String, targetProcessIdentifier: pid_t? = nil) {
-        HotkeyManager.suppressActivation(for: 2.0)
         let initialFront = NSWorkspace.shared.frontmostApplication
         AppLog.insertion.log("Insertion start targetPid=\(targetProcessIdentifier ?? -1, privacy: .public) frontmost=\(initialFront?.bundleIdentifier ?? "?", privacy: .public) textChars=\(text.count, privacy: .public)")
         let activatedTarget = activateTargetApplicationIfNeeded(processIdentifier: targetProcessIdentifier)
@@ -143,6 +143,7 @@ final class InsertionService {
     }
 
     private func pasteUsingAppleScript() -> Bool {
+        suppressSyntheticPasteHotkeys()
         // Requires Automation (Apple Events) permission to control System Events
         let script = """
         tell application "System Events"
@@ -192,6 +193,7 @@ final class InsertionService {
 
     private func synthesizeCmdV() {
         AppLog.insertion.log("Insertion: synthesizing Cmd+V")
+        suppressSyntheticPasteHotkeys()
         let src = CGEventSource(stateID: .hidSystemState)
         let keyV: CGKeyCode = CGKeyCode(kVK_ANSI_V)
         let keyCmd: CGKeyCode = 0x37 // left Command virtual key
@@ -231,6 +233,10 @@ final class InsertionService {
             let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)
             down?.post(tap: .cghidEventTap)
         }
+    }
+
+    private func suppressSyntheticPasteHotkeys() {
+        HotkeyManager.suppressActivation(for: Self.syntheticPasteSuppressionDuration)
     }
 
     private func axPressPasteInFrontApp() -> Bool {

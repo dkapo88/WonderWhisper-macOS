@@ -120,8 +120,8 @@ struct SimplePromptEditorView: View {
     GroupBox("Single-key shortcut") {
       VStack(alignment: .leading, spacing: 10) {
         Text(kind == .dictation
-             ? "Pick a single modifier key to trigger Simple Dictation on press-and-hold."
-             : "Pick a single modifier key to trigger Command Mode.")
+             ? "Pick a single key to trigger Simple Dictation on press-and-hold."
+             : "Pick a single key to trigger Command Mode.")
           .font(.caption)
           .foregroundColor(.secondary)
 

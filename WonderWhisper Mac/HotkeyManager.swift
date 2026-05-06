@@ -33,6 +33,7 @@ final class HotkeyManager {
         case rightOption
         case commandRightShift
         case optionRightShift
+        case backslash
         case f5
 
         var displayName: String {
@@ -45,23 +46,31 @@ final class HotkeyManager {
             case .rightOption: return "Right Option (⌥)"
             case .commandRightShift: return "Cmd + Right Shift"
             case .optionRightShift: return "Option + Right Shift"
+            case .backslash: return "Backslash (\\)"
             case .f5: return "F5"
+            }
+        }
+
+        var directShortcut: HotkeyManager.Shortcut? {
+            switch self {
+            case .f5:
+                return Shortcut(keyCode: UInt32(kVK_F5), modifiers: 0)
+            default:
+                return nil
             }
         }
 
         // Whether this selection requires an accessibility event tap
         var requiresAX: Bool {
-            switch self {
-            case .f5: return false
-            default: return true
-            }
+            directShortcut == nil
         }
 
         var needsChordGuard: Bool {
             switch self {
-            case .leftCommand, .leftOption, .control, .rightCommand, .rightOption:
+            case .fnGlobe, .leftCommand, .leftOption, .control, .rightCommand,
+                 .rightOption, .commandRightShift, .optionRightShift:
                 return true
-            case .fnGlobe, .commandRightShift, .optionRightShift, .f5:
+            case .backslash, .f5:
                 return false
             }
         }
@@ -202,11 +211,8 @@ final class HotkeyManager {
         guard let sel = selection else { return }
         if sel.requiresAX {
             startFnTap(for: sel)
-        } else {
-            // Only F5 currently uses Carbon hotkey
-            if sel == .f5 {
-                registeredShortcut = Shortcut(keyCode: UInt32(kVK_F5), modifiers: 0)
-            }
+        } else if let shortcut = sel.directShortcut {
+            registeredShortcut = shortcut
         }
     }
 
@@ -214,14 +220,19 @@ final class HotkeyManager {
         if eventTap != nil { return }
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
+            | CGEventMask(1 << CGEventType.keyUp.rawValue)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+            var shouldSuppress = false
             if type == .flagsChanged {
                 manager.handleFlagsChanged(event: event)
             } else if type == .keyDown {
-                manager.handleKeyDown(event: event)
+                shouldSuppress = manager.handleKeyDown(event: event)
+            } else if type == .keyUp {
+                shouldSuppress = manager.handleKeyUp(event: event)
             }
+            if shouldSuppress { return nil }
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
             // Likely missing Accessibility permission
@@ -270,21 +281,7 @@ final class HotkeyManager {
         let flags = event.flags
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
 
-        // Update per-side modifier booleans based on which key toggled
-        switch keyCode {
-        case CGKeyCode(kVK_Command): leftCmdDown = flags.contains(.maskCommand)
-        case CGKeyCode(kVK_RightCommand): rightCmdDown = flags.contains(.maskCommand)
-        case CGKeyCode(kVK_Option): leftOptDown = flags.contains(.maskAlternate)
-        case CGKeyCode(kVK_RightOption): rightOptDown = flags.contains(.maskAlternate)
-        case CGKeyCode(kVK_Control): leftCtrlDown = flags.contains(.maskControl)
-        case CGKeyCode(kVK_RightControl): rightCtrlDown = flags.contains(.maskControl)
-        case CGKeyCode(kVK_Shift): leftShiftDown = flags.contains(.maskShift)
-        case CGKeyCode(kVK_RightShift): rightShiftDown = flags.contains(.maskShift)
-        default: break
-        }
-
-        // Fn/globe state
-        lastFnFlagsOn = flags.contains(.maskSecondaryFn)
+        refreshModifierState(changedKeyCode: keyCode, flags: flags)
 
         // Evaluate active condition for current selection
         let newActive: Bool
@@ -305,33 +302,157 @@ final class HotkeyManager {
             newActive = (leftCmdDown || rightCmdDown) && rightShiftDown
         case .optionRightShift:
             newActive = (leftOptDown || rightOptDown) && rightShiftDown
-        case .f5:
-            newActive = false // handled via Carbon hotkey instead
+        case .backslash, .f5:
+            newActive = false // handled by direct key events instead
         }
 
         // Guard against state transitions triggering both down and up in the same event
         // Only trigger state transitions on actual state changes
         let stateChanged = newActive != selectionActive
+        let hasDisallowedModifier = sel.needsChordGuard && hasDisallowedModifierDown(for: sel)
+        if newActive, hasDisallowedModifier {
+            cancelPendingActivation()
+            hotkeyPressStart = nil
+            activateCalledOnThisPress = false
+        }
         if stateChanged {
             if newActive {
-                scheduleHotkeyDown()
+                if !hasDisallowedModifier {
+                    scheduleHotkeyDown()
+                }
             } else {
-                cancelPendingActivation()
+                firePendingActivationOnReleaseIfNeeded()
                 handleHotkeyUp()
             }
         }
         selectionActive = newActive
     }
 
-    private func handleKeyDown(event: CGEvent) {
+    private func refreshModifierState(changedKeyCode: CGKeyCode, flags: CGEventFlags) {
+        let commandDown = flags.contains(.maskCommand)
+        let optionDown = flags.contains(.maskAlternate)
+        let controlDown = flags.contains(.maskControl)
+        let shiftDown = flags.contains(.maskShift)
+        let fnDown = flags.contains(.maskSecondaryFn)
+
+        if !commandDown {
+            leftCmdDown = false
+            rightCmdDown = false
+        }
+        if !optionDown {
+            leftOptDown = false
+            rightOptDown = false
+        }
+        if !controlDown {
+            leftCtrlDown = false
+            rightCtrlDown = false
+        }
+        if !shiftDown {
+            leftShiftDown = false
+            rightShiftDown = false
+        }
+        if !fnDown {
+            lastFnFlagsOn = false
+        }
+
+        switch changedKeyCode {
+        case CGKeyCode(kVK_Command):
+            leftCmdDown = commandDown
+        case CGKeyCode(kVK_RightCommand):
+            rightCmdDown = commandDown
+        case CGKeyCode(kVK_Option):
+            leftOptDown = optionDown
+        case CGKeyCode(kVK_RightOption):
+            rightOptDown = optionDown
+        case CGKeyCode(kVK_Control):
+            leftCtrlDown = controlDown
+        case CGKeyCode(kVK_RightControl):
+            rightCtrlDown = controlDown
+        case CGKeyCode(kVK_Shift):
+            leftShiftDown = shiftDown
+        case CGKeyCode(kVK_RightShift):
+            rightShiftDown = shiftDown
+        case CGKeyCode(kVK_Function):
+            lastFnFlagsOn = fnDown
+        default:
+            break
+        }
+    }
+
+    private func hasDisallowedModifierDown(for sel: Selection) -> Bool {
+        switch sel {
+        case .fnGlobe:
+            return leftCmdDown || rightCmdDown || leftOptDown || rightOptDown ||
+                leftCtrlDown || rightCtrlDown || leftShiftDown || rightShiftDown
+        case .leftCommand:
+            return rightCmdDown || leftOptDown || rightOptDown || leftCtrlDown ||
+                rightCtrlDown || leftShiftDown || rightShiftDown || lastFnFlagsOn
+        case .rightCommand:
+            return leftCmdDown || leftOptDown || rightOptDown || leftCtrlDown ||
+                rightCtrlDown || leftShiftDown || rightShiftDown || lastFnFlagsOn
+        case .leftOption:
+            return leftCmdDown || rightCmdDown || rightOptDown || leftCtrlDown ||
+                rightCtrlDown || leftShiftDown || rightShiftDown || lastFnFlagsOn
+        case .rightOption:
+            return leftCmdDown || rightCmdDown || leftOptDown || leftCtrlDown ||
+                rightCtrlDown || leftShiftDown || rightShiftDown || lastFnFlagsOn
+        case .control:
+            return leftCmdDown || rightCmdDown || leftOptDown || rightOptDown ||
+                leftShiftDown || rightShiftDown || lastFnFlagsOn
+        case .commandRightShift:
+            return leftOptDown || rightOptDown || leftCtrlDown || rightCtrlDown ||
+                leftShiftDown || lastFnFlagsOn
+        case .optionRightShift:
+            return leftCmdDown || rightCmdDown || leftCtrlDown || rightCtrlDown ||
+                leftShiftDown || lastFnFlagsOn
+        case .backslash, .f5:
+            return false
+        }
+    }
+
+    private func handleKeyDown(event: CGEvent) -> Bool {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard !Self.isModifierKey(keyCode) else { return }
-        guard pendingActivationWorkItem != nil else { return }
+        if selection == .backslash, keyCode == CGKeyCode(kVK_ANSI_Backslash) {
+            return handleBackslashDown(event: event)
+        }
+        guard !Self.isModifierKey(keyCode) else { return false }
+        guard pendingActivationWorkItem != nil else { return false }
 
         AppLog.hotkeys.log("Cancelled modifier hotkey activation because keyCode=\(keyCode) followed the modifier")
         cancelPendingActivation()
         hotkeyPressStart = nil
         activateCalledOnThisPress = false
+        return false
+    }
+
+    private func handleKeyUp(event: CGEvent) -> Bool {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        guard selection == .backslash, keyCode == CGKeyCode(kVK_ANSI_Backslash) else {
+            return false
+        }
+        let shouldCapture = selectionActive || !hasDisallowedKeyModifiers(event.flags)
+        if selectionActive {
+            selectionActive = false
+            handleHotkeyUp()
+        }
+        return shouldCapture
+    }
+
+    private func handleBackslashDown(event: CGEvent) -> Bool {
+        guard !hasDisallowedKeyModifiers(event.flags) else { return false }
+        guard !Self.isActivationSuppressed else { return true }
+        guard !selectionActive else { return true }
+        selectionActive = true
+        handleHotkeyDown()
+        return true
+    }
+
+    private func hasDisallowedKeyModifiers(_ flags: CGEventFlags) -> Bool {
+        flags.contains(.maskCommand)
+            || flags.contains(.maskAlternate)
+            || flags.contains(.maskControl)
+            || flags.contains(.maskShift)
+            || flags.contains(.maskSecondaryFn)
     }
 
     private func scheduleHotkeyDown() {
@@ -375,12 +496,9 @@ final class HotkeyManager {
         guard let start = hotkeyPressStart else { return }
         hotkeyPressStart = nil
         let duration = Date().timeIntervalSince(start)
-        // Prevent double-invocation: only toggle on release if we haven't already called onActivate on this press
-        if duration >= briefPressThreshold && !activateCalledOnThisPress {
-            // Held long enough: push-to-talk ends on release
+        if duration >= briefPressThreshold {
+            // Held long enough: finish push-to-talk on release.
             onActivate?()
-        } else if duration >= briefPressThreshold && activateCalledOnThisPress {
-            // Short hold: was already triggered on down, don't duplicate
         } else {
             // Short tap: hands-free mode (stay recording); next press will toggle stop
         }
@@ -390,6 +508,14 @@ final class HotkeyManager {
     private func cancelPendingActivation() {
         pendingActivationWorkItem?.cancel()
         pendingActivationWorkItem = nil
+    }
+
+    private func firePendingActivationOnReleaseIfNeeded() {
+        guard pendingActivationWorkItem != nil else { return }
+        cancelPendingActivation()
+        guard !Self.isActivationSuppressed, hotkeyPressStart != nil else { return }
+        onActivate?()
+        activateCalledOnThisPress = true
     }
 
 

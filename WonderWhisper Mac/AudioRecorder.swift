@@ -269,33 +269,80 @@ final class AudioRecorder: NSObject {
     }
 
     private func startLevelUpdates() {
-        stopLevelUpdates()
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
-            guard let self = self, let r = self.recorder else { return }
-            r.updateMeters()
-            let avg = r.averagePower(forChannel: 0)
-            let peak = r.peakPower(forChannel: 0)
-            // Use the more reactive of the two
-            let level = max(Self.normalize(power: avg), Self.normalize(power: peak))
-            self.onLevel?(level)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.recorder != nil else { return }
+            self.levelTimer?.invalidate()
+            self.levelTimer = nil
+            self.onLevel?(0)
+            guard self.isRecording else { return }
+
+            let timer = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+                guard let self = self, self.isRecording, let r = self.recorder else { return }
+                r.updateMeters()
+                let avg = r.averagePower(forChannel: 0)
+                let peak = r.peakPower(forChannel: 0)
+                let level = Self.visualMeterLevel(averagePower: avg, peakPower: peak)
+                self.onLevel?(level)
+            }
+            self.levelTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
         }
-        if let t = levelTimer { RunLoop.main.add(t, forMode: .common) }
     }
 
     private func stopLevelUpdates() {
-        levelTimer?.invalidate()
-        levelTimer = nil
-        onLevel?(0)
+        DispatchQueue.main.async { [weak self] in
+            self?.levelTimer?.invalidate()
+            self?.levelTimer = nil
+            self?.onLevel?(0)
+        }
     }
 
-    private static func normalize(power: Float) -> Float {
-        // Map dB (-160..0) to 0..1, with floor at -50 dB for better responsiveness
-        let minDb: Float = -50
-        let clamped = max(power, minDb)
-        let range = minDb * -1
-        let norm = (clamped + range) / range // 0..1 linear
-        // Slight easing to emphasize small signals
-        return pow(norm, 1.1)
+    private static func visualMeterLevel(averagePower: Float, peakPower: Float) -> Float {
+        let average = normalizeVisualPower(averagePower)
+        let peak = normalizeVisualPower(peakPower)
+        let blended = average * 0.55 + peak * 0.45
+        return blended < 0.003 ? 0 : min(1, blended)
+    }
+
+    private static func normalizeVisualPower(_ power: Float) -> Float {
+        let silenceFloor: Float = -62
+        let speechCeiling: Float = -12
+        guard power > silenceFloor else { return 0 }
+        let clamped = min(max(power, silenceFloor), speechCeiling)
+        let linear = (clamped - silenceFloor) / (speechCeiling - silenceFloor)
+        return pow(linear, 0.85)
+    }
+
+    private static func visualMeterLevel(from buffer: AVAudioPCMBuffer) -> Float {
+        guard buffer.frameLength > 0 else { return 0 }
+        let frameCount = Int(buffer.frameLength)
+        var sumSquares: Float = 0
+        var peak: Float = 0
+
+        if let channels = buffer.floatChannelData {
+            let channel = channels.pointee
+            for sampleIndex in 0..<frameCount {
+                let value = abs(channel[sampleIndex])
+                sumSquares += value * value
+                peak = max(peak, value)
+            }
+        } else if let channels = buffer.int16ChannelData {
+            let channel = channels.pointee
+            let scale = Float(Int16.max)
+            for sampleIndex in 0..<frameCount {
+                let value = abs(Float(channel[sampleIndex]) / scale)
+                sumSquares += value * value
+                peak = max(peak, value)
+            }
+        } else {
+            return 0
+        }
+
+        let rms = sqrtf(sumSquares / Float(frameCount))
+        guard rms > 0 || peak > 0 else { return 0 }
+        let avgDb = 20 * log10(max(rms, 0.000_001))
+        let peakDb = 20 * log10(max(peak, 0.000_001))
+        return visualMeterLevel(averagePower: avgDb, peakPower: peakDb)
     }
 }
 
@@ -444,6 +491,8 @@ extension AudioRecorder {
             }
         }
         lastAudioTime = time
+
+        onLevel?(Self.visualMeterLevel(from: buffer))
 
         // Suppress low-energy buffers to reduce transmission of near-silence (optional)
         // Use user default to control RMS gate; default to 0 (disabled) for reliability

@@ -16,7 +16,7 @@ Core components: `DictationViewModel` (orchestrates recording → transcription 
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with six sidebar tabs: Dictation, Command, Vocabulary, History, Microphone, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with seven sidebar tabs: Dictation, Command, Hermes, Vocabulary, History, Microphone, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V4 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
@@ -48,8 +48,20 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-06: Attached active-window screenshots to Hermes voice turns when available.
+- 2026-05-06: Added Backslash as a dedicated hotkey option and improved Hermes response Markdown list rendering.
+- 2026-05-06: Moved Hermes setup into its own sidebar item with a dedicated hotkey.
+- 2026-05-06: Added an HTTP ATS allowance and authenticated remote probe for Hermes API endpoints.
+- 2026-05-06: Added Hermes agent voice-loop settings, API client, and response window integration.
+- 2026-05-06: Prevented stop-request polling from briefly restoring recording state and replaying chimes.
 - 2026-05-06: Improved screen-context OCR accuracy with lossless accurate captures and OCR-noise filtering.
 - 2026-05-06: Added full-display OCR preprocessing that uses Apple Intelligence for screen-context terms with a local keyword fallback.
+- 2026-05-06: Restored side-specific modifier hotkey detection from the changed key event so right Option taps register promptly.
+- 2026-05-06: Disabled the stale legacy recording hotkey listener so only visible prompt activation keys trigger dictation.
+- 2026-05-06: Tightened modifier hotkeys so alternate shortcuts with extra modifiers do not trigger WonderWhisper.
+- 2026-05-06: Shortened post-insertion hotkey suppression so back-to-back dictation can restart promptly after paste.
+- 2026-05-06: Made fast standalone modifier hotkey taps trigger immediately on release instead of requiring the guard delay.
+- 2026-05-06: Refined the recording overlay visualizer with quieter metering, modern capsule styling, and compact icon controls.
 - 2026-05-05: Updated FluidAudio to 0.14.4 and aligned Parakeet batch transcription with the current async ASR API.
 - 2026-05-05: Added OpenRouter Voice transcription engine using `/audio/transcriptions` with selectable STT model IDs.
 - 2026-05-05: Added xAI Grok Speech-to-Text cloud transcription engine and `XAI_API_KEY` setting.

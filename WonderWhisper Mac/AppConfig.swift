@@ -52,6 +52,11 @@ struct AppConfig {
     static let xaiAPIKeyAlias = "XAI_API_KEY"
     // Keychain alias for the Soniox API key
     static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
+    // Keychain alias for the Hermes API server bearer token
+    static let hermesAPIKeyAlias = "HERMES_API_SERVER_KEY"
+    static let defaultHermesBaseURLString = "http://127.0.0.1:8642"
+    static let defaultHermesModel = "hermes-agent"
+    static let defaultHermesConversationName = "wonderwhisper-mac"
     // OpenRouter header defaults
     static let openrouterTitle = "WonderWhisper Mac"
     static let openrouterReferer = "https://wonderwhisper.app"

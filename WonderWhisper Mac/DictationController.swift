@@ -7,6 +7,19 @@ import os.signpost
 actor DictationController {
     private let spLog = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Dictation-SP")
     enum State: Equatable { case idle, recording, transcribing, processing, inserting, error(String) }
+    struct TranscriptionOnlyResult: Equatable {
+        var fileURL: URL?
+        var appName: String?
+        var bundleID: String?
+        var transcript: String
+        var screenContext: String?
+        var screenContextMethod: String?
+        var selectedText: String?
+        var activeTextField: String?
+        var transcriptionModel: String
+        var transcriptionSeconds: Double
+        var totalSeconds: Double
+    }
     private(set) var state: State = .idle
 
     private let recorder: AudioRecorder
@@ -483,6 +496,90 @@ actor DictationController {
     func finish(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
         self.currentPrompt = activePrompt
         await stopAndProcess(userPrompt: userPrompt)
+    }
+
+    func finishTranscriptionOnly(activePrompt: PromptConfiguration? = nil) async throws -> TranscriptionOnlyResult? {
+        self.currentPrompt = activePrompt
+        guard state == .recording else { return nil }
+
+        AppLog.dictation.log("Stop requested for transcription-only flow provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
+        recorder.stopStreamingPCM16()
+
+        let recordingFileURL = await recorder.stopRecordingAndWait()
+        if autoMuteEnabled {
+            SystemAudioController.shared.unmuteSystemAudioAndWait()
+        }
+
+        let pipeId = OSSignpostID(log: spLog)
+        os_signpost(.begin, log: spLog, name: "WW.pipeline.transcriptionOnly", signpostID: pipeId)
+        defer {
+            resetTransientSessionState()
+            os_signpost(.end, log: spLog, name: "WW.pipeline.transcriptionOnly", signpostID: pipeId)
+        }
+
+        let overallStart = Date()
+        let activeTextFieldForHistory: String?
+        do {
+            state = .transcribing
+            let t0 = Date()
+            var transcript = ""
+            let hotkeySettings = TranscriptionSettings(
+                endpoint: transcriberSettings.endpoint,
+                model: transcriberSettings.model,
+                timeout: transcriberSettings.timeout,
+                language: transcriberSettings.language,
+                context: "hermes"
+            )
+
+            os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
+            if let groq = transcriber as? GroqStreamingProvider {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                transcript = try await groq.endRealtime()
+                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Hermes flow streaming empty/punctuation-only; fallback to file transcription")
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else if let soniox = transcriber as? SonioxStreamingProvider {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                transcript = try await soniox.endRealtime()
+                if looksEmptyOrPunctuation(transcript) {
+                    AppLog.dictation.log("Hermes flow Soniox streaming empty; no file fallback available")
+                }
+            } else {
+                guard let fileURL = recordingFileURL else {
+                    throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
+                }
+                await Self.waitUntilFileIsStable(fileURL)
+                transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+            }
+            let transcribeDT = Date().timeIntervalSince(t0)
+            os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
+
+            let selected = resolveSelectedTextForSession()
+            let activeTextField = resolveActiveTextFieldForSession()
+            activeTextFieldForHistory = activeTextField
+
+            let pair = screenContext.frontmostAppNameAndBundle()
+            state = .idle
+            return TranscriptionOnlyResult(
+                fileURL: recordingFileURL ?? currentRecordingURL,
+                appName: pair.0,
+                bundleID: screenContextEnabled ? pair.1 : nil,
+                transcript: transcript,
+                screenContext: preCapturedScreenText,
+                screenContextMethod: preCapturedScreenMethod,
+                selectedText: selected,
+                activeTextField: activeTextFieldForHistory,
+                transcriptionModel: transcriberSettings.model,
+                transcriptionSeconds: transcribeDT,
+                totalSeconds: Date().timeIntervalSince(overallStart)
+            )
+        } catch {
+            let ns = error as NSError
+            AppLog.dictation.error("Transcription-only pipeline error: \(ns.localizedDescription, privacy: .public)")
+            state = .error(error.localizedDescription)
+            throw error
+        }
     }
 
     func cancel() async {
