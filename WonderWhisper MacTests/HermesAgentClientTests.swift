@@ -70,11 +70,32 @@ struct HermesAgentClientTests {
         conversationName: "wonderwhisper-mac",
         timeout: 180
       ),
-      imageAttachment: nil
+      imageAttachment: nil,
+      clipboardText: nil
     )
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
     #expect(object["input"] as? String == "Summarise this")
+  }
+
+  @Test func requestBodyIncludesClipboardTextInPlainInput() throws {
+    let data = try HermesAgentAPIClient.requestBodyData(
+      input: "Send this to Sarah",
+      settings: HermesAgentSettings(
+        baseURLString: "http://127.0.0.1:8642",
+        model: "hermes-agent",
+        conversationName: "wonderwhisper-mac",
+        timeout: 180
+      ),
+      imageAttachment: nil,
+      clipboardText: "https://example.com/reference"
+    )
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let input = try #require(object["input"] as? String)
+
+    #expect(input.contains("Send this to Sarah"))
+    #expect(input.contains(HermesAgentAPIClient.clipboardContextHeader))
+    #expect(input.contains("https://example.com/reference"))
   }
 
   @Test func requestBodyIncludesScreenshotAttachmentAndFootnote() throws {
@@ -94,7 +115,8 @@ struct HermesAgentClientTests {
         conversationName: "wonderwhisper-mac",
         timeout: 180
       ),
-      imageAttachment: attachment
+      imageAttachment: attachment,
+      clipboardText: "Copied link"
     )
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     let input = try #require(object["input"] as? [[String: Any]])
@@ -105,6 +127,8 @@ struct HermesAgentClientTests {
 
     #expect(message["role"] as? String == "user")
     #expect((textPart["text"] as? String)?.contains(HermesAgentAPIClient.screenshotFootnote) == true)
+    #expect((textPart["text"] as? String)?.contains(HermesAgentAPIClient.clipboardContextHeader) == true)
+    #expect((textPart["text"] as? String)?.contains("Copied link") == true)
     #expect(imagePart["type"] as? String == "input_image")
     #expect((imagePart["image_url"] as? String)?.hasPrefix("data:image/jpeg;base64,") == true)
   }

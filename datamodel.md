@@ -378,6 +378,9 @@ erDiagram
 | `hermes.model` | String | Cosmetic Hermes API model field |
 | `hermes.timeout` | Double | Hermes request timeout (seconds) |
 | `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
+| `hermes.context.screenText.enabled` | Bool | Include Hermes OCR/screen text context |
+| `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
+| `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
 
 ### Keychain Storage
 
@@ -415,6 +418,9 @@ erDiagram
         Bool simpleLLMEnabled
         SimpleSidebarItem simpleSidebarSelection
         Bool hermesAgentEnabled
+        Bool hermesScreenContextEnabled
+        Bool hermesScreenshotEnabled
+        Bool hermesClipboardContextEnabled
         HermesResponseWindowState hermesResponseWindowState "optional"
     }
 ```
@@ -553,12 +559,12 @@ sequenceDiagram
     participant HistoryStore
 
     User->>DictationViewModel: Trigger Hermes hotkey
-    DictationViewModel->>DictationViewModel: Start active-window screenshot capture
+    DictationViewModel->>DictationViewModel: Start enabled active-window screenshot and clipboard text capture
     DictationViewModel->>DictationController: Start recording
     User->>DictationViewModel: Trigger Hermes hotkey again
     DictationViewModel->>DictationController: Finish transcription-only turn
     DictationController-->>DictationViewModel: Transcript + audio/context metadata
-    DictationViewModel->>HermesAPI: POST /v1/responses with conversation name and screenshot input_image when available
+    DictationViewModel->>HermesAPI: POST /v1/responses with enabled text/image/clipboard context
     HermesAPI-->>DictationViewModel: Assistant response
     DictationViewModel->>HistoryStore: append transcript/response entry and screenshot metadata
     DictationViewModel-->>User: Show Hermes response window

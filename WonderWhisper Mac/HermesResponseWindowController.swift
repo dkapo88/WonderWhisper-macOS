@@ -19,7 +19,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
 @MainActor
 final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private weak var viewModel: DictationViewModel?
-  private var panel: NSPanel?
+  private var panel: HermesResponsePanel?
   private var cancellable: AnyCancellable?
 
   init(viewModel: DictationViewModel) {
@@ -50,8 +50,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         onClose: { [weak self] in self?.viewModel?.dismissHermesResponse() }
       )
     )
-    position(panel)
-    panel.orderFrontRegardless()
+    present(panel)
     self.panel = panel
   }
 
@@ -59,8 +58,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     panel?.orderOut(nil)
   }
 
-  private func makePanel() -> NSPanel {
-    let panel = NSPanel(
+  private func makePanel() -> HermesResponsePanel {
+    let panel = HermesResponsePanel(
       contentRect: NSRect(x: 0, y: 0, width: 560, height: 390),
       styleMask: [.titled, .closable, .fullSizeContentView],
       backing: .buffered,
@@ -71,17 +70,48 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     panel.titlebarAppearsTransparent = true
     panel.isReleasedWhenClosed = false
     panel.isFloatingPanel = true
-    panel.level = .floating
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.hidesOnDeactivate = false
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.level = .statusBar
+    panel.collectionBehavior = [
+      .canJoinAllSpaces,
+      .fullScreenAuxiliary,
+      .transient,
+      .ignoresCycle
+    ]
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.hasShadow = true
+    panel.isMovableByWindowBackground = true
     panel.delegate = self
     return panel
   }
 
+  private func present(_ panel: HermesResponsePanel) {
+    let appWasHidden = NSApp.isHidden
+    if appWasHidden {
+      NSApp.unhideWithoutActivation()
+    }
+
+    position(panel)
+    panel.orderFrontRegardless()
+    NSApp.activate()
+    panel.makeKeyAndOrderFront(nil)
+
+    if appWasHidden {
+      hideMainAppWindows(except: panel)
+    }
+  }
+
+  private func hideMainAppWindows(except responsePanel: HermesResponsePanel) {
+    for window in NSApp.windows where window !== responsePanel {
+      guard window.isVisible, window.canBecomeMain || window.isMainWindow else { continue }
+      window.orderOut(nil)
+    }
+  }
+
   private func position(_ panel: NSPanel) {
-    let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+    let screenFrame = targetScreenFrame()
     let frame = panel.frame
     let origin = NSPoint(
       x: screenFrame.midX - frame.width / 2,
@@ -89,6 +119,19 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     )
     panel.setFrameOrigin(origin)
   }
+
+  private func targetScreenFrame() -> NSRect {
+    let pointer = NSEvent.mouseLocation
+    if let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) {
+      return screen.visibleFrame
+    }
+    return NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+  }
+}
+
+private final class HermesResponsePanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { false }
 }
 
 private struct HermesResponsePanelView: View {

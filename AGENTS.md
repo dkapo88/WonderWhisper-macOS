@@ -48,6 +48,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-06: Made Hermes response windows activate independently above other apps.
+- 2026-05-06: Added Hermes context toggles for screen text, screenshot images, and clipboard text.
+- 2026-05-06: Added current clipboard text context to Hermes voice turns.
 - 2026-05-06: Attached active-window screenshots to Hermes voice turns when available.
 - 2026-05-06: Added Backslash as a dedicated hotkey option and improved Hermes response Markdown list rendering.
 - 2026-05-06: Moved Hermes setup into its own sidebar item with a dedicated hotkey.

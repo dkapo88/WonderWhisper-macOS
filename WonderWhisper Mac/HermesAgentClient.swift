@@ -105,7 +105,8 @@ final class HermesAgentAPIClient {
 
   func send(input: String,
             settings: HermesAgentSettings,
-            imageAttachment: HermesAgentImageAttachment? = nil) async throws -> HermesAgentResponse {
+            imageAttachment: HermesAgentImageAttachment? = nil,
+            clipboardText: String? = nil) async throws -> HermesAgentResponse {
     let cleanedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !cleanedInput.isEmpty else { throw HermesAgentClientError.emptyInput }
     let url = try v1Endpoint(path: "responses", settings: settings)
@@ -118,7 +119,8 @@ final class HermesAgentAPIClient {
     request.httpBody = try Self.requestBodyData(
       input: cleanedInput,
       settings: settings,
-      imageAttachment: imageAttachment
+      imageAttachment: imageAttachment,
+      clipboardText: clipboardText
     )
 
     let response = try await perform(request)
@@ -438,6 +440,8 @@ private final class TransportState: @unchecked Sendable {
 extension HermesAgentAPIClient {
   static let screenshotFootnote =
     "Screenshot attached for active context of what I'm currently viewing or working on."
+  static let clipboardContextHeader = "Last copied text attached as clipboard context:"
+  static let clipboardContextCharacterLimit = 12_000
 
   static func extractOutputText(from data: Data) throws -> String {
     try JSONDecoder().decode(ResponsesEnvelope.self, from: data).extractedText
@@ -446,15 +450,45 @@ extension HermesAgentAPIClient {
   static func requestBodyData(
     input: String,
     settings: HermesAgentSettings,
-    imageAttachment: HermesAgentImageAttachment?
+    imageAttachment: HermesAgentImageAttachment?,
+    clipboardText: String?
   ) throws -> Data {
     let body = ResponsesRequest(
       model: settings.normalizedModel,
-      input: .from(text: input, imageAttachment: imageAttachment),
+      input: .from(text: input, imageAttachment: imageAttachment, clipboardText: clipboardText),
       conversation: settings.normalizedConversationName,
       store: true
     )
     return try JSONEncoder().encode(body)
+  }
+
+  static func enrichedInputText(
+    input: String,
+    imageAttachment: HermesAgentImageAttachment?,
+    clipboardText: String?
+  ) -> String {
+    var sections = [input]
+    if let clipboardContext = normalizedClipboardText(clipboardText) {
+      sections.append("\(clipboardContextHeader)\n\(clipboardContext)")
+    }
+    if imageAttachment != nil {
+      sections.append("Footnote: \(screenshotFootnote)")
+    }
+    return sections.joined(separator: "\n\n")
+  }
+
+  static func normalizedClipboardText(_ text: String?) -> String? {
+    guard let text else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard trimmed.count > clipboardContextCharacterLimit else { return trimmed }
+
+    let limitIndex = trimmed.index(
+      trimmed.startIndex,
+      offsetBy: clipboardContextCharacterLimit
+    )
+    return String(trimmed[..<limitIndex])
+      + "\n[Clipboard text truncated to \(clipboardContextCharacterLimit) characters.]"
   }
 
   static func endpointURL(path: String, baseURLString: String) throws -> URL {
@@ -483,14 +517,22 @@ private enum ResponsesInput: Encodable {
   case text(String)
   case multimodal([ResponsesInputMessage])
 
-  static func from(text: String, imageAttachment: HermesAgentImageAttachment?) -> ResponsesInput {
-    guard let imageAttachment else { return .text(text) }
-    let textWithFootnote = "\(text)\n\nFootnote: \(HermesAgentAPIClient.screenshotFootnote)"
+  static func from(
+    text: String,
+    imageAttachment: HermesAgentImageAttachment?,
+    clipboardText: String?
+  ) -> ResponsesInput {
+    let enrichedText = HermesAgentAPIClient.enrichedInputText(
+      input: text,
+      imageAttachment: imageAttachment,
+      clipboardText: clipboardText
+    )
+    guard let imageAttachment else { return .text(enrichedText) }
     return .multimodal([
       ResponsesInputMessage(
         role: "user",
         content: [
-          .text(textWithFootnote),
+          .text(enrichedText),
           .image(imageAttachment)
         ]
       )

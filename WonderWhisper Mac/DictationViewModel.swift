@@ -223,6 +223,39 @@ final class DictationViewModel: ObservableObject {
             refreshPromptHotkeys()
         }
     }
+    @Published var hermesScreenContextEnabled: Bool = {
+        let key = SimpleDefaultsKey.hermesScreenContextEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                hermesScreenContextEnabled,
+                forKey: SimpleDefaultsKey.hermesScreenContextEnabled
+            )
+        }
+    }
+    @Published var hermesScreenshotEnabled: Bool = {
+        let key = SimpleDefaultsKey.hermesScreenshotEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                hermesScreenshotEnabled,
+                forKey: SimpleDefaultsKey.hermesScreenshotEnabled
+            )
+        }
+    }
+    @Published var hermesClipboardContextEnabled: Bool = {
+        let key = SimpleDefaultsKey.hermesClipboardContextEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                hermesClipboardContextEnabled,
+                forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
+            )
+        }
+    }
     @Published var hermesConnectionStatus: String?
     @Published var hermesConnectionSucceeded: Bool?
     @Published var hermesResponseWindowState: HermesResponseWindowState?
@@ -307,6 +340,7 @@ final class DictationViewModel: ObservableObject {
     )
     private var activeHermesPromptID: UUID?
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
+    private var hermesClipboardTask: Task<String?, Never>?
 
     // Debouncing for provider updates
     private var providerUpdateTimer: Timer?
@@ -1778,7 +1812,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func beginHermesRecording(promptID: UUID) async {
-        prepareHermesScreenshotCapture()
+        prepareHermesContextCapture()
 
         await MainActor.run {
             self.hermesResponseWindowState = nil
@@ -1802,6 +1836,9 @@ final class DictationViewModel: ObservableObject {
             self.updateProvidersImmediately()
         }
         await waitForLatestProviderUpdate()
+        await controller.updateLLMEnabled(true)
+        await controller.updateScreenContextEnabled(hermesScreenContextEnabled)
+        await controller.updateClipboardContextEnabled(false)
         await checkAndStoreSelectedTextPromptFast()
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
@@ -1812,7 +1849,7 @@ final class DictationViewModel: ObservableObject {
             if case .error = state {
                 self.activeHermesPromptID = nil
                 self.isRecording = false
-                self.clearHermesScreenshotCapture(cancel: true)
+                self.clearHermesContextCapture(cancel: true)
             }
         }
     }
@@ -1830,7 +1867,7 @@ final class DictationViewModel: ObservableObject {
             guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
                 await MainActor.run {
                     self.activeHermesPromptID = nil
-                    self.clearHermesScreenshotCapture(cancel: true)
+                    self.clearHermesContextCapture(cancel: true)
                 }
                 return
             }
@@ -1840,7 +1877,7 @@ final class DictationViewModel: ObservableObject {
         } catch {
             await MainActor.run {
                 self.activeHermesPromptID = nil
-                self.clearHermesScreenshotCapture(cancel: true)
+                self.clearHermesContextCapture(cancel: true)
                 self.hermesResponseWindowState = HermesResponseWindowState(
                     title: "Hermes Error",
                     text: error.localizedDescription,
@@ -1859,7 +1896,7 @@ final class DictationViewModel: ObservableObject {
                 text: HermesAgentClientError.emptyInput.localizedDescription,
                 isError: true
             )
-            clearHermesScreenshotCapture(cancel: true)
+            clearHermesContextCapture(cancel: true)
             return
         }
 
@@ -1869,15 +1906,21 @@ final class DictationViewModel: ObservableObject {
 
         do {
             let screenshot = await consumeHermesScreenshot()
+            let clipboardText = await consumeHermesClipboardContext()
             let imageAttachment = screenshot.map(HermesAgentImageAttachment.init(snapshot:))
-            let userMessageForHistory = imageAttachment == nil
-                ? transcript
-                : "\(transcript)\n\nFootnote: \(HermesAgentAPIClient.screenshotFootnote)"
+            let screenContext = hermesScreenContextEnabled ? turn.screenContext : nil
+            let screenContextMethod = hermesScreenContextEnabled ? turn.screenContextMethod : nil
+            let userMessageForHistory = HermesAgentAPIClient.enrichedInputText(
+                input: transcript,
+                imageAttachment: imageAttachment,
+                clipboardText: clipboardText
+            )
             let start = Date()
             let response = try await hermesClient.send(
                 input: transcript,
                 settings: settings,
-                imageAttachment: imageAttachment
+                imageAttachment: imageAttachment,
+                clipboardText: clipboardText
             )
             let hermesSeconds = Date().timeIntervalSince(start)
 
@@ -1887,8 +1930,8 @@ final class DictationViewModel: ObservableObject {
                 bundleID: turn.bundleID,
                 transcript: transcript,
                 output: response.text,
-                screenContext: turn.screenContext,
-                screenContextMethod: turn.screenContextMethod,
+                screenContext: screenContext,
+                screenContextMethod: screenContextMethod,
                 screenImage: screenshot,
                 selectedText: turn.selectedText,
                 activeTextField: turn.activeTextField,
@@ -1912,14 +1955,21 @@ final class DictationViewModel: ObservableObject {
                 text: error.localizedDescription,
                 isError: true
             )
-            clearHermesScreenshotCapture(cancel: true)
+            clearHermesContextCapture(cancel: true)
         }
     }
 
-    private func prepareHermesScreenshotCapture() {
-        clearHermesScreenshotCapture(cancel: true)
-        hermesScreenshotTask = Task.detached(priority: .userInitiated) {
-            await DictationViewModel.captureHermesContextScreenshot()
+    private func prepareHermesContextCapture() {
+        clearHermesContextCapture(cancel: true)
+        if hermesScreenshotEnabled {
+            hermesScreenshotTask = Task.detached(priority: .userInitiated) {
+                await DictationViewModel.captureHermesContextScreenshot()
+            }
+        }
+        if hermesClipboardContextEnabled {
+            hermesClipboardTask = Task.detached(priority: .userInitiated) {
+                await DictationViewModel.captureHermesClipboardContext()
+            }
         }
     }
 
@@ -1929,11 +1979,29 @@ final class DictationViewModel: ObservableObject {
         return await task?.value
     }
 
+    private func consumeHermesClipboardContext() async -> String? {
+        let task = hermesClipboardTask
+        hermesClipboardTask = nil
+        return await task?.value
+    }
+
+    private func clearHermesContextCapture(cancel: Bool) {
+        clearHermesScreenshotCapture(cancel: cancel)
+        clearHermesClipboardCapture(cancel: cancel)
+    }
+
     private func clearHermesScreenshotCapture(cancel: Bool) {
         if cancel {
             hermesScreenshotTask?.cancel()
         }
         hermesScreenshotTask = nil
+    }
+
+    private func clearHermesClipboardCapture(cancel: Bool) {
+        if cancel {
+            hermesClipboardTask?.cancel()
+        }
+        hermesClipboardTask = nil
     }
 
     private nonisolated static func captureHermesContextScreenshot() async -> ScreenCaptureSnapshot? {
@@ -1947,6 +2015,25 @@ final class DictationViewModel: ObservableObject {
             AppLog.screen.warning("Hermes context screenshot unavailable; sending text-only turn")
         }
         return snapshot
+    }
+
+    private nonisolated static func captureHermesClipboardContext() async -> String? {
+        await MainActor.run {
+            do {
+                let result = try ObjCExceptionHandler.catchException {
+                    NSPasteboard.general.string(forType: .string) as NSString?
+                }
+                let text = result as? String
+                let normalized = HermesAgentAPIClient.normalizedClipboardText(text)
+                if normalized != nil {
+                    AppLog.dictation.log("Hermes clipboard context captured")
+                }
+                return normalized
+            } catch {
+                AppLog.dictation.warning("Hermes clipboard context unavailable")
+                return nil
+            }
+        }
     }
 
     private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
@@ -2305,6 +2392,9 @@ private enum SimpleDefaultsKey {
     static let openRouterTranscriptionModel = "transcription.openrouter.model"
     static let sidebar = "simple.sidebar.selection"
     static let hermesSelection = "hermes.shortcut.selection"
+    static let hermesScreenContextEnabled = "hermes.context.screenText.enabled"
+    static let hermesScreenshotEnabled = "hermes.context.screenshot.enabled"
+    static let hermesClipboardContextEnabled = "hermes.context.clipboard.enabled"
 }
 
 private extension DictationViewModel {

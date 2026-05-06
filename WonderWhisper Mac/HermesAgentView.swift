@@ -13,6 +13,7 @@ struct HermesAgentView: View {
       VStack(alignment: .leading, spacing: 24) {
         header
         connectionSection
+        contextSection
         hotkeySection
         Spacer(minLength: 0)
       }
@@ -138,6 +139,24 @@ struct HermesAgentView: View {
         }
 
         Text("Hermes uses its own hotkey and no longer takes over the Command shortcut.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private var contextSection: some View {
+    GroupBox("Context") {
+      VStack(alignment: .leading, spacing: 10) {
+        Toggle("Screen text context", isOn: $vm.hermesScreenContextEnabled)
+          .toggleStyle(.checkbox)
+        Toggle("Screenshot image", isOn: $vm.hermesScreenshotEnabled)
+          .toggleStyle(.checkbox)
+        Toggle("Copied text / clipboard", isOn: $vm.hermesClipboardContextEnabled)
+          .toggleStyle(.checkbox)
+
+        Text("Controls what Hermes receives with each voice turn.")
           .font(.caption)
           .foregroundColor(.secondary)
       }
