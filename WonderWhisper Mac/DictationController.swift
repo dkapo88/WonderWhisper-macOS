@@ -35,6 +35,7 @@ actor DictationController {
     private var clipboardSnapshotForSession: String?
     private let clipboardMonitor = ClipboardContextMonitor()
     private let clipboardWindowSeconds: TimeInterval = 10
+    private var screenContextCaptureGeneration: Int = 0
 
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
     private var autoMuteEnabled: Bool = false
@@ -118,9 +119,11 @@ actor DictationController {
                 preCapturedSelectedText = nil
                 preCapturedActiveTextField = nil
                 clipboardSnapshotForSession = nil
+                screenContextCaptureGeneration += 1
+                let contextGeneration = screenContextCaptureGeneration
 
                 if llmEnabled && screenContextEnabled {
-                    Task { await self.preCaptureScreenContext() }
+                    Task { await self.preCaptureScreenContext(generation: contextGeneration) }
                 }
                 if clipboardContextEnabled {
                     await clipboardMonitor.refreshSnapshot()
@@ -298,7 +301,8 @@ actor DictationController {
                     selectedText: selected,
                     activeTextField: activeTextField,
                     appName: appNameForPrompt,
-                    screenContents: screenContentsForPrompt,
+                    screenContents: nil,
+                    screenContextTerms: screenContentsForPrompt,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
                     clipboardText: clipboardSnapshotForSession
                 )
@@ -471,6 +475,7 @@ actor DictationController {
         preCapturedSelectedText = nil
         preCapturedActiveTextField = nil
         clipboardSnapshotForSession = nil
+        screenContextCaptureGeneration += 1
         recorder.captureProfile = .standard16k
     }
 
@@ -507,6 +512,7 @@ actor DictationController {
         preCapturedScreenMethod = nil
         preCapturedActiveTextField = nil
         clipboardSnapshotForSession = nil
+        screenContextCaptureGeneration += 1
         Task { await clipboardMonitor.clear() }
         // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
@@ -578,6 +584,10 @@ actor DictationController {
             let selected = entry.selectedText
             let screenInstruction = entry.screenContext
             let appNameForPrompt = entry.appName
+            let screenContextWasTermList = [
+                ScreenContextPreprocessingMethod.appleIntelligence.rawValue,
+                ScreenContextPreprocessingMethod.localKeywords.rawValue
+            ].contains(entry.screenContextMethod ?? "")
             var screenAttachment: LLMImageAttachment? = nil
             if let imageURL = await history.imageURL(for: entry),
                let data = try? Data(contentsOf: imageURL) {
@@ -592,7 +602,8 @@ actor DictationController {
                     selectedText: selected,
                     activeTextField: entry.activeTextField,
                     appName: appNameForPrompt,
-                    screenContents: screenInstruction,
+                    screenContents: screenContextWasTermList ? nil : screenInstruction,
+                    screenContextTerms: screenContextWasTermList ? screenInstruction : nil,
                     customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
                 )
                 // Capture full user message for history
@@ -670,18 +681,17 @@ extension DictationController {
         return nil
     }
 
-    private func preCaptureScreenContext() async {
+    private func preCaptureScreenContext(generation: Int) async {
         if !screenContextEnabled { return }
+        guard generation == screenContextCaptureGeneration else { return }
 
         if selectedTextEnabled {
             _ = resolveSelectedTextForSession()
         }
 
-        // If user already has selection, do not touch active text field (avoid select-all side effects)
-        if let selected = preCapturedSelectedText?.trimmingCharacters(in: .whitespacesAndNewlines), !selected.isEmpty {
-            preCapturedActiveTextField = nil
-            return
-        }
+        let hasSelectedText = preCapturedSelectedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
 
         // Always capture screen text for OCR context
         self.preCapturedScreenSnapshot = nil
@@ -689,38 +699,20 @@ extension DictationController {
         self.preCapturedScreenMethod = nil
         self.preCapturedActiveTextField = nil
 
-        // Capture active text field
-        if activeTextFieldEnabled, let focused = screenContext.activeTextField(), !focused.isEmpty {
+        // Capture active text field unless there is already selected text.
+        if !hasSelectedText,
+           activeTextFieldEnabled,
+           let focused = screenContext.activeTextField(),
+           !focused.isEmpty {
             self.preCapturedActiveTextField = focused
         }
 
-        // Continue to capture OCR if needed (don't return early)
-
-        let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        let isCodeEditor = [
-            "com.cursorai.cursor",
-            "com.todesktop.cursor",
-            "com.microsoft.VSCode",
-            "com.microsoft.VSCodeInsiders",
-            "com.apple.dt.Xcode",
-            "com.jetbrains"
-        ].contains(where: { frontBundle.hasPrefix($0) })
-        let isBrowser = [
-            "com.apple.Safari",
-            "com.google.Chrome",
-            "org.mozilla.firefox",
-            "com.microsoft.edgemac",
-            "com.operasoftware.Opera"
-        ].contains(where: { frontBundle.hasPrefix($0) })
-        let forceAccurate = UserDefaults.standard.bool(forKey: "ocr.forceAccurate")
-        let preferAccurate = forceAccurate || isCodeEditor || isBrowser
-
-        if let text = await screenContext.captureActiveWindowText(preferAccurate: preferAccurate) {
-            let trimmed = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                self.preCapturedScreenText = trimmed
-                self.preCapturedScreenMethod = "OCR"
-            }
+        if let result = await screenContext.captureFullScreenContextTerms(preferAccurate: true),
+           !result.contextText.isEmpty {
+            guard generation == screenContextCaptureGeneration else { return }
+            self.preCapturedScreenText = result.contextText
+            self.preCapturedScreenMethod = result.method.rawValue
+            AppLog.dictation.log("Screen context terms captured via \(result.method.rawValue, privacy: .public): \(result.contextText.count, privacy: .public) chars")
         }
     }
 

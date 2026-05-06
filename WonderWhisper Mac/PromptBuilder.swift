@@ -25,6 +25,7 @@ struct PromptBuilder {
                                  activeTextField: String?,
                                  appName: String?,
                                  screenContents: String?,
+                                 screenContextTerms: String? = nil,
                                  customVocabulary: String?,
                                  clipboardText: String? = nil) -> String {
         var out = ""
@@ -55,8 +56,10 @@ struct PromptBuilder {
             contextParts.append("<SELECTED_TEXT>\n\(selected)\n</SELECTED_TEXT>")
         }
 
-        // Screen contents (OCR)
-        if let screen = screenContents?.trimmingCharacters(in: .whitespacesAndNewlines), !screen.isEmpty {
+        // Screen context, preferring a distilled spelling term list over raw OCR.
+        if let terms = screenContextTerms?.trimmingCharacters(in: .whitespacesAndNewlines), !terms.isEmpty {
+            contextParts.append("<SCREEN_CONTEXT_TERMS>\n\(terms)\n</SCREEN_CONTEXT_TERMS>")
+        } else if let screen = screenContents?.trimmingCharacters(in: .whitespacesAndNewlines), !screen.isEmpty {
             contextParts.append("<SCREEN_CONTENTS>\n\(screen)\n</SCREEN_CONTENTS>")
         }
 

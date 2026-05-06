@@ -223,14 +223,54 @@ final class ScreenContextService {
         return await withCheckedContinuation { continuation in
             backgroundQueue.async {
                 let svc = ScreenCaptureService()
+                let correctionHints = ScreenContextPreprocessor.defaultCorrectionHints()
                 Task {
-                    guard let snapshot = await svc.captureActiveWindowImage() else {
+                    guard let snapshot = await svc.captureActiveWindowImage(
+                        maxDimension: 4096,
+                        lossless: true
+                    ) else {
                         continuation.resume(returning: nil)
                         return
                     }
                     
-                    let text = await svc.recognizeText(from: snapshot, preferAccurate: preferAccurate)
+                    let text = await svc.recognizeText(
+                        from: snapshot,
+                        preferAccurate: preferAccurate,
+                        customWords: correctionHints
+                    )
                     continuation.resume(returning: text)
+                }
+            }
+        }
+    }
+
+    func captureFullScreenContextTerms(preferAccurate: Bool) async -> ScreenContextPreprocessingResult? {
+        return await withCheckedContinuation { continuation in
+            backgroundQueue.async {
+                let svc = ScreenCaptureService()
+                let correctionHints = ScreenContextPreprocessor.defaultCorrectionHints()
+                let preprocessor = ScreenContextPreprocessor(correctionHints: correctionHints)
+                Task {
+                    guard let snapshot = await svc.captureActiveDisplayImage(
+                        maxDimension: 4096,
+                        lossless: true
+                    ) else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
+                    guard let text = await svc.recognizeText(
+                        from: snapshot,
+                        preferAccurate: preferAccurate,
+                        customWords: correctionHints
+                    ),
+                          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
+                    let result = await preprocessor.preprocess(ocrText: text)
+                    continuation.resume(returning: result)
                 }
             }
         }

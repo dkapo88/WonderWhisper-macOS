@@ -94,7 +94,7 @@ erDiagram
         String output
         String audioFilename "optional"
         String screenContext "optional"
-        String screenContextMethod "optional - AX, Image-Window, Image-Display"
+        String screenContextMethod "optional - AX, Image-Window, Image-Display, AppleIntelligenceTerms, LocalKeywordTerms"
         String screenImageFilename "optional"
         String screenImageMimeType "optional"
         Int screenImageWidth "optional"
@@ -115,7 +115,7 @@ erDiagram
 - Raw transcription and processed output
 - Application context (where dictation occurred)
 - Audio recording reference
-- Screen context and captures
+- Screen context and captures. Text context may be raw OCR or a comma-delimited term list generated from full-display OCR.
 - Focused text field contents
 - Performance metrics
 - LLM prompts used (for transparency)
@@ -280,7 +280,6 @@ erDiagram
         String llmModel
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
-        ScreenContextPreprocessingMode screenContextPreprocessingMode
     }
     
     HistoryStore {

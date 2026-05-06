@@ -27,7 +27,8 @@ final class ScreenCaptureService: NSObject {
   private static let signposter = OSSignposter(logger: AppLog.screen)
   private let sampleQueue = DispatchQueue(label: "ScreenCaptureService.Sample", qos: .userInitiated)
 
-  func captureActiveWindowImage() async -> ScreenCaptureSnapshot? {
+  func captureActiveWindowImage(maxDimension: CGFloat = 1920,
+                                lossless: Bool = false) async -> ScreenCaptureSnapshot? {
     if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
 
     do {
@@ -37,13 +38,21 @@ final class ScreenCaptureService: NSObject {
       Self.signposter.endInterval("SCShareableContent.current", state)
 
       if let window = frontmostWindow(in: content),
-         let snapshot = try await captureWindow(window) {
+         let snapshot = try await captureWindow(
+          window,
+          maxDimension: maxDimension,
+          lossless: lossless
+         ) {
         return snapshot
       }
 
       let mainID = CGMainDisplayID()
       if let display = content.displays.first(where: { $0.displayID == mainID }) ?? content.displays.first,
-         let snapshot = try await captureDisplay(display) {
+         let snapshot = try await captureDisplay(
+          display,
+          maxDimension: max(maxDimension, 3072),
+          lossless: lossless
+         ) {
         return snapshot
       }
     } catch {
@@ -52,10 +61,60 @@ final class ScreenCaptureService: NSObject {
 
     return nil
   }
+
+  func captureActiveDisplayImage(maxDimension: CGFloat = 3072,
+                                 lossless: Bool = false) async -> ScreenCaptureSnapshot? {
+    if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+
+    do {
+      let sid = Self.signposter.makeSignpostID()
+      let state = Self.signposter.beginInterval("SCShareableContent.current", id: sid)
+      let content = try await SCShareableContent.current
+      Self.signposter.endInterval("SCShareableContent.current", state)
+
+      if let display = activeDisplay(in: content),
+         let snapshot = try await captureDisplay(
+          display,
+          maxDimension: maxDimension,
+          lossless: lossless
+         ) {
+        return snapshot
+      }
+    } catch {
+      AppLog.screen.error("Full display screen capture failed: \(error.localizedDescription)")
+    }
+
+    return nil
+  }
 }
 
 // MARK: - Private helpers
 private extension ScreenCaptureService {
+  func activeDisplay(in content: SCShareableContent) -> SCDisplay? {
+    if let window = frontmostWindow(in: content),
+       let display = display(containing: window.frame, in: content) {
+      return display
+    }
+
+    let mainID = CGMainDisplayID()
+    return content.displays.first(where: { $0.displayID == mainID }) ?? content.displays.first
+  }
+
+  func display(containing frame: CGRect, in content: SCShareableContent) -> SCDisplay? {
+    let displaysByArea = content.displays.map { display -> (display: SCDisplay, area: CGFloat) in
+      let displayFrame = CGDisplayBounds(display.displayID)
+      let intersection = displayFrame.intersection(frame)
+      return (display, intersection.isNull ? 0 : intersection.area)
+    }
+
+    if let best = displaysByArea.max(by: { $0.area < $1.area }), best.area > 0 {
+      return best.display
+    }
+
+    let mainID = CGMainDisplayID()
+    return content.displays.first(where: { $0.displayID == mainID }) ?? content.displays.first
+  }
+
   func frontmostWindow(in content: SCShareableContent) -> SCWindow? {
     guard let frontmost = NSWorkspace.shared.frontmostApplication else { return nil }
     let pid = frontmost.processIdentifier
@@ -84,7 +143,9 @@ private extension ScreenCaptureService {
     return candidates.max(by: { $0.frame.area < $1.frame.area })
   }
 
-  func captureWindow(_ window: SCWindow) async throws -> ScreenCaptureSnapshot? {
+  func captureWindow(_ window: SCWindow,
+                     maxDimension: CGFloat = 1920,
+                     lossless: Bool = false) async throws -> ScreenCaptureSnapshot? {
     let filter = SCContentFilter(desktopIndependentWindow: window)
     let config = SCStreamConfiguration()
     let scale = screenScale(for: window.frame)
@@ -97,10 +158,18 @@ private extension ScreenCaptureService {
     config.queueDepth = 1
     config.pixelFormat = kCVPixelFormatType_32BGRA
 
-    return try await capture(filter: filter, configuration: config, method: .window)
+    return try await capture(
+      filter: filter,
+      configuration: config,
+      method: .window,
+      maxDimension: maxDimension,
+      lossless: lossless
+    )
   }
 
-  func captureDisplay(_ display: SCDisplay) async throws -> ScreenCaptureSnapshot? {
+  func captureDisplay(_ display: SCDisplay,
+                      maxDimension: CGFloat = 3072,
+                      lossless: Bool = false) async throws -> ScreenCaptureSnapshot? {
     let filter = SCContentFilter(display: display, excludingWindows: [])
     let config = SCStreamConfiguration()
     config.width = Int(display.width)
@@ -109,12 +178,20 @@ private extension ScreenCaptureService {
     config.queueDepth = 1
     config.pixelFormat = kCVPixelFormatType_32BGRA
 
-    return try await capture(filter: filter, configuration: config, method: .display)
+    return try await capture(
+      filter: filter,
+      configuration: config,
+      method: .display,
+      maxDimension: maxDimension,
+      lossless: lossless
+    )
   }
 
   func capture(filter: SCContentFilter,
                configuration: SCStreamConfiguration,
-               method: ScreenCaptureSnapshot.Method) async throws -> ScreenCaptureSnapshot? {
+               method: ScreenCaptureSnapshot.Method,
+               maxDimension: CGFloat = 1920,
+               lossless: Bool = false) async throws -> ScreenCaptureSnapshot? {
     let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
     var continuationHolder: AsyncStream<CMSampleBuffer>.Continuation?
     let sampleStream = AsyncStream<CMSampleBuffer> { continuation in
@@ -149,10 +226,18 @@ private extension ScreenCaptureService {
       return nil
     }
 
-    return convert(sample: sample, method: method)
+    return convert(
+      sample: sample,
+      method: method,
+      maxDimension: maxDimension,
+      lossless: lossless
+    )
   }
 
-  func convert(sample: CMSampleBuffer, method: ScreenCaptureSnapshot.Method) -> ScreenCaptureSnapshot? {
+  func convert(sample: CMSampleBuffer,
+               method: ScreenCaptureSnapshot.Method,
+               maxDimension: CGFloat = 1920,
+               lossless: Bool = false) -> ScreenCaptureSnapshot? {
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else {
       AppLog.screen.error("Failed to read pixel buffer from sample")
       return nil
@@ -169,11 +254,18 @@ private extension ScreenCaptureService {
       saveDebugImage(cgImage, prefix: "capture")
     }
 
-    return compress(image: cgImage, method: method)
+    return compress(
+      image: cgImage,
+      method: method,
+      maxDimension: maxDimension,
+      lossless: lossless
+    )
   }
 
-  func compress(image: CGImage, method: ScreenCaptureSnapshot.Method) -> ScreenCaptureSnapshot? {
-    let maxDimension: CGFloat = 1920
+  func compress(image: CGImage,
+                method: ScreenCaptureSnapshot.Method,
+                maxDimension: CGFloat = 1920,
+                lossless: Bool = false) -> ScreenCaptureSnapshot? {
     let compression: CGFloat = 0.8
 
     let width = CGFloat(image.width)
@@ -187,32 +279,49 @@ private extension ScreenCaptureService {
       guard let downsized = downscale(image: image, to: scaledSize) else {
         AppLog.screen.warning("Downscale failed; using original image")
         scaledImage = image
-        return encode(image: scaledImage, method: method, compression: compression)
+        return encode(
+          image: scaledImage,
+          method: method,
+          compression: compression,
+          lossless: lossless
+        )
       }
       scaledImage = downsized
     }
 
-    return encode(image: scaledImage, method: method, compression: compression)
+    return encode(
+      image: scaledImage,
+      method: method,
+      compression: compression,
+      lossless: lossless
+    )
   }
 
-  func encode(image: CGImage, method: ScreenCaptureSnapshot.Method, compression: CGFloat) -> ScreenCaptureSnapshot? {
+  func encode(image: CGImage,
+              method: ScreenCaptureSnapshot.Method,
+              compression: CGFloat,
+              lossless: Bool = false) -> ScreenCaptureSnapshot? {
     let data = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
-      AppLog.screen.error("Failed to create image destination for JPEG")
+    let type = lossless ? UTType.png : UTType.jpeg
+    guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else {
+      AppLog.screen.error("Failed to create image destination for \(type.identifier, privacy: .public)")
       return nil
     }
 
-    let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: compression]
-    CGImageDestinationAddImage(destination, image, options as CFDictionary)
+    let options: CFDictionary? = lossless
+      ? nil
+      : ([kCGImageDestinationLossyCompressionQuality: compression] as CFDictionary)
+    CGImageDestinationAddImage(destination, image, options)
     guard CGImageDestinationFinalize(destination) else {
-      AppLog.screen.error("Failed to finalize JPEG encoding")
+      AppLog.screen.error("Failed to finalize \(type.identifier, privacy: .public) encoding")
       return nil
     }
 
-    let fileName = "screen-\(Int(Date().timeIntervalSince1970)).jpg"
+    let ext = lossless ? "png" : "jpg"
+    let fileName = "screen-\(Int(Date().timeIntervalSince1970)).\(ext)"
     return ScreenCaptureSnapshot(
       data: data as Data,
-      mimeType: "image/jpeg",
+      mimeType: lossless ? "image/png" : "image/jpeg",
       width: image.width,
       height: image.height,
       method: method,
@@ -269,7 +378,9 @@ private extension ScreenCaptureService {
 }
 
 extension ScreenCaptureService {
-    func recognizeText(from snapshot: ScreenCaptureSnapshot, preferAccurate: Bool) async -> String? {
+  func recognizeText(from snapshot: ScreenCaptureSnapshot,
+                     preferAccurate: Bool,
+                     customWords: [String] = []) async -> String? {
     await Task.detached(priority: .userInitiated) {
       guard let source = CGImageSourceCreateWithData(snapshot.data as CFData, nil),
             let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -280,7 +391,10 @@ extension ScreenCaptureService {
       let request = VNRecognizeTextRequest()
       request.recognitionLevel = preferAccurate ? .accurate : .fast
       request.usesLanguageCorrection = true
+      request.recognitionLanguages = Self.preferredOCRRecognitionLanguages()
+      request.customWords = Self.normalizedOCRCustomWords(customWords)
       if #available(macOS 13.0, *) {
+        request.automaticallyDetectsLanguage = true
         request.revision = VNRecognizeTextRequestRevision3
       }
 
@@ -303,6 +417,30 @@ extension ScreenCaptureService {
         return nil
       }
     }.value
+  }
+
+  private static func preferredOCRRecognitionLanguages() -> [String] {
+    var languages = Locale.preferredLanguages.filter { $0.lowercased().hasPrefix("en") }
+    if !languages.contains("en-US") {
+      languages.append("en-US")
+    }
+    return Array(languages.prefix(3))
+  }
+
+  private static func normalizedOCRCustomWords(_ words: [String]) -> [String] {
+    var result: [String] = []
+    var seen = Set<String>()
+    for word in words {
+      let normalized = word
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .collapsingWhitespace()
+      guard normalized.count >= 2, normalized.count <= 80 else { continue }
+      let key = normalized.lowercased()
+      guard seen.insert(key).inserted else { continue }
+      result.append(normalized)
+      if result.count >= 120 { break }
+    }
+    return result
   }
 }
 
