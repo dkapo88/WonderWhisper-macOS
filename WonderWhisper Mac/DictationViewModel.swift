@@ -355,6 +355,7 @@ final class DictationViewModel: ObservableObject {
     private var activeHermesRecordingSessionID: UUID?
     private var focusedHermesResponseSessionID: UUID?
     private var hermesInFlightSessionIDs: Set<UUID> = []
+    private var hermesActiveRequestIDs: [UUID: UUID] = [:]
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
 
@@ -519,7 +520,11 @@ final class DictationViewModel: ObservableObject {
         refreshPromptHotkeys()
 
         configureSimpleModeState()
-        hermesSessions = hermesSessionStore.loadSessions()
+        let loadedHermesSessions = hermesSessionStore.loadSessions()
+        hermesSessions = HermesSessionRecovery.recoverAfterAppLaunch(loadedHermesSessions)
+        if hermesSessions != loadedHermesSessions {
+            hermesSessions = hermesSessionStore.save(hermesSessions)
+        }
         selectedHermesSessionID = hermesSessions.first?.id
         updateHermesChatProjection()
 
@@ -1772,6 +1777,14 @@ final class DictationViewModel: ObservableObject {
         return hermesSessions.first(where: { $0.id == selectedHermesSessionID })
     }
 
+    var activeHermesSessions: [HermesChatSession] {
+        HermesSessionLifecycle.activeSessions(hermesSessions)
+    }
+
+    var archivedHermesSessions: [HermesChatSession] {
+        HermesSessionLifecycle.archivedSessions(hermesSessions)
+    }
+
     func selectHermesSession(_ sessionID: UUID?) {
         selectedHermesSessionID = sessionID
     }
@@ -1792,11 +1805,40 @@ final class DictationViewModel: ObservableObject {
     }
 
     func closeHermesSession(_ sessionID: UUID) {
+        archiveHermesSession(sessionID)
+    }
+
+    func archiveHermesSession(_ sessionID: UUID) {
+        releaseHermesRequest(for: sessionID)
         updateHermesSession(sessionID) { session in
-            session.status = .closed
-            session.updatedAt = Date()
+            session = HermesSessionLifecycle.archive(session)
         }
         removeHermesResponseWindow(for: sessionID)
+        if selectedHermesSessionID == sessionID {
+            selectedHermesSessionID = activeHermesSessions.first?.id
+        }
+        settingsNotice = "Hermes session archived."
+    }
+
+    func restoreHermesSession(_ sessionID: UUID) {
+        updateHermesSession(sessionID) { session in
+            session = HermesSessionLifecycle.restore(session)
+        }
+        selectedHermesSessionID = sessionID
+        settingsNotice = "Hermes session restored."
+    }
+
+    func deleteHermesSession(_ sessionID: UUID) {
+        releaseHermesRequest(for: sessionID)
+        removeHermesResponseWindow(for: sessionID)
+        hermesSessions.removeAll { $0.id == sessionID }
+        hermesSessions = hermesSessionStore.save(hermesSessions)
+        if selectedHermesSessionID == sessionID {
+            selectedHermesSessionID = activeHermesSessions.first?.id ?? archivedHermesSessions.first?.id
+        } else {
+            updateHermesChatProjection()
+        }
+        settingsNotice = "Hermes session deleted locally."
     }
 
     func showHermesResponseWindow(for sessionID: UUID) {
@@ -1813,15 +1855,46 @@ final class DictationViewModel: ObservableObject {
     }
 
     func clearHermesChat() {
-        hermesSessionStore.clear()
-        hermesSessions.removeAll()
-        selectedHermesSessionID = nil
-        hermesChatMessages.removeAll()
-        hermesResponseWindowState = nil
-        hermesResponseWindowStates.removeAll()
-        focusedHermesResponseSessionID = nil
-        hermesInFlightSessionIDs.removeAll()
-        hermesIsSending = false
+        archiveActiveHermesSessions()
+    }
+
+    func archiveActiveHermesSessions() {
+        let activeIDs = Set(activeHermesSessions.map(\.id))
+        guard !activeIDs.isEmpty else { return }
+        for sessionID in activeIDs {
+            releaseHermesRequest(for: sessionID)
+            removeHermesResponseWindow(for: sessionID)
+        }
+        hermesSessions = hermesSessions.map { session in
+            activeIDs.contains(session.id) ? HermesSessionLifecycle.archive(session) : session
+        }
+        hermesSessions = hermesSessionStore.save(hermesSessions)
+        if let selectedHermesSessionID, activeIDs.contains(selectedHermesSessionID) {
+            self.selectedHermesSessionID = activeHermesSessions.first?.id
+        } else {
+            updateHermesChatProjection()
+        }
+        settingsNotice = "Active Hermes sessions archived."
+    }
+
+    func canReplyToHermesSession(_ session: HermesChatSession) -> Bool {
+        !session.isArchived && !hermesInFlightSessionIDs.contains(session.id)
+    }
+
+    func canInterruptHermesSession(_ session: HermesChatSession) -> Bool {
+        !session.isArchived && (session.status == .waiting || hermesInFlightSessionIDs.contains(session.id))
+    }
+
+    func isHermesSessionActivelyWaiting(_ session: HermesChatSession) -> Bool {
+        !session.isArchived && session.status == .waiting && hermesInFlightSessionIDs.contains(session.id)
+    }
+
+    func interruptHermesSession(_ sessionID: UUID) {
+        releaseHermesRequest(for: sessionID)
+        updateHermesSession(sessionID) { session in
+            session = HermesSessionRecovery.interrupt(session)
+        }
+        settingsNotice = "Hermes session interrupted. You can reply to continue it."
     }
 
     func saveHermesApiKey(_ value: String) {
@@ -1916,7 +1989,7 @@ final class DictationViewModel: ObservableObject {
 
     private func beginHermesRecording(promptID: UUID, sessionID: UUID) async {
         guard let session = hermesSessions.first(where: { $0.id == sessionID }) else { return }
-        guard session.canReply else {
+        guard canReplyToHermesSession(session) else {
             settingsNotice = "Hermes session is \(session.status.rawValue)."
             return
         }
@@ -2049,10 +2122,15 @@ final class DictationViewModel: ObservableObject {
         }
 
         let settings = currentHermesSettings(conversationName: session.conversationName)
+        let requestID = UUID()
+        hermesActiveRequestIDs[sessionID] = requestID
         hermesInFlightSessionIDs.insert(sessionID)
         hermesIsSending = true
         defer {
-            hermesInFlightSessionIDs.remove(sessionID)
+            if hermesActiveRequestIDs[sessionID] == requestID {
+                hermesActiveRequestIDs[sessionID] = nil
+                hermesInFlightSessionIDs.remove(sessionID)
+            }
             hermesIsSending = !hermesInFlightSessionIDs.isEmpty
         }
 
@@ -2085,6 +2163,7 @@ final class DictationViewModel: ObservableObject {
                 imageAttachment: imageAttachment,
                 clipboardText: clipboardText
             )
+            guard hermesActiveRequestIDs[sessionID] == requestID else { return }
             let hermesSeconds = Date().timeIntervalSince(start)
 
             await history.append(
@@ -2125,6 +2204,7 @@ final class DictationViewModel: ObservableObject {
                 status: .responded
             )
         } catch {
+            guard hermesActiveRequestIDs[sessionID] == requestID else { return }
             appendHermesChatMessage(
                 sessionID: sessionID,
                 role: .error,
@@ -2139,6 +2219,12 @@ final class DictationViewModel: ObservableObject {
             )
             clearHermesContextCapture(cancel: true)
         }
+    }
+
+    private func releaseHermesRequest(for sessionID: UUID) {
+        hermesActiveRequestIDs[sessionID] = nil
+        hermesInFlightSessionIDs.remove(sessionID)
+        hermesIsSending = !hermesInFlightSessionIDs.isEmpty
     }
 
     private func appendHermesChatMessage(sessionID: UUID,

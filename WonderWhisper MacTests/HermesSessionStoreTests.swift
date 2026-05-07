@@ -166,3 +166,106 @@ struct HermesSessionRoutingTests {
     )
   }
 }
+
+struct HermesSessionRecoveryTests {
+  @Test func waitingSessionsRecoveredAfterLaunchBecomeInterruptedAndReplyable() {
+    let waiting = HermesChatSession(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000801")!,
+      title: "Lost request",
+      conversationName: "wonderwhisper-mac-lost",
+      createdAt: Date(timeIntervalSince1970: 2_400),
+      updatedAt: Date(timeIntervalSince1970: 2_460),
+      status: .waiting,
+      messages: [
+        HermesChatMessage(
+          role: .user,
+          text: "Run the long task",
+          createdAt: Date(timeIntervalSince1970: 2_460)
+        )
+      ]
+    )
+    let responded = HermesChatSession(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000802")!,
+      title: "Finished request",
+      conversationName: "wonderwhisper-mac-finished",
+      status: .responded
+    )
+
+    let recovered = HermesSessionRecovery.recoverAfterAppLaunch([waiting, responded])
+
+    #expect(recovered[0].status == .interrupted)
+    #expect(recovered[0].canReply)
+    #expect(recovered[0].updatedAt == waiting.updatedAt)
+    #expect(recovered[1] == responded)
+  }
+
+  @Test func interruptedSessionCanReplyButWaitingSessionCannot() {
+    let waiting = HermesChatSession(
+      title: "Active request",
+      conversationName: "wonderwhisper-mac-active",
+      status: .waiting
+    )
+
+    let interrupted = HermesSessionRecovery.interrupt(waiting)
+
+    #expect(!waiting.canReply)
+    #expect(interrupted.status == .interrupted)
+    #expect(interrupted.canReply)
+  }
+}
+
+struct HermesSessionLifecycleTests {
+  @Test func archiveMovesSessionOutOfActiveListButKeepsItInArchive() {
+    let session = HermesChatSession(
+      title: "Finished task",
+      conversationName: "wonderwhisper-mac-finished",
+      status: .responded
+    )
+
+    let archived = HermesSessionLifecycle.archive(session)
+
+    #expect(archived.status == .archived)
+    #expect(archived.isArchived)
+    #expect(!archived.canReply)
+    #expect(HermesSessionLifecycle.activeSessions([archived]).isEmpty)
+    #expect(HermesSessionLifecycle.archivedSessions([archived]) == [archived])
+  }
+
+  @Test func restoreArchivedSessionReturnsItToReplyableState() {
+    let session = HermesChatSession(
+      title: "Finished task",
+      conversationName: "wonderwhisper-mac-finished",
+      status: .responded,
+      messages: [
+        HermesChatMessage(role: .user, text: "Do the thing"),
+        HermesChatMessage(role: .assistant, text: "Done.")
+      ]
+    )
+    let archived = HermesSessionLifecycle.archive(session)
+
+    let restored = HermesSessionLifecycle.restore(archived)
+
+    #expect(restored.status == .responded)
+    #expect(!restored.isArchived)
+    #expect(restored.canReply)
+  }
+
+  @Test func legacyClosedSessionsAreTreatedAsArchived() {
+    let closed = HermesChatSession(
+      title: "Old closed task",
+      conversationName: "wonderwhisper-mac-closed",
+      status: .closed,
+      messages: [
+        HermesChatMessage(role: .assistant, text: "Old result")
+      ]
+    )
+
+    let restored = HermesSessionLifecycle.restore(closed)
+
+    #expect(closed.isArchived)
+    #expect(HermesSessionLifecycle.activeSessions([closed]).isEmpty)
+    #expect(HermesSessionLifecycle.archivedSessions([closed]) == [closed])
+    #expect(restored.status == .responded)
+    #expect(restored.canReply)
+  }
+}

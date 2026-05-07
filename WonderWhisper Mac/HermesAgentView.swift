@@ -7,6 +7,13 @@ private enum HermesAgentSection: String, CaseIterable, Identifiable {
   var id: String { rawValue }
 }
 
+private enum HermesSessionListScope: String, CaseIterable, Identifiable {
+  case active = "Active"
+  case archive = "Archive"
+
+  var id: String { rawValue }
+}
+
 enum HermesChatScrollBehavior {
   static let bottomAnchorID = "hermes-chat-bottom"
 
@@ -18,9 +25,12 @@ enum HermesChatScrollBehavior {
 struct HermesAgentView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var selectedSection: HermesAgentSection = .chat
+  @State private var sessionListScope: HermesSessionListScope = .active
   @State private var hermesKeyInput: String = ""
   @State private var isTestingHermes: Bool = false
   @State private var hasSavedKey: Bool = false
+  @State private var showClearActiveConfirmation: Bool = false
+  @State private var pendingDeleteSession: HermesChatSession?
 
   private let keychain = KeychainService()
   private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
@@ -46,6 +56,43 @@ struct HermesAgentView: View {
     .onAppear {
       selectedSection = .chat
       refreshKeyStatus()
+    }
+    .onChange(of: sessionListScope) { _, _ in
+      selectFirstDisplayedSession()
+    }
+    .confirmationDialog(
+      "Archive all active Hermes sessions?",
+      isPresented: $showClearActiveConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Archive Active Sessions", role: .destructive) {
+        vm.archiveActiveHermesSessions()
+        sessionListScope = .archive
+        selectFirstDisplayedSession()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This removes active sessions from the main list and keeps them available in Archive.")
+    }
+    .alert(
+      "Delete Hermes session?",
+      isPresented: Binding(
+        get: { pendingDeleteSession != nil },
+        set: { if !$0 { pendingDeleteSession = nil } }
+      )
+    ) {
+      Button("Delete Locally", role: .destructive) {
+        if let sessionID = pendingDeleteSession?.id {
+          vm.deleteHermesSession(sessionID)
+          selectFirstDisplayedSession()
+        }
+        pendingDeleteSession = nil
+      }
+      Button("Cancel", role: .cancel) {
+        pendingDeleteSession = nil
+      }
+    } message: {
+      Text("This permanently removes the local WonderWhisper record for this session. It does not delete remote Hermes VPS context.")
     }
   }
 
@@ -104,17 +151,19 @@ struct HermesAgentView: View {
 
       Spacer()
 
-      Button(action: vm.startNewHermesSessionRecording) {
+      Button(action: {
+        sessionListScope = .active
+        vm.startNewHermesSessionRecording()
+      }) {
         Label("New", systemImage: "plus.circle.fill")
       }
       .disabled(!vm.hermesAgentEnabled)
 
-      if !vm.hermesSessions.isEmpty {
-        Button(action: vm.clearHermesChat) {
-          Label("Clear", systemImage: "trash")
+      if !vm.activeHermesSessions.isEmpty {
+        Button(action: { showClearActiveConfirmation = true }) {
+          Label("Clear Active", systemImage: "archivebox")
         }
-        .disabled(vm.hermesIsSending)
-        .help("Clear chat")
+        .help("Archive all active Hermes sessions")
       }
     }
   }
@@ -133,20 +182,56 @@ struct HermesAgentView: View {
   }
 
   private var sessionListView: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 6) {
-        ForEach(vm.hermesSessions) { session in
-          Button {
-            vm.selectHermesSession(session.id)
-          } label: {
-            sessionRow(session)
-          }
-          .buttonStyle(.plain)
+    VStack(alignment: .leading, spacing: 10) {
+      Picker("Sessions", selection: $sessionListScope) {
+        ForEach(HermesSessionListScope.allCases) { scope in
+          Text(scope.rawValue).tag(scope)
         }
       }
-      .padding(.vertical, 2)
+      .pickerStyle(.segmented)
+
+      ScrollView {
+        VStack(alignment: .leading, spacing: 6) {
+          if displayedSessions.isEmpty {
+            emptySessionListView
+          } else {
+            ForEach(displayedSessions) { session in
+              Button {
+                vm.selectHermesSession(session.id)
+              } label: {
+                sessionRow(session)
+              }
+              .buttonStyle(.plain)
+            }
+          }
+        }
+        .padding(.vertical, 2)
+      }
     }
     .frame(minHeight: 320, maxHeight: 600)
+  }
+
+  private var displayedSessions: [HermesChatSession] {
+    switch sessionListScope {
+    case .active:
+      return vm.activeHermesSessions
+    case .archive:
+      return vm.archivedHermesSessions
+    }
+  }
+
+  private var emptySessionListView: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(sessionListScope == .active ? "No active sessions." : "No archived sessions.")
+        .font(.callout.weight(.medium))
+      Text(sessionListScope == .active
+           ? "Archived sessions are available in Archive."
+           : "Archived sessions will appear here.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var selectedSessionView: some View {
@@ -162,7 +247,7 @@ struct HermesAgentView: View {
         } else {
           chatMessagesView(
             messages: session.messages,
-            isWaiting: session.status == .waiting
+            isWaiting: vm.isHermesSessionActivelyWaiting(session)
           )
         }
       } else {
@@ -229,7 +314,7 @@ struct HermesAgentView: View {
 
       Spacer()
 
-      if session.status == .waiting {
+      if vm.isHermesSessionActivelyWaiting(session) {
         ProgressView()
           .controlSize(.small)
       }
@@ -239,15 +324,30 @@ struct HermesAgentView: View {
       }
       .disabled(session.latestAssistantMessage == nil)
 
-      Button(action: { vm.startHermesReply(to: session.id) }) {
-        Label("Reply", systemImage: "mic.fill")
-      }
-      .disabled(!vm.hermesAgentEnabled || !session.canReply)
+      if session.isArchived {
+        Button(action: { vm.restoreHermesSession(session.id); sessionListScope = .active }) {
+          Label("Restore", systemImage: "arrow.uturn.backward.circle")
+        }
+      } else {
+        if vm.canInterruptHermesSession(session) {
+          Button(action: { vm.interruptHermesSession(session.id) }) {
+            Label("Interrupt", systemImage: "stop.circle")
+          }
+        }
 
-      Button(action: { vm.closeHermesSession(session.id) }) {
-        Label("Close", systemImage: "xmark.circle")
+        Button(action: { vm.startHermesReply(to: session.id) }) {
+          Label("Reply", systemImage: "mic.fill")
+        }
+        .disabled(!vm.hermesAgentEnabled || !vm.canReplyToHermesSession(session))
+
+        Button(action: { vm.archiveHermesSession(session.id) }) {
+          Label("Archive", systemImage: "archivebox")
+        }
       }
-      .disabled(session.status == .closed)
+
+      Button(role: .destructive, action: { pendingDeleteSession = session }) {
+        Label("Delete", systemImage: "trash")
+      }
     }
   }
 
@@ -614,7 +714,8 @@ struct HermesAgentView: View {
     case .waiting: return "Waiting"
     case .responded: return "Responded"
     case .error: return "Error"
-    case .closed: return "Closed"
+    case .interrupted: return "Interrupted"
+    case .archived, .closed: return "Archived"
     }
   }
 
@@ -624,7 +725,8 @@ struct HermesAgentView: View {
     case .waiting: return "hourglass"
     case .responded: return "checkmark.circle.fill"
     case .error: return "exclamationmark.triangle.fill"
-    case .closed: return "lock.fill"
+    case .interrupted: return "exclamationmark.circle.fill"
+    case .archived, .closed: return "archivebox.fill"
     }
   }
 
@@ -634,8 +736,18 @@ struct HermesAgentView: View {
     case .waiting: return .orange
     case .responded: return .green
     case .error: return .red
-    case .closed: return .secondary
+    case .interrupted: return .orange
+    case .archived, .closed: return .secondary
     }
+  }
+
+  private func selectFirstDisplayedSession() {
+    let selectedID = vm.selectedHermesSessionID
+    if let selectedID,
+       displayedSessions.contains(where: { $0.id == selectedID }) {
+      return
+    }
+    vm.selectHermesSession(displayedSessions.first?.id)
   }
 
   private func hotkeyTitle(for option: HotkeyManager.Selection) -> String {

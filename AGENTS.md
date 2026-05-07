@@ -48,6 +48,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-07: Added Hermes Active/Archive session lifecycle with confirmed clear-active and local delete actions.
+- 2026-05-07: Recovered stale waiting Hermes sessions after app restart and made waiting sessions interruptible/replyable.
+- 2026-05-07: Hid inactive native traffic-light controls on Hermes response panels in favor of the custom window buttons.
 - 2026-05-07: Added persistent multi-session Hermes tasks with per-session chat, response windows, replies, and close/minimize controls.
 - 2026-05-07: Reduced recording overlay visualizer sensitivity without changing captured audio.
 - 2026-05-07: Anchored the Hermes chat tab to the latest messages when opened.

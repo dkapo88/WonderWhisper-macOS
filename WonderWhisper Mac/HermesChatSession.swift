@@ -7,6 +7,8 @@ struct HermesChatSession: Identifiable, Codable, Equatable {
     case waiting
     case responded
     case error
+    case interrupted
+    case archived
     case closed
   }
 
@@ -46,7 +48,11 @@ struct HermesChatSession: Identifiable, Codable, Equatable {
   }
 
   var canReply: Bool {
-    status != .waiting && status != .closed
+    status != .waiting && !isArchived
+  }
+
+  var isArchived: Bool {
+    status == .archived || status == .closed
   }
 }
 
@@ -73,6 +79,57 @@ enum HermesSessionRouting {
     }
 
     return .newSession
+  }
+}
+
+enum HermesSessionRecovery {
+  static func recoverAfterAppLaunch(_ sessions: [HermesChatSession]) -> [HermesChatSession] {
+    sessions.map { session in
+      session.status == .waiting ? interrupt(session) : session
+    }
+  }
+
+  static func interrupt(_ session: HermesChatSession) -> HermesChatSession {
+    var interrupted = session
+    interrupted.status = .interrupted
+    return interrupted
+  }
+}
+
+enum HermesSessionLifecycle {
+  static func activeSessions(_ sessions: [HermesChatSession]) -> [HermesChatSession] {
+    sessions.filter { !$0.isArchived }
+  }
+
+  static func archivedSessions(_ sessions: [HermesChatSession]) -> [HermesChatSession] {
+    sessions.filter(\.isArchived)
+  }
+
+  static func archive(_ session: HermesChatSession) -> HermesChatSession {
+    var archived = session
+    archived.status = .archived
+    archived.updatedAt = Date()
+    return archived
+  }
+
+  static func restore(_ session: HermesChatSession) -> HermesChatSession {
+    var restored = session
+    restored.status = restoredStatus(for: session)
+    restored.updatedAt = Date()
+    return restored
+  }
+
+  private static func restoredStatus(for session: HermesChatSession) -> HermesChatSession.Status {
+    switch session.messages.last?.role {
+    case .assistant:
+      return .responded
+    case .error:
+      return .error
+    case .user:
+      return .interrupted
+    case nil:
+      return .open
+    }
   }
 }
 

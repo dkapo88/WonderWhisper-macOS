@@ -133,7 +133,20 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     panel.hasShadow = true
     panel.isMovableByWindowBackground = true
     panel.delegate = self
+    hideTrafficLights(in: panel)
     return panel
+  }
+
+  private func hideTrafficLights(in panel: NSPanel) {
+    [
+      NSWindow.ButtonType.closeButton,
+      .miniaturizeButton,
+      .zoomButton
+    ].forEach { buttonType in
+      let button = panel.standardWindowButton(buttonType)
+      button?.isHidden = true
+      button?.isEnabled = false
+    }
   }
 
   private func present(_ panel: HermesResponsePanel, shouldPosition: Bool) {

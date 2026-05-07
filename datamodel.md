@@ -140,7 +140,7 @@ erDiagram
         String serverSessionID "optional X-Hermes-Session-Id"
         Date createdAt
         Date updatedAt
-        String status "open, waiting, responded, error, closed"
+        String status "open, waiting, responded, error, interrupted, archived, closed"
     }
 
     HermesChatMessage {
@@ -161,6 +161,18 @@ erDiagram
 - Context labels indicate which optional payloads were sent with the user turn.
 
 **Persistence**: `HermesSessionStore` persists recent Hermes sessions in `~/Library/Application Support/WonderWhisper/HermesChat/sessions.json`. The default retention limit is 25 sessions, controlled by `hermes.sessions.maxSessions`; each session keeps the latest 50 messages by default, controlled by `hermes.chat.maxMessages`. `messages.json` from the previous flat chat history format is migrated into a `Previous Hermes Chat` session when `sessions.json` does not exist. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
+
+Persisted sessions found in `waiting` state after app launch are recovered as `interrupted`,
+because the remote Hermes task may have continued after the local app process was restarted.
+Interrupted sessions remain replyable so the user can reinitiate the same Hermes conversation.
+
+Hermes sessions have an Active/Archive lifecycle in the app UI. Archiving removes a
+session from the active list but keeps the local session record and message history
+available in the Archive tab; legacy `closed` sessions are treated as archived.
+Restoring an archived session returns it to a replyable active state inferred from its
+latest message. Deleting a session permanently removes only the local WonderWhisper
+record; it does not delete remote Hermes VPS context unless the API later adds a
+separate remote delete operation.
 
 ---
 
@@ -636,6 +648,10 @@ sequenceDiagram
     DictationViewModel->>HermesSessionStore: append assistant message and mark session responded
     DictationViewModel->>HistoryStore: append transcript/response entry and screenshot metadata
     DictationViewModel-->>User: Show response window for that session
+    User->>DictationViewModel: Interrupt stale or active waiting session
+    DictationViewModel->>HermesSessionStore: mark session interrupted and keep it replyable
+    User->>DictationViewModel: Archive, restore, or delete a local session record
+    DictationViewModel->>HermesSessionStore: persist active/archive lifecycle changes
 ```
 
 ---
