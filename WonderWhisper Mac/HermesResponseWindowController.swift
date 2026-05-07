@@ -16,56 +16,104 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   }
 }
 
+enum HermesResponseWindowLifecycle {
+  static func replyRecordingStarted(
+    _ state: HermesResponseWindowState?
+  ) -> HermesResponseWindowState? {
+    state
+  }
+
+  static func replyRecordingFinished(
+    _ state: HermesResponseWindowState?
+  ) -> HermesResponseWindowState? {
+    nil
+  }
+
+  static func replyRecordingStarted(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states
+  }
+
+  static func replyRecordingFinished(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states.filter { $0.id != sessionID }
+  }
+}
+
 @MainActor
 final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private weak var viewModel: DictationViewModel?
-  private var panel: HermesResponsePanel?
+  private var panels: [UUID: HermesResponsePanel] = [:]
   private var cancellable: AnyCancellable?
 
   init(viewModel: DictationViewModel) {
     self.viewModel = viewModel
     super.init()
-    cancellable = viewModel.$hermesResponseWindowState.sink { [weak self] state in
+    cancellable = viewModel.$hermesResponseWindowStates.sink { [weak self] states in
       Task { @MainActor in
-        self?.render(state)
+        self?.render(states)
       }
     }
   }
 
   func windowWillClose(_ notification: Notification) {
-    viewModel?.dismissHermesResponse()
-  }
-
-  private func render(_ state: HermesResponseWindowState?) {
-    guard let state else {
-      hide()
+    guard let panel = notification.object as? HermesResponsePanel,
+          let sessionID = panel.sessionID else {
       return
     }
+    panels[sessionID] = nil
+    viewModel?.dismissHermesResponse(sessionID: sessionID)
+  }
 
-    let panel = panel ?? makePanel()
+  func windowDidBecomeKey(_ notification: Notification) {
+    guard let panel = notification.object as? HermesResponsePanel,
+          let sessionID = panel.sessionID else {
+      return
+    }
+    viewModel?.activateHermesSession(sessionID)
+  }
+
+  private func render(_ states: [HermesResponseWindowState]) {
+    let activeIDs = Set(states.map(\.id))
+    for sessionID in Array(panels.keys) where !activeIDs.contains(sessionID) {
+      panels[sessionID]?.orderOut(nil)
+      panels[sessionID]?.delegate = nil
+      panels[sessionID] = nil
+    }
+
+    for state in states {
+      let isNewPanel = panels[state.id] == nil
+      let panel = panels[state.id] ?? makePanel(sessionID: state.id)
+      render(state, in: panel)
+      present(panel, shouldPosition: isNewPanel || !panel.isVisible)
+      panels[state.id] = panel
+    }
+  }
+
+  private func render(_ state: HermesResponseWindowState, in panel: HermesResponsePanel) {
     panel.contentView = NSHostingView(
       rootView: HermesResponsePanelView(
         state: state,
         onCopy: { HermesResponseClipboard.copy(state.text) },
-        onReply: { [weak self] in self?.viewModel?.startHermesReply() },
-        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse() }
+        onReply: { [weak self] in self?.viewModel?.startHermesReply(to: state.id) },
+        onMinimize: { [weak panel] in panel?.miniaturize(nil) },
+        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: state.id) }
       )
     )
-    present(panel)
-    self.panel = panel
   }
 
-  private func hide() {
-    panel?.orderOut(nil)
-  }
-
-  private func makePanel() -> HermesResponsePanel {
+  private func makePanel(sessionID: UUID) -> HermesResponsePanel {
     let panel = HermesResponsePanel(
       contentRect: NSRect(x: 0, y: 0, width: 560, height: 390),
-      styleMask: [.titled, .closable, .fullSizeContentView],
+      styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
+    panel.sessionID = sessionID
     panel.title = "Hermes"
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
@@ -88,24 +136,27 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     return panel
   }
 
-  private func present(_ panel: HermesResponsePanel) {
+  private func present(_ panel: HermesResponsePanel, shouldPosition: Bool) {
     let appWasHidden = NSApp.isHidden
     if appWasHidden {
       NSApp.unhideWithoutActivation()
     }
 
-    position(panel)
+    if shouldPosition {
+      position(panel)
+    }
     panel.orderFrontRegardless()
     NSApp.activate()
     panel.makeKeyAndOrderFront(nil)
 
     if appWasHidden {
-      hideMainAppWindows(except: panel)
+      hideMainAppWindows()
     }
   }
 
-  private func hideMainAppWindows(except responsePanel: HermesResponsePanel) {
-    for window in NSApp.windows where window !== responsePanel {
+  private func hideMainAppWindows() {
+    for window in NSApp.windows {
+      if window is HermesResponsePanel { continue }
       guard window.isVisible, window.canBecomeMain || window.isMainWindow else { continue }
       window.orderOut(nil)
     }
@@ -114,9 +165,10 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private func position(_ panel: NSPanel) {
     let screenFrame = targetScreenFrame()
     let frame = panel.frame
+    let cascadeOffset = CGFloat(min(panels.count, 5) * 26)
     let origin = NSPoint(
-      x: screenFrame.midX - frame.width / 2,
-      y: screenFrame.midY - frame.height / 2
+      x: screenFrame.midX - frame.width / 2 + cascadeOffset,
+      y: screenFrame.midY - frame.height / 2 - cascadeOffset
     )
     panel.setFrameOrigin(origin)
   }
@@ -131,6 +183,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
 }
 
 private final class HermesResponsePanel: NSPanel {
+  var sessionID: UUID?
+
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { false }
 }
@@ -139,6 +193,7 @@ private struct HermesResponsePanelView: View {
   var state: HermesResponseWindowState
   var onCopy: () -> Void
   var onReply: () -> Void
+  var onMinimize: () -> Void
   var onClose: () -> Void
 
   var body: some View {
@@ -165,6 +220,11 @@ private struct HermesResponsePanelView: View {
         }
         .disabled(state.isError)
         .keyboardShortcut(.return, modifiers: [.command])
+
+        Button(action: onMinimize) {
+          Label("Minimize", systemImage: "minus.circle")
+        }
+        .keyboardShortcut("m", modifiers: [.command])
 
         Button(action: onClose) {
           Label("Close", systemImage: "xmark.circle.fill")
@@ -194,11 +254,19 @@ private struct HermesResponsePanelView: View {
 
       Spacer()
 
+      Button(action: onMinimize) {
+        Image(systemName: "minus")
+          .frame(width: 24, height: 24)
+      }
+      .buttonStyle(.borderless)
+      .help("Minimize")
+
       Button(action: onClose) {
         Image(systemName: "xmark")
           .frame(width: 24, height: 24)
       }
       .buttonStyle(.borderless)
+      .help("Close")
     }
   }
 }

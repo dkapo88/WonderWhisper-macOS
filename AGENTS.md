@@ -48,6 +48,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-07: Added persistent multi-session Hermes tasks with per-session chat, response windows, replies, and close/minimize controls.
+- 2026-05-07: Reduced recording overlay visualizer sensitivity without changing captured audio.
+- 2026-05-07: Anchored the Hermes chat tab to the latest messages when opened.
+- 2026-05-07: Kept the Hermes response window visible while recording an immediate reply.
+- 2026-05-07: Disabled OpenRouter reasoning by default for LLM post-processing requests.
 - 2026-05-06: Added persistent Hermes chat history capped to the latest 50 messages by default.
 - 2026-05-06: Raised the Hermes request timeout cap to 30 minutes.
 - 2026-05-06: Added a Copy button to Hermes response windows.

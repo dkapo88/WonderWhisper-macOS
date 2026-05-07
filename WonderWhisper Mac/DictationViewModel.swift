@@ -265,8 +265,13 @@ final class DictationViewModel: ObservableObject {
     @Published var hermesConnectionStatus: String?
     @Published var hermesConnectionSucceeded: Bool?
     @Published var hermesResponseWindowState: HermesResponseWindowState?
+    @Published var hermesResponseWindowStates: [HermesResponseWindowState] = []
     @Published var hermesIsSending: Bool = false
     @Published var hermesChatMessages: [HermesChatMessage] = []
+    @Published var hermesSessions: [HermesChatSession] = []
+    @Published var selectedHermesSessionID: UUID? {
+        didSet { updateHermesChatProjection() }
+    }
 
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
@@ -336,7 +341,7 @@ final class DictationViewModel: ObservableObject {
     private var idleSkipCounter: Int = 0
     private var timer: Timer?
     let history = HistoryStore()
-    private let hermesChatHistoryStore = HermesChatHistoryStore()
+    private let hermesSessionStore = HermesSessionStore()
     private let promptHotkeyManager = PromptHotkeyManager()
     private var controller: DictationController!
     private var isApplyingPromptFromSelection = false
@@ -347,6 +352,9 @@ final class DictationViewModel: ObservableObject {
         apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.hermesAPIKeyAlias) }
     )
     private var activeHermesPromptID: UUID?
+    private var activeHermesRecordingSessionID: UUID?
+    private var focusedHermesResponseSessionID: UUID?
+    private var hermesInFlightSessionIDs: Set<UUID> = []
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
 
@@ -511,7 +519,9 @@ final class DictationViewModel: ObservableObject {
         refreshPromptHotkeys()
 
         configureSimpleModeState()
-        hermesChatMessages = hermesChatHistoryStore.loadMessages()
+        hermesSessions = hermesSessionStore.loadSessions()
+        selectedHermesSessionID = hermesSessions.first?.id
+        updateHermesChatProjection()
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
@@ -535,7 +545,7 @@ final class DictationViewModel: ObservableObject {
                     self.idleSkipCounter = 0
                 }
                 let s = await self.controllerState()
-                if self.hermesIsSending {
+                if self.hermesIsSending, s != "Recording", s != "Transcribing" {
                     if self.status != "Waiting for Hermes" { self.status = "Waiting for Hermes" }
                     return
                 }
@@ -603,8 +613,10 @@ final class DictationViewModel: ObservableObject {
     func toggle() {
         Task {
             let currentState = await controller.currentState()
-            if case .recording = currentState, let hermesPromptID = activeHermesPromptID {
-                await finishHermesRecording(promptID: hermesPromptID)
+            if case .recording = currentState,
+               let hermesPromptID = activeHermesPromptID,
+               let sessionID = activeHermesRecordingSessionID {
+                await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
                 return
             }
 
@@ -670,8 +682,9 @@ final class DictationViewModel: ObservableObject {
     func finish() {
         persistPromptLibrary()
         Task {
-            if let hermesPromptID = activeHermesPromptID {
-                await finishHermesRecording(promptID: hermesPromptID)
+            if let hermesPromptID = activeHermesPromptID,
+               let sessionID = activeHermesRecordingSessionID {
+                await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
                 return
             }
 
@@ -1727,21 +1740,88 @@ final class DictationViewModel: ObservableObject {
     private let promptPressThreshold: TimeInterval = 0.8
 
     func startHermesReply() {
-        hermesResponseWindowState = nil
+        startHermesReply(to: focusedHermesResponseSessionID ?? selectedHermesSessionID)
+    }
+
+    func startHermesReply(to sessionID: UUID?) {
         Task {
             let state = await controller.currentState()
             guard isIdleOrError(state) else { return }
-            await beginHermesRecording(promptID: SimplePromptKind.command.promptID)
+            let targetSessionID = ensureHermesSessionID(sessionID)
+            await beginHermesRecording(
+                promptID: SimplePromptKind.command.promptID,
+                sessionID: targetSessionID
+            )
         }
+    }
+
+    func startNewHermesSessionRecording() {
+        Task {
+            let state = await controller.currentState()
+            guard isIdleOrError(state) else { return }
+            let sessionID = createHermesSession().id
+            await beginHermesRecording(
+                promptID: SimplePromptKind.command.promptID,
+                sessionID: sessionID
+            )
+        }
+    }
+
+    var selectedHermesSession: HermesChatSession? {
+        guard let selectedHermesSessionID else { return nil }
+        return hermesSessions.first(where: { $0.id == selectedHermesSessionID })
+    }
+
+    func selectHermesSession(_ sessionID: UUID?) {
+        selectedHermesSessionID = sessionID
+    }
+
+    func activateHermesSession(_ sessionID: UUID) {
+        focusedHermesResponseSessionID = sessionID
+        selectedHermesSessionID = sessionID
     }
 
     func dismissHermesResponse() {
         hermesResponseWindowState = nil
+        hermesResponseWindowStates.removeAll()
+        focusedHermesResponseSessionID = nil
+    }
+
+    func dismissHermesResponse(sessionID: UUID) {
+        removeHermesResponseWindow(for: sessionID)
+    }
+
+    func closeHermesSession(_ sessionID: UUID) {
+        updateHermesSession(sessionID) { session in
+            session.status = .closed
+            session.updatedAt = Date()
+        }
+        removeHermesResponseWindow(for: sessionID)
+    }
+
+    func showHermesResponseWindow(for sessionID: UUID) {
+        guard let session = hermesSessions.first(where: { $0.id == sessionID }),
+              let message = session.latestAssistantMessage else {
+            return
+        }
+        upsertHermesResponseWindow(
+            sessionID: sessionID,
+            title: session.title,
+            text: message.text,
+            isError: message.role == .error
+        )
     }
 
     func clearHermesChat() {
-        hermesChatHistoryStore.clear()
+        hermesSessionStore.clear()
+        hermesSessions.removeAll()
+        selectedHermesSessionID = nil
         hermesChatMessages.removeAll()
+        hermesResponseWindowState = nil
+        hermesResponseWindowStates.removeAll()
+        focusedHermesResponseSessionID = nil
+        hermesInFlightSessionIDs.removeAll()
+        hermesIsSending = false
     }
 
     func saveHermesApiKey(_ value: String) {
@@ -1791,11 +1871,11 @@ final class DictationViewModel: ObservableObject {
         return false
     }
 
-    private func currentHermesSettings() -> HermesAgentSettings {
+    private func currentHermesSettings(conversationName: String? = nil) -> HermesAgentSettings {
         HermesAgentSettings(
             baseURLString: hermesBaseURLString,
             model: hermesModel,
-            conversationName: hermesConversationName,
+            conversationName: conversationName ?? hermesConversationName,
             timeout: HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds)
         )
     }
@@ -1808,9 +1888,15 @@ final class DictationViewModel: ObservableObject {
             promptPressTimes[id] = Date()
             switch currentState {
             case .idle, .error:
-                await beginHermesRecording(promptID: id)
+                let sessionID = hermesSessionIDForHotkey()
+                await beginHermesRecording(promptID: id, sessionID: sessionID)
             case .recording:
-                await finishHermesRecording(promptID: activeHermesPromptID ?? id)
+                if let sessionID = activeHermesRecordingSessionID {
+                    await finishHermesRecording(
+                        promptID: activeHermesPromptID ?? id,
+                        sessionID: sessionID
+                    )
+                }
             default:
                 break
             }
@@ -1819,22 +1905,39 @@ final class DictationViewModel: ObservableObject {
             let duration = Date().timeIntervalSince(start)
             guard duration >= promptPressThreshold else { return }
             let state = await controller.currentState()
-            if case .recording = state {
-                await finishHermesRecording(promptID: activeHermesPromptID ?? id)
+            if case .recording = state, let sessionID = activeHermesRecordingSessionID {
+                await finishHermesRecording(
+                    promptID: activeHermesPromptID ?? id,
+                    sessionID: sessionID
+                )
             }
         }
     }
 
-    private func beginHermesRecording(promptID: UUID) async {
+    private func beginHermesRecording(promptID: UUID, sessionID: UUID) async {
+        guard let session = hermesSessions.first(where: { $0.id == sessionID }) else { return }
+        guard session.canReply else {
+            settingsNotice = "Hermes session is \(session.status.rawValue)."
+            return
+        }
         prepareHermesContextCapture()
 
         await MainActor.run {
-            self.hermesResponseWindowState = nil
+            self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingStarted(
+                self.hermesResponseWindowStates,
+                sessionID: sessionID
+            )
+            self.hermesResponseWindowState = self.hermesResponseWindowStates.first {
+                $0.id == sessionID
+            } ?? self.hermesResponseWindowState
             self.isRecording = true
             self.recordingStartTimestamp = Date()
             self.recordingStartInProgress = true
             self.recordingStopInProgress = false
             self.activeHermesPromptID = promptID
+            self.activeHermesRecordingSessionID = sessionID
+            self.focusedHermesResponseSessionID = sessionID
+            self.selectedHermesSessionID = sessionID
         }
 
         await MainActor.run {
@@ -1862,14 +1965,20 @@ final class DictationViewModel: ObservableObject {
             self.recordingStartInProgress = false
             if case .error = state {
                 self.activeHermesPromptID = nil
+                self.activeHermesRecordingSessionID = nil
                 self.isRecording = false
                 self.clearHermesContextCapture(cancel: true)
             }
         }
     }
 
-    private func finishHermesRecording(promptID: UUID) async {
+    private func finishHermesRecording(promptID: UUID, sessionID: UUID) async {
         await MainActor.run {
+            self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingFinished(
+                self.hermesResponseWindowStates,
+                sessionID: sessionID
+            )
+            self.hermesResponseWindowState = self.hermesResponseWindowStates.first
             self.recordingStopInProgress = true
             self.isRecording = false
             self.recordingStartTimestamp = nil
@@ -1881,22 +1990,30 @@ final class DictationViewModel: ObservableObject {
             guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
                 await MainActor.run {
                     self.activeHermesPromptID = nil
+                    self.activeHermesRecordingSessionID = nil
                     self.clearHermesContextCapture(cancel: true)
                 }
                 return
             }
-            await MainActor.run { self.activeHermesPromptID = nil }
+            await MainActor.run {
+                self.activeHermesPromptID = nil
+                self.activeHermesRecordingSessionID = nil
+            }
             await restoreOriginalPromptIfNeeded()
-            await submitHermesTurn(result)
+            await submitHermesTurn(result, sessionID: sessionID)
         } catch {
             await MainActor.run {
                 self.activeHermesPromptID = nil
+                self.activeHermesRecordingSessionID = nil
                 self.clearHermesContextCapture(cancel: true)
                 self.appendHermesChatMessage(
+                    sessionID: sessionID,
                     role: .error,
-                    text: error.localizedDescription
+                    text: error.localizedDescription,
+                    status: .error
                 )
-                self.hermesResponseWindowState = HermesResponseWindowState(
+                self.upsertHermesResponseWindow(
+                    sessionID: sessionID,
                     title: "Hermes Error",
                     text: error.localizedDescription,
                     isError: true
@@ -1906,14 +2023,18 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult) async {
+    private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult,
+                                  sessionID: UUID) async {
         let transcript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
             appendHermesChatMessage(
+                sessionID: sessionID,
                 role: .error,
-                text: HermesAgentClientError.emptyInput.localizedDescription
+                text: HermesAgentClientError.emptyInput.localizedDescription,
+                status: .error
             )
-            hermesResponseWindowState = HermesResponseWindowState(
+            upsertHermesResponseWindow(
+                sessionID: sessionID,
                 title: "Hermes",
                 text: HermesAgentClientError.emptyInput.localizedDescription,
                 isError: true
@@ -1922,9 +2043,18 @@ final class DictationViewModel: ObservableObject {
             return
         }
 
-        let settings = currentHermesSettings()
+        guard let session = hermesSessions.first(where: { $0.id == sessionID }) else {
+            clearHermesContextCapture(cancel: true)
+            return
+        }
+
+        let settings = currentHermesSettings(conversationName: session.conversationName)
+        hermesInFlightSessionIDs.insert(sessionID)
         hermesIsSending = true
-        defer { hermesIsSending = false }
+        defer {
+            hermesInFlightSessionIDs.remove(sessionID)
+            hermesIsSending = !hermesInFlightSessionIDs.isEmpty
+        }
 
         do {
             let screenshot = await consumeHermesScreenshot()
@@ -1933,13 +2063,15 @@ final class DictationViewModel: ObservableObject {
             let screenContext = hermesScreenContextEnabled ? turn.screenContext : nil
             let screenContextMethod = hermesScreenContextEnabled ? turn.screenContextMethod : nil
             appendHermesChatMessage(
+                sessionID: sessionID,
                 role: .user,
                 text: transcript,
                 contextLabels: hermesContextLabels(
                     screenContext: screenContext,
                     screenshot: screenshot,
                     clipboardText: clipboardText
-                )
+                ),
+                status: .waiting
             )
             let userMessageForHistory = HermesAgentAPIClient.enrichedInputText(
                 input: transcript,
@@ -1975,15 +2107,32 @@ final class DictationViewModel: ObservableObject {
                 totalSeconds: turn.totalSeconds + hermesSeconds
             )
 
-            hermesResponseWindowState = HermesResponseWindowState(
-                title: "Hermes",
+            updateHermesSession(sessionID) { session in
+                session.serverSessionID = response.sessionID ?? session.serverSessionID
+                session.status = .responded
+                session.updatedAt = Date()
+            }
+            upsertHermesResponseWindow(
+                sessionID: sessionID,
+                title: selectedHermesSession?.title ?? "Hermes",
                 text: response.text,
                 isError: false
             )
-            appendHermesChatMessage(role: .assistant, text: response.text)
+            appendHermesChatMessage(
+                sessionID: sessionID,
+                role: .assistant,
+                text: response.text,
+                status: .responded
+            )
         } catch {
-            appendHermesChatMessage(role: .error, text: error.localizedDescription)
-            hermesResponseWindowState = HermesResponseWindowState(
+            appendHermesChatMessage(
+                sessionID: sessionID,
+                role: .error,
+                text: error.localizedDescription,
+                status: .error
+            )
+            upsertHermesResponseWindow(
+                sessionID: sessionID,
                 title: "Hermes Error",
                 text: error.localizedDescription,
                 isError: true
@@ -1992,9 +2141,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func appendHermesChatMessage(role: HermesChatMessage.Role,
+    private func appendHermesChatMessage(sessionID: UUID,
+                                         role: HermesChatMessage.Role,
                                          text: String,
-                                         contextLabels: [String] = []) {
+                                         contextLabels: [String] = [],
+                                         status: HermesChatSession.Status? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let message = HermesChatMessage(
@@ -2002,7 +2153,110 @@ final class DictationViewModel: ObservableObject {
             text: trimmed,
             contextLabels: contextLabels
         )
-        hermesChatMessages = hermesChatHistoryStore.save(hermesChatMessages + [message])
+        updateHermesSession(sessionID) { session in
+            if session.messages.isEmpty, role == .user {
+                session.title = HermesSessionNaming.title(for: trimmed)
+            }
+            session.messages.append(message)
+            session.status = status ?? session.status
+            session.updatedAt = message.createdAt
+        }
+    }
+
+    private func hermesSessionIDForHotkey() -> UUID {
+        let target = HermesSessionRouting.hotkeyTarget(
+            focusedSessionID: focusedHermesResponseSessionID,
+            visibleResponseSessionIDs: hermesResponseWindowStates.map(\.id)
+        )
+
+        switch target {
+        case .newSession:
+            return createHermesSession().id
+        case .reply(let sessionID):
+            return ensureHermesSessionID(sessionID)
+        }
+    }
+
+    @discardableResult
+    private func ensureHermesSessionID(_ sessionID: UUID?) -> UUID {
+        if let sessionID, hermesSessions.contains(where: { $0.id == sessionID }) {
+            selectedHermesSessionID = sessionID
+            return sessionID
+        }
+        return createHermesSession().id
+    }
+
+    @discardableResult
+    private func createHermesSession() -> HermesChatSession {
+        let id = UUID()
+        let settings = currentHermesSettings()
+        let session = HermesChatSession(
+            id: id,
+            title: "New Hermes Task",
+            conversationName: HermesSessionNaming.conversationName(
+                base: settings.normalizedConversationName,
+                id: id
+            )
+        )
+        hermesSessions.insert(session, at: 0)
+        saveHermesSessions()
+        selectedHermesSessionID = id
+        return session
+    }
+
+    private func updateHermesSession(_ sessionID: UUID,
+                                     mutate: (inout HermesChatSession) -> Void) {
+        guard let index = hermesSessions.firstIndex(where: { $0.id == sessionID }) else {
+            return
+        }
+        mutate(&hermesSessions[index])
+        saveHermesSessions()
+    }
+
+    private func saveHermesSessions() {
+        hermesSessions = hermesSessionStore.save(hermesSessions)
+        if let selectedHermesSessionID,
+           !hermesSessions.contains(where: { $0.id == selectedHermesSessionID }) {
+            self.selectedHermesSessionID = hermesSessions.first?.id
+        } else if selectedHermesSessionID == nil {
+            selectedHermesSessionID = hermesSessions.first?.id
+        } else {
+            updateHermesChatProjection()
+        }
+    }
+
+    private func updateHermesChatProjection() {
+        hermesChatMessages = selectedHermesSession?.messages ?? []
+    }
+
+    private func upsertHermesResponseWindow(sessionID: UUID,
+                                            title: String,
+                                            text: String,
+                                            isError: Bool) {
+        let state = HermesResponseWindowState(
+            id: sessionID,
+            title: title,
+            text: text,
+            isError: isError
+        )
+        if let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }) {
+            hermesResponseWindowStates[index] = state
+        } else {
+            hermesResponseWindowStates.append(state)
+        }
+        hermesResponseWindowState = state
+        focusedHermesResponseSessionID = sessionID
+        selectedHermesSessionID = sessionID
+    }
+
+    private func removeHermesResponseWindow(for sessionID: UUID) {
+        hermesResponseWindowStates.removeAll { $0.id == sessionID }
+        if hermesResponseWindowState?.id == sessionID {
+            hermesResponseWindowState = hermesResponseWindowStates.last
+        }
+        if focusedHermesResponseSessionID == sessionID {
+            focusedHermesResponseSessionID = hermesResponseWindowStates.last?.id
+        }
     }
 
     private func hermesContextLabels(screenContext: String?,

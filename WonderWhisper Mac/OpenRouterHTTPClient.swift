@@ -118,11 +118,35 @@ struct OpenRouterHTTPClient {
             }
         }
         struct ProviderOptions: Encodable { let sort: String }
+        struct ReasoningOptions: Encodable {
+            static let disabled = ReasoningOptions(effort: "none", exclude: true)
+
+            let effort: String
+            let exclude: Bool
+        }
+
         let model: String
         let messages: [Message]
         let temperature: Double
         let stream: Bool?
         let provider: ProviderOptions?
+        let reasoning: ReasoningOptions?
+
+        init(
+            model: String,
+            messages: [Message],
+            temperature: Double,
+            stream: Bool?,
+            provider: ProviderOptions?,
+            reasoning: ReasoningOptions? = .disabled
+        ) {
+            self.model = model
+            self.messages = messages
+            self.temperature = temperature
+            self.stream = stream
+            self.provider = provider
+            self.reasoning = reasoning
+        }
     }
 
     // Non-streaming chat

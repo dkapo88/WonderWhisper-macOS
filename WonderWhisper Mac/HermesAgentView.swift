@@ -7,6 +7,14 @@ private enum HermesAgentSection: String, CaseIterable, Identifiable {
   var id: String { rawValue }
 }
 
+enum HermesChatScrollBehavior {
+  static let bottomAnchorID = "hermes-chat-bottom"
+
+  static func shouldScrollToLatestOnAppear(messageCount: Int) -> Bool {
+    messageCount > 0
+  }
+}
+
 struct HermesAgentView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var selectedSection: HermesAgentSection = .chat
@@ -15,7 +23,7 @@ struct HermesAgentView: View {
   @State private var hasSavedKey: Bool = false
 
   private let keychain = KeychainService()
-  private let chatBottomID = "hermes-chat-bottom"
+  private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
 
   var body: some View {
     ScrollView {
@@ -66,10 +74,18 @@ struct HermesAgentView: View {
       VStack(alignment: .leading, spacing: 14) {
         chatToolbar
 
-        if vm.hermesChatMessages.isEmpty {
+        if vm.hermesSessions.isEmpty {
           emptyChatView
         } else {
-          chatMessagesView
+          HStack(alignment: .top, spacing: 14) {
+            sessionListView
+              .frame(width: 240)
+
+            Divider()
+
+            selectedSessionView
+              .frame(maxWidth: .infinity, alignment: .topLeading)
+          }
         }
       }
       .padding(.top, 4)
@@ -88,18 +104,18 @@ struct HermesAgentView: View {
 
       Spacer()
 
-      if !vm.hermesChatMessages.isEmpty {
+      Button(action: vm.startNewHermesSessionRecording) {
+        Label("New", systemImage: "plus.circle.fill")
+      }
+      .disabled(!vm.hermesAgentEnabled)
+
+      if !vm.hermesSessions.isEmpty {
         Button(action: vm.clearHermesChat) {
           Label("Clear", systemImage: "trash")
         }
         .disabled(vm.hermesIsSending)
         .help("Clear chat")
       }
-
-      Button(action: vm.startHermesReply) {
-        Label("Reply", systemImage: "mic.fill")
-      }
-      .disabled(!vm.hermesAgentEnabled || vm.hermesIsSending)
     }
   }
 
@@ -116,16 +132,135 @@ struct HermesAgentView: View {
     .frame(maxWidth: .infinity, minHeight: 280)
   }
 
-  private var chatMessagesView: some View {
+  private var sessionListView: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 6) {
+        ForEach(vm.hermesSessions) { session in
+          Button {
+            vm.selectHermesSession(session.id)
+          } label: {
+            sessionRow(session)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(.vertical, 2)
+    }
+    .frame(minHeight: 320, maxHeight: 600)
+  }
+
+  private var selectedSessionView: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      if let session = vm.selectedHermesSession {
+        selectedSessionHeader(session)
+
+        if session.messages.isEmpty {
+          Text("No messages in this session yet.")
+            .font(.callout)
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 260)
+        } else {
+          chatMessagesView(
+            messages: session.messages,
+            isWaiting: session.status == .waiting
+          )
+        }
+      } else {
+        Text("Select a Hermes session.")
+          .font(.callout)
+          .foregroundColor(.secondary)
+          .frame(maxWidth: .infinity, minHeight: 320)
+      }
+    }
+  }
+
+  private func sessionRow(_ session: HermesChatSession) -> some View {
+    let isSelected = vm.selectedHermesSessionID == session.id
+
+    return VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 6) {
+        Image(systemName: statusIcon(for: session.status))
+          .font(.caption)
+          .foregroundColor(statusColor(for: session.status))
+          .frame(width: 16)
+
+        Text(session.title)
+          .font(.callout.weight(.semibold))
+          .lineLimit(1)
+
+        Spacer(minLength: 4)
+      }
+
+      if !session.lastMessagePreview.isEmpty {
+        Text(session.lastMessagePreview)
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .lineLimit(2)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
+      Text(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: Date()))
+        .font(.caption2)
+        .foregroundColor(.secondary)
+    }
+    .padding(9)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(isSelected ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(isSelected ? Color.accentColor.opacity(0.28) : Color.secondary.opacity(0.12))
+    )
+  }
+
+  private func selectedSessionHeader(_ session: HermesChatSession) -> some View {
+    HStack(alignment: .center, spacing: 10) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(session.title)
+          .font(.headline)
+          .lineLimit(1)
+
+        Label(statusTitle(for: session.status), systemImage: statusIcon(for: session.status))
+          .font(.caption)
+          .foregroundColor(statusColor(for: session.status))
+      }
+
+      Spacer()
+
+      if session.status == .waiting {
+        ProgressView()
+          .controlSize(.small)
+      }
+
+      Button(action: { vm.showHermesResponseWindow(for: session.id) }) {
+        Label("Window", systemImage: "macwindow")
+      }
+      .disabled(session.latestAssistantMessage == nil)
+
+      Button(action: { vm.startHermesReply(to: session.id) }) {
+        Label("Reply", systemImage: "mic.fill")
+      }
+      .disabled(!vm.hermesAgentEnabled || !session.canReply)
+
+      Button(action: { vm.closeHermesSession(session.id) }) {
+        Label("Close", systemImage: "xmark.circle")
+      }
+      .disabled(session.status == .closed)
+    }
+  }
+
+  private func chatMessagesView(messages: [HermesChatMessage], isWaiting: Bool) -> some View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 14) {
-          ForEach(vm.hermesChatMessages) { message in
+          ForEach(messages) { message in
             chatMessageRow(message)
               .id(message.id)
           }
 
-          if vm.hermesIsSending {
+          if isWaiting {
             waitingRow
           }
 
@@ -136,10 +271,21 @@ struct HermesAgentView: View {
         .padding(.vertical, 4)
       }
       .frame(minHeight: 280, maxHeight: 560)
+      .defaultScrollAnchor(.bottom)
+      .onAppear {
+        if HermesChatScrollBehavior.shouldScrollToLatestOnAppear(
+          messageCount: messages.count
+        ) {
+          scrollChatToBottom(proxy, animated: false)
+        }
+      }
       .onChange(of: vm.hermesChatMessages.count) { _, _ in
         scrollChatToBottom(proxy)
       }
-      .onChange(of: vm.hermesIsSending) { _, _ in
+      .onChange(of: vm.selectedHermesSessionID) { _, _ in
+        scrollChatToBottom(proxy)
+      }
+      .onChange(of: isWaiting) { _, _ in
         scrollChatToBottom(proxy)
       }
     }
@@ -462,6 +608,36 @@ struct HermesAgentView: View {
     }
   }
 
+  private func statusTitle(for status: HermesChatSession.Status) -> String {
+    switch status {
+    case .open: return "Open"
+    case .waiting: return "Waiting"
+    case .responded: return "Responded"
+    case .error: return "Error"
+    case .closed: return "Closed"
+    }
+  }
+
+  private func statusIcon(for status: HermesChatSession.Status) -> String {
+    switch status {
+    case .open: return "bubble.left"
+    case .waiting: return "hourglass"
+    case .responded: return "checkmark.circle.fill"
+    case .error: return "exclamationmark.triangle.fill"
+    case .closed: return "lock.fill"
+    }
+  }
+
+  private func statusColor(for status: HermesChatSession.Status) -> Color {
+    switch status {
+    case .open: return .secondary
+    case .waiting: return .orange
+    case .responded: return .green
+    case .error: return .red
+    case .closed: return .secondary
+    }
+  }
+
   private func hotkeyTitle(for option: HotkeyManager.Selection) -> String {
     if option == vm.simpleDictation.selection {
       return "\(option.displayName) (Dictation)"
@@ -476,10 +652,21 @@ struct HermesAgentView: View {
     option == vm.simpleDictation.selection || option == vm.simpleCommand.selection
   }
 
-  private func scrollChatToBottom(_ proxy: ScrollViewProxy) {
-    DispatchQueue.main.async {
-      withAnimation(.easeOut(duration: 0.18)) {
+  private func scrollChatToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+    let scroll = {
+      if animated {
+        withAnimation(.easeOut(duration: 0.18)) {
+          proxy.scrollTo(chatBottomID, anchor: .bottom)
+        }
+      } else {
         proxy.scrollTo(chatBottomID, anchor: .bottom)
+      }
+    }
+
+    DispatchQueue.main.async {
+      scroll()
+      DispatchQueue.main.async {
+        scroll()
       }
     }
   }
@@ -520,6 +707,12 @@ struct HermesAgentView: View {
     let formatter = DateFormatter()
     formatter.dateStyle = .none
     formatter.timeStyle = .short
+    return formatter
+  }()
+
+  private static let relativeFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
     return formatter
   }()
 }

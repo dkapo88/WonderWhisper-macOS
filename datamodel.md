@@ -131,6 +131,18 @@ erDiagram
 
 ```mermaid
 erDiagram
+    HermesChatSession ||--o{ HermesChatMessage : "contains"
+
+    HermesChatSession {
+        UUID id PK
+        String title
+        String conversationName "unique Hermes API conversation"
+        String serverSessionID "optional X-Hermes-Session-Id"
+        Date createdAt
+        Date updatedAt
+        String status "open, waiting, responded, error, closed"
+    }
+
     HermesChatMessage {
         UUID id PK
         String role "user, assistant, or error"
@@ -140,13 +152,15 @@ erDiagram
     }
 ```
 
-**HermesChatMessage**: Messages shown on the Hermes sidebar Chat section. Messages are appended from the dedicated Hermes voice loop:
+**HermesChatSession**: Persistent Hermes task thread. Each session owns a unique API `conversation` value derived from the configured Hermes conversation prefix plus the session id, allowing simultaneous background Hermes tasks to continue independently.
+
+**HermesChatMessage**: Messages shown in the selected Hermes sidebar Chat session. Messages are appended from the dedicated Hermes voice loop:
 - User messages show the clean spoken transcript, not the enriched payload sent to the API.
 - Assistant messages show the Hermes response with Markdown rendering.
 - Error messages preserve failed transcription or API turn feedback.
 - Context labels indicate which optional payloads were sent with the user turn.
 
-**Persistence**: `HermesChatHistoryStore` persists the latest Hermes chat messages in `~/Library/Application Support/WonderWhisper/HermesChat/messages.json`. The default retention limit is 50 messages, controlled by `hermes.chat.maxMessages`. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
+**Persistence**: `HermesSessionStore` persists recent Hermes sessions in `~/Library/Application Support/WonderWhisper/HermesChat/sessions.json`. The default retention limit is 25 sessions, controlled by `hermes.sessions.maxSessions`; each session keeps the latest 50 messages by default, controlled by `hermes.chat.maxMessages`. `messages.json` from the previous flat chat history format is migrated into a `Previous Hermes Chat` session when `sessions.json` does not exist. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
 
 ---
 
@@ -218,7 +232,7 @@ erDiagram
 
 **TranscriptionSettings**: Configuration for speech-to-text providers (Parakeet V3 local capture, Groq Whisper Turbo, OpenRouter speech-to-text, xAI Grok Speech-to-Text, and Soniox streaming)
 
-**LLMSettings**: Configuration for language model providers (OpenRouter only; legacy Cerebras keychain support remains)
+**LLMSettings**: Configuration for language model providers (OpenRouter only; legacy Cerebras keychain support remains). OpenRouter chat requests explicitly send `reasoning.effort = "none"` and `reasoning.exclude = true` for post-processing and command LLM calls; this is a request default, not a persisted UserDefaults setting.
 
 ---
 
@@ -281,15 +295,16 @@ erDiagram
     DictationViewModel ||--|| ConversationHistoryStore : "uses"
     DictationViewModel ||--|{ FavoriteLLMModel : "tracks"
     DictationViewModel ||--|| HermesAgentSettings : "uses when enabled"
-    DictationViewModel ||--|| HermesChatHistoryStore : "loads and saves"
-    DictationViewModel ||--o{ HermesChatMessage : "tracks Hermes chat"
+    DictationViewModel ||--|| HermesSessionStore : "loads and saves"
+    DictationViewModel ||--o{ HermesChatSession : "tracks Hermes sessions"
     
     HistoryStore ||--|{ HistoryEntry : "stores"
     
     ConversationHistoryStore ||--|{ PromptConversationMessage : "stores"
     ConversationHistoryStore ||--|{ ConversationHistoryMetadata : "tracks"
 
-    HermesChatHistoryStore ||--o{ HermesChatMessage : "persists"
+    HermesSessionStore ||--o{ HermesChatSession : "persists"
+    HermesChatSession ||--o{ HermesChatMessage : "contains"
     
     PromptConfiguration ||--o| Shortcut : "has shortcut"
     PromptConfiguration ||--o| Selection : "has selection"
@@ -309,6 +324,8 @@ erDiagram
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
         Bool hermesAgentEnabled
+        UUID selectedHermesSessionID FK "optional"
+        HermesChatSession[] hermesSessions
         HermesChatMessage[] hermesChatMessages
     }
     
@@ -318,8 +335,9 @@ erDiagram
         Bool isLoadingMore
     }
 
-    HermesChatHistoryStore {
-        Int maxMessages
+    HermesSessionStore {
+        Int maxMessagesPerSession
+        Int maxSessions
         URL fileURL
     }
     
@@ -360,7 +378,8 @@ erDiagram
 │       ├── <promptID>_messages.json    # PromptConversationMessage[]
 │       └── <promptID>_metadata.json    # ConversationHistoryMetadata
 └── HermesChat/
-    └── messages.json      # Last retained HermesChatMessage[] rows
+    ├── sessions.json      # Last retained HermesChatSession[] rows
+    └── messages.json      # Legacy flat HermesChatMessage[] rows, migrated on load
 ```
 
 ### UserDefaults Keys
@@ -409,7 +428,7 @@ erDiagram
 | `network.http_protocol_preference` | String | HTTP protocol preference |
 | `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
 | `hermes.api.baseURL` | String | Hermes API server URL; root and `/v1` URLs are both accepted |
-| `hermes.conversation.name` | String | Named Hermes conversation for continuous voice sessions |
+| `hermes.conversation.name` | String | Hermes conversation prefix used when creating new sessions |
 | `hermes.model` | String | Cosmetic Hermes API model field |
 | `hermes.timeout` | Double | Hermes request timeout (seconds), clamped from 15 seconds to 1,800 seconds |
 | `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
@@ -417,6 +436,7 @@ erDiagram
 | `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
 | `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
+| `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
 
 ### Keychain Storage
 
@@ -457,8 +477,10 @@ erDiagram
         Bool hermesScreenContextEnabled
         Bool hermesScreenshotEnabled
         Bool hermesClipboardContextEnabled
+        UUID selectedHermesSessionID "optional"
+        HermesChatSession[] hermesSessions
         HermesChatMessage[] hermesChatMessages
-        HermesResponseWindowState hermesResponseWindowState "optional"
+        HermesResponseWindowState[] hermesResponseWindowStates
     }
 ```
 
@@ -508,6 +530,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.6 (May 7, 2026)**: Added persistent multi-session Hermes storage and per-session response windows.
+- **v1.5 (May 7, 2026)**: Documented OpenRouter chat requests disabling reasoning by default.
 - **v1.4 (May 6, 2026)**: Added persistent Hermes chat history storage capped to the latest 50 messages by default.
 - **v1.3 (May 6, 2026)**: Raised the Hermes request timeout maximum from 600 to 1,800 seconds.
 - **v1.2 (May 6, 2026)**: Added `HermesChatMessage` as the current-session Hermes chat UI model and documented Hermes as a first-class sidebar item.
@@ -596,18 +620,22 @@ sequenceDiagram
     participant DictationViewModel
     participant DictationController
     participant HermesAPI
+    participant HermesSessionStore
     participant HistoryStore
 
     User->>DictationViewModel: Trigger Hermes hotkey
+    DictationViewModel->>DictationViewModel: Reply to visible response window session, else create a new session
     DictationViewModel->>DictationViewModel: Start enabled active-window screenshot and clipboard text capture
     DictationViewModel->>DictationController: Start recording
     User->>DictationViewModel: Trigger Hermes hotkey again
     DictationViewModel->>DictationController: Finish transcription-only turn
     DictationController-->>DictationViewModel: Transcript + audio/context metadata
-    DictationViewModel->>HermesAPI: POST /v1/responses with enabled text/image/clipboard context
+    DictationViewModel->>HermesSessionStore: append user message and mark session waiting
+    DictationViewModel->>HermesAPI: POST /v1/responses with session conversation and enabled context
     HermesAPI-->>DictationViewModel: Assistant response
+    DictationViewModel->>HermesSessionStore: append assistant message and mark session responded
     DictationViewModel->>HistoryStore: append transcript/response entry and screenshot metadata
-    DictationViewModel-->>User: Show Hermes response window
+    DictationViewModel-->>User: Show response window for that session
 ```
 
 ---
@@ -758,6 +786,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.4
-**Last Updated**: May 6, 2026
+**Document Version**: 1.5
+**Last Updated**: May 7, 2026
 **Maintainer**: WonderWhisper Mac Development Team

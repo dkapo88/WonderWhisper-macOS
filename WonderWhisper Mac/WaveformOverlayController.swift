@@ -100,6 +100,29 @@ final class WaveformOverlayController {
     }
 }
 
+enum AudioVisualizerSensitivity {
+    static let noiseGate: CGFloat = 0.018
+    static let displayZeroThreshold: CGFloat = 0.012
+    static let boostExponent: CGFloat = 0.68
+    static let inputAttack: CGFloat = 0.55
+    static let inputRelease: CGFloat = 0.18
+    static let levelAttack: CGFloat = 0.56
+    static let levelRelease: CGFloat = 0.20
+    static let speechFloor: CGFloat = 0.14
+    static let wobbleScale: CGFloat = 0.10
+
+    static func gatedLevel(_ value: CGFloat) -> CGFloat {
+        let clamped = max(0, min(1, value))
+        return clamped < noiseGate ? 0 : clamped
+    }
+
+    static func boostedLevel(_ value: CGFloat) -> CGFloat {
+        let gated = gatedLevel(value)
+        guard gated > 0 else { return 0 }
+        return min(1, pow(gated, boostExponent))
+    }
+}
+
 private final class WaveformView: NSView {
     enum Style {
         case pillBars      // vertical bars inside a rounded capsule
@@ -294,15 +317,15 @@ private final class WaveformView: NSView {
         let minH: CGFloat = 3.0
         let maxH = rect.height
         let now = CFAbsoluteTimeGetCurrent()
-        let input = level < 0.003 ? 0 : boost(level)
-        let attack: CGFloat = 0.72
-        let release: CGFloat = 0.20
+        let input = AudioVisualizerSensitivity.boostedLevel(level)
+        let attack = AudioVisualizerSensitivity.inputAttack
+        let release = AudioVisualizerSensitivity.inputRelease
         if input > displayLevel {
             displayLevel += (input - displayLevel) * attack
         } else {
             displayLevel += (input - displayLevel) * release
         }
-        if displayLevel < 0.008 { displayLevel = 0 }
+        if displayLevel < AudioVisualizerSensitivity.displayZeroThreshold { displayLevel = 0 }
 
         if !barLayers.isEmpty {
             for (i, bar) in barLayers.enumerated() {
@@ -313,9 +336,9 @@ private final class WaveformView: NSView {
                 let speed: CGFloat = 0.65 + CGFloat(i % 5) * 0.06
                 let wobble = CGFloat(sin(now * Double(7 * speed) + Double(seed)))
                 let idleShape: CGFloat = 0.04 + 0.06 * (1 - d)
-                let speechFloor: CGFloat = displayLevel > 0 ? 0.24 : 0
+                let speechFloor = displayLevel > 0 ? AudioVisualizerSensitivity.speechFloor : 0
                 let liveShape = (speechFloor + displayLevel * 0.76) * shape
-                    + wobble * displayLevel * 0.14
+                    + wobble * displayLevel * AudioVisualizerSensitivity.wobbleScale
                 var amp = max(idleShape, liveShape)
                 if displayLevel == 0 { amp = idleShape }
                 amp = max(0, min(1, amp))
@@ -358,15 +381,11 @@ private final class WaveformView: NSView {
     }
 
     func setLevel(_ value: CGFloat) {
-        let clamped = max(0, min(1, value))
-        let gated = clamped < 0.003 ? 0 : clamped
-        let alpha: CGFloat = gated > level ? 0.76 : 0.22
+        let gated = AudioVisualizerSensitivity.gatedLevel(value)
+        let alpha = gated > level
+            ? AudioVisualizerSensitivity.levelAttack
+            : AudioVisualizerSensitivity.levelRelease
         level = level * (1 - alpha) + gated * alpha
-    }
-
-    private func boost(_ x: CGFloat) -> CGFloat {
-        let clamped = max(0, min(1, x))
-        return min(1, pow(clamped, 0.45))
     }
 }
 
