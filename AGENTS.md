@@ -16,7 +16,7 @@ Core components: `DictationViewModel` (orchestrates recording → transcription 
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with seven sidebar tabs: Dictation, Command, Hermes, Vocabulary, History, Microphone, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with seven sidebar tabs: Hermes, History, Dictation, Command, Vocabulary, Microphone, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V4 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
@@ -48,6 +48,13 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-08: Made the Hermes chat tab fill and resize with the available window space.
+- 2026-05-08: Restored Hermes Markdown block rendering and made formatted copy preserve rich/plain structure.
+- 2026-05-08: Added Hermes LLM session titles, optional Hermes post-processing, clearer response-window focus/reply state, and raw/formatted copy controls.
+- 2026-05-07: Restored Hermes response-window minimize by hiding the custom panel directly.
+- 2026-05-07: Moved Hermes to the top of the main sidebar above History.
+- 2026-05-07: Made Hermes response windows larger by default and manually resizable.
+- 2026-05-07: Limited Hermes clipboard context to text copied within one minute before recording start.
 - 2026-05-07: Added Hermes Active/Archive session lifecycle with confirmed clear-active and local delete actions.
 - 2026-05-07: Recovered stale waiting Hermes sessions after app restart and made waiting sessions interruptible/replyable.
 - 2026-05-07: Hid inactive native traffic-light controls on Hermes response panels in favor of the custom window buttons.

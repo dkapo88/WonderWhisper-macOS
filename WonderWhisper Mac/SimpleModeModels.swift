@@ -23,13 +23,23 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
+  case hermes
   case history
   case dictation
   case command
-  case hermes
   case vocabulary
   case microphone
   case settings
+
+  static let displayOrder: [SimpleSidebarItem] = [
+    .hermes,
+    .history,
+    .dictation,
+    .command,
+    .vocabulary,
+    .microphone,
+    .settings
+  ]
 
   var id: String { rawValue }
 

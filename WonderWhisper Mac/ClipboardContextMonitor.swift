@@ -6,8 +6,10 @@ actor ClipboardContextMonitor {
     private var lastCapturedText: String?
     private var lastCaptureDate: Date?
     private var monitorTask: Task<Void, Never>?
+    private let maximumRetentionWindow: TimeInterval?
 
-    init() {
+    init(maximumRetentionWindow: TimeInterval? = nil) {
+        self.maximumRetentionWindow = maximumRetentionWindow
         monitorTask = Task { [weak self] in
             await self?.runMonitor()
         }
@@ -17,9 +19,15 @@ actor ClipboardContextMonitor {
         monitorTask?.cancel()
     }
 
-    func refreshSnapshot() async {
+    func refreshSnapshot(capturedAt: Date = Date(), matchingChangeCount: Int? = nil) async {
         let changeCount = await readChangeCount()
-        guard changeCount != lastChangeCount else { return }
+        if let matchingChangeCount, changeCount != matchingChangeCount {
+            return
+        }
+        guard changeCount != lastChangeCount else {
+            expireStaleCapture(referenceDate: capturedAt)
+            return
+        }
         lastChangeCount = changeCount
         guard let raw = await readClipboardText() else {
             lastCapturedText = nil
@@ -33,18 +41,44 @@ actor ClipboardContextMonitor {
             return
         }
         lastCapturedText = trimmed
-        lastCaptureDate = Date()
+        lastCaptureDate = capturedAt
     }
 
     func consumeClipboardIfRecent(referenceDate: Date, window: TimeInterval) async -> String? {
-        guard let captureDate = lastCaptureDate,
-              referenceDate.timeIntervalSince(captureDate) <= window,
-              let text = lastCapturedText else {
+        guard let snapshot = clipboardSnapshotIfRecent(referenceDate: referenceDate, window: window) else {
             return nil
         }
         lastCapturedText = nil
         lastCaptureDate = nil
-        return text
+        return snapshot.text
+    }
+
+    func peekClipboardIfRecent(referenceDate: Date, window: TimeInterval) async -> String? {
+        clipboardSnapshotIfRecent(referenceDate: referenceDate, window: window)?.text
+    }
+
+    func peekClipboardSnapshotIfRecent(referenceDate: Date,
+                                       window: TimeInterval) async -> (text: String, copiedAt: Date)? {
+        clipboardSnapshotIfRecent(referenceDate: referenceDate, window: window)
+    }
+
+    private func clipboardSnapshotIfRecent(referenceDate: Date,
+                                           window: TimeInterval) -> (text: String, copiedAt: Date)? {
+        guard let captureDate = lastCaptureDate,
+              let text = lastCapturedText else {
+            return nil
+        }
+        guard let recentText = ClipboardContextPolicy.contextText(
+            text,
+            copiedAt: captureDate,
+            recordingStartedAt: referenceDate,
+            retentionWindow: window
+        ) else {
+            lastCapturedText = nil
+            lastCaptureDate = nil
+            return nil
+        }
+        return (recentText, captureDate)
     }
 
     func clear() {
@@ -56,6 +90,7 @@ actor ClipboardContextMonitor {
         lastChangeCount = await readChangeCount()
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 250_000_000)
+            expireStaleCapture()
             let changeCount = await readChangeCount()
             guard changeCount != lastChangeCount else { continue }
             lastChangeCount = changeCount
@@ -99,5 +134,49 @@ actor ClipboardContextMonitor {
                 return nil
             }
         }
+    }
+
+    private func expireStaleCapture(referenceDate: Date = Date()) {
+        guard let maximumRetentionWindow,
+              let captureDate = lastCaptureDate,
+              referenceDate.timeIntervalSince(captureDate) > maximumRetentionWindow else {
+            return
+        }
+        lastCapturedText = nil
+        lastCaptureDate = nil
+    }
+}
+
+enum ClipboardContextPolicy {
+    static func contextText(_ text: String?,
+                            copiedAt: Date,
+                            recordingStartedAt: Date,
+                            retentionWindow: TimeInterval) -> String? {
+        let ageAtRecordingStart = recordingStartedAt.timeIntervalSince(copiedAt)
+        guard ageAtRecordingStart >= 0,
+              ageAtRecordingStart <= retentionWindow else {
+            return nil
+        }
+        return text?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum HermesClipboardContextPolicy {
+    static let retentionWindow: TimeInterval = 60
+
+    static func contextText(_ text: String?,
+                            copiedAt: Date,
+                            recordingStartedAt: Date,
+                            requestSentAt _: Date? = nil,
+                            retentionWindow: TimeInterval = retentionWindow) -> String? {
+        guard let recentText = ClipboardContextPolicy.contextText(
+            text,
+            copiedAt: copiedAt,
+            recordingStartedAt: recordingStartedAt,
+            retentionWindow: retentionWindow
+        ) else {
+            return nil
+        }
+        return HermesAgentAPIClient.normalizedClipboardText(recentText)
     }
 }

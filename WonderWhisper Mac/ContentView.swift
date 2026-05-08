@@ -9,15 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var vm: DictationViewModel
-    private let simpleItems: [SimpleSidebarItem] = [
-        .history,
-        .dictation,
-        .command,
-        .hermes,
-        .vocabulary,
-        .microphone,
-        .settings
-    ]
+    private let simpleItems = SimpleSidebarItem.displayOrder
 
     var body: some View {
         NavigationSplitView {

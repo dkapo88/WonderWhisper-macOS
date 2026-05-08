@@ -134,6 +134,9 @@ enum HermesSessionLifecycle {
 }
 
 enum HermesSessionNaming {
+  static let defaultTitle = "New Hermes Task"
+  static let maxTitleLength = 58
+
   static func conversationName(base: String, id: UUID) -> String {
     let prefix = sanitizedPrefix(base)
     let suffix = id.uuidString
@@ -152,10 +155,87 @@ enum HermesSessionNaming {
       .joined(separator: " ")
 
     if words.isEmpty {
-      return "New Hermes Task"
+      return defaultTitle
     }
 
     return words.count > 54 ? String(words.prefix(51)) + "..." : words
+  }
+
+  static func promptForGeneratedTitle(sessionText: String) -> String {
+    """
+    Create a concise task title for this Hermes session.
+
+    Requirements:
+    - 3 to 7 words
+    - Specific to the task
+    - No quotes
+    - No trailing punctuation
+    - Return only the title
+
+    Session text:
+    \(sessionText.trimmingCharacters(in: .whitespacesAndNewlines))
+    """
+  }
+
+  static func normalizedGeneratedTitle(_ title: String) -> String? {
+    var normalized = title
+      .replacingOccurrences(of: "<OUTPUT>", with: "", options: .caseInsensitive)
+      .replacingOccurrences(of: "</OUTPUT>", with: "", options: .caseInsensitive)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if normalized.lowercased().hasPrefix("title:") {
+      normalized = String(normalized.dropFirst("title:".count))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    if let firstLine = normalized
+      .components(separatedBy: .newlines)
+      .first?
+      .trimmingCharacters(in: .whitespacesAndNewlines) {
+      normalized = firstLine
+    }
+
+    normalized = normalized
+      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`*_ "))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    while [".", "!", "?", ":", ";", ","].contains(String(normalized.last ?? "\0")) {
+      normalized.removeLast()
+      normalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    guard !normalized.isEmpty else { return nil }
+    if normalized.count <= maxTitleLength {
+      return normalized
+    }
+
+    let clipped = normalized
+      .split(whereSeparator: { $0.isWhitespace })
+      .reduce(into: "") { partial, word in
+        guard partial.count < maxTitleLength else { return }
+        let candidate = partial.isEmpty ? String(word) : "\(partial) \(word)"
+        if candidate.count <= maxTitleLength {
+          partial = candidate
+        }
+      }
+
+    if clipped.isEmpty {
+      return String(normalized.prefix(maxTitleLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return clipped
+  }
+
+  static func displayTitle(for sessions: [HermesChatSession],
+                           sessionID: UUID,
+                           fallback: String = "Hermes") -> String {
+    guard let title = sessions
+      .first(where: { $0.id == sessionID })?
+      .title
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !title.isEmpty else {
+      return fallback
+    }
+    return title
   }
 
   private static func sanitizedPrefix(_ value: String) -> String {

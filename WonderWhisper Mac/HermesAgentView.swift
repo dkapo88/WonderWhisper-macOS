@@ -34,25 +34,31 @@ struct HermesAgentView: View {
 
   private let keychain = KeychainService()
   private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
+  private let sessionListWidth: CGFloat = 280
+  private let messageSideInset: CGFloat = 64
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 18) {
-        header
-        sectionPicker
+    VStack(alignment: .leading, spacing: 18) {
+      header
+      sectionPicker
 
-        switch selectedSection {
-        case .chat:
-          chatSection
-        case .settings:
+      switch selectedSection {
+      case .chat:
+        chatSection
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .layoutPriority(1)
+      case .settings:
+        ScrollView {
           settingsSection
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 24)
         }
-
-        Spacer(minLength: 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .layoutPriority(1)
       }
-      .padding(24)
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .padding(24)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear {
       selectedSection = .chat
       refreshKeyStatus()
@@ -123,20 +129,27 @@ struct HermesAgentView: View {
 
         if vm.hermesSessions.isEmpty {
           emptyChatView
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           HStack(alignment: .top, spacing: 14) {
             sessionListView
-              .frame(width: 240)
+              .frame(width: sessionListWidth)
+              .frame(maxHeight: .infinity)
 
             Divider()
+              .frame(maxHeight: .infinity)
 
             selectedSessionView
-              .frame(maxWidth: .infinity, alignment: .topLeading)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+              .layoutPriority(1)
           }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
       }
       .padding(.top, 4)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private var chatToolbar: some View {
@@ -207,8 +220,10 @@ struct HermesAgentView: View {
         }
         .padding(.vertical, 2)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .layoutPriority(1)
     }
-    .frame(minHeight: 320, maxHeight: 600)
+    .frame(maxHeight: .infinity, alignment: .topLeading)
   }
 
   private var displayedSessions: [HermesChatSession] {
@@ -243,20 +258,22 @@ struct HermesAgentView: View {
           Text("No messages in this session yet.")
             .font(.callout)
             .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, minHeight: 260)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           chatMessagesView(
             messages: session.messages,
             isWaiting: vm.isHermesSessionActivelyWaiting(session)
           )
+          .layoutPriority(1)
         }
       } else {
         Text("Select a Hermes session.")
           .font(.callout)
           .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, minHeight: 320)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private func sessionRow(_ session: HermesChatSession) -> some View {
@@ -336,9 +353,12 @@ struct HermesAgentView: View {
         }
 
         Button(action: { vm.startHermesReply(to: session.id) }) {
-          Label("Reply", systemImage: "mic.fill")
+          Label(
+            vm.isHermesRecordingReply(to: session.id) ? "Send" : "Reply",
+            systemImage: vm.isHermesRecordingReply(to: session.id) ? "paperplane.fill" : "mic.fill"
+          )
         }
-        .disabled(!vm.hermesAgentEnabled || !vm.canReplyToHermesSession(session))
+        .disabled(!vm.hermesAgentEnabled || !vm.canUseHermesReplyButton(for: session))
 
         Button(action: { vm.archiveHermesSession(session.id) }) {
           Label("Archive", systemImage: "archivebox")
@@ -369,8 +389,9 @@ struct HermesAgentView: View {
             .id(chatBottomID)
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
       }
-      .frame(minHeight: 280, maxHeight: 560)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .defaultScrollAnchor(.bottom)
       .onAppear {
         if HermesChatScrollBehavior.shouldScrollToLatestOnAppear(
@@ -396,7 +417,8 @@ struct HermesAgentView: View {
 
     return HStack(alignment: .top, spacing: 10) {
       if isUser {
-        Spacer(minLength: 64)
+        Color.clear
+          .frame(width: messageSideInset)
       } else {
         chatAvatar(for: message.role)
       }
@@ -416,14 +438,16 @@ struct HermesAgentView: View {
           contextLabelsView(message.contextLabels)
         }
       }
-      .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
+      .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
 
       if isUser {
         chatAvatar(for: message.role)
       } else {
-        Spacer(minLength: 64)
+        Color.clear
+          .frame(width: messageSideInset)
       }
     }
+    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
   }
 
   private func chatAvatar(for role: HermesChatMessage.Role) -> some View {
@@ -452,7 +476,7 @@ struct HermesAgentView: View {
   }
 
   private func chatBubble(_ message: HermesChatMessage) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 8) {
       switch message.role {
       case .assistant:
         HermesMarkdownView(text: message.text)
@@ -460,11 +484,14 @@ struct HermesAgentView: View {
         Text(message.text)
           .font(.body)
           .lineSpacing(3)
+          .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
+
+      copyButtons(for: message.text)
     }
-    .textSelection(.enabled)
     .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(chatBubbleColor(for: message.role))
@@ -473,6 +500,30 @@ struct HermesAgentView: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .stroke(chatBubbleStroke(for: message.role), lineWidth: 1)
     )
+  }
+
+  private func copyButtons(for text: String) -> some View {
+    HStack(spacing: 8) {
+      Spacer(minLength: 0)
+
+      Button {
+        HermesResponseClipboard.copyRaw(text)
+      } label: {
+        Label("Copy Raw", systemImage: "doc.on.doc")
+      }
+      .buttonStyle(.borderless)
+      .font(.caption)
+      .help("Copy Markdown text")
+
+      Button {
+        HermesResponseClipboard.copyFormatted(text)
+      } label: {
+        Label("Copy Formatted", systemImage: "doc.richtext")
+      }
+      .buttonStyle(.borderless)
+      .font(.caption)
+      .help("Copy formatted rich text")
+    }
   }
 
   private func contextLabelsView(_ labels: [String]) -> some View {
@@ -643,6 +694,8 @@ struct HermesAgentView: View {
         Toggle("Screenshot image", isOn: $vm.hermesScreenshotEnabled)
           .toggleStyle(.checkbox)
         Toggle("Copied text / clipboard", isOn: $vm.hermesClipboardContextEnabled)
+          .toggleStyle(.checkbox)
+        Toggle("LLM post-processing", isOn: $vm.hermesPostProcessingEnabled)
           .toggleStyle(.checkbox)
 
         Text("Controls what Hermes receives with each voice turn.")

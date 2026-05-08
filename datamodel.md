@@ -153,12 +153,22 @@ erDiagram
 ```
 
 **HermesChatSession**: Persistent Hermes task thread. Each session owns a unique API `conversation` value derived from the configured Hermes conversation prefix plus the session id, allowing simultaneous background Hermes tasks to continue independently.
+New sessions start with the generic title `New Hermes Task`; after the first user
+turn is captured, the app asks the configured OpenRouter LLM model for a concise
+local title and updates only the matching session id. Title generation is local to
+WonderWhisper state and is not sent through Hermes.
 
 **HermesChatMessage**: Messages shown in the selected Hermes sidebar Chat session. Messages are appended from the dedicated Hermes voice loop:
-- User messages show the clean spoken transcript, not the enriched payload sent to the API.
+- User messages show the spoken transcript after optional Hermes LLM post-processing, not the enriched payload sent to the API.
 - Assistant messages show the Hermes response with Markdown rendering.
 - Error messages preserve failed transcription or API turn feedback.
 - Context labels indicate which optional payloads were sent with the user turn.
+- Clipboard context is eligible only when the copied text was captured within 60
+  seconds before the Hermes recording starts. The request may finish later; the
+  recording start time determines whether copied text is included.
+- `hermes.postProcessing.enabled` controls whether Hermes dictation text is cleaned
+  through the existing OpenRouter post-processing/vocabulary flow before it is sent
+  to the Hermes API. When disabled, the raw transcript is sent.
 
 **Persistence**: `HermesSessionStore` persists recent Hermes sessions in `~/Library/Application Support/WonderWhisper/HermesChat/sessions.json`. The default retention limit is 25 sessions, controlled by `hermes.sessions.maxSessions`; each session keeps the latest 50 messages by default, controlled by `hermes.chat.maxMessages`. `messages.json` from the previous flat chat history format is migrated into a `Previous Hermes Chat` session when `sessions.json` does not exist. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
 
@@ -286,7 +296,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "dictation, command, hermes, vocabulary, history, microphone, settings"
+        String value "hermes, history, dictation, command, vocabulary, microphone, settings"
     }
     
     SimpleVoiceEngine {
@@ -446,7 +456,8 @@ erDiagram
 | `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
 | `hermes.context.screenText.enabled` | Bool | Include Hermes OCR/screen text context |
 | `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
-| `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
+| `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context only when copied within 60 seconds before recording start |
+| `hermes.postProcessing.enabled` | Bool | Clean Hermes dictations through the OpenRouter post-processing flow before sending |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 | `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
 
@@ -542,6 +553,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.8 (May 8, 2026)**: Added Hermes LLM title generation, optional Hermes post-processing, clearer response-window focus/reply state, selectable message bodies, and raw/formatted copy actions.
+- **v1.7 (May 7, 2026)**: Limited Hermes clipboard context to copied text captured within one minute before recording start.
 - **v1.6 (May 7, 2026)**: Added persistent multi-session Hermes storage and per-session response windows.
 - **v1.5 (May 7, 2026)**: Documented OpenRouter chat requests disabling reasoning by default.
 - **v1.4 (May 6, 2026)**: Added persistent Hermes chat history storage capped to the latest 50 messages by default.
@@ -637,11 +650,12 @@ sequenceDiagram
 
     User->>DictationViewModel: Trigger Hermes hotkey
     DictationViewModel->>DictationViewModel: Reply to visible response window session, else create a new session
-    DictationViewModel->>DictationViewModel: Start enabled active-window screenshot and clipboard text capture
+    DictationViewModel->>DictationViewModel: Start screenshot capture and 60-second clipboard eligibility check
     DictationViewModel->>DictationController: Start recording
     User->>DictationViewModel: Trigger Hermes hotkey again
     DictationViewModel->>DictationController: Finish transcription-only turn
     DictationController-->>DictationViewModel: Transcript + audio/context metadata
+    DictationViewModel->>DictationViewModel: Optionally clean transcript and generate local session title
     DictationViewModel->>HermesSessionStore: append user message and mark session waiting
     DictationViewModel->>HermesAPI: POST /v1/responses with session conversation and enabled context
     HermesAPI-->>DictationViewModel: Assistant response

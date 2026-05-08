@@ -130,6 +130,36 @@ struct HermesSessionNamingTests {
 
     #expect(title == "Please summarise the attached planning notes")
   }
+
+  @Test func generatedTitleIsSanitizedAndClipped() {
+    let title = HermesSessionNaming.normalizedGeneratedTitle(
+      "<OUTPUT>Title: \"Daily AI briefing cron output review and Slack posting plan.\"</OUTPUT>"
+    )
+
+    #expect(title == "Daily AI briefing cron output review and Slack posting plan")
+  }
+
+  @Test func displayTitleUsesMatchingSessionNotCurrentSelection() {
+    let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000441")!
+    let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000442")!
+    let sessions = [
+      HermesChatSession(
+        id: firstID,
+        title: "First session title",
+        conversationName: "first"
+      ),
+      HermesChatSession(
+        id: secondID,
+        title: "Second session title",
+        conversationName: "second"
+      )
+    ]
+
+    #expect(
+      HermesSessionNaming.displayTitle(for: sessions, sessionID: secondID)
+      == "Second session title"
+    )
+  }
 }
 
 struct HermesSessionRoutingTests {

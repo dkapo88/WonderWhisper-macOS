@@ -1,86 +1,166 @@
+import AppKit
 import SwiftUI
 
 struct HermesMarkdownView: View {
   var text: String
 
-  private var renderedBlocks: [HermesMarkdownBlock] {
-    HermesMarkdownBlock.parse(text)
-  }
-
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      ForEach(renderedBlocks) { block in
-        blockView(block)
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func blockView(_ block: HermesMarkdownBlock) -> some View {
-    switch block.kind {
-    case .heading(let level, let text):
-      Text(text)
-        .font(level == 1 ? .title3.weight(.semibold) : .headline)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, level == 1 ? 2 : 0)
-    case .paragraph(let text):
-      Text(text)
-        .font(.body)
-        .lineSpacing(3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    case .unorderedList(let items):
-      VStack(alignment: .leading, spacing: 6) {
-        ForEach(items) { item in
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("•")
-              .font(.body)
-              .frame(width: 14, alignment: .trailing)
-            Text(item.text)
-              .font(.body)
-              .lineSpacing(3)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
-        }
-      }
-    case .orderedList(let items):
-      VStack(alignment: .leading, spacing: 6) {
-        ForEach(items) { item in
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(item.marker)
-              .font(.body)
-              .monospacedDigit()
-              .frame(width: 28, alignment: .trailing)
-            Text(item.text)
-              .font(.body)
-              .lineSpacing(3)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
-        }
-      }
-    case .code(let text):
-      Text(text)
-        .font(.system(.body, design: .monospaced))
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(
-          RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(Color(nsColor: .textBackgroundColor).opacity(0.65))
-        )
-    }
+    Text(HermesMarkdownContent.attributedString(from: text))
+      .textSelection(.enabled)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
-private struct HermesMarkdownBlock: Identifiable {
+enum HermesMarkdownContent {
+  static func attributedString(from markdown: String) -> AttributedString {
+    AttributedString(nsAttributedString(from: markdown))
+  }
+
+  static func nsAttributedString(from markdown: String) -> NSAttributedString {
+    let result = NSMutableAttributedString()
+    let blocks = HermesMarkdownBlock.parse(markdown)
+
+    for (index, block) in blocks.enumerated() {
+      if index > 0 {
+        result.append(NSAttributedString(string: "\n\n", attributes: baseAttributes))
+      }
+      result.append(attributedBlock(block))
+    }
+
+    if result.length == 0 {
+      return NSAttributedString(string: markdown, attributes: baseAttributes)
+    }
+    return result
+  }
+
+  static func plainFormattedString(from markdown: String) -> String {
+    let blocks = HermesMarkdownBlock.parse(markdown)
+    let rendered = blocks.map { block -> String in
+      switch block.kind {
+      case .heading(_, let text):
+        return stripInlineMarkdown(text)
+      case .paragraph(let text):
+        return stripInlineMarkdown(text)
+      case .unorderedList(let items):
+        return items
+          .map { "• \(stripInlineMarkdown($0.text))" }
+          .joined(separator: "\n")
+      case .orderedList(let items):
+        return items
+          .map { "\($0.marker) \(stripInlineMarkdown($0.text))" }
+          .joined(separator: "\n")
+      case .code(let text):
+        return text
+      }
+    }
+    return rendered
+      .joined(separator: "\n\n")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private static func attributedBlock(_ block: HermesMarkdownBlock) -> NSAttributedString {
+    switch block.kind {
+    case .heading(let level, let text):
+      return inlineAttributedString(
+        text,
+        fallbackAttributes: headingAttributes(level: level)
+      )
+    case .paragraph(let text):
+      return inlineAttributedString(text, fallbackAttributes: baseAttributes)
+    case .unorderedList(let items):
+      let result = NSMutableAttributedString()
+      for (index, item) in items.enumerated() {
+        if index > 0 {
+          result.append(NSAttributedString(string: "\n", attributes: baseAttributes))
+        }
+        result.append(NSAttributedString(string: "• ", attributes: baseAttributes))
+        result.append(inlineAttributedString(item.text, fallbackAttributes: baseAttributes))
+      }
+      return result
+    case .orderedList(let items):
+      let result = NSMutableAttributedString()
+      for (index, item) in items.enumerated() {
+        if index > 0 {
+          result.append(NSAttributedString(string: "\n", attributes: baseAttributes))
+        }
+        result.append(NSAttributedString(string: "\(item.marker) ", attributes: baseAttributes))
+        result.append(inlineAttributedString(item.text, fallbackAttributes: baseAttributes))
+      }
+      return result
+    case .code(let text):
+      let attributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+        .foregroundColor: NSColor.labelColor,
+        .paragraphStyle: paragraphStyle
+      ]
+      return NSAttributedString(string: text, attributes: attributes)
+    }
+  }
+
+  private static func inlineAttributedString(
+    _ source: String,
+    fallbackAttributes: [NSAttributedString.Key: Any]
+  ) -> NSAttributedString {
+    if let parsed = try? AttributedString(
+      markdown: source,
+      options: AttributedString.MarkdownParsingOptions(
+        interpretedSyntax: .inlineOnlyPreservingWhitespace
+      )
+    ) {
+      let attributed = NSMutableAttributedString(parsed)
+      let fullRange = NSRange(location: 0, length: attributed.length)
+      attributed.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
+      attributed.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
+      return attributed
+    }
+    return NSAttributedString(
+      string: stripInlineMarkdown(source),
+      attributes: fallbackAttributes
+    )
+  }
+
+  private static func headingAttributes(level: Int) -> [NSAttributedString.Key: Any] {
+    let size = level == 1 ? NSFont.systemFontSize + 4 : NSFont.systemFontSize + 2
+    return [
+      .font: NSFont.boldSystemFont(ofSize: size),
+      .foregroundColor: NSColor.labelColor,
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private static var baseAttributes: [NSAttributedString.Key: Any] {
+    [
+      .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+      .foregroundColor: NSColor.labelColor,
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private static var paragraphStyle: NSParagraphStyle {
+    let style = NSMutableParagraphStyle()
+    style.lineSpacing = 3
+    style.paragraphSpacing = 0
+    return style
+  }
+
+  private static func stripInlineMarkdown(_ source: String) -> String {
+    var stripped = source
+    for token in ["**", "__", "`", "*", "_"] {
+      stripped = stripped.replacingOccurrences(of: token, with: "")
+    }
+    return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+}
+
+private struct HermesMarkdownBlock {
   enum Kind {
-    case heading(level: Int, AttributedString)
-    case paragraph(AttributedString)
+    case heading(level: Int, String)
+    case paragraph(String)
     case unorderedList([HermesMarkdownListItem])
     case orderedList([HermesMarkdownOrderedListItem])
     case code(String)
   }
 
-  let id = UUID()
   let kind: Kind
 
   static func parse(_ text: String) -> [HermesMarkdownBlock] {
@@ -98,7 +178,7 @@ private struct HermesMarkdownBlock: Identifiable {
       let paragraph = paragraphLines.joined(separator: "\n")
         .trimmingCharacters(in: .whitespacesAndNewlines)
       if !paragraph.isEmpty {
-        blocks.append(HermesMarkdownBlock(kind: .paragraph(inlineMarkdown(paragraph))))
+        blocks.append(HermesMarkdownBlock(kind: .paragraph(paragraph)))
       }
       paragraphLines.removeAll()
     }
@@ -146,26 +226,21 @@ private struct HermesMarkdownBlock: Identifiable {
       if let heading = heading(from: trimmed) {
         flushParagraph()
         flushLists()
-        blocks.append(HermesMarkdownBlock(
-          kind: .heading(level: heading.level, inlineMarkdown(heading.text))
-        ))
+        blocks.append(HermesMarkdownBlock(kind: .heading(level: heading.level, heading.text)))
         continue
       }
 
       if let itemText = unorderedListText(from: trimmed) {
         flushParagraph()
         if !orderedItems.isEmpty { flushLists() }
-        unorderedItems.append(HermesMarkdownListItem(text: inlineMarkdown(itemText)))
+        unorderedItems.append(HermesMarkdownListItem(text: itemText))
         continue
       }
 
       if let item = orderedListItem(from: trimmed) {
         flushParagraph()
         if !unorderedItems.isEmpty { flushLists() }
-        orderedItems.append(HermesMarkdownOrderedListItem(
-          marker: item.marker,
-          text: inlineMarkdown(item.text)
-        ))
+        orderedItems.append(HermesMarkdownOrderedListItem(marker: item.marker, text: item.text))
         continue
       }
 
@@ -180,13 +255,9 @@ private struct HermesMarkdownBlock: Identifiable {
     flushLists()
 
     if blocks.isEmpty {
-      return [HermesMarkdownBlock(kind: .paragraph(inlineMarkdown(text)))]
+      return [HermesMarkdownBlock(kind: .paragraph(text))]
     }
     return blocks
-  }
-
-  private static func inlineMarkdown(_ source: String) -> AttributedString {
-    (try? AttributedString(markdown: source)) ?? AttributedString(source)
   }
 
   private static func heading(from line: String) -> (level: Int, text: String)? {
@@ -220,13 +291,11 @@ private struct HermesMarkdownBlock: Identifiable {
   }
 }
 
-private struct HermesMarkdownListItem: Identifiable {
-  let id = UUID()
-  let text: AttributedString
+private struct HermesMarkdownListItem {
+  let text: String
 }
 
-private struct HermesMarkdownOrderedListItem: Identifiable {
-  let id = UUID()
+private struct HermesMarkdownOrderedListItem {
   let marker: String
-  let text: AttributedString
+  let text: String
 }
