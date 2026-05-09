@@ -8,6 +8,7 @@ struct HermesAgentSettings: Equatable {
 
   var baseURLString: String
   var model: String
+  var profileName: String = ""
   var conversationName: String
   var timeout: TimeInterval
 
@@ -23,6 +24,15 @@ struct HermesAgentSettings: Equatable {
   var normalizedModel: String {
     let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? AppConfig.defaultHermesModel : trimmed
+  }
+
+  var normalizedProfileName: String? {
+    let trimmed = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  var requestModel: String {
+    normalizedProfileName ?? normalizedModel
   }
 
   var normalizedConversationName: String {
@@ -87,6 +97,7 @@ enum HermesAgentClientError: LocalizedError {
   case invalidResponse
   case serverStatus(Int, String)
   case emptyResponse
+  case profileUnavailable(String, [String])
 
   var errorDescription: String? {
     switch self {
@@ -102,6 +113,9 @@ enum HermesAgentClientError: LocalizedError {
       return "Hermes returned HTTP \(status): \(message)"
     case .emptyResponse:
       return "Hermes returned an empty response."
+    case .profileUnavailable(let profile, let available):
+      let suffix = available.isEmpty ? "" : " Available profiles/models: \(available.joined(separator: ", "))."
+      return "Hermes profile '\(profile)' is not advertised by this API server.\(suffix)"
     }
   }
 }
@@ -170,6 +184,7 @@ final class HermesAgentAPIClient {
 
     let probeResponse = try await perform(authProbe)
     try validateHTTPResponse(probeResponse)
+    try validateRequestedProfile(settings: settings, responseData: probeResponse.data)
   }
 
   private var hasAPIKey: Bool {
@@ -232,6 +247,15 @@ final class HermesAgentAPIClient {
         ?? String(data: response.data, encoding: .utf8)
         ?? "Unknown error"
       throw HermesAgentClientError.serverStatus(response.statusCode, message)
+    }
+  }
+
+  private func validateRequestedProfile(settings: HermesAgentSettings, responseData: Data) throws {
+    guard let profile = settings.normalizedProfileName else { return }
+    let envelope = try JSONDecoder().decode(ModelsEnvelope.self, from: responseData)
+    let available = envelope.data.map(\.id)
+    guard available.contains(where: { $0.caseInsensitiveCompare(profile) == .orderedSame }) else {
+      throw HermesAgentClientError.profileUnavailable(profile, available)
     }
   }
 }
@@ -466,7 +490,7 @@ extension HermesAgentAPIClient {
     clipboardText: String?
   ) throws -> Data {
     let body = ResponsesRequest(
-      model: settings.normalizedModel,
+      model: settings.requestModel,
       input: .from(text: input, imageAttachment: imageAttachment, clipboardText: clipboardText),
       conversation: settings.normalizedConversationName,
       store: true
@@ -523,6 +547,14 @@ private struct ResponsesRequest: Encodable {
   let input: ResponsesInput
   let conversation: String
   let store: Bool
+}
+
+private struct ModelsEnvelope: Decodable {
+  let data: [Model]
+
+  struct Model: Decodable {
+    let id: String
+  }
 }
 
 private enum ResponsesInput: Encodable {

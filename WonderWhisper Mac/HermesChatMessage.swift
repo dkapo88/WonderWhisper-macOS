@@ -12,16 +12,19 @@ struct HermesChatMessage: Identifiable, Codable, Equatable {
   let text: String
   let createdAt: Date
   let contextLabels: [String]
+  let clipboardText: String?
 
   init(id: UUID = UUID(),
        role: Role,
        text: String,
        createdAt: Date = Date(),
-       contextLabels: [String] = []) {
+       contextLabels: [String] = [],
+       clipboardText: String? = nil) {
     self.id = id
     self.role = role
     self.text = text
     self.createdAt = createdAt
     self.contextLabels = contextLabels
+    self.clipboardText = clipboardText
   }
 }

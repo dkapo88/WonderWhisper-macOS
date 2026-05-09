@@ -31,6 +31,7 @@ struct HermesAgentView: View {
   @State private var hasSavedKey: Bool = false
   @State private var showClearActiveConfirmation: Bool = false
   @State private var pendingDeleteSession: HermesChatSession?
+  @State private var textReplyDrafts: [UUID: String] = [:]
 
   private let keychain = KeychainService()
   private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
@@ -38,8 +39,7 @@ struct HermesAgentView: View {
   private let messageSideInset: CGFloat = 64
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      header
+    VStack(alignment: .leading, spacing: 14) {
       sectionPicker
 
       switch selectedSection {
@@ -57,7 +57,9 @@ struct HermesAgentView: View {
         .layoutPriority(1)
       }
     }
-    .padding(24)
+    .padding(.horizontal, 24)
+    .padding(.top, 12)
+    .padding(.bottom, 24)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear {
       selectedSection = .chat
@@ -102,16 +104,6 @@ struct HermesAgentView: View {
     }
   }
 
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Text("Hermes Agent")
-        .font(.title2.weight(.semibold))
-      Text("Voice turns sent directly to your Hermes API server.")
-        .font(.callout)
-        .foregroundColor(.secondary)
-    }
-  }
-
   private var sectionPicker: some View {
     Picker("Hermes section", selection: $selectedSection) {
       ForEach(HermesAgentSection.allCases) { section in
@@ -119,7 +111,9 @@ struct HermesAgentView: View {
       }
     }
     .pickerStyle(.segmented)
-    .frame(maxWidth: 260)
+    .labelsHidden()
+    .accessibilityLabel("Hermes section")
+    .frame(maxWidth: 160)
   }
 
   private var chatSection: some View {
@@ -254,18 +248,10 @@ struct HermesAgentView: View {
       if let session = vm.selectedHermesSession {
         selectedSessionHeader(session)
 
-        if session.messages.isEmpty {
-          Text("No messages in this session yet.")
-            .font(.callout)
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          chatMessagesView(
-            messages: session.messages,
-            isWaiting: vm.isHermesSessionActivelyWaiting(session)
-          )
+        chatTranscript(for: session)
           .layoutPriority(1)
-        }
+
+        textReplyComposer(for: session)
       } else {
         Text("Select a Hermes session.")
           .font(.callout)
@@ -354,7 +340,7 @@ struct HermesAgentView: View {
 
         Button(action: { vm.startHermesReply(to: session.id) }) {
           Label(
-            vm.isHermesRecordingReply(to: session.id) ? "Send" : "Reply",
+            vm.isHermesRecordingReply(to: session.id) ? "Send" : "Voice",
             systemImage: vm.isHermesRecordingReply(to: session.id) ? "paperplane.fill" : "mic.fill"
           )
         }
@@ -368,6 +354,63 @@ struct HermesAgentView: View {
       Button(role: .destructive, action: { pendingDeleteSession = session }) {
         Label("Delete", systemImage: "trash")
       }
+    }
+  }
+
+  private func chatTranscript(for session: HermesChatSession) -> some View {
+    Group {
+      if session.messages.isEmpty {
+        Text("No messages in this session yet.")
+          .font(.callout)
+          .foregroundColor(.secondary)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        chatMessagesView(
+          messages: session.messages,
+          isWaiting: vm.isHermesSessionActivelyWaiting(session)
+        )
+      }
+    }
+  }
+
+  private func textReplyComposer(for session: HermesChatSession) -> some View {
+    let draft = textReplyDraftBinding(for: session.id)
+    let canSend = vm.canUseHermesTextReply(for: session)
+      && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+    return VStack(alignment: .leading, spacing: 8) {
+      Divider()
+
+      HStack(alignment: .bottom, spacing: 10) {
+        TextEditor(text: draft)
+          .font(.body)
+          .scrollContentBackground(.hidden)
+          .frame(minHeight: 46, idealHeight: 64, maxHeight: 110)
+          .padding(6)
+          .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .fill(Color(nsColor: .textBackgroundColor).opacity(0.92))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .stroke(Color.secondary.opacity(0.18))
+          )
+          .disabled(!vm.canUseHermesTextReply(for: session))
+
+        Button {
+          sendTextReply(for: session)
+        } label: {
+          Label("Send", systemImage: "paperplane.fill")
+        }
+        .keyboardShortcut(.return, modifiers: [.command])
+        .disabled(!canSend)
+      }
+
+      Text(vm.canUseHermesTextReply(for: session)
+           ? "Type a reply to this Hermes session. Press Command-Return to send."
+           : "Text replies are unavailable while this session is archived, waiting, or recording.")
+        .font(.caption)
+        .foregroundColor(.secondary)
     }
   }
 
@@ -435,7 +478,7 @@ struct HermesAgentView: View {
         chatBubble(message)
 
         if !message.contextLabels.isEmpty {
-          contextLabelsView(message.contextLabels)
+          contextLabelsView(message)
         }
       }
       .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -526,20 +569,11 @@ struct HermesAgentView: View {
     }
   }
 
-  private func contextLabelsView(_ labels: [String]) -> some View {
-    HStack(spacing: 6) {
-      ForEach(labels, id: \.self) { label in
-        Text(label)
-          .font(.caption2.weight(.semibold))
-          .foregroundColor(.secondary)
-          .padding(.horizontal, 7)
-          .padding(.vertical, 3)
-          .background(
-            Capsule()
-              .fill(Color.secondary.opacity(0.10))
-          )
-      }
-    }
+  private func contextLabelsView(_ message: HermesChatMessage) -> some View {
+    HermesContextLabelsView(
+      labels: message.contextLabels,
+      clipboardText: message.clipboardText
+    )
   }
 
   private var waitingRow: some View {
@@ -578,25 +612,49 @@ struct HermesAgentView: View {
           .textFieldStyle(.roundedBorder)
           .frame(maxWidth: 440)
 
-        HStack(spacing: 12) {
-          TextField(AppConfig.defaultHermesConversationName, text: $vm.hermesConversationName)
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 240)
+        HStack(alignment: .top, spacing: 12) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Conversation prefix")
+              .font(.caption)
+              .foregroundColor(.secondary)
+            TextField(AppConfig.defaultHermesConversationName, text: $vm.hermesConversationName)
+              .textFieldStyle(.roundedBorder)
+              .frame(maxWidth: 240)
+              .help("Used as the prefix for new Hermes conversation names.")
+          }
 
-          TextField(AppConfig.defaultHermesModel, text: $vm.hermesModel)
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 170)
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Agent profile")
+              .font(.caption)
+              .foregroundColor(.secondary)
+            TextField("Default profile", text: $vm.hermesProfileName)
+              .textFieldStyle(.roundedBorder)
+              .frame(maxWidth: 190)
+              .help("Leave blank for the server default. Set this to the profile/model name advertised by /v1/models.")
+          }
         }
 
-        Stepper(
-          value: $vm.hermesTimeoutSeconds,
-          in: HermesAgentSettings.minimumTimeout...HermesAgentSettings.maximumTimeout,
-          step: 15
-        ) {
-          Text("Timeout: \(timeoutDisplay(vm.hermesTimeoutSeconds))")
+        Text("A typed profile is sent as the Hermes API model and checked during Test connection.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
+        HStack(spacing: 8) {
+          Text("Timeout")
             .font(.callout)
+
+          TextField(
+            "\(Int(HermesAgentSettings.defaultTimeout / 60))",
+            value: hermesTimeoutMinutesBinding,
+            format: .number
+          )
+          .textFieldStyle(.roundedBorder)
+          .frame(width: 72)
+
+          Text("minutes")
+            .font(.callout)
+            .foregroundColor(.secondary)
         }
-        .frame(maxWidth: 240, alignment: .leading)
+        .help("Hermes request timeout, in whole minutes.")
 
         HStack(spacing: 6) {
           Text(hasSavedKey ? "Bearer key: Saved" : "Bearer key: Not saved")
@@ -695,10 +753,32 @@ struct HermesAgentView: View {
           .toggleStyle(.checkbox)
         Toggle("Copied text / clipboard", isOn: $vm.hermesClipboardContextEnabled)
           .toggleStyle(.checkbox)
+        HStack(spacing: 8) {
+          Text("Copied text timeout")
+            .font(.callout)
+          TextField(
+            "\(Int(HermesClipboardContextPolicy.defaultRetentionWindow))",
+            value: $vm.hermesClipboardTimeoutSeconds,
+            format: .number.precision(.fractionLength(0))
+          )
+          .textFieldStyle(.roundedBorder)
+          .frame(width: 72)
+          Text("seconds")
+            .font(.callout)
+            .foregroundColor(.secondary)
+          Stepper(
+            "",
+            value: $vm.hermesClipboardTimeoutSeconds,
+            in: HermesClipboardContextPolicy.minimumRetentionWindow...HermesClipboardContextPolicy.maximumRetentionWindow,
+            step: 1
+          )
+          .labelsHidden()
+        }
+        .disabled(!vm.hermesClipboardContextEnabled)
         Toggle("LLM post-processing", isOn: $vm.hermesPostProcessingEnabled)
           .toggleStyle(.checkbox)
 
-        Text("Controls what Hermes receives with each voice turn.")
+        Text("Copied text is included only when the Hermes hotkey starts recording within the configured timeout.")
           .font(.caption)
           .foregroundColor(.secondary)
       }
@@ -711,6 +791,21 @@ struct HermesAgentView: View {
       get: { vm.hermesSelection },
       set: { vm.setHermesSelection($0) }
     )
+  }
+
+  private func textReplyDraftBinding(for sessionID: UUID) -> Binding<String> {
+    Binding(
+      get: { textReplyDrafts[sessionID] ?? "" },
+      set: { textReplyDrafts[sessionID] = $0 }
+    )
+  }
+
+  private func sendTextReply(for session: HermesChatSession) {
+    let text = textReplyDrafts[session.id] ?? ""
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    textReplyDrafts[session.id] = ""
+    vm.sendHermesTextReply(trimmed, to: session.id)
   }
 
   private var statusIcon: String {
@@ -852,21 +947,28 @@ struct HermesAgentView: View {
     }
   }
 
-  private func timeoutDisplay(_ seconds: Double) -> String {
-    let value = Int(HermesAgentSettings.clampedTimeout(seconds))
-    let minutes = value / 60
-    let remainingSeconds = value % 60
-
-    if remainingSeconds == 0, minutes > 0 {
-      return minutes == 1 ? "1 min" : "\(minutes) min"
-    }
-
-    if minutes > 0 {
-      return "\(minutes)m \(remainingSeconds)s"
-    }
-
-    return "\(remainingSeconds)s"
+  private var hermesTimeoutMinutesBinding: Binding<Int> {
+    Binding(
+      get: {
+        let minutes = Int((vm.hermesTimeoutSeconds / 60).rounded())
+        return Self.clampedHermesTimeoutMinutes(minutes)
+      },
+      set: { minutes in
+        let clampedMinutes = Self.clampedHermesTimeoutMinutes(minutes)
+        vm.hermesTimeoutSeconds = Double(clampedMinutes * 60)
+      }
+    )
   }
+
+  private static func clampedHermesTimeoutMinutes(_ minutes: Int) -> Int {
+    min(max(minutes, hermesTimeoutMinuteRange.lowerBound), hermesTimeoutMinuteRange.upperBound)
+  }
+
+  private static let hermesTimeoutMinuteRange: ClosedRange<Int> = {
+    let lower = max(1, Int((HermesAgentSettings.minimumTimeout / 60).rounded(.up)))
+    let upper = max(lower, Int(HermesAgentSettings.maximumTimeout / 60))
+    return lower...upper
+  }()
 
   private static let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()
@@ -880,6 +982,89 @@ struct HermesAgentView: View {
     formatter.unitsStyle = .abbreviated
     return formatter
   }()
+}
+
+private struct HermesContextLabelsView: View {
+  let labels: [String]
+  let clipboardText: String?
+
+  @State private var isClipboardPreviewPresented = false
+
+  var body: some View {
+    HStack(spacing: 6) {
+      ForEach(labels, id: \.self) { label in
+        if isClipboardLabel(label), let clipboardText {
+          Button {
+            isClipboardPreviewPresented.toggle()
+          } label: {
+            contextLabel(label, isInteractive: true)
+          }
+          .buttonStyle(.plain)
+          .help("Preview copied text sent with this message")
+          .popover(isPresented: $isClipboardPreviewPresented, arrowEdge: .bottom) {
+            clipboardPreview(clipboardText)
+          }
+        } else if isClipboardLabel(label) {
+          contextLabel(label, isInteractive: false)
+            .help("Clipboard preview is unavailable for older messages")
+        } else {
+          contextLabel(label, isInteractive: false)
+        }
+      }
+    }
+  }
+
+  private func contextLabel(_ label: String, isInteractive: Bool) -> some View {
+    HStack(spacing: 4) {
+      Text(label)
+      if isInteractive {
+        Image(systemName: "eye")
+          .font(.system(size: 9, weight: .semibold))
+      }
+    }
+    .font(.caption2.weight(.semibold))
+    .foregroundColor(isInteractive ? .accentColor : .secondary)
+    .padding(.horizontal, 7)
+    .padding(.vertical, 3)
+    .background(
+      Capsule()
+        .fill(
+          isInteractive
+            ? Color.accentColor.opacity(0.12)
+            : Color.secondary.opacity(0.10)
+        )
+    )
+  }
+
+  private func clipboardPreview(_ text: String) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        Label("Clipboard text", systemImage: "doc.on.clipboard")
+          .font(.headline)
+        Spacer()
+        Button {
+          HermesResponseClipboard.copyRaw(text)
+        } label: {
+          Label("Copy", systemImage: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+      }
+
+      ScrollView {
+        Text(text)
+          .font(.callout)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .frame(maxHeight: 240)
+    }
+    .padding(14)
+    .frame(width: 430)
+  }
+
+  private func isClipboardLabel(_ label: String) -> Bool {
+    label.localizedCaseInsensitiveCompare("Clipboard") == .orderedSame
+  }
 }
 
 #Preview {

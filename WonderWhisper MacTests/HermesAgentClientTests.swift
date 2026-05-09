@@ -43,7 +43,27 @@ struct HermesAgentClientTests {
 
     #expect(settings.normalizedBaseURLString == AppConfig.defaultHermesBaseURLString)
     #expect(settings.normalizedModel == AppConfig.defaultHermesModel)
+    #expect(settings.normalizedProfileName == nil)
+    #expect(settings.requestModel == AppConfig.defaultHermesModel)
     #expect(settings.normalizedConversationName == AppConfig.defaultHermesConversationName)
+  }
+
+  @Test func hermesProfileNameOverridesRequestModel() throws {
+    let data = try HermesAgentAPIClient.requestBodyData(
+      input: "Use the profile agent",
+      settings: HermesAgentSettings(
+        baseURLString: "http://127.0.0.1:8642",
+        model: "hermes-agent",
+        profileName: "research",
+        conversationName: "wonderwhisper-mac",
+        timeout: 180
+      ),
+      imageAttachment: nil,
+      clipboardText: nil
+    )
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+    #expect(object["model"] as? String == "research")
   }
 
   @Test func hermesTimeoutLimitsAllowThirtyMinutes() {

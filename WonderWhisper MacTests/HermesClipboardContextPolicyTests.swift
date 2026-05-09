@@ -43,4 +43,31 @@ struct HermesClipboardContextPolicyTests {
 
     #expect(text == nil)
   }
+
+  @Test func customRetentionWindowControlsClipboardEligibility() {
+    let copiedAt = Date(timeIntervalSince1970: 1_000)
+    let recordingStartedAt = copiedAt.addingTimeInterval(90)
+
+    let included = HermesClipboardContextPolicy.contextText(
+      "Still relevant",
+      copiedAt: copiedAt,
+      recordingStartedAt: recordingStartedAt,
+      retentionWindow: 120
+    )
+    let excluded = HermesClipboardContextPolicy.contextText(
+      "Too old",
+      copiedAt: copiedAt,
+      recordingStartedAt: recordingStartedAt,
+      retentionWindow: 30
+    )
+
+    #expect(included == "Still relevant")
+    #expect(excluded == nil)
+  }
+
+  @Test func retentionWindowClampsToSupportedRange() {
+    #expect(HermesClipboardContextPolicy.clampedRetentionWindow(0) == 1)
+    #expect(HermesClipboardContextPolicy.clampedRetentionWindow(60) == 60)
+    #expect(HermesClipboardContextPolicy.clampedRetentionWindow(1_000) == 600)
+  }
 }

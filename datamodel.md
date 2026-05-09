@@ -149,6 +149,7 @@ erDiagram
         String text
         Date createdAt
         String[] contextLabels "screen text, screenshot, clipboard"
+        String clipboardText "optional copied text preview payload"
     }
 ```
 
@@ -160,12 +161,20 @@ WonderWhisper state and is not sent through Hermes.
 
 **HermesChatMessage**: Messages shown in the selected Hermes sidebar Chat session. Messages are appended from the dedicated Hermes voice loop:
 - User messages show the spoken transcript after optional Hermes LLM post-processing, not the enriched payload sent to the API.
+- Typed user replies can also be sent from the Hermes Chat tab or a response window
+  without starting audio recording. Typed replies are sent as entered and are
+  stored in the same session history.
 - Assistant messages show the Hermes response with Markdown rendering.
 - Error messages preserve failed transcription or API turn feedback.
 - Context labels indicate which optional payloads were sent with the user turn.
-- Clipboard context is eligible only when the copied text was captured within 60
-  seconds before the Hermes recording starts. The request may finish later; the
-  recording start time determines whether copied text is included.
+- User messages that include clipboard context persist the normalized clipboard text
+  so the Chat UI can reveal the exact copied text from the Clipboard tag on demand.
+  Legacy messages may have the label without the preview payload.
+- Clipboard context is eligible only when the copied text was captured within
+  the configured Hermes clipboard timeout before the Hermes recording starts.
+  The default is 60 seconds and can be adjusted from 1 to 600 seconds. The
+  request may finish later; the recording start time determines whether copied
+  text is included.
 - `hermes.postProcessing.enabled` controls whether Hermes dictation text is cleaned
   through the existing OpenRouter post-processing/vocabulary flow before it is sent
   to the Hermes API. When disabled, the raw transcript is sent.
@@ -451,12 +460,14 @@ erDiagram
 | `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
 | `hermes.api.baseURL` | String | Hermes API server URL; root and `/v1` URLs are both accepted |
 | `hermes.conversation.name` | String | Hermes conversation prefix used when creating new sessions |
-| `hermes.model` | String | Cosmetic Hermes API model field |
-| `hermes.timeout` | Double | Hermes request timeout (seconds), clamped from 15 seconds to 1,800 seconds |
+| `hermes.model` | String | Fallback Hermes API model field when no profile is configured |
+| `hermes.profile.name` | String | Optional Hermes API profile/model name; blank uses the server default, nonblank is sent as the request model and verified against `/v1/models` |
+| `hermes.timeout` | Double | Hermes request timeout (stored in seconds; settings UI edits whole minutes), clamped from 15 seconds to 1,800 seconds |
 | `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
 | `hermes.context.screenText.enabled` | Bool | Include Hermes OCR/screen text context |
 | `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
-| `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context only when copied within 60 seconds before recording start |
+| `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
+| `hermes.context.clipboard.timeoutSeconds` | Double | Hermes copied text freshness timeout; default 60 seconds, clamped from 1 to 600 seconds |
 | `hermes.postProcessing.enabled` | Bool | Clean Hermes dictations through the OpenRouter post-processing flow before sending |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 | `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
@@ -650,7 +661,7 @@ sequenceDiagram
 
     User->>DictationViewModel: Trigger Hermes hotkey
     DictationViewModel->>DictationViewModel: Reply to visible response window session, else create a new session
-    DictationViewModel->>DictationViewModel: Start screenshot capture and 60-second clipboard eligibility check
+    DictationViewModel->>DictationViewModel: Start screenshot capture and configured clipboard eligibility check
     DictationViewModel->>DictationController: Start recording
     User->>DictationViewModel: Trigger Hermes hotkey again
     DictationViewModel->>DictationController: Finish transcription-only turn

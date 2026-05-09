@@ -193,32 +193,27 @@ private extension ScreenCaptureService {
                maxDimension: CGFloat = 1920,
                lossless: Bool = false) async throws -> ScreenCaptureSnapshot? {
     let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-    var continuationHolder: AsyncStream<CMSampleBuffer>.Continuation?
-    let sampleStream = AsyncStream<CMSampleBuffer> { continuation in
-      continuationHolder = continuation
-    }
+    let sampleWaiter = ScreenSampleWaiter()
 
     let output = OneShotOutput { sample in
-      continuationHolder?.yield(sample)
-      continuationHolder?.finish()
+      sampleWaiter.finish(with: sample)
     }
 
     try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: sampleQueue)
-    try await stream.startCapture()
-
-    var iterator = sampleStream.makeAsyncIterator()
-    let deadline = Date().addingTimeInterval(0.6)
-    var sample: CMSampleBuffer? = nil
-    while Date() < deadline {
-      if let value = await iterator.next() {
-        sample = value
-        break
-      }
-      try? await Task.sleep(nanoseconds: 10_000_000) // 10ms polling while waiting
+    do {
+      try await stream.startCapture()
+    } catch {
+      try? stream.removeStreamOutput(output, type: .screen)
+      throw error
     }
 
-    continuationHolder?.finish()
-    try await stream.stopCapture()
+    let sample = await withTaskCancellationHandler(operation: {
+      await sampleWaiter.wait(timeout: 0.6)
+    }, onCancel: {
+      sampleWaiter.finish(with: nil)
+    })
+
+    try? await stream.stopCapture()
     try? stream.removeStreamOutput(output, type: .screen)
 
     guard let sample else {
@@ -741,6 +736,53 @@ private final class OneShotOutput: NSObject, SCStreamOutput {
   func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
     guard outputType == .screen, CMSampleBufferIsValid(sampleBuffer) else { return }
     handler(sampleBuffer)
+  }
+}
+
+private final class ScreenSampleWaiter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<CMSampleBuffer?, Never>?
+  private var completed = false
+  private var sample: CMSampleBuffer?
+
+  func wait(timeout: TimeInterval) async -> CMSampleBuffer? {
+    await withCheckedContinuation { continuation in
+      var shouldResumeImmediately = false
+      var sampleToResume: CMSampleBuffer?
+
+      lock.lock()
+      if completed {
+        shouldResumeImmediately = true
+        sampleToResume = sample
+      } else {
+        self.continuation = continuation
+      }
+      lock.unlock()
+
+      if shouldResumeImmediately {
+        continuation.resume(returning: sampleToResume)
+        return
+      }
+
+      DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) { [weak self] in
+        self?.finish(with: nil)
+      }
+    }
+  }
+
+  func finish(with sample: CMSampleBuffer?) {
+    lock.lock()
+    guard !completed else {
+      lock.unlock()
+      return
+    }
+    completed = true
+    self.sample = sample
+    let continuation = continuation
+    self.continuation = nil
+    lock.unlock()
+
+    continuation?.resume(returning: sample)
   }
 }
 

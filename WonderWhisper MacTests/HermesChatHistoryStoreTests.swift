@@ -13,7 +13,8 @@ struct HermesChatHistoryStoreTests {
       role: .user,
       text: "Plan the launch",
       createdAt: Date(timeIntervalSince1970: 1_800),
-      contextLabels: ["Screen text", "Screenshot"]
+      contextLabels: ["Screen text", "Screenshot", "Clipboard"],
+      clipboardText: "https://example.com/launch-plan"
     )
     let assistant = HermesChatMessage(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
@@ -27,6 +28,23 @@ struct HermesChatHistoryStoreTests {
 
     let secondStore = HermesChatHistoryStore(baseDirectory: directory, maxMessages: 50)
     #expect(secondStore.loadMessages() == [user, assistant])
+  }
+
+  @Test func decodesLegacyMessagesWithoutClipboardPreviewText() throws {
+    let payload = """
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "role": "user",
+      "text": "Legacy message",
+      "createdAt": 1800,
+      "contextLabels": ["Clipboard"]
+    }
+    """.data(using: .utf8)!
+
+    let message = try JSONDecoder().decode(HermesChatMessage.self, from: payload)
+
+    #expect(message.contextLabels == ["Clipboard"])
+    #expect(message.clipboardText == nil)
   }
 
   @Test func keepsNewestMessagesWithinConfiguredLimit() throws {

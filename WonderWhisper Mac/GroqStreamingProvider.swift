@@ -224,11 +224,10 @@ final class GroqStreamingProvider: TranscriptionProvider {
         AppLog.dictation.log("GroqStreaming: Ending streaming session")
         isStreaming = false
 
-        // Prefer allowing in-flight uploads to finish (bounded by limiter max)
-        let waitStart = Date()
-        while await limiter.current() > 0 {
-            if Date().timeIntervalSince(waitStart) > 2.0 { break }
-            try? await Task.sleep(nanoseconds: 50_000_000)
+        // Prefer allowing queued and in-flight uploads to finish before assembling the transcript.
+        let uploadsCompleted = await uploads.waitForAll(timeout: 10.0)
+        if !uploadsCompleted {
+            AppLog.dictation.warning("GroqStreaming: Timed out waiting for queued uploads; cancelling remaining chunks")
         }
 
         // Upload any remaining audio in buffer as final chunk if we have meaningful data
@@ -514,10 +513,39 @@ private actor GroqTranscriptAccumulator {
 private actor UploadTaskBag {
     private var tasks: Set<Task<Void, Never>> = []
     func add(_ task: Task<Void, Never>) { tasks.insert(task) }
-    func compact() { 
+    func compact() {
         tasks = tasks.filter { !$0.isCancelled }
-        // Also remove completed tasks to prevent memory accumulation
-        tasks.removeAll(keepingCapacity: false)
+    }
+    func waitForAll(timeout: TimeInterval) async -> Bool {
+        let tasksToWait = Array(tasks)
+        guard !tasksToWait.isEmpty else { return true }
+
+        let completed = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for task in tasksToWait {
+                    await task.value
+                }
+                return true
+            }
+            group.addTask {
+                let timeoutNanos = UInt64(max(0.1, timeout) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNanos)
+                return false
+            }
+            let firstResult = await group.next() ?? false
+            group.cancelAll()
+            return firstResult
+        }
+
+        if completed {
+            tasks.removeAll(keepingCapacity: false)
+        } else {
+            for task in tasks {
+                task.cancel()
+            }
+            tasks.removeAll(keepingCapacity: false)
+        }
+        return completed
     }
     func cancelAll() {
         for t in tasks { t.cancel() }

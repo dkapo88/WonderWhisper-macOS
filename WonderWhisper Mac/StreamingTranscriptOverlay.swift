@@ -94,7 +94,7 @@ final class StreamingTranscriptOverlay {
   }
 
   private func positionAtTopCenter() {
-    guard let screen = NSScreen.main else { return }
+    guard let screen = OverlayScreenResolver.activeScreen() else { return }
     let vf = screen.visibleFrame
     let x = screen.frame.midX - window.frame.width / 2
     // Position below menu bar with some padding

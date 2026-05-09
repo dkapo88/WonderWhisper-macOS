@@ -48,6 +48,16 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-09: Added a Hermes agent profile setting that maps to the API model and validates against `/v1/models`.
+- 2026-05-09: Replaced Hermes request timeout arrows with a whole-minute text field.
+- 2026-05-09: Added typed Hermes replies from the chat tab and response windows.
+- 2026-05-09: Exposed Hermes copied text timeout as a configurable settings value.
+- 2026-05-09: Added clickable Hermes clipboard context preview tags in chat history.
+- 2026-05-08: Fixed bounded screen-capture waits, display-aware overlays, Groq streaming upload cleanup, and transcription cache stat locking.
+- 2026-05-08: Made Hermes response-window foreground highlighting react immediately on mouse down.
+- 2026-05-08: Removed clipped SwiftUI shadow artifact from Hermes response windows.
+- 2026-05-08: Cleared Hermes reply recording state when a dictation is cancelled.
+- 2026-05-08: Removed redundant Hermes chat intro copy and tightened the tab's top spacing.
 - 2026-05-08: Made the Hermes chat tab fill and resize with the available window space.
 - 2026-05-08: Restored Hermes Markdown block rendering and made formatted copy preserve rich/plain structure.
 - 2026-05-08: Added Hermes LLM session titles, optional Hermes post-processing, clearer response-window focus/reply state, and raw/formatted copy controls.

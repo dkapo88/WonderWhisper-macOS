@@ -37,6 +37,14 @@ enum HermesResponseWindowLifecycle {
     nil
   }
 
+  static func replyRecordingCancelled(
+    _ state: HermesResponseWindowState?
+  ) -> HermesResponseWindowState? {
+    guard var state else { return nil }
+    state.isRecordingReply = false
+    return state
+  }
+
   static func replyRecordingStarted(
     _ states: [HermesResponseWindowState],
     sessionID: UUID
@@ -54,6 +62,18 @@ enum HermesResponseWindowLifecycle {
     sessionID: UUID
   ) -> [HermesResponseWindowState] {
     states.filter { $0.id != sessionID }
+  }
+
+  static func replyRecordingCancelled(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var cancelledState = state
+      cancelledState.isRecordingReply = false
+      return cancelledState
+    }
   }
 }
 
@@ -88,6 +108,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private var panels: [UUID: HermesResponsePanel] = [:]
   private var latestStates: [HermesResponseWindowState] = []
   private var focusedSessionID: UUID?
+  private var textReplyDrafts: [UUID: String] = [:]
+  private var textReplySessionIDs: Set<UUID> = []
   private var cancellable: AnyCancellable?
 
   init(viewModel: DictationViewModel) {
@@ -114,9 +136,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
           let sessionID = panel.sessionID else {
       return
     }
-    focusedSessionID = sessionID
-    viewModel?.activateHermesSession(sessionID)
-    refreshPanelFocus()
+    focusPanel(sessionID: sessionID, syncSelection: true)
   }
 
   func windowDidResignKey(_ notification: Notification) {
@@ -131,6 +151,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       panels[sessionID]?.orderOut(nil)
       panels[sessionID]?.delegate = nil
       panels[sessionID] = nil
+      textReplyDrafts[sessionID] = nil
+      textReplySessionIDs.remove(sessionID)
     }
 
     for state in states {
@@ -160,6 +182,17 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     }
   }
 
+  private func focusPanel(sessionID: UUID, syncSelection: Bool) {
+    let didChangeFocus = focusedSessionID != sessionID
+    focusedSessionID = sessionID
+    if didChangeFocus {
+      refreshPanelFocus()
+    }
+    if syncSelection {
+      viewModel?.activateHermesSession(sessionID)
+    }
+  }
+
   private func render(_ state: HermesResponseWindowState,
                       in panel: HermesResponsePanel,
                       isForeground: Bool) {
@@ -168,13 +201,43 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       rootView: HermesResponsePanelView(
         state: state,
         isForeground: isForeground,
+        textReplyDraft: textReplyBinding(for: state.id),
+        isTextReplyVisible: textReplySessionIDs.contains(state.id),
         onCopyRaw: { HermesResponseClipboard.copyRaw(state.text) },
         onCopyFormatted: { HermesResponseClipboard.copyFormatted(state.text) },
         onReply: { [weak self] in self?.viewModel?.startHermesReply(to: state.id) },
+        onToggleTextReply: { [weak self] in self?.toggleTextReply(for: state.id) },
+        onSendTextReply: { [weak self] text in
+          self?.sendTextReply(text, sessionID: state.id)
+        },
         onMinimize: { [weak panel] in HermesResponseWindowControls.minimize(panel) },
         onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: state.id) }
       )
     )
+  }
+
+  private func textReplyBinding(for sessionID: UUID) -> Binding<String> {
+    Binding(
+      get: { [weak self] in self?.textReplyDrafts[sessionID] ?? "" },
+      set: { [weak self] value in self?.textReplyDrafts[sessionID] = value }
+    )
+  }
+
+  private func toggleTextReply(for sessionID: UUID) {
+    if textReplySessionIDs.contains(sessionID) {
+      textReplySessionIDs.remove(sessionID)
+    } else {
+      textReplySessionIDs.insert(sessionID)
+    }
+    render(latestStates)
+  }
+
+  private func sendTextReply(_ text: String, sessionID: UUID) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    textReplyDrafts[sessionID] = nil
+    textReplySessionIDs.remove(sessionID)
+    viewModel?.sendHermesTextReply(trimmed, to: sessionID, dismissResponseWindow: true)
   }
 
   private func makePanel(sessionID: UUID) -> HermesResponsePanel {
@@ -185,6 +248,11 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       defer: false
     )
     panel.sessionID = sessionID
+    panel.onFocusRequested = { [weak self] sessionID in
+      Task { @MainActor [weak self] in
+        self?.focusPanel(sessionID: sessionID, syncSelection: false)
+      }
+    }
     panel.title = "Hermes"
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
@@ -271,17 +339,34 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
 
 private final class HermesResponsePanel: NSPanel {
   var sessionID: UUID?
+  var onFocusRequested: ((UUID) -> Void)?
 
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { false }
+
+  override func sendEvent(_ event: NSEvent) {
+    switch event.type {
+    case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+      if let sessionID {
+        onFocusRequested?(sessionID)
+      }
+    default:
+      break
+    }
+    super.sendEvent(event)
+  }
 }
 
 private struct HermesResponsePanelView: View {
   var state: HermesResponseWindowState
   var isForeground: Bool
+  @Binding var textReplyDraft: String
+  var isTextReplyVisible: Bool
   var onCopyRaw: () -> Void
   var onCopyFormatted: () -> Void
   var onReply: () -> Void
+  var onToggleTextReply: () -> Void
+  var onSendTextReply: (String) -> Void
   var onMinimize: () -> Void
   var onClose: () -> Void
 
@@ -301,6 +386,10 @@ private struct HermesResponsePanelView: View {
       .frame(maxWidth: .infinity, minHeight: 220, maxHeight: .infinity)
       .layoutPriority(1)
 
+      if isTextReplyVisible {
+        textReplyComposer
+      }
+
       HStack(spacing: 10) {
         Spacer()
         Button(action: onCopyRaw) {
@@ -314,12 +403,19 @@ private struct HermesResponsePanelView: View {
 
         Button(action: onReply) {
           Label(
-            state.isRecordingReply ? "Send" : "Reply",
-            systemImage: state.isRecordingReply ? "paperplane.fill" : "arrowshape.turn.up.left.fill"
+            state.isRecordingReply ? "Send" : "Voice Reply",
+            systemImage: state.isRecordingReply ? "paperplane.fill" : "mic.fill"
           )
         }
         .disabled(state.isError && !state.isRecordingReply)
-        .keyboardShortcut(.return, modifiers: [.command])
+
+        Button(action: onToggleTextReply) {
+          Label(
+            isTextReplyVisible ? "Hide Text" : "Text Reply",
+            systemImage: isTextReplyVisible ? "text.bubble.fill" : "text.bubble"
+          )
+        }
+        .disabled(state.isError || state.isRecordingReply)
 
         Button(action: onMinimize) {
           Label("Minimize", systemImage: "minus.circle")
@@ -357,7 +453,6 @@ private struct HermesResponsePanelView: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .stroke(isForeground ? Color.accentColor.opacity(0.58) : Color.secondary.opacity(0.18), lineWidth: isForeground ? 2 : 1)
     )
-    .shadow(color: isForeground ? Color.accentColor.opacity(0.20) : Color.black.opacity(0.12), radius: isForeground ? 18 : 10)
   }
 
   private var header: some View {
@@ -399,5 +494,50 @@ private struct HermesResponsePanelView: View {
         Capsule(style: .continuous)
           .fill(Color.accentColor.opacity(0.14))
       )
+  }
+
+  private var textReplyComposer: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextEditor(text: $textReplyDraft)
+        .font(.body)
+        .scrollContentBackground(.hidden)
+        .frame(minHeight: 72, idealHeight: 90, maxHeight: 130)
+        .padding(6)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color(nsColor: .textBackgroundColor).opacity(0.92))
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.secondary.opacity(0.18))
+        )
+
+      HStack(spacing: 8) {
+        Text("Type a reply to this Hermes session.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        Spacer()
+        Button {
+          textReplyDraft = ""
+          onToggleTextReply()
+        } label: {
+          Label("Cancel", systemImage: "xmark.circle")
+        }
+        .buttonStyle(.borderless)
+
+        Button {
+          onSendTextReply(textReplyDraft)
+        } label: {
+          Label("Send Text", systemImage: "paperplane.fill")
+        }
+        .disabled(textReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .keyboardShortcut(.return, modifiers: [.command])
+      }
+    }
+    .padding(10)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color.secondary.opacity(0.08))
+    )
   }
 }

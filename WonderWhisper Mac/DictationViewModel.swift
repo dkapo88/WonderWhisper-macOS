@@ -211,6 +211,9 @@ final class DictationViewModel: ObservableObject {
     @Published var hermesModel: String = UserDefaults.standard.string(forKey: "hermes.model") ?? AppConfig.defaultHermesModel {
         didSet { UserDefaults.standard.set(hermesModel, forKey: "hermes.model") }
     }
+    @Published var hermesProfileName: String = UserDefaults.standard.string(forKey: "hermes.profile.name") ?? "" {
+        didSet { UserDefaults.standard.set(hermesProfileName, forKey: "hermes.profile.name") }
+    }
     @Published var hermesTimeoutSeconds: Double = {
         let value = UserDefaults.standard.object(forKey: "hermes.timeout") as? Double
             ?? HermesAgentSettings.defaultTimeout
@@ -260,6 +263,22 @@ final class DictationViewModel: ObservableObject {
                 hermesClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
             )
+        }
+    }
+    @Published var hermesClipboardTimeoutSeconds: Double = {
+        let key = SimpleDefaultsKey.hermesClipboardTimeoutSeconds
+        let value = UserDefaults.standard.object(forKey: key) as? Double
+            ?? HermesClipboardContextPolicy.defaultRetentionWindow
+        return HermesClipboardContextPolicy.clampedRetentionWindow(value)
+    }() {
+        didSet {
+            let clamped = HermesClipboardContextPolicy.clampedRetentionWindow(
+                hermesClipboardTimeoutSeconds
+            )
+            UserDefaults.standard.set(clamped, forKey: SimpleDefaultsKey.hermesClipboardTimeoutSeconds)
+            if clamped != hermesClipboardTimeoutSeconds {
+                hermesClipboardTimeoutSeconds = clamped
+            }
         }
     }
     @Published var hermesPostProcessingEnabled: Bool = {
@@ -371,7 +390,7 @@ final class DictationViewModel: ObservableObject {
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
     private let hermesClipboardMonitor = ClipboardContextMonitor(
-        maximumRetentionWindow: HermesClipboardContextPolicy.retentionWindow
+        maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow
     )
 
     // Debouncing for provider updates
@@ -747,7 +766,7 @@ final class DictationViewModel: ObservableObject {
                 self.isRecording = false
                 self.recordingStartTimestamp = nil
                 self.recordingStartInProgress = false
-                self.activeHermesPromptID = nil
+                self.clearActiveHermesRecording(cancelContext: true)
             }
             await controller.cancel()
 
@@ -1798,6 +1817,29 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func sendHermesTextReply(_ text: String,
+                             to sessionID: UUID?,
+                             dismissResponseWindow: Bool = false) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard hermesAgentEnabled else {
+            settingsNotice = "Enable Hermes agent before sending a text reply."
+            return
+        }
+        let targetSessionID = ensureHermesSessionID(sessionID)
+        guard let targetSession = hermesSessions.first(where: { $0.id == targetSessionID }),
+              canUseHermesTextReply(for: targetSession) else {
+            settingsNotice = "Hermes session is not ready for a text reply."
+            return
+        }
+        if dismissResponseWindow {
+            removeHermesResponseWindow(for: targetSessionID)
+        }
+        Task {
+            await submitHermesTextTurn(trimmed, sessionID: targetSessionID)
+        }
+    }
+
     var selectedHermesSession: HermesChatSession? {
         guard let selectedHermesSessionID else { return nil }
         return hermesSessions.first(where: { $0.id == selectedHermesSessionID })
@@ -1921,6 +1963,13 @@ final class DictationViewModel: ObservableObject {
         return true
     }
 
+    func canUseHermesTextReply(for session: HermesChatSession) -> Bool {
+        hermesAgentEnabled
+            && !session.isArchived
+            && !hermesInFlightSessionIDs.contains(session.id)
+            && activeHermesRecordingSessionID == nil
+    }
+
     func canInterruptHermesSession(_ session: HermesChatSession) -> Bool {
         !session.isArchived && (session.status == .waiting || hermesInFlightSessionIDs.contains(session.id))
     }
@@ -1988,6 +2037,7 @@ final class DictationViewModel: ObservableObject {
         HermesAgentSettings(
             baseURLString: hermesBaseURLString,
             model: hermesModel,
+            profileName: hermesProfileName,
             conversationName: conversationName ?? hermesConversationName,
             timeout: HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds)
         )
@@ -2077,10 +2127,8 @@ final class DictationViewModel: ObservableObject {
         await MainActor.run {
             self.recordingStartInProgress = false
             if case .error = state {
-                self.activeHermesPromptID = nil
-                self.activeHermesRecordingSessionID = nil
+                self.clearActiveHermesRecording(cancelContext: true)
                 self.isRecording = false
-                self.clearHermesContextCapture(cancel: true)
             }
         }
     }
@@ -2177,6 +2225,7 @@ final class DictationViewModel: ObservableObject {
         do {
             let screenshot = await consumeHermesScreenshot()
             let clipboardText = await consumeHermesClipboardContext()
+            let normalizedClipboardText = HermesAgentAPIClient.normalizedClipboardText(clipboardText)
             let imageAttachment = screenshot.map(HermesAgentImageAttachment.init(snapshot:))
             let screenContext = hermesScreenContextEnabled ? turn.screenContext : nil
             let screenContextMethod = hermesScreenContextEnabled ? turn.screenContextMethod : nil
@@ -2195,6 +2244,7 @@ final class DictationViewModel: ObservableObject {
                     screenshot: screenshot,
                     clipboardText: clipboardText
                 ),
+                clipboardText: normalizedClipboardText,
                 status: .waiting
             )
             let userMessageForHistory = HermesAgentAPIClient.enrichedInputText(
@@ -2267,6 +2317,106 @@ final class DictationViewModel: ObservableObject {
                 isError: true
             )
             clearHermesContextCapture(cancel: true)
+        }
+    }
+
+    private func submitHermesTextTurn(_ text: String, sessionID: UUID) async {
+        let rawText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty else { return }
+
+        guard let session = hermesSessions.first(where: { $0.id == sessionID }) else {
+            return
+        }
+        guard canReplyToHermesSession(session) else {
+            settingsNotice = "Hermes session is \(session.status.rawValue)."
+            return
+        }
+
+        let settings = currentHermesSettings(conversationName: session.conversationName)
+        let requestID = UUID()
+        hermesActiveRequestIDs[sessionID] = requestID
+        hermesInFlightSessionIDs.insert(sessionID)
+        hermesIsSending = true
+        appendHermesChatMessage(
+            sessionID: sessionID,
+            role: .user,
+            text: rawText,
+            contextLabels: [],
+            status: .waiting
+        )
+        defer {
+            if hermesActiveRequestIDs[sessionID] == requestID {
+                hermesActiveRequestIDs[sessionID] = nil
+                hermesInFlightSessionIDs.remove(sessionID)
+            }
+            hermesIsSending = !hermesInFlightSessionIDs.isEmpty
+        }
+
+        do {
+            let start = Date()
+            let response = try await hermesClient.send(
+                input: rawText,
+                settings: settings,
+                imageAttachment: nil,
+                clipboardText: nil
+            )
+            guard hermesActiveRequestIDs[sessionID] == requestID else { return }
+            let hermesSeconds = Date().timeIntervalSince(start)
+
+            await history.append(
+                fileURL: nil,
+                appName: "WonderWhisper",
+                bundleID: Bundle.main.bundleIdentifier,
+                transcript: rawText,
+                output: response.text,
+                screenContext: nil,
+                screenContextMethod: nil,
+                screenImage: nil,
+                selectedText: nil,
+                activeTextField: nil,
+                llmSystemMessage: nil,
+                llmUserMessage: rawText,
+                transcriptionModel: "Typed",
+                llmModel: "Hermes \(response.model)",
+                transcriptionSeconds: nil,
+                llmSeconds: hermesSeconds,
+                totalSeconds: hermesSeconds
+            )
+
+            updateHermesSession(sessionID) { session in
+                session.serverSessionID = response.sessionID ?? session.serverSessionID
+                session.status = .responded
+                session.updatedAt = Date()
+            }
+            upsertHermesResponseWindow(
+                sessionID: sessionID,
+                title: HermesSessionNaming.displayTitle(
+                    for: hermesSessions,
+                    sessionID: sessionID
+                ),
+                text: response.text,
+                isError: false
+            )
+            appendHermesChatMessage(
+                sessionID: sessionID,
+                role: .assistant,
+                text: response.text,
+                status: .responded
+            )
+        } catch {
+            guard hermesActiveRequestIDs[sessionID] == requestID else { return }
+            appendHermesChatMessage(
+                sessionID: sessionID,
+                role: .error,
+                text: error.localizedDescription,
+                status: .error
+            )
+            upsertHermesResponseWindow(
+                sessionID: sessionID,
+                title: "Hermes Error",
+                text: error.localizedDescription,
+                isError: true
+            )
         }
     }
 
@@ -2391,13 +2541,15 @@ final class DictationViewModel: ObservableObject {
                                          role: HermesChatMessage.Role,
                                          text: String,
                                          contextLabels: [String] = [],
+                                         clipboardText: String? = nil,
                                          status: HermesChatSession.Status? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let message = HermesChatMessage(
             role: role,
             text: trimmed,
-            contextLabels: contextLabels
+            contextLabels: contextLabels,
+            clipboardText: clipboardText
         )
         var shouldGenerateTitle = false
         updateHermesSession(sessionID) { session in
@@ -2552,10 +2704,14 @@ final class DictationViewModel: ObservableObject {
         if hermesClipboardContextEnabled {
             let clipboardMonitor = hermesClipboardMonitor
             let pasteboardChangeCount = Self.currentPasteboardChangeCount()
+            let retentionWindow = HermesClipboardContextPolicy.clampedRetentionWindow(
+                hermesClipboardTimeoutSeconds
+            )
             hermesClipboardTask = Task.detached(priority: .userInitiated) {
                 await DictationViewModel.captureHermesClipboardContext(
                     recordingStartedAt: recordingStartedAt,
                     pasteboardChangeCount: pasteboardChangeCount,
+                    retentionWindow: retentionWindow,
                     clipboardMonitor: clipboardMonitor
                 )
             }
@@ -2577,6 +2733,30 @@ final class DictationViewModel: ObservableObject {
     private func clearHermesContextCapture(cancel: Bool) {
         clearHermesScreenshotCapture(cancel: cancel)
         clearHermesClipboardCapture(cancel: cancel)
+    }
+
+    private func clearActiveHermesRecording(cancelContext: Bool) {
+        activeHermesPromptID = nil
+        guard let sessionID = activeHermesRecordingSessionID else {
+            if cancelContext {
+                clearHermesContextCapture(cancel: true)
+            }
+            return
+        }
+
+        activeHermesRecordingSessionID = nil
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingCancelled(
+            hermesResponseWindowStates,
+            sessionID: sessionID
+        )
+        if hermesResponseWindowState?.id == sessionID {
+            hermesResponseWindowState = HermesResponseWindowLifecycle.replyRecordingCancelled(
+                hermesResponseWindowState
+            )
+        }
+        if cancelContext {
+            clearHermesContextCapture(cancel: true)
+        }
     }
 
     private func clearHermesScreenshotCapture(cancel: Bool) {
@@ -2609,6 +2789,7 @@ final class DictationViewModel: ObservableObject {
     private nonisolated static func captureHermesClipboardContext(
         recordingStartedAt: Date,
         pasteboardChangeCount: Int,
+        retentionWindow: TimeInterval,
         clipboardMonitor: ClipboardContextMonitor
     ) async -> String? {
         await clipboardMonitor.refreshSnapshot(
@@ -2617,12 +2798,13 @@ final class DictationViewModel: ObservableObject {
         )
         let snapshot = await clipboardMonitor.peekClipboardSnapshotIfRecent(
             referenceDate: recordingStartedAt,
-            window: HermesClipboardContextPolicy.retentionWindow
+            window: retentionWindow
         )
         let normalized = HermesClipboardContextPolicy.contextText(
             snapshot?.text,
             copiedAt: snapshot?.copiedAt ?? recordingStartedAt,
-            recordingStartedAt: recordingStartedAt
+            recordingStartedAt: recordingStartedAt,
+            retentionWindow: retentionWindow
         )
         if normalized != nil {
             AppLog.dictation.log("Hermes clipboard context captured")
@@ -3003,6 +3185,7 @@ private enum SimpleDefaultsKey {
     static let hermesScreenContextEnabled = "hermes.context.screenText.enabled"
     static let hermesScreenshotEnabled = "hermes.context.screenshot.enabled"
     static let hermesClipboardContextEnabled = "hermes.context.clipboard.enabled"
+    static let hermesClipboardTimeoutSeconds = "hermes.context.clipboard.timeoutSeconds"
     static let hermesPostProcessingEnabled = "hermes.postProcessing.enabled"
 }
 

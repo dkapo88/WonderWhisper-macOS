@@ -38,6 +38,19 @@ struct HermesResponseWindowLifecycleTests {
     #expect(HermesResponseWindowLifecycle.replyRecordingFinished(response) == nil)
   }
 
+  @Test func replyRecordingCancelKeepsResponseVisibleAndClearsRecordingState() {
+    let response = HermesResponseWindowState(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000124")!,
+      title: "Hermes",
+      text: "Use this response as context while replying.",
+      isRecordingReply: true
+    )
+    var idleResponse = response
+    idleResponse.isRecordingReply = false
+
+    #expect(HermesResponseWindowLifecycle.replyRecordingCancelled(response) == idleResponse)
+  }
+
   @Test func replyRecordingOnlyDismissesTheTargetResponseWindowWhenFinished() {
     let target = HermesResponseWindowState(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000701")!,
@@ -60,6 +73,13 @@ struct HermesResponseWindowLifecycleTests {
     #expect(
       HermesResponseWindowLifecycle.replyRecordingFinished(states, sessionID: target.id)
       == [other]
+    )
+    #expect(
+      HermesResponseWindowLifecycle.replyRecordingCancelled(
+        [recordingTarget, other],
+        sessionID: target.id
+      )
+      == [target, other]
     )
   }
 }

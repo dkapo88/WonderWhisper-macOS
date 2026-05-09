@@ -32,6 +32,7 @@ final class TranscriptionCache {
     private var hitCount: Int = 0
     private var missCount: Int = 0
     private var totalSizeEstimate: Int = 0
+    private let statsLock = NSLock()
 
     private init() {
         // Schedule periodic cleanup
@@ -120,10 +121,14 @@ final class TranscriptionCache {
 
     func lookup(_ key: TranscriptionCacheKey) -> String? {
         if let result = cache.get(key) {
+            statsLock.lock()
             hitCount += 1
+            statsLock.unlock()
             return result
         } else {
+            statsLock.lock()
             missCount += 1
+            statsLock.unlock()
             return nil
         }
     }
@@ -138,11 +143,15 @@ final class TranscriptionCache {
     func store(_ key: TranscriptionCacheKey, result: String) {
         cache.set(key, result)
         // Update size estimate (rough approximation)
-        totalSizeEstimate = max(totalSizeEstimate, cache.count * (result.count + 200)) // 200 bytes overhead per entry
+        statsLock.lock()
+        totalSizeEstimate = cache.count * (result.count + 200) // 200 bytes overhead per entry
+        statsLock.unlock()
     }
     
     // Cache performance statistics
     var cacheStatistics: (hitCount: Int, missCount: Int, totalSize: Int) {
+        statsLock.lock()
+        defer { statsLock.unlock() }
         return (hitCount: hitCount, missCount: missCount, totalSize: totalSizeEstimate)
     }
     
@@ -164,9 +173,10 @@ final class TranscriptionCache {
     
     // Reset cache statistics
     func resetStatistics() {
+        statsLock.lock()
         hitCount = 0
         missCount = 0
         totalSizeEstimate = 0
+        statsLock.unlock()
     }
 }
-
