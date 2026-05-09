@@ -76,11 +76,6 @@ final class MenuBarController: NSObject {
         inputMenu.submenu = sub
         menu.addItem(inputMenu)
 
-        menu.addItem(.separator())
-        let apiItem = NSMenuItem(title: "API Keys…", action: #selector(openAPIKeys), keyEquivalent: ",")
-        apiItem.keyEquivalentModifierMask = [.command]
-        apiItem.target = self
-        menu.addItem(apiItem)
         menu.addItem(NSMenuItem(title: "Quit HermesWhisper", action: #selector(quitApp), keyEquivalent: "q"))
         return menu
     }
@@ -95,11 +90,6 @@ final class MenuBarController: NSObject {
         statusItem.menu = buildMenu()
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
-
-    @objc private func openAPIKeys() {
-        // Post a notification for ContentView to switch to API Keys
-        NotificationCenter.default.post(name: .openAPIKeysSettings, object: nil)
-    }
 
     @objc private func addClipboardToVocabulary() {
         guard let vm = vm else { return }
@@ -134,7 +124,7 @@ final class MenuBarController: NSObject {
             .foregroundColor: NSColor.white, // template color, will be tinted
             .paragraphStyle: paragraph
         ]
-        let str = NSAttributedString(string: "W", attributes: attrs)
+        let str = NSAttributedString(string: "H", attributes: attrs)
         let rect = NSRect(x: 0, y: (size.height - font.capHeight)/2 - 1, width: size.width, height: font.capHeight + 2)
         str.draw(in: rect)
         img.isTemplate = true

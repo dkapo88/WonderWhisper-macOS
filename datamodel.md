@@ -476,7 +476,10 @@ erDiagram
 
 ### Keychain Storage
 
-Secure storage via `KeychainService` for API keys:
+Secure storage via `KeychainService` for API keys. Reads are scoped to the current
+HermesWhisper keychain service plus the legacy WonderWhisper service for one-time
+migration, and fail without showing macOS authentication UI. If macOS blocks
+legacy access, keys may need to be saved once under the new app identity.
 
 | Key Alias | Purpose |
 |-----------|---------|

@@ -47,7 +47,3 @@ struct HermesWhisperApp: App {
         }
     }
 }
-
-extension Notification.Name {
-    static let openAPIKeysSettings = Notification.Name("openAPIKeysSettings")
-}

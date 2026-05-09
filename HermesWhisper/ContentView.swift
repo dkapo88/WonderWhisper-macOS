@@ -54,9 +54,6 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 680, minHeight: 420)
-        .onReceive(NotificationCenter.default.publisher(for: .openAPIKeysSettings)) { _ in
-            vm.simpleSidebarSelection = .settings
-        }
     }
 }
 

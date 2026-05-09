@@ -48,7 +48,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
-- 2026-05-09: Renamed the app, project, module, bundle identifiers, docs, and runtime storage identity to HermesWhisper with legacy data/keychain migration.
+- 2026-05-09: Removed the stale menu-bar API Keys action and limited Keychain reads/migration to non-interactive current or legacy app-scoped lookups.
+- 2026-05-09: Renamed the app, project, module, bundle identifiers, docs, and runtime storage identity to HermesWhisper with legacy local data/keychain migration.
 - 2026-05-09: Added a Hermes agent profile setting that maps to the API model and validates against `/v1/models`.
 - 2026-05-09: Replaced Hermes request timeout arrows with a whole-minute text field.
 - 2026-05-09: Added typed Hermes replies from the chat tab and response windows.

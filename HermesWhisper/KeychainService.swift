@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 enum KeychainServiceError: LocalizedError {
@@ -59,22 +60,24 @@ final class KeychainService {
         }
 
         if let value = getSecret(forKey: key, service: Self.legacyService) {
+            try? setSecret(value, forKey: key)
             return value
         }
 
-        return getSecret(forKey: key, service: nil)
+        return nil
     }
 
-    private func getSecret(forKey key: String, service: String?) -> String? {
-        var query: [String: Any] = [
+    private func getSecret(forKey key: String, service: String) -> String? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
+            kSecAttrService as String: service,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
         ]
-        if let service {
-            query[kSecAttrService as String] = service
-        }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else { return nil }
