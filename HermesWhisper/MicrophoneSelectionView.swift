@@ -4,7 +4,6 @@ import AVFoundation
 struct MicrophoneSelectionView: View {
   @ObservedObject var vm: DictationViewModel
   @State private var availableDevices: [AudioDeviceInfo] = []
-  @State private var currentSelection: AudioInputSelection = .systemDefault
   @State private var systemDefaultUID: String?
 
   var body: some View {
@@ -146,14 +145,14 @@ struct MicrophoneSelectionView: View {
   }
   
   private var isSystemDefaultSelected: Bool {
-    if case .systemDefault = currentSelection {
+    if case .systemDefault = vm.audioInputSelection {
       return true
     }
     return false
   }
   
   private func isDeviceSelected(_ device: AudioDeviceInfo) -> Bool {
-    if case .deviceUID(let uid) = currentSelection {
+    if case .deviceUID(let uid) = vm.audioInputSelection {
       return uid == device.uid
     }
     return false
@@ -165,7 +164,7 @@ struct MicrophoneSelectionView: View {
   }
   
   private func loadCurrentSelection() {
-    currentSelection = AudioInputSelection.load()
+    vm.audioInputSelection = AudioInputSelection.load()
     Task {
       let uid = await getSystemDefaultUID()
       await MainActor.run {
@@ -204,8 +203,7 @@ struct MicrophoneSelectionView: View {
   
   private func selectSystemDefault() {
     print("🎤 Selected: System Default")
-    currentSelection = .systemDefault
-    currentSelection.persist()
+    vm.audioInputSelection = .systemDefault
     Task {
       let uid = await getSystemDefaultUID()
       await MainActor.run {
@@ -216,8 +214,7 @@ struct MicrophoneSelectionView: View {
   
   private func selectDevice(_ device: AudioDeviceInfo) {
     print("🎤 Selected device: \(device.name) (\(device.uid))")
-    currentSelection = .deviceUID(device.uid)
-    currentSelection.persist()
+    vm.audioInputSelection = .deviceUID(device.uid)
   }
 }
 

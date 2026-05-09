@@ -164,7 +164,7 @@ enum ClipboardContextPolicy {
 enum HermesClipboardContextPolicy {
     static let minimumRetentionWindow: TimeInterval = 1
     static let maximumRetentionWindow: TimeInterval = 600
-    static let defaultRetentionWindow: TimeInterval = 60
+    static let defaultRetentionWindow: TimeInterval = 20
     static let retentionWindow: TimeInterval = defaultRetentionWindow
 
     static func clampedRetentionWindow(_ seconds: TimeInterval) -> TimeInterval {

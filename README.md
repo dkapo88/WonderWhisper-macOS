@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/hermes-whisper-readme-header.jpg" alt="Hermes Whisper - Voice-native sessions for Hermes Agent">
+</p>
+
 # HermesWhisper
 
 HermesWhisper is a macOS voice interface for dictation, LLM cleanup, and fast interaction with a Hermes Agent API server. It started as a local dictation app and now centers on a dedicated Hermes workflow: speak a task, send it to Hermes, receive an always-on-top response window, and keep multiple agent sessions running in parallel.

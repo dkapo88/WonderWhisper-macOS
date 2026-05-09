@@ -57,6 +57,21 @@ struct HermesWhisperTests {
         #expect(!KeychainService.isPlausibleGroqAPIKey("sk-not-a-groq-key"))
     }
 
+    @Test func freshInstallSimpleModeDefaultsMatchVoiceFirstWorkflow() {
+        let dictation = SimpleModeDefaults.settings(for: .dictation)
+        #expect(dictation.enableScreenContext)
+        #expect(!dictation.enableClipboardContext)
+        #expect(!dictation.enableSelectedText)
+        #expect(dictation.selection == .fnGlobe)
+
+        let command = SimpleModeDefaults.settings(for: .command)
+        #expect(command.enableScreenContext)
+        #expect(!command.enableClipboardContext)
+        #expect(!command.enableSelectedText)
+        #expect(command.enableActiveTextField)
+        #expect(command.selection == .rightOption)
+    }
+
     private func writeSineWave(to url: URL, frames: Int, amplitude: Float, frequency: Double = 440.0) throws {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else {

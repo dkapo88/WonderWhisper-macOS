@@ -33,7 +33,7 @@ struct HermesAgentClientTests {
     #expect(text == "Hermes response")
   }
 
-  @Test func hermesSettingsFallbackToDefaultsWhenEmpty() {
+  @Test func hermesSettingsLeaveBaseURLBlankWhenEmpty() {
     let settings = HermesAgentSettings(
       baseURLString: " ",
       model: "",
@@ -41,7 +41,7 @@ struct HermesAgentClientTests {
       timeout: 180
     )
 
-    #expect(settings.normalizedBaseURLString == AppConfig.defaultHermesBaseURLString)
+    #expect(settings.normalizedBaseURLString == "")
     #expect(settings.normalizedModel == AppConfig.defaultHermesModel)
     #expect(settings.normalizedProfileName == nil)
     #expect(settings.requestModel == AppConfig.defaultHermesModel)
@@ -69,9 +69,15 @@ struct HermesAgentClientTests {
   @Test func hermesTimeoutLimitsAllowThirtyMinutes() {
     #expect(HermesAgentSettings.minimumTimeout == 15)
     #expect(HermesAgentSettings.maximumTimeout == 1_800)
-    #expect(HermesAgentSettings.defaultTimeout == 180)
+    #expect(HermesAgentSettings.defaultTimeout == 1_200)
     #expect(HermesAgentSettings.clampedTimeout(5) == 15)
     #expect(HermesAgentSettings.clampedTimeout(2_400) == 1_800)
+  }
+
+  @Test func hermesEndpointRejectsBlankBaseURL() throws {
+    #expect(throws: HermesAgentClientError.self) {
+      try HermesAgentAPIClient.endpointURL(path: "responses", baseURLString: "")
+    }
   }
 
   @Test func hermesEndpointsAcceptRootOrV1BaseURLs() throws {

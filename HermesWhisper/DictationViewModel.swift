@@ -38,6 +38,12 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var audioLevel: Float = 0
     @Published var sonioxPreviewText: String = ""  // Live transcript preview for Soniox streaming
+    @Published var audioInputSelection: AudioInputSelection = AudioInputSelection.load() {
+        didSet {
+            guard audioInputSelection != oldValue else { return }
+            audioInputSelection.persist()
+        }
+    }
 
     // Prompts
     @Published var prompts: [PromptConfiguration] = [] {
@@ -297,6 +303,7 @@ final class DictationViewModel: ObservableObject {
     @Published var hermesResponseWindowState: HermesResponseWindowState?
     @Published var hermesResponseWindowStates: [HermesResponseWindowState] = []
     @Published var hermesIsSending: Bool = false
+    @Published private(set) var hermesPendingResponseCount: Int = 0
     @Published var hermesChatMessages: [HermesChatMessage] = []
     @Published var hermesSessions: [HermesChatSession] = []
     @Published var selectedHermesSessionID: UUID? {
@@ -2212,14 +2219,11 @@ final class DictationViewModel: ObservableObject {
         let settings = currentHermesSettings(conversationName: session.conversationName)
         let requestID = UUID()
         hermesActiveRequestIDs[sessionID] = requestID
-        hermesInFlightSessionIDs.insert(sessionID)
-        hermesIsSending = true
+        markHermesRequestStarted(for: sessionID)
         defer {
             if hermesActiveRequestIDs[sessionID] == requestID {
-                hermesActiveRequestIDs[sessionID] = nil
-                hermesInFlightSessionIDs.remove(sessionID)
+                releaseHermesRequest(for: sessionID)
             }
-            hermesIsSending = !hermesInFlightSessionIDs.isEmpty
         }
 
         do {
@@ -2335,8 +2339,7 @@ final class DictationViewModel: ObservableObject {
         let settings = currentHermesSettings(conversationName: session.conversationName)
         let requestID = UUID()
         hermesActiveRequestIDs[sessionID] = requestID
-        hermesInFlightSessionIDs.insert(sessionID)
-        hermesIsSending = true
+        markHermesRequestStarted(for: sessionID)
         appendHermesChatMessage(
             sessionID: sessionID,
             role: .user,
@@ -2346,10 +2349,8 @@ final class DictationViewModel: ObservableObject {
         )
         defer {
             if hermesActiveRequestIDs[sessionID] == requestID {
-                hermesActiveRequestIDs[sessionID] = nil
-                hermesInFlightSessionIDs.remove(sessionID)
+                releaseHermesRequest(for: sessionID)
             }
-            hermesIsSending = !hermesInFlightSessionIDs.isEmpty
         }
 
         do {
@@ -2534,7 +2535,17 @@ final class DictationViewModel: ObservableObject {
     private func releaseHermesRequest(for sessionID: UUID) {
         hermesActiveRequestIDs[sessionID] = nil
         hermesInFlightSessionIDs.remove(sessionID)
+        syncHermesRequestStatus()
+    }
+
+    private func markHermesRequestStarted(for sessionID: UUID) {
+        hermesInFlightSessionIDs.insert(sessionID)
+        syncHermesRequestStatus()
+    }
+
+    private func syncHermesRequestStatus() {
         hermesIsSending = !hermesInFlightSessionIDs.isEmpty
+        hermesPendingResponseCount = hermesInFlightSessionIDs.count
     }
 
     private func appendHermesChatMessage(sessionID: UUID,
@@ -3260,7 +3271,7 @@ private extension DictationViewModel {
         if let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.hermesSelection) {
             return HotkeyManager.Selection(rawValue: raw)
         }
-        let fallback: HotkeyManager.Selection = .f5
+        let fallback: HotkeyManager.Selection = .backslash
         let dictation = loadSimpleSettings(for: .dictation).selection
         let command = loadSimpleSettings(for: .command).selection
         return fallback == dictation || fallback == command ? nil : fallback
@@ -3324,7 +3335,10 @@ private extension DictationViewModel {
             }
             return result
         }
-        return []
+        return [
+            FavoriteOpenRouterModel(id: "anthropic/claude-haiku-latest", name: "Anthropic · Claude Haiku Latest"),
+            FavoriteOpenRouterModel(id: "openai/gpt-5.5", name: "OpenAI · GPT-5.5")
+        ]
     }
 
     @MainActor

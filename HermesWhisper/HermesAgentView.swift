@@ -32,6 +32,7 @@ struct HermesAgentView: View {
   @State private var showClearActiveConfirmation: Bool = false
   @State private var pendingDeleteSession: HermesChatSession?
   @State private var textReplyDrafts: [UUID: String] = [:]
+  @State private var setupPromptCopied: Bool = false
 
   private let keychain = KeychainService()
   private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
@@ -597,9 +598,47 @@ struct HermesAgentView: View {
 
   private var settingsSection: some View {
     VStack(alignment: .leading, spacing: 18) {
+      setupPromptSection
       connectionSection
       contextSection
       hotkeySection
+    }
+  }
+
+  private var setupPromptSection: some View {
+    GroupBox("Setup prompt") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(alignment: .firstTextBaseline) {
+          Text("Copy this prompt and give it to Hermes to get the settings values for this app.")
+            .font(.callout)
+            .foregroundColor(.secondary)
+          Spacer()
+          Button {
+            HermesResponseClipboard.copyRaw(Self.hermesSetupPrompt)
+            setupPromptCopied = true
+            Task { @MainActor in
+              try? await Task.sleep(nanoseconds: 1_500_000_000)
+              setupPromptCopied = false
+            }
+          } label: {
+            Label(
+              setupPromptCopied ? "Copied" : "Copy Prompt",
+              systemImage: setupPromptCopied ? "checkmark" : "doc.on.doc"
+            )
+          }
+        }
+
+        Text(Self.hermesSetupPrompt)
+          .font(.system(.caption, design: .monospaced))
+          .textSelection(.enabled)
+          .padding(10)
+          .frame(maxWidth: 720, alignment: .leading)
+          .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
+          )
+      }
+      .padding(.top, 4)
     }
   }
 
@@ -608,7 +647,7 @@ struct HermesAgentView: View {
       VStack(alignment: .leading, spacing: 12) {
         Toggle("Enable Hermes agent", isOn: $vm.hermesAgentEnabled)
 
-        TextField(AppConfig.defaultHermesBaseURLString, text: $vm.hermesBaseURLString)
+        TextField("Hermes API base URL", text: $vm.hermesBaseURLString)
           .textFieldStyle(.roundedBorder)
           .frame(maxWidth: 440)
 
@@ -696,7 +735,7 @@ struct HermesAgentView: View {
             .textSelection(.enabled)
         }
 
-        Text("Use `http://127.0.0.1:8642` for a local gateway or your remote Hermes server URL. URLs ending in `/v1` also work.")
+        Text("Enter your local gateway or remote Hermes server URL. URLs ending in `/v1` also work.")
           .font(.caption)
           .foregroundColor(.secondary)
           .textSelection(.enabled)
@@ -799,6 +838,39 @@ struct HermesAgentView: View {
       set: { textReplyDrafts[sessionID] = $0 }
     )
   }
+
+  private static let hermesSetupPrompt = """
+I am setting up HermesWhisper, a macOS voice client that connects to a Hermes Agent API server.
+
+Please help me find the exact connection settings I should enter in the HermesWhisper settings page:
+
+1. Hermes API base URL
+   * Give me the base URL for the Hermes API server.
+   * Tell me whether I should enter the root URL or the `/v1` URL.
+   * Confirm whether the URL is local-only, LAN/VPN-only, or publicly reachable.
+
+2. API server key
+   * Tell me whether this Hermes server requires a bearer API key.
+   * If a key already exists, tell me where to retrieve it securely.
+   * If I need to create one, give me the exact command or config steps.
+   * Do not print a production secret unless I explicitly ask you to reveal it.
+
+3. Conversation prefix
+   * Recommend a short conversation prefix for this Mac client.
+   * Explain whether the prefix affects session persistence, routing, or only naming.
+
+4. Agent profile
+   * List the available Hermes agent profiles/models from `/v1/models`.
+   * Tell me what value to put in the Agent profile field.
+   * If the field should be blank to use the server default profile, say that clearly.
+
+Please return the answer as a small table with these exact fields:
+* Hermes API base URL
+* API key source or creation command
+* Conversation prefix
+* Agent profile
+* Notes
+"""
 
   private func sendTextReply(for session: HermesChatSession) {
     let text = textReplyDrafts[session.id] ?? ""

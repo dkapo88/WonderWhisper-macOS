@@ -278,7 +278,7 @@ enum SimpleModeDefaults {
         footer: systemFooter(for: .dictation),
         enableScreenContext: true,
         enableClipboardContext: false,
-        enableSelectedText: true,
+        enableSelectedText: false,
         enableActiveTextField: true,
         selection: .fnGlobe,
         includeScreenImage: false
@@ -289,10 +289,10 @@ enum SimpleModeDefaults {
         header: systemHeader(for: .command),
         footer: systemFooter(for: .command),
         enableScreenContext: true,
-        enableClipboardContext: true,
-        enableSelectedText: true,
+        enableClipboardContext: false,
+        enableSelectedText: false,
         enableActiveTextField: true,
-        selection: .rightCommand,
+        selection: .rightOption,
         includeScreenImage: false
       )
     }

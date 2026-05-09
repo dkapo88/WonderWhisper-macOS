@@ -48,6 +48,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-09: Added the HermesWhisper README header image asset and referenced it from GitHub Markdown.
+- 2026-05-09: Updated the menu bar icon, synced menu microphone selection, added voice-model menu controls, and showed pending Hermes response counts in the status item.
+- 2026-05-09: Updated the HermesWhisper macOS app icon assets.
+- 2026-05-09: Added a copyable Hermes setup prompt to help first-time users collect API URL, key, conversation prefix, and profile settings.
+- 2026-05-09: Updated fresh-install defaults for Hermes URL, timeouts, hotkeys, screen context toggles, and OpenRouter favorites.
 - 2026-05-09: Removed the stale menu-bar API Keys action and limited Keychain reads/migration to non-interactive current or legacy app-scoped lookups.
 - 2026-05-09: Renamed the app, project, module, bundle identifiers, docs, and runtime storage identity to HermesWhisper with legacy local data/keychain migration.
 - 2026-05-09: Added a Hermes agent profile setting that maps to the API model and validates against `/v1/models`.

@@ -4,7 +4,7 @@ import Network
 struct HermesAgentSettings: Equatable {
   static let minimumTimeout: TimeInterval = 15
   static let maximumTimeout: TimeInterval = 1_800
-  static let defaultTimeout: TimeInterval = 180
+  static let defaultTimeout: TimeInterval = 1_200
 
   var baseURLString: String
   var model: String
@@ -18,7 +18,7 @@ struct HermesAgentSettings: Equatable {
 
   var normalizedBaseURLString: String {
     let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? AppConfig.defaultHermesBaseURLString : trimmed
+    return trimmed
   }
 
   var normalizedModel: String {
@@ -530,7 +530,11 @@ extension HermesAgentAPIClient {
   static func endpointURL(path: String, baseURLString: String) throws -> URL {
     let base = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
       .trimmingTrailingSlashes()
-    guard let url = URL(string: base) else {
+    guard !base.isEmpty,
+          let url = URL(string: base),
+          let scheme = url.scheme?.lowercased(),
+          ["http", "https"].contains(scheme),
+          url.host?.isEmpty == false else {
       throw HermesAgentClientError.invalidBaseURL(baseURLString)
     }
     if url.pathComponents.last == "v1" {

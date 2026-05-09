@@ -3,9 +3,9 @@ import Testing
 @testable import HermesWhisper
 
 struct HermesClipboardContextPolicyTests {
-  @Test func textCopiedWithinOneMinuteAttachesWhenRecordingStarts() {
+  @Test func textCopiedWithinDefaultWindowAttachesWhenRecordingStarts() {
     let copiedAt = Date(timeIntervalSince1970: 1_000)
-    let recordingStartedAt = copiedAt.addingTimeInterval(55)
+    let recordingStartedAt = copiedAt.addingTimeInterval(15)
 
     let text = HermesClipboardContextPolicy.contextText(
       "https://example.com",
@@ -16,9 +16,9 @@ struct HermesClipboardContextPolicyTests {
     #expect(text == "https://example.com")
   }
 
-  @Test func textCopiedWithinOneMinuteStillAttachesWhenSendHappensAfterExpiry() {
+  @Test func textCopiedWithinDefaultWindowStillAttachesWhenSendHappensAfterExpiry() {
     let copiedAt = Date(timeIntervalSince1970: 1_000)
-    let recordingStartedAt = copiedAt.addingTimeInterval(55)
+    let recordingStartedAt = copiedAt.addingTimeInterval(15)
     let requestSentAt = recordingStartedAt.addingTimeInterval(20)
 
     let text = HermesClipboardContextPolicy.contextText(
@@ -31,9 +31,9 @@ struct HermesClipboardContextPolicyTests {
     #expect(text == "Copied context")
   }
 
-  @Test func textCopiedMoreThanOneMinuteBeforeRecordingDoesNotAttach() {
+  @Test func textCopiedBeforeDefaultWindowDoesNotAttach() {
     let copiedAt = Date(timeIntervalSince1970: 1_000)
-    let recordingStartedAt = copiedAt.addingTimeInterval(61)
+    let recordingStartedAt = copiedAt.addingTimeInterval(21)
 
     let text = HermesClipboardContextPolicy.contextText(
       "Old context",
@@ -67,6 +67,7 @@ struct HermesClipboardContextPolicyTests {
 
   @Test func retentionWindowClampsToSupportedRange() {
     #expect(HermesClipboardContextPolicy.clampedRetentionWindow(0) == 1)
+    #expect(HermesClipboardContextPolicy.defaultRetentionWindow == 20)
     #expect(HermesClipboardContextPolicy.clampedRetentionWindow(60) == 60)
     #expect(HermesClipboardContextPolicy.clampedRetentionWindow(1_000) == 600)
   }

@@ -222,8 +222,8 @@ erDiagram
 ```
 
 **SimplePromptSettings**: Simplified configuration for the two user-facing modes. Each mode can independently toggle OCR screen context, clipboard history, selected text, and the full active text field payload.
-- **Dictation**: Voice-to-text formatting
-- **Command**: Selected-text/OCR aware assistant mode
+- **Dictation**: Voice-to-text formatting. Fresh installs default to Fn/Globe, screen context on, clipboard context off, selected text off, and active field context on.
+- **Command**: Selected-text/OCR aware assistant mode. Fresh installs default to Right Option, screen context on, clipboard context off, selected text off, and active field context on.
 
 **SimplePromptRule**: Individual formatting/behavior rules as plain text statements
 
@@ -460,16 +460,16 @@ erDiagram
 | `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
 | `network.http_protocol_preference` | String | HTTP protocol preference |
 | `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
-| `hermes.api.baseURL` | String | Hermes API server URL; root and `/v1` URLs are both accepted |
+| `hermes.api.baseURL` | String | Hermes API server URL; blank by default, root and `/v1` URLs are both accepted |
 | `hermes.conversation.name` | String | Hermes conversation prefix used when creating new sessions |
 | `hermes.model` | String | Fallback Hermes API model field when no profile is configured |
 | `hermes.profile.name` | String | Optional Hermes API profile/model name; blank uses the server default, nonblank is sent as the request model and verified against `/v1/models` |
-| `hermes.timeout` | Double | Hermes request timeout (stored in seconds; settings UI edits whole minutes), clamped from 15 seconds to 1,800 seconds |
-| `hermes.shortcut.selection` | String | Dedicated Hermes activation key; accepts `backslash`, `f5`, and modifier-key selections |
+| `hermes.timeout` | Double | Hermes request timeout (stored in seconds; settings UI edits whole minutes), default 1,200 seconds, clamped from 15 seconds to 1,800 seconds |
+| `hermes.shortcut.selection` | String | Dedicated Hermes activation key; defaults to `backslash` and accepts `backslash`, `f5`, and modifier-key selections |
 | `hermes.context.screenText.enabled` | Bool | Include Hermes OCR/screen text context |
 | `hermes.context.screenshot.enabled` | Bool | Attach Hermes active-window screenshot images |
 | `hermes.context.clipboard.enabled` | Bool | Include Hermes copied text / clipboard context |
-| `hermes.context.clipboard.timeoutSeconds` | Double | Hermes copied text freshness timeout; default 60 seconds, clamped from 1 to 600 seconds |
+| `hermes.context.clipboard.timeoutSeconds` | Double | Hermes copied text freshness timeout; default 20 seconds, clamped from 1 to 600 seconds |
 | `hermes.postProcessing.enabled` | Bool | Clean Hermes dictations through the OpenRouter post-processing flow before sending |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 | `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
@@ -550,7 +550,7 @@ struct AppConfig {
     static let groqAPIKeyAlias: String = "GROQ_API_KEY"
     static let openrouterAPIKeyAlias: String = "OPENROUTER_API_KEY"
     static let hermesAPIKeyAlias: String = "HERMES_API_SERVER_KEY"
-    static let defaultHermesBaseURLString: String = "http://127.0.0.1:8642"
+    static let defaultHermesBaseURLString: String = ""
     static let defaultHermesModel: String = "hermes-agent"
     static let defaultHermesConversationName: String = "hermeswhisper-mac"
     

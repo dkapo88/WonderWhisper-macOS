@@ -61,7 +61,7 @@ struct AppConfig {
     static let sonioxAPIKeyAlias = "SONIOX_API_KEY"
     // Keychain alias for the Hermes API server bearer token
     static let hermesAPIKeyAlias = "HERMES_API_SERVER_KEY"
-    static let defaultHermesBaseURLString = "http://127.0.0.1:8642"
+    static let defaultHermesBaseURLString = ""
     static let defaultHermesModel = "hermes-agent"
     static let defaultHermesConversationName = "hermeswhisper-mac"
     // OpenRouter header defaults
