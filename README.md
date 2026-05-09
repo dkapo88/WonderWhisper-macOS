@@ -321,6 +321,24 @@ text, and clipboard text to the cloud providers or Hermes server you configure.
 Review the context toggles for each mode before using the app with sensitive
 material.
 
+## Preview Install
+
+The current GitHub release is an unsigned preview build while Developer ID
+signing and notarization are being set up. macOS may block the app the first
+time you open it because it cannot verify the developer.
+
+To open the preview build:
+
+1. Download the DMG from the GitHub release.
+2. Drag **HermesWhisper** into **Applications**.
+3. Try opening the app once. macOS may block it.
+4. Open **System Settings -> Privacy & Security**.
+5. Scroll to the security warning for HermesWhisper and choose **Open Anyway**.
+6. Confirm that you want to open the app.
+
+A future release will be Developer ID signed and notarized so this manual
+approval step is no longer required.
+
 ## Build
 
 Open the project in Xcode:
