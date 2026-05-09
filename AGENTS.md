@@ -1,16 +1,16 @@
 # Repository Guidelines
 
 Scope: Entire repository  
-Owner: WonderWhisper Mac Development Team  
-Last updated: November 20, 2025
+Owner: HermesWhisper Development Team
+Last updated: May 9, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
 ## Project Structure & Module Organization
-WonderWhisper Mac stores SwiftUI sources under `WonderWhisper Mac/`, with views, view models, and helpers grouped by feature. Shared assets live in `WonderWhisper Mac/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `WonderWhisper MacTests/`, and UI automation lives in `WonderWhisper MacUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
+HermesWhisper stores SwiftUI sources under `HermesWhisper/`, with views, view models, and helpers grouped by feature. Shared assets live in `HermesWhisper/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `HermesWhisperTests/`, and UI automation lives in `HermesWhisperUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
 ### Architecture Overview
-Core components: `DictationViewModel` (orchestrates recording → transcription → LLM → insertion), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), provider protocols (`TranscriptionProvider`, `LLMProvider`), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `HotkeyManager`). Storage paths: `~/Library/Application Support/WonderWhisper/` for history entries, audio files, screen captures, and conversation state. API keys stored in macOS Keychain via `KeychainService`.
+Core components: `DictationViewModel` (orchestrates recording → transcription → LLM → insertion), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), provider protocols (`TranscriptionProvider`, `LLMProvider`), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `HotkeyManager`). Storage paths: `~/Library/Application Support/HermesWhisper/` for history entries, audio files, screen captures, and conversation state. On first launch after the rename, local app support data is copied from the legacy `WonderWhisper` directory if needed. API keys stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
@@ -21,7 +21,7 @@ The app includes a persistent microphone selection feature accessible from the s
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
 ## Build, Test, and Development Commands
-Use `open "WonderWhisper Mac.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug build`. Execute tests with `xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test`. To run a single test, use `xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test -only-testing:WonderWhisper_MacTests/WonderWhisper_MacTests/testName`. After a successful build, `open build/Debug/WonderWhisper\ Mac.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations.
+Use `open "HermesWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -configuration Debug build`. Execute tests with `xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test`. To run a single test, use `xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test -only-testing:HermesWhisperTests/HermesWhisperTests/testName`. After a successful script build, `open build/Build/Products/Debug/HermesWhisper.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations.
 
 ## Coding Style & Naming Conventions
 Adopt 2-space indentation and keep lines near 100 characters. Name types with PascalCase, functions and variables with camelCase, and prefer `static let` for constants. Match filenames to the primary type (`AudioTranscriber.swift`). Imports should be organized: Foundation first, then Apple frameworks (SwiftUI, AVFoundation, etc.), then `@testable import` in tests. Favor small SwiftUI views, avoid force unwraps (use `guard` or optional chaining), use explicit error handling with `do-catch` or `throws`, and add SwiftUI previews when practical. One primary type per file. Run `swiftformat .` and `swiftlint` before posting changes when tooling is available.
@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-09: Renamed the app, project, module, bundle identifiers, docs, and runtime storage identity to HermesWhisper with legacy data/keychain migration.
 - 2026-05-09: Added a Hermes agent profile setting that maps to the API model and validates against `/v1/models`.
 - 2026-05-09: Replaced Hermes request timeout arrows with a whole-minute text field.
 - 2026-05-09: Added typed Hermes replies from the chat tab and response windows.
@@ -90,7 +91,7 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
 - 2026-05-06: Added full-display OCR preprocessing that uses Apple Intelligence for screen-context terms with a local keyword fallback.
 - 2026-05-06: Restored side-specific modifier hotkey detection from the changed key event so right Option taps register promptly.
 - 2026-05-06: Disabled the stale legacy recording hotkey listener so only visible prompt activation keys trigger dictation.
-- 2026-05-06: Tightened modifier hotkeys so alternate shortcuts with extra modifiers do not trigger WonderWhisper.
+- 2026-05-06: Tightened modifier hotkeys so alternate shortcuts with extra modifiers do not trigger HermesWhisper.
 - 2026-05-06: Shortened post-insertion hotkey suppression so back-to-back dictation can restart promptly after paste.
 - 2026-05-06: Made fast standalone modifier hotkey taps trigger immediately on release instead of requiring the guard delay.
 - 2026-05-06: Refined the recording overlay visualizer with quieter metering, modern capsule styling, and compact icon controls.

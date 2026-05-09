@@ -1,10 +1,12 @@
-# WonderWhisper Mac - Data Model Documentation
+# HermesWhisper - Data Model Documentation
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
 ## Overview
 
-WonderWhisper Mac is a voice dictation and AI assistant application. This document provides comprehensive entity relationship diagrams and data model documentation for database schemas, service models, and UI data structures.
+HermesWhisper is a voice dictation and AI assistant application. This document provides comprehensive entity relationship diagrams and data model documentation for database schemas, service models, and UI data structures.
+
+Local storage now lives under `~/Library/Application Support/HermesWhisper/`. First launch after the rename copies existing local data from the legacy `WonderWhisper` Application Support directory when the new directory does not already exist.
 
 ---
 
@@ -120,7 +122,7 @@ erDiagram
 - Performance metrics
 - LLM prompts used (for transparency)
 
-**Storage**: Files persisted in `~/Library/Application Support/WonderWhisper/History/`
+**Storage**: Files persisted in `~/Library/Application Support/HermesWhisper/History/`
 - `entries/` - JSON files (one per entry)
 - `audio/` - M4A/WAV recordings
 - `images/` - PNG/JPG screen captures
@@ -157,7 +159,7 @@ erDiagram
 New sessions start with the generic title `New Hermes Task`; after the first user
 turn is captured, the app asks the configured OpenRouter LLM model for a concise
 local title and updates only the matching session id. Title generation is local to
-WonderWhisper state and is not sent through Hermes.
+HermesWhisper state and is not sent through Hermes.
 
 **HermesChatMessage**: Messages shown in the selected Hermes sidebar Chat session. Messages are appended from the dedicated Hermes voice loop:
 - User messages show the spoken transcript after optional Hermes LLM post-processing, not the enriched payload sent to the API.
@@ -179,7 +181,7 @@ WonderWhisper state and is not sent through Hermes.
   through the existing OpenRouter post-processing/vocabulary flow before it is sent
   to the Hermes API. When disabled, the raw transcript is sent.
 
-**Persistence**: `HermesSessionStore` persists recent Hermes sessions in `~/Library/Application Support/WonderWhisper/HermesChat/sessions.json`. The default retention limit is 25 sessions, controlled by `hermes.sessions.maxSessions`; each session keeps the latest 50 messages by default, controlled by `hermes.chat.maxMessages`. `messages.json` from the previous flat chat history format is migrated into a `Previous Hermes Chat` session when `sessions.json` does not exist. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
+**Persistence**: `HermesSessionStore` persists recent Hermes sessions in `~/Library/Application Support/HermesWhisper/HermesChat/sessions.json`. The default retention limit is 25 sessions, controlled by `hermes.sessions.maxSessions`; each session keeps the latest 50 messages by default, controlled by `hermes.chat.maxMessages`. `messages.json` from the previous flat chat history format is migrated into a `Previous Hermes Chat` session when `sessions.json` does not exist. Completed Hermes turns also write to the general `HistoryEntry` store with transcript, output, screen context, screenshot metadata, and LLM message payloads.
 
 Persisted sessions found in `waiting` state after app launch are recovered as `interrupted`,
 because the remote Hermes task may have continued after the local app process was restarted.
@@ -189,7 +191,7 @@ Hermes sessions have an Active/Archive lifecycle in the app UI. Archiving remove
 session from the active list but keeps the local session record and message history
 available in the Archive tab; legacy `closed` sessions are treated as archived.
 Restoring an archived session returns it to a replyable active state inferred from its
-latest message. Deleting a session permanently removes only the local WonderWhisper
+latest message. Deleting a session permanently removes only the local HermesWhisper
 record; it does not delete remote Hermes VPS context unless the API later adds a
 separate remote delete operation.
 
@@ -393,7 +395,7 @@ erDiagram
 ### File System Layout
 
 ```
-~/Library/Application Support/WonderWhisper/
+~/Library/Application Support/HermesWhisper/
 ├── History/
 │   ├── entries/           # JSON files (HistoryEntry)
 │   │   ├── <uuid>.json
@@ -547,7 +549,7 @@ struct AppConfig {
     static let hermesAPIKeyAlias: String = "HERMES_API_SERVER_KEY"
     static let defaultHermesBaseURLString: String = "http://127.0.0.1:8642"
     static let defaultHermesModel: String = "hermes-agent"
-    static let defaultHermesConversationName: String = "wonderwhisper-mac"
+    static let defaultHermesConversationName: String = "hermeswhisper-mac"
     
     // Network
     static let httpProtocolPreference: HTTPProtocolPreference
@@ -829,4 +831,4 @@ protocol LLMProvider {
 
 **Document Version**: 1.5
 **Last Updated**: May 7, 2026
-**Maintainer**: WonderWhisper Mac Development Team
+**Maintainer**: HermesWhisper Development Team

@@ -1,28 +1,28 @@
 # Claude Code Instructions
 
 ## Project Overview
-WonderWhisper Mac is a macOS dictation app built with SwiftUI. It provides voice-to-text transcription via Groq Whisper or local Parakeet, with optional LLM processing through OpenRouter.
+HermesWhisper is a macOS dictation app built with SwiftUI. It provides voice-to-text transcription via Groq Whisper or local Parakeet, with optional LLM processing through OpenRouter.
 
 ## Quick Reference
 
 ### Build & Run
 ```bash
 # Build
-xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug build
+xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -configuration Debug build
 
 # Run tests
-xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test
+xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test
 
 # Run single test
-xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test -only-testing:WonderWhisper_MacTests/TestClass/testName
+xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test -only-testing:HermesWhisperTests/TestClass/testName
 
-# Launch built app
-open build/Debug/WonderWhisper\ Mac.app
+# Launch script-built app
+open build/Build/Products/Debug/HermesWhisper.app
 ```
 
 ### Key Directories
-- `WonderWhisper Mac/` - Main app source (SwiftUI views, view models, services)
-- `WonderWhisper MacTests/` - Unit tests (Swift Testing framework)
+- `HermesWhisper/` - Main app source (SwiftUI views, view models, services)
+- `HermesWhisperTests/` - Unit tests (Swift Testing framework)
 - `Scripts/` - Build helper scripts
 
 ### Core Architecture
@@ -65,4 +65,5 @@ open build/Debug/WonderWhisper\ Mac.app
 ## Security
 - API keys stored in macOS Keychain via `KeychainService`
 - Never commit secrets
-- User data in `~/Library/Application Support/WonderWhisper/`
+- User data in `~/Library/Application Support/HermesWhisper/`
+- First launch after the app rename copies existing local data from the legacy `WonderWhisper` Application Support directory when needed.

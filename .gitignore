@@ -1,6 +1,8 @@
 # Build artifacts
 /build/
 /DerivedData_WW/
+*.xcresult/
+logs/
 
 # Xcode
 *.pbxuser
@@ -30,6 +32,7 @@
 .xcuserstate
 *.xcuserstate
 .xcuserdata/
+**/xcuserdata/
 xcuserdata/*.xcuserstate
 project.xcworkspace/xcuserdata/*.xcuserstate
 
@@ -38,3 +41,10 @@ project.xcworkspace/xcuserdata/*.xcuserstate
 
 # Git worktrees
 .worktrees/
+
+# Local assistant/editor state
+.cursor/worktrees.json
+.kilocode/
+.roo/
+.kilocodemodes
+docs/superpowers/

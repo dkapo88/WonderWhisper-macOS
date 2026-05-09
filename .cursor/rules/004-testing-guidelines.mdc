@@ -1,5 +1,5 @@
 ---
-description: Testing guidelines for WonderWhisper Mac
+description: Testing guidelines for HermesWhisper
 ---
 # Testing Guidelines
 
@@ -9,5 +9,5 @@ description: Testing guidelines for WonderWhisper Mac
 - **Coverage**: aim ≥80% for core modules.
 - **Run**: use the Test command rule or Xcode’s Test action.
 
-Place unit tests in ["WonderWhisper MacTests/"](mdc:WonderWhisper MacTests/) and UI tests in ["WonderWhisper MacUITests/"](mdc:WonderWhisper MacUITests/).
+Place unit tests in ["HermesWhisperTests/"](mdc:HermesWhisperTests/) and UI tests in ["HermesWhisperUITests/"](mdc:HermesWhisperUITests/).
 
