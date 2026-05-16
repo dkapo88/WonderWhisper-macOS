@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-16: Replaced unsigned preview install notes with signed notarized release install guidance.
 - 2026-05-09: Documented unsigned preview install instructions for GitHub release DMGs.
 - 2026-05-09: Expanded the README with app overview, dictation, Command Mode, Hermes setup, context, timeout, and prompt-tag documentation.
 - 2026-05-09: Updated the HermesWhisper README header image asset.
