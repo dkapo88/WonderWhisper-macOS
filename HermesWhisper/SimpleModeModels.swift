@@ -29,6 +29,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case command
   case vocabulary
   case microphone
+  case permissions
   case settings
 
   static let displayOrder: [SimpleSidebarItem] = [
@@ -38,6 +39,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     .command,
     .vocabulary,
     .microphone,
+    .permissions,
     .settings
   ]
 
@@ -51,6 +53,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
     case .microphone: return "Microphone"
+    case .permissions: return "Permissions"
     case .settings: return "Settings"
     }
   }
@@ -63,6 +66,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
     case .microphone: return "waveform"
+    case .permissions: return "checkmark.shield"
     case .settings: return "gearshape.fill"
     }
   }

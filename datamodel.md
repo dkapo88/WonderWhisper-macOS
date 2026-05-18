@@ -307,7 +307,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "hermes, history, dictation, command, vocabulary, microphone, settings"
+        String value "hermes, history, dictation, command, vocabulary, microphone, permissions, settings"
     }
     
     SimpleVoiceEngine {
@@ -569,6 +569,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.8.1 (May 19, 2026)**: Added `permissions` to `SimpleSidebarItem` for the macOS permissions checker tab.
 - **v1.8 (May 8, 2026)**: Added Hermes LLM title generation, optional Hermes post-processing, clearer response-window focus/reply state, selectable message bodies, and raw/formatted copy actions.
 - **v1.7 (May 7, 2026)**: Limited Hermes clipboard context to copied text captured within one minute before recording start.
 - **v1.6 (May 7, 2026)**: Added persistent multi-session Hermes storage and per-session response windows.

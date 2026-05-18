@@ -1656,7 +1656,7 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .hermes, .microphone, .settings: return nil
+        case .vocabulary, .history, .hermes, .microphone, .permissions, .settings: return nil
         }
     }
 

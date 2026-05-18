@@ -16,7 +16,7 @@ Core components: `DictationViewModel` (orchestrates recording → transcription 
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with seven sidebar tabs: Hermes, History, Dictation, Command, Vocabulary, Microphone, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with eight sidebar tabs: Hermes, History, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V4 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-19: Added a Permissions sidebar tab for checking and prompting required macOS permissions.
 - 2026-05-16: Replaced unsigned preview install notes with signed notarized release install guidance.
 - 2026-05-09: Documented unsigned preview install instructions for GitHub release DMGs.
 - 2026-05-09: Expanded the README with app overview, dictation, Command Mode, Hermes setup, context, timeout, and prompt-tag documentation.

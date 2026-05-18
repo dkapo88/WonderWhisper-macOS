@@ -48,6 +48,9 @@ struct ContentView: View {
             case .microphone:
                 MicrophoneSelectionView(vm: vm)
                     .navigationTitle("Microphone")
+            case .permissions:
+                PermissionsView()
+                    .navigationTitle("Permissions")
             case .settings:
                 SimpleModeSettingsView(vm: vm)
                     .navigationTitle("Settings")
