@@ -202,7 +202,7 @@ separate remote delete operation.
 ```mermaid
 erDiagram
     SimplePromptSettings {
-        SimplePromptRule[] rules
+        String rules
         String header
         String footer
         Bool enableScreenContext
@@ -212,20 +212,23 @@ erDiagram
         Selection selection "optional hotkey"
         Bool includeScreenImage
     }
-    
-    SimplePromptRule {
+
+    SimplePromptTemplate {
         UUID id PK
-        String text
+        String name
+        String rules
+        String footer
+        String source "builtIn or custom"
     }
     
-    SimplePromptSettings ||--|{ SimplePromptRule : "contains"
+    SimplePromptTemplate ||--|| SimplePromptSettings : "applies rules/footer"
 ```
 
 **SimplePromptSettings**: Simplified configuration for the two user-facing modes. Each mode can independently toggle OCR screen context, clipboard history, selected text, and the full active text field payload.
 - **Dictation**: Voice-to-text formatting. Fresh installs default to Fn/Globe, screen context on, clipboard context off, selected text off, and active field context on.
 - **Command**: Selected-text/OCR aware assistant mode. Fresh installs default to Right Option, screen context on, clipboard context off, selected text off, and active field context on.
 
-**SimplePromptRule**: Individual formatting/behavior rules as plain text statements
+**SimplePromptTemplate**: Reusable dictation prompt template. Built-in templates live in code; custom templates persist as JSON data and store the prompt body (`rules`) plus footer.
 
 **SimpleVoiceEngine**: User-facing toggle that selects the transcription backend.
 
@@ -454,6 +457,7 @@ erDiagram
 | `transcription.openrouter.model` | String | Selected OpenRouter speech-to-text model ID |
 | `simple.dictation.settings` | Data | Dictation prompt settings |
 | `simple.command.settings` | Data | Command prompt settings |
+| `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
 | `audio.stream.eq.enabled` | Bool | Stream EQ enabled |
 | `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
@@ -569,6 +573,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.8.2 (May 19, 2026)**: Added reusable dictation prompt templates with custom template persistence.
 - **v1.8.1 (May 19, 2026)**: Added `permissions` to `SimpleSidebarItem` for the macOS permissions checker tab.
 - **v1.8 (May 8, 2026)**: Added Hermes LLM title generation, optional Hermes post-processing, clearer response-window focus/reply state, selectable message bodies, and raw/formatted copy actions.
 - **v1.7 (May 7, 2026)**: Limited Hermes clipboard context to copied text captured within one minute before recording start.

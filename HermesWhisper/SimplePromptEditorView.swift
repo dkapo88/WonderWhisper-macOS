@@ -3,6 +3,8 @@ import SwiftUI
 struct SimplePromptEditorView: View {
   @ObservedObject var vm: DictationViewModel
   let kind: SimplePromptKind
+  @State private var templateDraft: PromptTemplateDraft?
+  @State private var pendingTemplateDeletion: SimplePromptTemplate?
 
   private var settings: SimplePromptSettings {
     kind == .dictation ? vm.simpleDictation : vm.simpleCommand
@@ -37,6 +39,7 @@ struct SimplePromptEditorView: View {
 
         singleKeySection
         captureSection
+        promptTemplateSection
         promptHeaderSection
         rulesSection
         promptFooterSection
@@ -45,6 +48,113 @@ struct SimplePromptEditorView: View {
       }
       .padding(24)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .sheet(item: $templateDraft) { draft in
+      PromptTemplateEditorSheet(draft: draft) { name, rules, footer in
+        switch draft.mode {
+        case .save:
+          vm.saveCurrentDictationPromptTemplate(named: name)
+        case .edit(let id):
+          vm.updateDictationPromptTemplate(id: id, name: name, rules: rules, footer: footer)
+        }
+      }
+    }
+    .confirmationDialog(
+      "Delete template?",
+      isPresented: Binding(
+        get: { pendingTemplateDeletion != nil },
+        set: { if !$0 { pendingTemplateDeletion = nil } }
+      )
+    ) {
+      if let template = pendingTemplateDeletion {
+        Button("Delete \(template.name)", role: .destructive) {
+          vm.deleteDictationPromptTemplate(id: template.id)
+          pendingTemplateDeletion = nil
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        pendingTemplateDeletion = nil
+      }
+    }
+  }
+
+  private var promptTemplateSection: some View {
+    Group {
+      if kind == .dictation {
+        GroupBox("Prompt templates") {
+          VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+              Picker("Template", selection: Binding<UUID?>(
+                get: { vm.selectedDictationPromptTemplateID },
+                set: { newValue in
+                  guard let id = newValue else {
+                    vm.selectedDictationPromptTemplateID = nil
+                    return
+                  }
+                  vm.applyDictationPromptTemplate(id: id)
+                }
+              )) {
+                Text("Choose template").tag(UUID?.none)
+                ForEach(vm.dictationPromptTemplates) { template in
+                  Text(template.name).tag(Optional(template.id))
+                }
+              }
+              .frame(maxWidth: 360)
+
+              Spacer()
+
+              Button {
+                templateDraft = PromptTemplateDraft(
+                  mode: .save,
+                  title: "Save Template",
+                  name: suggestedTemplateName,
+                  rules: settings.rules,
+                  footer: settings.footer
+                )
+              } label: {
+                Label("Save Template", systemImage: "plus")
+              }
+              .controlSize(.small)
+
+              Button {
+                guard let template = selectedEditableTemplate else { return }
+                templateDraft = PromptTemplateDraft(
+                  mode: .edit(template.id),
+                  title: "Edit Template",
+                  name: template.name,
+                  rules: template.rules,
+                  footer: template.footer
+                )
+              } label: {
+                Label("Edit Template", systemImage: "pencil")
+              }
+              .controlSize(.small)
+              .disabled(selectedEditableTemplate == nil)
+
+              Button(role: .destructive) {
+                pendingTemplateDeletion = selectedEditableTemplate
+              } label: {
+                Label("Delete Template", systemImage: "trash")
+              }
+              .controlSize(.small)
+              .disabled(selectedEditableTemplate == nil)
+            }
+
+            if let selected = selectedTemplate {
+              Text(selected.isBuiltIn
+                   ? "Built-in templates can be applied or saved as a new custom template."
+                   : "Custom template selected.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            } else {
+              Text("Selecting a template replaces the current prompt body and footer.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+          }
+          .padding(.top, 4)
+        }
+      }
     }
   }
 
@@ -225,7 +335,125 @@ struct SimplePromptEditorView: View {
   SimplePromptEditorView(vm: DictationViewModel(), kind: .dictation)
 }
 
+private struct PromptTemplateDraft: Identifiable {
+  enum Mode {
+    case save
+    case edit(UUID)
+  }
+
+  let id = UUID()
+  let mode: Mode
+  let title: String
+  let name: String
+  let rules: String
+  let footer: String
+}
+
+private struct PromptTemplateEditorSheet: View {
+  let draft: PromptTemplateDraft
+  let onSave: (String, String, String) -> Void
+  @Environment(\.dismiss) private var dismiss
+  @State private var name: String
+  @State private var rules: String
+  @State private var footer: String
+
+  init(draft: PromptTemplateDraft, onSave: @escaping (String, String, String) -> Void) {
+    self.draft = draft
+    self.onSave = onSave
+    _name = State(initialValue: draft.name)
+    _rules = State(initialValue: draft.rules)
+    _footer = State(initialValue: draft.footer)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(draft.title)
+        .font(.title3.weight(.semibold))
+
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Name")
+          .font(.caption.weight(.semibold))
+          .foregroundColor(.secondary)
+        TextField("Template name", text: $name)
+          .textFieldStyle(.roundedBorder)
+      }
+
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Prompt body")
+          .font(.caption.weight(.semibold))
+          .foregroundColor(.secondary)
+        TextEditor(text: $rules)
+          .font(.body)
+          .frame(minHeight: 220)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 10)
+              .fill(Color(nsColor: .textBackgroundColor))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.secondary.opacity(0.2))
+          )
+      }
+
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Footer")
+          .font(.caption.weight(.semibold))
+          .foregroundColor(.secondary)
+        TextEditor(text: $footer)
+          .font(.body)
+          .frame(minHeight: 120)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 10)
+              .fill(Color(nsColor: .textBackgroundColor))
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.secondary.opacity(0.2))
+          )
+      }
+
+      HStack {
+        Spacer()
+        Button("Cancel") {
+          dismiss()
+        }
+        Button("Save") {
+          onSave(name, rules, footer)
+          dismiss()
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+    }
+    .padding(24)
+    .frame(width: 680, height: 640)
+  }
+}
+
 private extension SimplePromptEditorView {
+  var selectedTemplate: SimplePromptTemplate? {
+    guard let id = vm.selectedDictationPromptTemplateID else { return nil }
+    return vm.dictationPromptTemplates.first(where: { $0.id == id })
+  }
+
+  var selectedEditableTemplate: SimplePromptTemplate? {
+    guard let template = selectedTemplate, !template.isBuiltIn else { return nil }
+    return template
+  }
+
+  var suggestedTemplateName: String {
+    var counter = vm.customDictationPromptTemplates.count + 1
+    var candidate = "Custom template \(counter)"
+    let existing = Set(vm.dictationPromptTemplates.map { $0.name.lowercased() })
+    while existing.contains(candidate.lowercased()) {
+      counter += 1
+      candidate = "Custom template \(counter)"
+    }
+    return candidate
+  }
+
   var singleKeyBinding: Binding<HotkeyManager.Selection?> {
     Binding(
       get: { kind == .dictation ? vm.simpleDictation.selection : vm.simpleCommand.selection },

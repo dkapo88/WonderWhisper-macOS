@@ -110,6 +110,14 @@ final class DictationViewModel: ObservableObject {
             }
         }
     }
+    @Published var customDictationPromptTemplates: [SimplePromptTemplate] = DictationViewModel.loadCustomDictationPromptTemplates() {
+        didSet {
+            Task { @MainActor [weak self] in
+                self?.persistCustomDictationPromptTemplates()
+            }
+        }
+    }
+    @Published var selectedDictationPromptTemplateID: UUID?
     @Published var simpleLLMEnabled: Bool = DictationViewModel.loadSimpleLLMEnabled() {
         didSet {
             Task { @MainActor [weak self] in
@@ -138,6 +146,9 @@ final class DictationViewModel: ObservableObject {
     var simpleDictation: SimplePromptSettings { simpleDictationSettings }
     var simpleCommand: SimplePromptSettings { simpleCommandSettings }
     var simpleModelOptions: [SimpleModelOption] { SimpleModeDefaults.modelOptions(custom: simpleCustomModels) }
+    var dictationPromptTemplates: [SimplePromptTemplate] {
+        SimplePromptTemplateLibrary.builtInDictationTemplates + customDictationPromptTemplates
+    }
 
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
@@ -1498,6 +1509,48 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
+    func applyDictationPromptTemplate(id: UUID) {
+        guard let template = dictationPromptTemplates.first(where: { $0.id == id }) else { return }
+        selectedDictationPromptTemplateID = id
+        var settings = simpleSettings(for: .dictation)
+        settings.rules = template.rules
+        settings.footer = template.footer
+        applySimpleSettings(settings, for: .dictation)
+    }
+
+    func saveCurrentDictationPromptTemplate(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let template = SimplePromptTemplate(
+            name: trimmed,
+            rules: simpleDictationSettings.rules,
+            footer: simpleDictationSettings.footer
+        )
+        customDictationPromptTemplates.append(template)
+        selectedDictationPromptTemplateID = template.id
+    }
+
+    func updateDictationPromptTemplate(id: UUID, name: String, rules: String, footer: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = customDictationPromptTemplates.firstIndex(where: { $0.id == id }) else { return }
+        customDictationPromptTemplates[index].name = trimmed
+        customDictationPromptTemplates[index].rules = rules
+        customDictationPromptTemplates[index].footer = footer
+
+        if selectedDictationPromptTemplateID == id {
+            applyDictationPromptTemplate(id: id)
+        }
+    }
+
+    func deleteDictationPromptTemplate(id: UUID) {
+        guard customDictationPromptTemplates.contains(where: { $0.id == id }) else { return }
+        customDictationPromptTemplates.removeAll { $0.id == id }
+        if selectedDictationPromptTemplateID == id {
+            selectedDictationPromptTemplateID = nil
+        }
+    }
+
     func addCustomSimpleModel(id: String) {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1562,6 +1615,12 @@ final class DictationViewModel: ObservableObject {
         }
         UserDefaults.standard.set(cleaned, forKey: SimpleDefaultsKey.customModels)
         applySimplePrompts()
+    }
+
+    private func persistCustomDictationPromptTemplates() {
+        if let data = try? JSONEncoder().encode(customDictationPromptTemplates) {
+            UserDefaults.standard.set(data, forKey: SimpleDefaultsKey.dictationPromptTemplates)
+        }
     }
 
     private func simpleVoiceEngineDidChange(oldValue: SimpleVoiceEngine) {
@@ -1718,6 +1777,7 @@ final class DictationViewModel: ObservableObject {
             isUpdatingSimpleSidebar = false
         }
         isApplyingSimplePrompts = false
+        refreshPromptHotkeys()
         updateProvidersImmediately()
     }
 
@@ -3186,6 +3246,7 @@ private struct PromptBootstrap {
 private enum SimpleDefaultsKey {
     static let dictationSettings = "simple.dictation.settings"
     static let commandSettings = "simple.command.settings"
+    static let dictationPromptTemplates = "simple.dictation.promptTemplates"
     static let selectedModel = "simple.model.selected"
     static let customModels = "simple.model.custom"
     static let llmEnabled = "simple.llm.enabled"
@@ -3227,6 +3288,26 @@ private extension DictationViewModel {
 
     static func loadSimpleCustomModels() -> [String] {
         UserDefaults.standard.stringArray(forKey: SimpleDefaultsKey.customModels) ?? []
+    }
+
+    static func loadCustomDictationPromptTemplates() -> [SimplePromptTemplate] {
+        guard let data = UserDefaults.standard.data(forKey: SimpleDefaultsKey.dictationPromptTemplates),
+              let decoded = try? JSONDecoder().decode([SimplePromptTemplate].self, from: data) else {
+            return []
+        }
+        var seen: Set<String> = []
+        return decoded.compactMap { template in
+            let trimmed = template.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+
+            var sanitized = template
+            sanitized.name = trimmed
+            sanitized.source = .custom
+            return sanitized
+        }
     }
 
     static func loadSimpleLLMEnabled() -> Bool {

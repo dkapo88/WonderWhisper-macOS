@@ -1,6 +1,7 @@
 import Foundation
 import Carbon.HIToolbox
 import Cocoa
+import ApplicationServices
 
 final class PromptHotkeyManager {
     enum TriggerPhase {
@@ -67,9 +68,18 @@ final class PromptHotkeyManager {
             return
         }
         ensureSelectionTap()
+        guard selectionTap != nil else {
+            AppLog.hotkeys.error(
+                "Skipped prompt selection id=\(promptID.uuidString, privacy: .public) selection=\(selection.rawValue, privacy: .public) because event tap is unavailable"
+            )
+            return
+        }
         var set = selectionBindings[selection] ?? []
         set.insert(promptID)
         selectionBindings[selection] = set
+        AppLog.hotkeys.log(
+            "Registered prompt selection id=\(promptID.uuidString, privacy: .public) selection=\(selection.rawValue, privacy: .public)"
+        )
     }
 
     func unregister(promptID: UUID) {
@@ -132,6 +142,13 @@ final class PromptHotkeyManager {
     // MARK: - Selection monitoring
     private func ensureSelectionTap() {
         guard selectionTap == nil else { return }
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [promptKey: true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        guard trusted else {
+            AppLog.hotkeys.error("Prompt selection event tap blocked: Accessibility trust is not granted")
+            return
+        }
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
@@ -149,7 +166,9 @@ final class PromptHotkeyManager {
             if shouldSuppress { return nil }
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
-            AppLog.hotkeys.error("Failed to install prompt selection event tap")
+            AppLog.hotkeys.error(
+                "Failed to install prompt selection event tap axTrusted=\(trusted, privacy: .public)"
+            )
             return
         }
         selectionTap = tap
@@ -157,7 +176,10 @@ final class PromptHotkeyManager {
         if let src = selectionSource {
             CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            AppLog.hotkeys.log("Installed prompt selection event tap")
+            let trusted = AXIsProcessTrusted()
+            AppLog.hotkeys.log(
+                "Installed prompt selection event tap axTrusted=\(trusted, privacy: .public)"
+            )
         }
     }
 
