@@ -129,6 +129,45 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   }
 }
 
+struct TranscriptionLanguageOption: Identifiable, Hashable {
+  let code: String
+  let name: String
+
+  var id: String { code }
+  var displayName: String {
+    code == "auto" ? name : "\(name) (\(code))"
+  }
+
+  static let options: [TranscriptionLanguageOption] = [
+    .init(code: "auto", name: "Auto-detect"),
+    .init(code: "en", name: "English"),
+    .init(code: "ar", name: "Arabic"),
+    .init(code: "cs", name: "Czech"),
+    .init(code: "da", name: "Danish"),
+    .init(code: "de", name: "German"),
+    .init(code: "es", name: "Spanish"),
+    .init(code: "fa", name: "Persian"),
+    .init(code: "fil", name: "Filipino"),
+    .init(code: "fr", name: "French"),
+    .init(code: "hi", name: "Hindi"),
+    .init(code: "id", name: "Indonesian"),
+    .init(code: "it", name: "Italian"),
+    .init(code: "ja", name: "Japanese"),
+    .init(code: "ko", name: "Korean"),
+    .init(code: "mk", name: "Macedonian"),
+    .init(code: "ms", name: "Malay"),
+    .init(code: "nl", name: "Dutch"),
+    .init(code: "pl", name: "Polish"),
+    .init(code: "pt", name: "Portuguese"),
+    .init(code: "ro", name: "Romanian"),
+    .init(code: "ru", name: "Russian"),
+    .init(code: "sv", name: "Swedish"),
+    .init(code: "th", name: "Thai"),
+    .init(code: "tr", name: "Turkish"),
+    .init(code: "vi", name: "Vietnamese")
+  ]
+}
+
 struct SimplePromptSettings: Codable, Equatable {
   var rules: String
   var header: String

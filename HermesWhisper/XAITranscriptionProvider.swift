@@ -31,7 +31,8 @@ final class XAITranscriptionProvider: TranscriptionProvider {
             provider: "xai",
             model: settings.model,
             language: language,
-            preprocessing: false
+            preprocessing: false,
+            vocabularyTerms: settings.vocabularyTerms
         )
         if let key = cacheKey, let cached = TranscriptionCache.shared.lookup(key) {
             return cached
@@ -49,6 +50,10 @@ final class XAITranscriptionProvider: TranscriptionProvider {
             fields.append(("format", "true"))
             fields.append(("language", language))
         }
+        fields.append(("filler_words", "false"))
+        for term in settings.vocabularyTerms.prefix(VoiceVocabularyKeyterms.maxTerms) {
+            fields.append(("keyterm", term))
+        }
 
         let signpostID = OSSignpostID(log: spLog)
         os_signpost(
@@ -61,7 +66,7 @@ final class XAITranscriptionProvider: TranscriptionProvider {
             mimeType
         )
         AppLog.dictation.log(
-            "xAI transcription start bytes=\(data.count, privacy: .public) mime=\(mimeType, privacy: .public)"
+            "xAI transcription start bytes=\(data.count, privacy: .public) mime=\(mimeType, privacy: .public) keyterms=\(settings.vocabularyTerms.count, privacy: .public)"
         )
 
         let t0 = Date()

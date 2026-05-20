@@ -85,6 +85,11 @@ struct SimpleModeSettingsView: View {
           .font(.caption)
           .foregroundColor(.secondary)
 
+        Divider()
+          .padding(.vertical, 2)
+
+        transcriptionLanguageSelector
+
         if vm.simpleVoiceEngine == .openRouterTranscription {
           Divider()
             .padding(.vertical, 2)
@@ -93,6 +98,25 @@ struct SimpleModeSettingsView: View {
         }
       }
       .padding(.top, 4)
+    }
+  }
+
+  private var transcriptionLanguageSelector: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Transcription language")
+        .font(.callout.weight(.semibold))
+
+      Picker("Transcription language", selection: $vm.transcriptionLanguage) {
+        ForEach(TranscriptionLanguageOption.options) { option in
+          Text(option.displayName).tag(option.code)
+        }
+      }
+      .labelsHidden()
+      .frame(maxWidth: 420)
+
+      Text("Grok STT uses this with formatting enabled. Auto-detect skips formatting-specific language hints.")
+        .font(.caption)
+        .foregroundColor(.secondary)
     }
   }
 

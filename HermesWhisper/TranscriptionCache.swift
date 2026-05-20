@@ -9,8 +9,16 @@ struct TranscriptionCacheKey: Hashable {
     let language: String?
     let preprocessing: Bool
     let contentHash: String? // Audio content fingerprint for better deduplication
+    let vocabularySignature: String?
     
-    init(fileSize: UInt64, fileMod: TimeInterval, provider: String, model: String, language: String?, preprocessing: Bool, contentHash: String? = nil) {
+    init(fileSize: UInt64,
+         fileMod: TimeInterval,
+         provider: String,
+         model: String,
+         language: String?,
+         preprocessing: Bool,
+         contentHash: String? = nil,
+         vocabularyTerms: [String] = []) {
         self.fileSize = fileSize
         self.fileMod = fileMod
         self.provider = provider
@@ -18,6 +26,18 @@ struct TranscriptionCacheKey: Hashable {
         self.language = language
         self.preprocessing = preprocessing
         self.contentHash = contentHash
+        self.vocabularySignature = Self.signature(for: vocabularyTerms)
+    }
+
+    private static func signature(for terms: [String]) -> String? {
+        let normalized = terms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .sorted()
+        guard !normalized.isEmpty else { return nil }
+        let data = Data(normalized.joined(separator: "\u{1F}").utf8)
+        let digest = SHA256.hash(data: data)
+        return digest.compactMap { String(format: "%02x", $0) }.joined().prefix(16).description
     }
 }
 
@@ -41,7 +61,7 @@ final class TranscriptionCache {
         }
     }
 
-    func key(for fileURL: URL, provider: String, model: String, language: String?, preprocessing: Bool) -> TranscriptionCacheKey? {
+    func key(for fileURL: URL, provider: String, model: String, language: String?, preprocessing: Bool, vocabularyTerms: [String] = []) -> TranscriptionCacheKey? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
               let size = attrs[.size] as? NSNumber,
               let mod = attrs[.modificationDate] as? Date else { return nil }
@@ -56,12 +76,13 @@ final class TranscriptionCache {
             model: model,
             language: language,
             preprocessing: preprocessing,
-            contentHash: contentHash
+            contentHash: contentHash,
+            vocabularyTerms: vocabularyTerms
         )
     }
     
     // Create cache key from raw audio data
-    func key(for audioData: Data, filename: String, provider: String, model: String, language: String?, preprocessing: Bool) -> TranscriptionCacheKey {
+    func key(for audioData: Data, filename: String, provider: String, model: String, language: String?, preprocessing: Bool, vocabularyTerms: [String] = []) -> TranscriptionCacheKey {
         let contentHash = generateContentHash(for: audioData)
         
         return TranscriptionCacheKey(
@@ -71,7 +92,8 @@ final class TranscriptionCache {
             model: model,
             language: language,
             preprocessing: preprocessing,
-            contentHash: contentHash
+            contentHash: contentHash,
+            vocabularyTerms: vocabularyTerms
         )
     }
     

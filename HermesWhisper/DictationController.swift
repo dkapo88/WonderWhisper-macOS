@@ -46,7 +46,7 @@ actor DictationController {
     private var preCapturedSelectedText: String?
     private var preCapturedActiveTextField: String?
     private var clipboardSnapshotForSession: String?
-    private let clipboardMonitor = ClipboardContextMonitor()
+    private let clipboardMonitor = ClipboardContextMonitor(startsEnabled: false)
     private let clipboardWindowSeconds: TimeInterval = 10
     private var screenContextCaptureGeneration: Int = 0
 
@@ -218,6 +218,7 @@ actor DictationController {
                 model: transcriberSettings.model,
                 timeout: transcriberSettings.timeout,
                 language: transcriberSettings.language,
+                vocabularyTerms: transcriberSettings.vocabularyTerms,
                 context: "hotkey"
             )
 
@@ -253,6 +254,7 @@ actor DictationController {
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
+            transcript = applyVocabularyCorrections(to: transcript)
 
             let selected = resolveSelectedTextForSession()
             let activeTextField = resolveActiveTextFieldForSession()
@@ -463,6 +465,7 @@ actor DictationController {
     func updateScreenContextCaptureMode(_ mode: ScreenContextCaptureMode) { self.screenContextCaptureMode = mode }
     func updateClipboardContextEnabled(_ enabled: Bool) {
         clipboardContextEnabled = enabled
+        Task { await clipboardMonitor.setMonitoringEnabled(enabled) }
         if !enabled {
             clipboardSnapshotForSession = nil
             Task { await clipboardMonitor.clear() }
@@ -478,6 +481,15 @@ actor DictationController {
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
+
+    private func applyVocabularyCorrections(to transcript: String) -> String {
+        let vocabulary = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
+        let corrected = VocabularyTextCorrector.apply(to: transcript, vocabulary: vocabulary)
+        if corrected != transcript {
+            AppLog.dictation.log("Applied deterministic vocabulary corrections")
+        }
+        return corrected
+    }
 
     private func resetTransientSessionState() {
         currentRecordingURL = nil
@@ -528,6 +540,7 @@ actor DictationController {
                 model: transcriberSettings.model,
                 timeout: transcriberSettings.timeout,
                 language: transcriberSettings.language,
+                vocabularyTerms: transcriberSettings.vocabularyTerms,
                 context: "hermes"
             )
 
@@ -554,6 +567,7 @@ actor DictationController {
             }
             let transcribeDT = Date().timeIntervalSince(t0)
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
+            transcript = applyVocabularyCorrections(to: transcript)
 
             let selected = resolveSelectedTextForSession()
             let activeTextField = resolveActiveTextFieldForSession()
@@ -668,9 +682,12 @@ actor DictationController {
                 model: transcriberSettings.model,
                 timeout: transcriberSettings.timeout,
                 language: transcriberSettings.language,
+                vocabularyTerms: transcriberSettings.vocabularyTerms,
                 context: "reprocess"
             )
-            let transcript = try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
+            let transcript = applyVocabularyCorrections(
+                to: try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
+            )
             let transcribeDT = Date().timeIntervalSince(t0)
             var output = transcript
             var llmDT: TimeInterval = 0

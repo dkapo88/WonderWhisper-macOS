@@ -183,7 +183,14 @@ enum ScreenContextTermExtractor {
 
     for piece in unified.split(separator: ",") {
       var raw = String(piece).trimmingCharacters(in: .whitespacesAndNewlines)
-      raw = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-•*0123456789. \t"))
+      let leadingSet = CharacterSet(charactersIn: "-•*0123456789. \t")
+      if let firstNonNoisyIndex = raw.firstIndex(where: { char in
+        char.unicodeScalars.allSatisfy { !leadingSet.contains($0) }
+      }) {
+        raw = String(raw[firstNonNoisyIndex...])
+      } else {
+        raw = ""
+      }
 
       let lower = raw.lowercased()
       for prefix in ["terms:", "keywords:", "screen context terms:", "context terms:"] {
@@ -352,7 +359,7 @@ enum ScreenContextTermExtractor {
       scheme: .nameType,
       options: options
     ) { tag, range in
-      guard let tag, tag != .other else { return true }
+      guard let tag, tag == .personalName || tag == .placeName || tag == .organizationName else { return true }
       let term = String(text[range])
       add(term, 60, text.distance(from: text.startIndex, to: range.lowerBound))
       return true

@@ -2,24 +2,43 @@ import Foundation
 import AppKit
 
 actor ClipboardContextMonitor {
+    private static let activePollingIntervalNanoseconds: UInt64 = 1_000_000_000
+    private static let inactivePollingIntervalNanoseconds: UInt64 = 5_000_000_000
+
     private var lastChangeCount: Int = -1
     private var lastCapturedText: String?
     private var lastCaptureDate: Date?
     private var monitorTask: Task<Void, Never>?
     private let maximumRetentionWindow: TimeInterval?
+    private var isMonitoringEnabled: Bool
 
-    init(maximumRetentionWindow: TimeInterval? = nil) {
+    init(maximumRetentionWindow: TimeInterval? = nil, startsEnabled: Bool = true) {
         self.maximumRetentionWindow = maximumRetentionWindow
-        monitorTask = Task { [weak self] in
-            await self?.runMonitor()
-        }
+        self.isMonitoringEnabled = startsEnabled
     }
 
     deinit {
         monitorTask?.cancel()
     }
 
+    func start() {
+        startMonitorIfNeeded()
+    }
+
+    func setMonitoringEnabled(_ enabled: Bool) async {
+        startMonitorIfNeeded()
+        guard isMonitoringEnabled != enabled else { return }
+        isMonitoringEnabled = enabled
+        if enabled {
+            lastChangeCount = await readChangeCount()
+        } else {
+            lastCapturedText = nil
+            lastCaptureDate = nil
+        }
+    }
+
     func refreshSnapshot(capturedAt: Date = Date(), matchingChangeCount: Int? = nil) async {
+        startMonitorIfNeeded()
         let changeCount = await readChangeCount()
         if let matchingChangeCount, changeCount != matchingChangeCount {
             return
@@ -86,11 +105,22 @@ actor ClipboardContextMonitor {
         lastCaptureDate = nil
     }
 
+    private func startMonitorIfNeeded() {
+        guard monitorTask == nil else { return }
+        monitorTask = Task { [weak self] in
+            await self?.runMonitor()
+        }
+    }
+
     private func runMonitor() async {
         lastChangeCount = await readChangeCount()
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            let interval = isMonitoringEnabled
+                ? Self.activePollingIntervalNanoseconds
+                : Self.inactivePollingIntervalNanoseconds
+            try? await Task.sleep(nanoseconds: interval)
             expireStaleCapture()
+            guard isMonitoringEnabled else { continue }
             let changeCount = await readChangeCount()
             guard changeCount != lastChangeCount else { continue }
             lastChangeCount = changeCount

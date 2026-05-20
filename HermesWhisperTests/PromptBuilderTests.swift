@@ -100,6 +100,43 @@ struct PromptBuilderTests {
         #expect(message.contains("</OUTPUT>"))
         #expect(!message.contains("<FORMATTED_TEXT>"))
     }
+
+    @Test func voiceVocabularyKeytermsIncludeCustomTermsAndReplacementTargets() {
+        let terms = VoiceVocabularyKeyterms.terms(
+            customVocabulary: "HermesWhisper, Hapana\nEzypay, hermeswhisper",
+            spellingCorrections: "home's wispa -> HermesWhisper\nbisso -> Biso"
+        )
+
+        #expect(terms == ["HermesWhisper", "Hapana", "Ezypay", "Biso"])
+    }
+
+    @Test func voiceVocabularyKeytermsDropTermsOverProviderLimit() {
+        let longTerm = String(repeating: "A", count: VoiceVocabularyKeyterms.maxCharactersPerTerm + 1)
+        let terms = VoiceVocabularyKeyterms.terms(
+            customVocabulary: "Valid Term, \(longTerm)",
+            spellingCorrections: ""
+        )
+
+        #expect(terms == ["Valid Term"])
+    }
+
+    @Test func vocabularyTextCorrectorFixesNearMissProperNouns() {
+        let corrected = VocabularyTextCorrector.apply(
+            to: "It should be okay with Ezipay, then I will talk to McKenzie.",
+            vocabulary: "Ezypay, Makenzie, Hapana"
+        )
+
+        #expect(corrected == "It should be okay with Ezypay, then I will talk to Makenzie.")
+    }
+
+    @Test func vocabularyTextCorrectorAvoidsDistantCommonWords() {
+        let corrected = VocabularyTextCorrector.apply(
+            to: "This payment report is ready.",
+            vocabulary: "Tais, Hapana"
+        )
+
+        #expect(corrected == "This payment report is ready.")
+    }
 }
 
 struct StructuredScreenTextBuilderTests {

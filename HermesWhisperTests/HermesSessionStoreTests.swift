@@ -133,10 +133,10 @@ struct HermesSessionNamingTests {
 
   @Test func generatedTitleIsSanitizedAndClipped() {
     let title = HermesSessionNaming.normalizedGeneratedTitle(
-      "<OUTPUT>Title: \"Daily AI briefing cron output review and Slack posting plan.\"</OUTPUT>"
+      "<OUTPUT>Title: \"Daily AI briefing review and Slack posting plan.\"</OUTPUT>"
     )
 
-    #expect(title == "Daily AI briefing cron output review and Slack posting plan")
+    #expect(title == "Daily AI briefing review and Slack posting plan")
   }
 
   @Test func displayTitleUsesMatchingSessionNotCurrentSelection() {

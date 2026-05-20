@@ -280,6 +280,8 @@ final class DictationViewModel: ObservableObject {
                 hermesClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
             )
+            let enabled = hermesClipboardContextEnabled
+            Task { await hermesClipboardMonitor.setMonitoringEnabled(enabled) }
         }
     }
     @Published var hermesClipboardTimeoutSeconds: Double = {
@@ -408,7 +410,10 @@ final class DictationViewModel: ObservableObject {
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
     private let hermesClipboardMonitor = ClipboardContextMonitor(
-        maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow
+        maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow,
+        startsEnabled: UserDefaults.standard.object(
+            forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
+        ) as? Bool ?? true
     )
 
     // Debouncing for provider updates
@@ -470,6 +475,10 @@ final class DictationViewModel: ObservableObject {
         let activeScreenContextEnabled = simpleShouldEnableScreenContext()
         let activeClipboardContextEnabled = simpleShouldEnableClipboard()
         let activeLLMModel = simpleSelectedModel
+        let initialVoiceVocabularyTerms = VoiceVocabularyKeyterms.terms(
+            customVocabulary: persistedVocabCustom,
+            spellingCorrections: persistedVocabSpelling
+        )
 
         let transcriptionTimeout = max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
         let transcriber: TranscriptionProvider
@@ -479,7 +488,8 @@ final class DictationViewModel: ObservableObject {
             transcriberSettings = TranscriptionSettings(
                 endpoint: URL(string: "https://localhost")!,
                 model: activeTranscriptionModel,
-                language: transcriptionLanguage
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
             )
         } else if Self.isOpenRouterTranscriptionModel(activeTranscriptionModel) {
             transcriber = OpenRouterTranscriptionProvider(
@@ -491,7 +501,8 @@ final class DictationViewModel: ObservableObject {
                 endpoint: AppConfig.openrouterAudioTranscriptions,
                 model: activeTranscriptionModel,
                 timeout: transcriptionTimeout,
-                language: transcriptionLanguage
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
             )
         } else if activeTranscriptionModel == AppConfig.defaultXAITranscriptionModel {
             transcriber = XAITranscriptionProvider(
@@ -503,7 +514,8 @@ final class DictationViewModel: ObservableObject {
                 endpoint: AppConfig.xaiSpeechToText,
                 model: activeTranscriptionModel,
                 timeout: transcriptionTimeout,
-                language: transcriptionLanguage
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
             )
         } else {
             transcriber = GroqTranscriptionProvider(client: http)
@@ -511,7 +523,8 @@ final class DictationViewModel: ObservableObject {
                 endpoint: AppConfig.groqAudioTranscriptions,
                 model: activeTranscriptionModel,
                 timeout: transcriptionTimeout,
-                language: transcriptionLanguage
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
             )
         }
 
@@ -559,6 +572,7 @@ final class DictationViewModel: ObservableObject {
             Task { @MainActor in self.audioLevel = level }
         }
         Task {
+            await hermesClipboardMonitor.start()
             await controller.updateLLMEnabled(activeLLMEnabled)
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
@@ -593,10 +607,14 @@ final class DictationViewModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Throttle polling when idle to reduce wakeups
-                let isActive = self.isRecording || self.hermesIsSending || self.status == "Transcribing" || self.status == "Processing" || self.status == "Inserting"
+                // Throttle controller polling when idle to reduce wakeups.
+                let isActive = self.isRecording
+                    || self.hermesIsSending
+                    || self.status == "Transcribing"
+                    || self.status == "Processing"
+                    || self.status == "Inserting"
                 if !isActive {
-                    self.idleSkipCounter = (self.idleSkipCounter + 1) % 2 // ~2.5 Hz when idle
+                    self.idleSkipCounter = (self.idleSkipCounter + 1) % 5 // ~1 Hz when idle
                     if self.idleSkipCounter != 0 { return }
                 } else {
                     self.idleSkipCounter = 0
@@ -2331,7 +2349,7 @@ final class DictationViewModel: ObservableObject {
                 appName: turn.appName,
                 bundleID: turn.bundleID,
                 transcript: transcript,
-                output: response.text,
+                output: "",
                 screenContext: screenContext,
                 screenContextMethod: screenContextMethod,
                 screenImage: screenshot,
@@ -2429,7 +2447,7 @@ final class DictationViewModel: ObservableObject {
                 appName: "HermesWhisper",
                 bundleID: Bundle.main.bundleIdentifier,
                 transcript: rawText,
-                output: response.text,
+                output: "",
                 screenContext: nil,
                 screenContextMethod: nil,
                 screenImage: nil,
@@ -3052,11 +3070,16 @@ final class DictationViewModel: ObservableObject {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         let voiceModel = resolvedVoiceModel(for: prompt)
         let voiceLanguage = resolvedVoiceLanguage(for: prompt)
+        let voiceVocabularyTerms = VoiceVocabularyKeyterms.terms(
+            customVocabulary: vocabCustom,
+            spellingCorrections: vocabSpelling
+        )
         var tSettings = TranscriptionSettings(
             endpoint: AppConfig.groqAudioTranscriptions,
             model: voiceModel,
             timeout: max(5, min(120, transcriptionTimeoutSeconds)),
-            language: voiceLanguage
+            language: voiceLanguage,
+            vocabularyTerms: voiceVocabularyTerms
         )
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
@@ -3069,7 +3092,8 @@ final class DictationViewModel: ObservableObject {
             tSettings = TranscriptionSettings(
                 endpoint: URL(string: "https://localhost")!,
                 model: voiceModel,
-                language: voiceLanguage
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
             )
         } else if voiceModel == "groq-streaming" {
             let actualModel = AppConfig.defaultTranscriptionModel
@@ -3077,28 +3101,32 @@ final class DictationViewModel: ObservableObject {
                 endpoint: AppConfig.groqAudioTranscriptions,
                 model: actualModel,
                 timeout: max(5, min(120, transcriptionTimeoutSeconds)),
-                language: voiceLanguage
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
             )
         } else if Self.isOpenRouterTranscriptionModel(voiceModel) {
             tSettings = TranscriptionSettings(
                 endpoint: AppConfig.openrouterAudioTranscriptions,
                 model: voiceModel,
                 timeout: max(5, min(120, transcriptionTimeoutSeconds)),
-                language: voiceLanguage
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
             )
         } else if voiceModel == AppConfig.defaultXAITranscriptionModel {
             tSettings = TranscriptionSettings(
                 endpoint: AppConfig.xaiSpeechToText,
                 model: voiceModel,
                 timeout: max(5, min(120, transcriptionTimeoutSeconds)),
-                language: voiceLanguage
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
             )
         } else {
             tSettings = TranscriptionSettings(
                 endpoint: AppConfig.groqAudioTranscriptions,
                 model: voiceModel,
                 timeout: max(5, min(120, transcriptionTimeoutSeconds)),
-                language: voiceLanguage
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
             )
         }
 

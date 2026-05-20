@@ -50,18 +50,54 @@ public struct TranscriptionSettings {
     public let model: String
     public let timeout: TimeInterval
     public let language: String?
+    public let vocabularyTerms: [String]
     // Optional context label to help diagnose where requests originate (e.g., "hotkey", "reprocess")
     public let context: String?
     public init(endpoint: URL,
                 model: String,
                 timeout: TimeInterval = 180,
                 language: String? = nil,
+                vocabularyTerms: [String] = [],
                 context: String? = nil) {
         self.endpoint = endpoint
         self.model = model
         self.timeout = timeout
         self.language = language
+        self.vocabularyTerms = vocabularyTerms
         self.context = context
+    }
+}
+
+enum VoiceVocabularyKeyterms {
+    static let maxTerms = 100
+    static let maxCharactersPerTerm = 50
+
+    static func terms(customVocabulary: String, spellingCorrections: String) -> [String] {
+        var result: [String] = []
+        var seen: Set<String> = []
+
+        func add(_ raw: String) {
+            let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty, term.count <= maxCharactersPerTerm else { return }
+            let key = term.lowercased()
+            guard seen.insert(key).inserted else { return }
+            result.append(term)
+        }
+
+        let separators = CharacterSet(charactersIn: ",\n\r")
+        for item in customVocabulary.components(separatedBy: separators) {
+            add(item)
+            if result.count >= maxTerms { return result }
+        }
+
+        for line in spellingCorrections.components(separatedBy: .newlines) {
+            let parts = line.components(separatedBy: "->")
+            guard parts.count >= 2 else { continue }
+            add(parts[1...].joined(separator: "->"))
+            if result.count >= maxTerms { return result }
+        }
+
+        return result
     }
 }
 

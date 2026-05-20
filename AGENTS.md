@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-20: Added xAI STT keyterm injection, a transcription language selector, and deterministic vocabulary near-miss corrections.
 - 2026-05-19: Added reusable dictation prompt templates with save, edit, delete, and built-in defaults.
 - 2026-05-19: Added a Permissions sidebar tab for checking and prompting required macOS permissions.
 - 2026-05-16: Replaced unsigned preview install notes with signed notarized release install guidance.

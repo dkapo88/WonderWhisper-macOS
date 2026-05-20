@@ -62,6 +62,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
                 model: apiModel,
                 timeout: settings.timeout,
                 language: settings.language,
+                vocabularyTerms: settings.vocabularyTerms,
                 context: settings.context
             ),
             cacheKey: cacheKey
@@ -81,12 +82,14 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         )
         var fields: [String: String] = ["model": settings.model]
         // Optional: tighten decoding by providing language if known (prefer explicit override)
-        if let forced = settings.language?.trimmingCharacters(in: .whitespacesAndNewlines), !forced.isEmpty {
-            fields["language"] = forced
-        } else if let forced = UserDefaults.standard.string(forKey: "transcription.language"), !forced.isEmpty {
-            fields["language"] = forced
-        } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
-            fields["language"] = String(lang)
+        if !Self.isAutoLanguage(settings.language) {
+            if let forced = Self.normalizedLanguage(settings.language) {
+                fields["language"] = forced
+            } else if let forced = Self.normalizedLanguage(UserDefaults.standard.string(forKey: "transcription.language")) {
+                fields["language"] = forced
+            } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
+                fields["language"] = String(lang)
+            }
         }
         fields["temperature"] = "0"
 
@@ -131,6 +134,16 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         }
         
         throw ProviderError.decodingFailed
+    }
+
+    private static func normalizedLanguage(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty, trimmed.lowercased() != "auto" else { return nil }
+        return trimmed
+    }
+
+    private static func isAutoLanguage(_ value: String?) -> Bool {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "auto"
     }
 
     private static func apiModel(for storedModel: String) -> String {
