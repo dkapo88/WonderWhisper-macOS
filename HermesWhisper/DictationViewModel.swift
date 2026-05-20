@@ -193,6 +193,10 @@ final class DictationViewModel: ObservableObject {
     let llmProvider: String = "openrouter"
     // OpenRouter routing preference: "latency" or "throughput"
     @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "auto" { didSet { persistAndUpdate() } }
+    @Published var openrouterReasoning: OpenRouterReasoningMode = {
+        let raw = UserDefaults.standard.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
+        return OpenRouterReasoningMode(rawValue: raw) ?? .omit
+    }() { didSet { persistAndUpdate() } }
     @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(llmStreaming, forKey: "llm.streaming")
@@ -504,6 +508,19 @@ final class DictationViewModel: ObservableObject {
                 language: transcriptionLanguage,
                 vocabularyTerms: initialVoiceVocabularyTerms
             )
+        } else if activeTranscriptionModel == AppConfig.defaultXAIStreamingTranscriptionModel {
+            transcriber = XAIStreamingTranscriptionProvider(
+                apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias)
+                }
+            )
+            transcriberSettings = TranscriptionSettings(
+                endpoint: AppConfig.xaiSpeechToTextStreaming,
+                model: activeTranscriptionModel,
+                timeout: transcriptionTimeout,
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
+            )
         } else if activeTranscriptionModel == AppConfig.defaultXAITranscriptionModel {
             transcriber = XAITranscriptionProvider(
                 client: XAIHTTPClient(apiKeyProvider: {
@@ -543,7 +560,8 @@ final class DictationViewModel: ObservableObject {
             systemPrompt: renderedInitial,
             timeout: 60,
             streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false,
-            temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2
+            temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2,
+            openRouterReasoning: Self.loadOpenRouterReasoning()
         )
         GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
 
@@ -963,6 +981,7 @@ final class DictationViewModel: ObservableObject {
             try kc.setSecret(value, forKey: AppConfig.xaiAPIKeyAlias)
             settingsNotice = "xAI API key saved."
             transcriptionProviderCache.removeValue(forKey: AppConfig.defaultXAITranscriptionModel)
+            transcriptionProviderCache.removeValue(forKey: AppConfig.defaultXAIStreamingTranscriptionModel)
         } catch {
             settingsNotice = "Could not save xAI API key: \(error.localizedDescription)"
         }
@@ -1120,6 +1139,20 @@ final class DictationViewModel: ObservableObject {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
         updated.openrouterRoutingOverride = routing
+        prompts[idx] = updated
+        if updated.id == selectedPromptID {
+            updateProviders()
+        }
+    }
+
+    func resolvedOpenRouterReasoning(for prompt: PromptConfiguration?) -> OpenRouterReasoningMode {
+        prompt?.openrouterReasoningOverride ?? openrouterReasoning
+    }
+
+    func updateOpenRouterReasoningOverride(for id: UUID, to reasoning: OpenRouterReasoningMode?) {
+        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = prompts[idx]
+        updated.openrouterReasoningOverride = reasoning
         prompts[idx] = updated
         if updated.id == selectedPromptID {
             updateProviders()
@@ -1364,6 +1397,7 @@ final class DictationViewModel: ObservableObject {
 
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
+        UserDefaults.standard.set(openrouterReasoning.rawValue, forKey: "llm.openrouter.reasoning")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
         updateProviders()
@@ -2543,7 +2577,8 @@ final class DictationViewModel: ObservableObject {
                 systemPrompt: system,
                 timeout: max(30, min(120, transcriptionTimeoutSeconds)),
                 streaming: false,
-                temperature: llmTemperature
+                temperature: llmTemperature,
+                openRouterReasoning: openrouterReasoning
             )
             var cleaned = try await provider.process(
                 text: userMessage,
@@ -2596,7 +2631,8 @@ final class DictationViewModel: ObservableObject {
                 systemPrompt: "You create concise titles for task conversations.",
                 timeout: 30,
                 streaming: false,
-                temperature: 0.1
+                temperature: 0.1,
+                openRouterReasoning: openrouterReasoning
             )
             let output = try await provider.process(
                 text: HermesSessionNaming.promptForGeneratedTitle(sessionText: sourceText),
@@ -3112,6 +3148,14 @@ final class DictationViewModel: ObservableObject {
                 language: voiceLanguage,
                 vocabularyTerms: voiceVocabularyTerms
             )
+        } else if voiceModel == AppConfig.defaultXAIStreamingTranscriptionModel {
+            tSettings = TranscriptionSettings(
+                endpoint: AppConfig.xaiSpeechToTextStreaming,
+                model: voiceModel,
+                timeout: max(5, min(120, transcriptionTimeoutSeconds)),
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
+            )
         } else if voiceModel == AppConfig.defaultXAITranscriptionModel {
             tSettings = TranscriptionSettings(
                 endpoint: AppConfig.xaiSpeechToText,
@@ -3136,8 +3180,9 @@ final class DictationViewModel: ObservableObject {
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
 
         let routingForActivePrompt = resolvedOpenRouterRouting(for: prompt)
+        let reasoningForActivePrompt = resolvedOpenRouterReasoning(for: prompt)
         let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt, routing: routingForActivePrompt)
-        lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
+        lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature, openRouterReasoning: reasoningForActivePrompt)
         GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
 
         let transcriberSettings = tSettings
@@ -3230,6 +3275,18 @@ final class DictationViewModel: ObservableObject {
                     KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
                 })
             )
+        } else if model == AppConfig.defaultXAIStreamingTranscriptionModel {
+            let xaiStreamingProvider = XAIStreamingTranscriptionProvider(
+                apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias) }
+            )
+            Task {
+                await xaiStreamingProvider.setOnPreviewUpdate { [weak self] text in
+                    Task { @MainActor in
+                        self?.sonioxPreviewText = text
+                    }
+                }
+            }
+            provider = xaiStreamingProvider
         } else if model == AppConfig.defaultXAITranscriptionModel {
             provider = XAITranscriptionProvider(
                 client: XAIHTTPClient(apiKeyProvider: {
@@ -3354,6 +3411,11 @@ private extension DictationViewModel {
         let stored = UserDefaults.standard.string(forKey: SimpleDefaultsKey.openRouterTranscriptionModel)
         let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? AppConfig.defaultOpenRouterTranscriptionModel : trimmed
+    }
+
+    static func loadOpenRouterReasoning() -> OpenRouterReasoningMode {
+        let raw = UserDefaults.standard.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
+        return OpenRouterReasoningMode(rawValue: raw) ?? .omit
     }
 
     static func voiceModel(for engine: SimpleVoiceEngine, openRouterModel: String) -> String {

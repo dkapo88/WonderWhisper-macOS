@@ -435,12 +435,12 @@ extension AudioRecorder {
         audioConverter = AVAudioConverter(from: inputFormat, to: format)
         print("🎤 Streaming output sample rate: \(actualInputSampleRate) Hz")
 
-        // Tap buffer size: ~50ms of hardware audio. Output buffers are sized for the
-        // converted 16 kHz stream with margin for converter rounding.
-        let bufferSize: AVAudioFrameCount = AVAudioFrameCount(inputFormat.sampleRate / 20)
-        let outputBufferSize = AVAudioFrameCount(
-            max(1, Int(ceil(Double(bufferSize) * targetSampleRate / inputFormat.sampleRate))) + 32
-        )
+        // Tap buffer size: ~100ms of hardware audio. xAI recommends 100ms PCM
+        // frames, and AVAudioEngine may deliver larger buffers than requested, so
+        // keep enough converted-frame capacity to avoid silent truncation.
+        let bufferSize: AVAudioFrameCount = AVAudioFrameCount(inputFormat.sampleRate / 10)
+        let nominalOutputFrames = Int(ceil(Double(bufferSize) * targetSampleRate / inputFormat.sampleRate))
+        let outputBufferSize = AVAudioFrameCount(max(nominalOutputFrames + 256, 4_096))
 
         // Prepare audio buffers
         bufferLock.lock()
@@ -511,10 +511,20 @@ extension AudioRecorder {
             }
         }
 
+        let expectedOutputFrames = Int(
+            ceil(Double(buffer.frameLength) * 16_000.0 / buffer.format.sampleRate)
+        )
+
         // Convert buffer to target format if needed
         guard let convertedBuffer = convertBuffer(buffer) else {
             print("❌ Buffer conversion failed")
             return
+        }
+        if expectedOutputFrames > 0 {
+            let frameDeficit = expectedOutputFrames - Int(convertedBuffer.frameLength)
+            if frameDeficit > max(32, expectedOutputFrames / 20) {
+                print("⚠️ Streaming conversion under-emitted: produced=\(convertedBuffer.frameLength) expected≈\(expectedOutputFrames)")
+            }
         }
 
         // Send audio data

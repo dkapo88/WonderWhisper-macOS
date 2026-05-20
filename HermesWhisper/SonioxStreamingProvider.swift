@@ -24,6 +24,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   private let apiKeyProvider: () -> String?
   private let vocabularyProvider: () -> String?
   private let languageProvider: () -> String?
+  private nonisolated let audioChunkSource = SonioxStreamingAudioChunkSource()
 
   private var webSocketTask: URLSessionWebSocketTask?
   private var urlSession: URLSession?
@@ -53,6 +54,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   // Keepalive timer to prevent WebSocket timeout during silence
   private var keepaliveTask: Task<Void, Never>?
+  private var startupTask: Task<Void, Never>?
+  private var sendTask: Task<Void, Never>?
 
   init(apiKeyProvider: @escaping () -> String?,
        vocabularyProvider: @escaping () -> String? = { nil },
@@ -106,6 +109,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     AppLog.dictation.log("SonioxStreaming: Beginning real-time session")
 
     // Reset state
+    startupTask?.cancel()
+    startupTask = nil
+    sendTask?.cancel()
+    sendTask = nil
     await accumulator.reset()
     onPreviewUpdate?("")
     pendingAudioBuffer.removeAll()
@@ -120,6 +127,13 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     let sessionID = UUID()
     activeSessionID = sessionID
     isStreaming = true
+    let audioStream = audioChunkSource.startSession()
+    sendTask = Task { [weak self] in
+      guard let self else { return }
+      for await chunk in audioStream {
+        await self.sendQueuedPCM16(chunk)
+      }
+    }
 
     // Create URLSession with delegate for WebSocket
     let config = URLSessionConfiguration.default
@@ -151,14 +165,13 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       await self.receiveMessages(from: task, sessionID: sessionID)
     }
 
-    // Send initial configuration immediately (will be queued if connection is pending)
-    // Note: This might throw if connection fails instantly, which is what we want.
-    try await sendConfiguration(apiKey: apiKey)
-
-    // Start keepalive timer to prevent timeout during silence (every 15 seconds)
-    startKeepaliveTimer(for: task, sessionID: sessionID)
-
-    AppLog.dictation.log("SonioxStreaming: Session initialized")
+    // Configure in the background so the audio tap can start immediately and buffer
+    // the first words while URLSession opens the WebSocket.
+    startupTask = Task { [weak self] in
+      guard let self else { return }
+      await self.finishStartup(apiKey: apiKey, task: task, sessionID: sessionID)
+    }
+    AppLog.dictation.log("SonioxStreaming: Session accepting audio while configuration completes")
   }
 
   // Track bytes sent for logging
@@ -166,8 +179,16 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   private var lastLogTime: Date = Date()
   private var firstAudioSent: Bool = false
 
+  nonisolated func enqueuePCM16(_ data: Data) {
+    audioChunkSource.send(data)
+  }
+
   /// Feed PCM16 audio data to the streaming session
   func feedPCM16(_ data: Data) async throws {
+    await sendQueuedPCM16(data)
+  }
+
+  private func sendQueuedPCM16(_ data: Data) async {
     guard isStreaming else { return }
     guard !data.isEmpty else { return }
 
@@ -221,6 +242,11 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
     AppLog.dictation.log("SonioxStreaming: Ending session - finalizing stream")
     stopKeepaliveTimer()
+    audioChunkSource.finish()
+    await sendTask?.value
+    sendTask = nil
+    await startupTask?.value
+    startupTask = nil
 
     // Calculate how much audio we sent (in milliseconds)
     let bytesPerMs = inputSampleRate * 2.0 / 1000.0  // 16-bit = 2 bytes/sample
@@ -295,6 +321,11 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     isStreaming = false
 
     stopKeepaliveTimer()
+    audioChunkSource.finish()
+    startupTask?.cancel()
+    startupTask = nil
+    sendTask?.cancel()
+    sendTask = nil
     webSocketTask?.cancel(with: .normalClosure, reason: nil)
     webSocketTask = nil
     urlSession?.invalidateAndCancel()
@@ -345,6 +376,20 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   private var shouldLogVerboseMessages: Bool {
     UserDefaults.standard.bool(forKey: Self.verboseLoggingDefaultsKey)
+  }
+
+  private func finishStartup(apiKey: String, task: URLSessionWebSocketTask, sessionID: UUID) async {
+    do {
+      try await sendConfiguration(apiKey: apiKey)
+      guard isActiveSession(sessionID, task: task) else { return }
+      startKeepaliveTimer(for: task, sessionID: sessionID)
+      AppLog.dictation.log("SonioxStreaming: Session initialized")
+    } catch {
+      if isActiveSession(sessionID, task: task) {
+        AppLog.dictation.error("SonioxStreaming: Startup failed: \(error.localizedDescription)")
+        isServerFinished = true
+      }
+    }
   }
 
   private func isActiveSession(_ sessionID: UUID, task: URLSessionWebSocketTask) -> Bool {
@@ -670,5 +715,39 @@ private class SonioxSessionDelegate: NSObject, URLSessionWebSocketDelegate {
     if let error = error {
       AppLog.dictation.error("SonioxStreaming: Connection error: \(error.localizedDescription)")
     }
+  }
+}
+
+private final class SonioxStreamingAudioChunkSource: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: AsyncStream<Data>.Continuation?
+
+  func startSession() -> AsyncStream<Data> {
+    lock.lock()
+    continuation?.finish()
+    continuation = nil
+    lock.unlock()
+
+    return AsyncStream(bufferingPolicy: .unbounded) { [weak self] continuation in
+      self?.lock.lock()
+      self?.continuation = continuation
+      self?.lock.unlock()
+    }
+  }
+
+  func send(_ data: Data) {
+    guard !data.isEmpty else { return }
+    lock.lock()
+    let continuation = continuation
+    lock.unlock()
+    continuation?.yield(data)
+  }
+
+  func finish() {
+    lock.lock()
+    let continuation = continuation
+    self.continuation = nil
+    lock.unlock()
+    continuation?.finish()
   }
 }

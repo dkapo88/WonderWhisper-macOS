@@ -295,6 +295,26 @@ struct SimpleModeSettingsView: View {
             .foregroundColor(.secondary)
         }
 
+        Divider()
+
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Reasoning")
+            .font(.callout.weight(.semibold))
+
+          Picker("Reasoning", selection: $vm.openrouterReasoning) {
+            ForEach(OpenRouterReasoningMode.allCases, id: \.self) { mode in
+              Text(mode.displayName).tag(mode)
+            }
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .frame(maxWidth: 460)
+
+          Text(vm.openrouterReasoning.detail)
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+
       }
       .padding(.top, 4)
     }

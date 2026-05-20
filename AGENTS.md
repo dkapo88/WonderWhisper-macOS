@@ -48,6 +48,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-05-20: Added an OpenRouter reasoning setting for omitting, disabling, or minimizing model reasoning.
+- 2026-05-20: Stopped forcing OpenRouter reasoning parameters by default and preserved failed LLM attempt timing.
+- 2026-05-20: Added a separate xAI Grok STT streaming engine with ordered audio draining and async xAI fallback.
+- 2026-05-20: Increased streaming PCM conversion buffer capacity to prevent truncated live audio frames.
+- 2026-05-20: Made Soniox streaming accept and buffer audio immediately during WebSocket startup.
 - 2026-05-20: Added xAI STT keyterm injection, a transcription language selector, and deterministic vocabulary near-miss corrections.
 - 2026-05-19: Added reusable dictation prompt templates with save, edit, delete, and built-in defaults.
 - 2026-05-19: Added a Permissions sidebar tab for checking and prompting required macOS permissions.

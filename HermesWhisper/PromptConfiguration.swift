@@ -10,6 +10,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
   var llmModelOverride: String?
   var llmProviderOverride: String?
   var openrouterRoutingOverride: String?
+  var openrouterReasoningOverride: OpenRouterReasoningMode?
   var voiceModelOverride: String?
   var voiceLanguageOverride: String?
   var screenContextOverride: Bool?
@@ -30,6 +31,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
        selection: HotkeyManager.Selection? = nil,
        llmModelOverride: String? = nil,
        llmProviderOverride: String? = nil,
+       openrouterRoutingOverride: String? = nil,
+       openrouterReasoningOverride: OpenRouterReasoningMode? = nil,
        voiceModelOverride: String? = nil,
        voiceLanguageOverride: String? = nil,
        screenContextOverride: Bool? = nil,
@@ -49,6 +52,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     self.selection = selection
     self.llmModelOverride = llmModelOverride
     self.llmProviderOverride = llmProviderOverride
+    self.openrouterRoutingOverride = openrouterRoutingOverride
+    self.openrouterReasoningOverride = openrouterReasoningOverride
     self.voiceModelOverride = voiceModelOverride
     self.voiceLanguageOverride = voiceLanguageOverride
     self.screenContextOverride = screenContextOverride
@@ -72,6 +77,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     case llmModelOverride
     case llmProviderOverride
     case openrouterRoutingOverride
+    case openrouterReasoningOverride
     case voiceModelOverride
     case voiceLanguageOverride
     case screenContextOverride
@@ -96,6 +102,8 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     selection = try container.decodeIfPresent(HotkeyManager.Selection.self, forKey: .selection)
     llmModelOverride = try container.decodeIfPresent(String.self, forKey: .llmModelOverride)
     llmProviderOverride = try container.decodeIfPresent(String.self, forKey: .llmProviderOverride)
+    openrouterRoutingOverride = try container.decodeIfPresent(String.self, forKey: .openrouterRoutingOverride)
+    openrouterReasoningOverride = try container.decodeIfPresent(OpenRouterReasoningMode.self, forKey: .openrouterReasoningOverride)
     voiceModelOverride = try container.decodeIfPresent(String.self, forKey: .voiceModelOverride)
     voiceLanguageOverride = try container.decodeIfPresent(String.self, forKey: .voiceLanguageOverride)
     screenContextOverride = try container.decodeIfPresent(Bool.self, forKey: .screenContextOverride)
@@ -120,6 +128,7 @@ struct PromptConfiguration: Identifiable, Codable, Hashable {
     try container.encodeIfPresent(llmModelOverride, forKey: .llmModelOverride)
     try container.encodeIfPresent(llmProviderOverride, forKey: .llmProviderOverride)
     try container.encodeIfPresent(openrouterRoutingOverride, forKey: .openrouterRoutingOverride)
+    try container.encodeIfPresent(openrouterReasoningOverride, forKey: .openrouterReasoningOverride)
     try container.encodeIfPresent(voiceModelOverride, forKey: .voiceModelOverride)
     try container.encodeIfPresent(voiceLanguageOverride, forKey: .voiceLanguageOverride)
     try container.encodeIfPresent(screenContextOverride, forKey: .screenContextOverride)

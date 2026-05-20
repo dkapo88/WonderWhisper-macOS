@@ -112,13 +112,48 @@ public struct LLMSettings {
     public let timeout: TimeInterval
     public let streaming: Bool
     public let temperature: Double
-    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, streaming: Bool = false, temperature: Double = 0.2) {
+    public let openRouterReasoning: OpenRouterReasoningMode
+    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, streaming: Bool = false, temperature: Double = 0.2, openRouterReasoning: OpenRouterReasoningMode = .omit) {
         self.endpoint = endpoint
         self.model = model
         self.systemPrompt = systemPrompt
         self.timeout = timeout
         self.streaming = streaming
         self.temperature = temperature
+        self.openRouterReasoning = openRouterReasoning
+    }
+}
+
+public enum OpenRouterReasoningMode: String, CaseIterable, Codable, Hashable {
+    case omit
+    case off
+    case minimal
+    case low
+    case medium
+
+    public var displayName: String {
+        switch self {
+        case .omit: return "Omit"
+        case .off: return "Off"
+        case .minimal: return "Minimal"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .omit:
+            return "Send no reasoning field for broad model compatibility."
+        case .off:
+            return "Request reasoning off where the model/provider supports effort none."
+        case .minimal:
+            return "Use the smallest supported thinking level, useful for Gemini thinking models."
+        case .low:
+            return "Allow a small reasoning budget."
+        case .medium:
+            return "Allow the provider's normal medium reasoning mode."
+        }
     }
 }
 

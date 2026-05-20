@@ -40,12 +40,14 @@ struct AppConfig {
         return url
     }()
     static let xaiSpeechToText = xaiBase.appendingPathComponent("stt")
+    static let xaiSpeechToTextStreaming = URL(string: "wss://api.x.ai/v1/stt")!
 
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
     static let defaultOpenRouterTranscriptionModel = "openai/gpt-4o-mini-transcribe"
     static let defaultXAITranscriptionModel = "xai-stt"
+    static let defaultXAIStreamingTranscriptionModel = "xai-stt-streaming"
     static let defaultLLMModel = "moonshotai/kimi-k2-instruct"          // Kimi K2 Instruct (per Android config)
 
     // Legacy prompt previously used for OCR screen content organization

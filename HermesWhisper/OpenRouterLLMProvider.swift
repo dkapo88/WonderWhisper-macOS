@@ -47,19 +47,27 @@ final class OpenRouterLLMProvider: LLMProvider {
             provider = nil
         }
 
-        let req = OpenRouterHTTPClient.ChatRequest(model: settings.model, messages: typed, temperature: settings.temperature, stream: settings.streaming ? true : nil, provider: provider)
+        let req = OpenRouterHTTPClient.ChatRequest(
+            model: settings.model,
+            messages: typed,
+            temperature: settings.temperature,
+            stream: settings.streaming ? true : nil,
+            provider: provider,
+            reasoning: Self.reasoningOptions(for: settings.openRouterReasoning)
+        )
 
         // Use extended timeout for multimodal requests (image + text)
         // Image requests take longer due to base64 encoding and vision model processing
         let effectiveTimeout = hasImage ? max(settings.timeout * 1.5, 120) : settings.timeout
 
-        os_log("LLM request started - model: %{public}@, has_image: %{public}@, timeout: %.0fs, detail_level: %{public}@",
+        os_log("LLM request started - model: %{public}@, has_image: %{public}@, timeout: %.0fs, detail_level: %{public}@, reasoning: %{public}@",
                log: OpenRouterLLMProvider.log,
                type: .debug,
                settings.model,
                hasImage ? "yes" : "no",
                effectiveTimeout,
-               imageAttachment?.detail.rawValue ?? "none")
+               imageAttachment?.detail.rawValue ?? "none",
+               settings.openRouterReasoning.rawValue)
 
         if hasImage, let imageData = imageAttachment?.data {
             let imageSizeKB = Double(imageData.count) / 1024.0
@@ -94,6 +102,17 @@ final class OpenRouterLLMProvider: LLMProvider {
             let elapsed = Date().timeIntervalSince(startTime)
             os_log("LLM request failed after %.2fs: %{public}@", log: OpenRouterLLMProvider.log, type: .error, elapsed, error.localizedDescription)
             throw error
+        }
+    }
+
+    private static func reasoningOptions(for mode: OpenRouterReasoningMode) -> OpenRouterHTTPClient.ChatRequest.ReasoningOptions? {
+        switch mode {
+        case .omit:
+            return nil
+        case .off:
+            return .disabled
+        case .minimal, .low, .medium:
+            return .init(effort: mode.rawValue, exclude: true)
         }
     }
 

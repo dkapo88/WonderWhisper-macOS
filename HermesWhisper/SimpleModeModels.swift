@@ -82,6 +82,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   case sonioxStreaming
   case openRouterTranscription
   case xaiSpeechToText
+  case xaiStreamingSpeechToText
 
   var id: String { rawValue }
 
@@ -92,6 +93,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     case .sonioxStreaming: return "Soniox V4 (Real-time Cloud)"
     case .openRouterTranscription: return "OpenRouter Voice (Cloud)"
     case .xaiSpeechToText: return "Grok STT / xAI (Cloud)"
+    case .xaiStreamingSpeechToText: return "Grok STT / xAI Streaming (Cloud)"
     }
   }
 
@@ -107,6 +109,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
       return "Uploads finalized audio to OpenRouter's speech-to-text endpoint using the selected voice model."
     case .xaiSpeechToText:
       return "Uploads finalized audio to xAI's Grok Speech-to-Text API with optional formatting."
+    case .xaiStreamingSpeechToText:
+      return "Streams live PCM audio to xAI's Grok Speech-to-Text API for lower stop-to-text latency."
     }
   }
 
@@ -117,13 +121,14 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     case .sonioxStreaming: return "soniox-streaming"
     case .openRouterTranscription: return "openrouter-transcription"
     case .xaiSpeechToText: return "xai-stt"
+    case .xaiStreamingSpeechToText: return "xai-stt-streaming"
     }
   }
 
   /// Whether this engine shows a live transcript overlay instead of waveform
   var showsLiveTranscript: Bool {
     switch self {
-    case .sonioxStreaming: return true
+    case .sonioxStreaming, .xaiStreamingSpeechToText: return true
     default: return false
     }
   }

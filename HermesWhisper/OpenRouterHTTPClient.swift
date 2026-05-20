@@ -119,10 +119,17 @@ struct OpenRouterHTTPClient {
         }
         struct ProviderOptions: Encodable { let sort: String }
         struct ReasoningOptions: Encodable {
-            static let disabled = ReasoningOptions(effort: "none", exclude: true)
+            static let disabled = ReasoningOptions(effort: "none", enabled: nil, exclude: true)
 
-            let effort: String
-            let exclude: Bool
+            let effort: String?
+            let enabled: Bool?
+            let exclude: Bool?
+
+            init(effort: String? = nil, enabled: Bool? = nil, exclude: Bool? = nil) {
+                self.effort = effort
+                self.enabled = enabled
+                self.exclude = exclude
+            }
         }
 
         let model: String
@@ -138,7 +145,7 @@ struct OpenRouterHTTPClient {
             temperature: Double,
             stream: Bool?,
             provider: ProviderOptions?,
-            reasoning: ReasoningOptions? = .disabled
+            reasoning: ReasoningOptions? = nil
         ) {
             self.model = model
             self.messages = messages

@@ -121,7 +121,14 @@ actor DictationController {
                     await soniox.setInputSampleRate(16_000)
                     try await soniox.beginRealtime()
                     try recorder.startStreamingPCM16 { data in
-                        Task { try? await soniox.feedPCM16(data) }
+                        soniox.enqueuePCM16(data)
+                    }
+                }
+
+                if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
+                    try await xaiStreaming.beginRealtime(settings: transcriberSettings)
+                    try recorder.startStreamingPCM16 { data in
+                        xaiStreaming.enqueuePCM16(data)
                     }
                 }
 
@@ -150,6 +157,9 @@ actor DictationController {
                 }
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.abort()
+                }
+                if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
+                    await xaiStreaming.abort()
                 }
                 _ = recorder.stopRecording()
                 if autoMuteEnabled {
@@ -240,6 +250,13 @@ actor DictationController {
                 if looksEmptyOrPunctuation(transcript), recordingFileURL != nil {
                     AppLog.dictation.log("Soniox streaming empty; no file fallback available")
                     // Soniox doesn't support file transcription, so just use empty
+                }
+            } else if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                transcript = try await xaiStreaming.endRealtime()
+                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                    AppLog.dictation.log("xAI streaming empty/punctuation-only; fallback to async file transcription")
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else {
                 // Standard file-based transcription for non-streaming providers
@@ -369,10 +386,10 @@ actor DictationController {
                     os_signpost(.end, log: spLog, name: "HW.llm.process", signpostID: pipeId)
                 } catch {
                     let ns = error as NSError
-                    AppLog.dictation.error("LLM error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
+                    llmDT = Date().timeIntervalSince(t1)
+                    AppLog.dictation.error("LLM error after \(llmDT, format: .fixed(precision: 3))s: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
                     // Fallback to raw transcript on LLM failure
                     output = transcript
-                    llmDT = 0
                     state = .transcribing
                 }
             }
@@ -558,6 +575,13 @@ actor DictationController {
                 if looksEmptyOrPunctuation(transcript) {
                     AppLog.dictation.log("Hermes flow Soniox streaming empty; no file fallback available")
                 }
+            } else if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                transcript = try await xaiStreaming.endRealtime()
+                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
+                    AppLog.dictation.log("Hermes flow xAI streaming empty/punctuation-only; fallback to async file transcription")
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
             } else {
                 guard let fileURL = recordingFileURL else {
                     throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
@@ -607,6 +631,9 @@ actor DictationController {
         }
         if let soniox = transcriber as? SonioxStreamingProvider {
             await soniox.abort()
+        }
+        if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
+            await xaiStreaming.abort()
         }
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()
@@ -666,7 +693,8 @@ actor DictationController {
             systemPrompt: systemPromptOverride ?? llmSettings.systemPrompt,
             timeout: llmSettings.timeout,
             streaming: streamingOverride ?? llmSettings.streaming,
-            temperature: llmSettings.temperature
+            temperature: llmSettings.temperature,
+            openRouterReasoning: llmSettings.openRouterReasoning
         )
         return try await llm.process(text: text, userPrompt: userPrompt, settings: settings)
     }
