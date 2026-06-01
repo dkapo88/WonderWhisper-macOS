@@ -16,7 +16,7 @@ Core components: `DictationViewModel` (orchestrates recording → transcription 
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with eight sidebar tabs: Hermes, History, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with ten sidebar tabs: Hermes, Beeper, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V4 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
@@ -48,6 +48,10 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-06-01: Made Beeper response monitoring ambient for the configured chat, surfacing new incoming replies even when the user replies directly in Beeper.
+- 2026-05-31: Added a dedicated Beeper voice-send integration with chat ID storage, token storage, configurable shortcut, copied-text context, bounded response polling, and experimental WebSocket-first monitoring.
+- 2026-05-21: Added LLM-only history reprocessing for real-time transcripts and a Compare sidebar tab for favorite-model output and timing tests.
+- 2026-05-21: Tightened the default medium cleanup prompt body for brevity, voice preservation, and stronger list extraction.
 - 2026-05-20: Added an OpenRouter reasoning setting for omitting, disabling, or minimizing model reasoning.
 - 2026-05-20: Stopped forcing OpenRouter reasoning parameters by default and preserved failed LLM attempt timing.
 - 2026-05-20: Added a separate xAI Grok STT streaming engine with ordered audio draining and async xAI fallback.

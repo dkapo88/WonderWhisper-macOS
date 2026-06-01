@@ -700,23 +700,41 @@ actor DictationController {
     }
 
     func reprocess(entry: HistoryEntry, userPrompt: String) async {
-        guard let history = history, let url = await history.audioURL(for: entry) else { return }
+        guard let history else { return }
+        let audioURL = await history.audioURL(for: entry)
+        let useSavedTranscript = Self.shouldReprocessSavedTranscriptOnly(
+            entry: entry,
+            currentTranscriptionModel: transcriberSettings.model,
+            hasAudio: audioURL != nil
+        )
+        guard useSavedTranscript || audioURL != nil else { return }
+
         do {
-            state = .transcribing
             let overallStart = Date()
-            let t0 = Date()
-            let reprocSettings = TranscriptionSettings(
-                endpoint: transcriberSettings.endpoint,
-                model: transcriberSettings.model,
-                timeout: transcriberSettings.timeout,
-                language: transcriberSettings.language,
-                vocabularyTerms: transcriberSettings.vocabularyTerms,
-                context: "reprocess"
-            )
-            let transcript = applyVocabularyCorrections(
-                to: try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
-            )
-            let transcribeDT = Date().timeIntervalSince(t0)
+            let transcript: String
+            let transcribeDT: TimeInterval?
+
+            if useSavedTranscript {
+                transcript = entry.transcript
+                transcribeDT = nil
+            } else {
+                guard let url = audioURL else { return }
+                state = .transcribing
+                let t0 = Date()
+                let reprocSettings = TranscriptionSettings(
+                    endpoint: transcriberSettings.endpoint,
+                    model: transcriberSettings.model,
+                    timeout: transcriberSettings.timeout,
+                    language: transcriberSettings.language,
+                    vocabularyTerms: transcriberSettings.vocabularyTerms,
+                    context: "reprocess"
+                )
+                transcript = applyVocabularyCorrections(
+                    to: try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
+                )
+                transcribeDT = Date().timeIntervalSince(t0)
+            }
+
             var output = transcript
             var llmDT: TimeInterval = 0
             var userMsgForHistory: String? = nil
@@ -733,8 +751,14 @@ actor DictationController {
             var screenAttachment: LLMImageAttachment? = nil
             if let imageURL = await history.imageURL(for: entry),
                let data = try? Data(contentsOf: imageURL) {
-                let inferredMime = entry.screenImageMimeType ?? HistoryStore.mimeType(forExtension: imageURL.pathExtension)
-                screenAttachment = LLMImageAttachment(data: data, mimeType: inferredMime, detail: .high, filename: imageURL.lastPathComponent)
+                let inferredMime = entry.screenImageMimeType
+                    ?? HistoryStore.mimeType(forExtension: imageURL.pathExtension)
+                screenAttachment = LLMImageAttachment(
+                    data: data,
+                    mimeType: inferredMime,
+                    detail: .high,
+                    filename: imageURL.lastPathComponent
+                )
             }
 
             if llmEnabled {
@@ -751,7 +775,12 @@ actor DictationController {
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 let t1 = Date()
-                output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+                output = try await llm.process(
+                    text: userMsg,
+                    userPrompt: userPrompt,
+                    settings: llmSettings,
+                    imageAttachment: screenAttachment
+                )
                 llmDT = Date().timeIntervalSince(t1)
             }
             state = .idle
@@ -770,15 +799,35 @@ actor DictationController {
             // Only update the processing results and metadata
             updated.llmSystemMessage = systemForHistory
             updated.llmUserMessage = userMsgForHistory
-            updated.transcriptionModel = transcriberSettings.model
+            updated.transcriptionModel = useSavedTranscript
+                ? (entry.transcriptionModel ?? transcriberSettings.model)
+                : transcriberSettings.model
             updated.llmModel = llmEnabled ? llmSettings.model : nil
-            updated.transcriptionSeconds = transcribeDT
+            updated.transcriptionSeconds = useSavedTranscript ? entry.transcriptionSeconds : transcribeDT
             updated.llmSeconds = llmEnabled ? llmDT : nil
             updated.totalSeconds = Date().timeIntervalSince(overallStart)
             await history.replace(id: entry.id, with: updated)
         } catch {
             state = .error(error.localizedDescription)
         }
+    }
+
+    private static func shouldReprocessSavedTranscriptOnly(entry: HistoryEntry,
+                                                           currentTranscriptionModel: String,
+                                                           hasAudio: Bool) -> Bool {
+        if isRealtimeOnlyTranscriptionModel(entry.transcriptionModel) {
+            return true
+        }
+        if !hasAudio && !entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return isRealtimeOnlyTranscriptionModel(currentTranscriptionModel)
+    }
+
+    private static func isRealtimeOnlyTranscriptionModel(_ model: String?) -> Bool {
+        let normalized = model?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return normalized == "soniox-streaming"
+            || normalized == AppConfig.defaultXAIStreamingTranscriptionModel.lowercased()
     }
 }
 

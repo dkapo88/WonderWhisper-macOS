@@ -3,7 +3,7 @@ import Testing
 @testable import HermesWhisper
 
 struct OpenRouterHTTPClientTests {
-  @Test func chatRequestDisablesReasoningByDefault() throws {
+  @Test func chatRequestOmitsReasoningByDefault() throws {
     let request = OpenRouterHTTPClient.ChatRequest(
       model: "openai/gpt-5.2",
       messages: [
@@ -15,9 +15,7 @@ struct OpenRouterHTTPClientTests {
     )
     let data = try JSONEncoder().encode(request)
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    let reasoning = try #require(object["reasoning"] as? [String: Any])
 
-    #expect(reasoning["effort"] as? String == "none")
-    #expect(reasoning["exclude"] as? Bool == true)
+    #expect(object["reasoning"] == nil)
   }
 }

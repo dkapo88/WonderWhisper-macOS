@@ -284,8 +284,7 @@ final class DictationViewModel: ObservableObject {
                 hermesClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
             )
-            let enabled = hermesClipboardContextEnabled
-            Task { await hermesClipboardMonitor.setMonitoringEnabled(enabled) }
+            updateClipboardMonitorEnabled()
         }
     }
     @Published var hermesClipboardTimeoutSeconds: Double = {
@@ -326,6 +325,142 @@ final class DictationViewModel: ObservableObject {
     @Published var selectedHermesSessionID: UUID? {
         didSet { updateHermesChatProjection() }
     }
+    @Published var beeperEnabled: Bool = UserDefaults.standard.object(forKey: "beeper.enabled") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(beeperEnabled, forKey: "beeper.enabled")
+            refreshPromptHotkeys()
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperBaseURLString: String = UserDefaults.standard.string(forKey: "beeper.api.baseURL") ?? AppConfig.defaultBeeperBaseURLString {
+        didSet {
+            UserDefaults.standard.set(beeperBaseURLString, forKey: "beeper.api.baseURL")
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperChatID: String = UserDefaults.standard.string(forKey: "beeper.chat.id") ?? "" {
+        didSet {
+            UserDefaults.standard.set(beeperChatID, forKey: "beeper.chat.id")
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperSelection: HotkeyManager.Selection? = DictationViewModel.loadBeeperSelection() {
+        didSet {
+            persistBeeperSelection()
+            refreshPromptHotkeys()
+        }
+    }
+    @Published var beeperPostProcessingEnabled: Bool = {
+        let key = SimpleDefaultsKey.beeperPostProcessingEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                beeperPostProcessingEnabled,
+                forKey: SimpleDefaultsKey.beeperPostProcessingEnabled
+            )
+        }
+    }
+    @Published var beeperClipboardContextEnabled: Bool = {
+        let key = SimpleDefaultsKey.beeperClipboardContextEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                beeperClipboardContextEnabled,
+                forKey: SimpleDefaultsKey.beeperClipboardContextEnabled
+            )
+            updateClipboardMonitorEnabled()
+        }
+    }
+    @Published var beeperClipboardTimeoutSeconds: Double = {
+        let key = SimpleDefaultsKey.beeperClipboardTimeoutSeconds
+        let value = UserDefaults.standard.object(forKey: key) as? Double
+            ?? HermesClipboardContextPolicy.defaultRetentionWindow
+        return HermesClipboardContextPolicy.clampedRetentionWindow(value)
+    }() {
+        didSet {
+            let clamped = HermesClipboardContextPolicy.clampedRetentionWindow(
+                beeperClipboardTimeoutSeconds
+            )
+            if clamped != beeperClipboardTimeoutSeconds {
+                beeperClipboardTimeoutSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: SimpleDefaultsKey.beeperClipboardTimeoutSeconds)
+        }
+    }
+    @Published var beeperResponseMonitoringEnabled: Bool = {
+        let key = SimpleDefaultsKey.beeperResponseMonitoringEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                beeperResponseMonitoringEnabled,
+                forKey: SimpleDefaultsKey.beeperResponseMonitoringEnabled
+            )
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperWebSocketMonitoringEnabled: Bool = {
+        let key = SimpleDefaultsKey.beeperWebSocketMonitoringEnabled
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                beeperWebSocketMonitoringEnabled,
+                forKey: SimpleDefaultsKey.beeperWebSocketMonitoringEnabled
+            )
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperResponsePollingIntervalSeconds: Double = {
+        let key = SimpleDefaultsKey.beeperResponsePollingIntervalSeconds
+        let stored = UserDefaults.standard.object(forKey: key) as? Double ?? 10
+        return DictationViewModel.clampedBeeperPollingInterval(stored)
+    }() {
+        didSet {
+            let clamped = Self.clampedBeeperPollingInterval(
+                beeperResponsePollingIntervalSeconds
+            )
+            if clamped != beeperResponsePollingIntervalSeconds {
+                beeperResponsePollingIntervalSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(
+                clamped,
+                forKey: SimpleDefaultsKey.beeperResponsePollingIntervalSeconds
+            )
+            refreshBeeperResponseMonitor()
+        }
+    }
+    @Published var beeperResponsePollingTimeoutSeconds: Double = {
+        let key = SimpleDefaultsKey.beeperResponsePollingTimeoutSeconds
+        let stored = UserDefaults.standard.object(forKey: key) as? Double ?? 120
+        return DictationViewModel.clampedBeeperPollingTimeout(stored)
+    }() {
+        didSet {
+            let clamped = Self.clampedBeeperPollingTimeout(
+                beeperResponsePollingTimeoutSeconds
+            )
+            if clamped != beeperResponsePollingTimeoutSeconds {
+                beeperResponsePollingTimeoutSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(
+                clamped,
+                forKey: SimpleDefaultsKey.beeperResponsePollingTimeoutSeconds
+            )
+        }
+    }
+    @Published var beeperConnectionStatus: String?
+    @Published var beeperConnectionSucceeded: Bool?
+    @Published var beeperIsSending: Bool = false
+    @Published var beeperIsAwaitingResponse: Bool = false
+    @Published var beeperLastSentText: String = ""
+    @Published var beeperLastPendingMessageID: String?
+    @Published var beeperLastResponseText: String = ""
+    @Published var beeperLastResponseSender: String = ""
 
     @Published var audioStreamEQEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
@@ -405,19 +540,32 @@ final class DictationViewModel: ObservableObject {
     private lazy var hermesClient = HermesAgentAPIClient(
         apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.hermesAPIKeyAlias) }
     )
+    private lazy var beeperClient = BeeperAPIClient(
+        accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
+    )
+    private lazy var beeperWebSocketClient = BeeperWebSocketClient(
+        accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
+    )
     private var activeHermesPromptID: UUID?
     private var activeHermesRecordingSessionID: UUID?
+    private var activeBeeperPromptID: UUID?
+    private var beeperResponseMonitorTask: Task<Void, Never>?
     private var focusedHermesResponseSessionID: UUID?
     private var hermesInFlightSessionIDs: Set<UUID> = []
     private var hermesActiveRequestIDs: [UUID: UUID] = [:]
     private var hermesTitleRequestIDs: [UUID: UUID] = [:]
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
+    private var beeperClipboardTask: Task<String?, Never>?
+    private var activeBeeperResponseWindowID: UUID?
+    private var beeperResponseWindowIDForActiveRecording: UUID?
     private let hermesClipboardMonitor = ClipboardContextMonitor(
         maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow,
-        startsEnabled: UserDefaults.standard.object(
-            forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
-        ) as? Bool ?? true
+        startsEnabled: (
+            UserDefaults.standard.object(forKey: SimpleDefaultsKey.hermesClipboardContextEnabled) as? Bool ?? true
+        ) || (
+            UserDefaults.standard.object(forKey: SimpleDefaultsKey.beeperClipboardContextEnabled) as? Bool ?? true
+        )
     )
 
     // Debouncing for provider updates
@@ -591,6 +739,9 @@ final class DictationViewModel: ObservableObject {
         }
         Task {
             await hermesClipboardMonitor.start()
+            await hermesClipboardMonitor.setMonitoringEnabled(
+                hermesClipboardContextEnabled || beeperClipboardContextEnabled
+            )
             await controller.updateLLMEnabled(activeLLMEnabled)
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
@@ -602,6 +753,7 @@ final class DictationViewModel: ObservableObject {
             Task { await self?.handlePromptHotkey(id: id, phase: phase) }
         }
         refreshPromptHotkeys()
+        refreshBeeperResponseMonitor()
 
         configureSimpleModeState()
         let loadedHermesSessions = hermesSessionStore.loadSessions()
@@ -628,6 +780,8 @@ final class DictationViewModel: ObservableObject {
                 // Throttle controller polling when idle to reduce wakeups.
                 let isActive = self.isRecording
                     || self.hermesIsSending
+                    || self.beeperIsSending
+                    || self.beeperIsAwaitingResponse
                     || self.status == "Transcribing"
                     || self.status == "Processing"
                     || self.status == "Inserting"
@@ -640,6 +794,16 @@ final class DictationViewModel: ObservableObject {
                 let s = await self.controllerState()
                 if self.hermesIsSending, s != "Recording", s != "Transcribing" {
                     if self.status != "Waiting for Hermes" { self.status = "Waiting for Hermes" }
+                    return
+                }
+                if self.beeperIsSending, s != "Recording", s != "Transcribing" {
+                    if self.status != "Sending to Beeper" { self.status = "Sending to Beeper" }
+                    return
+                }
+                if self.beeperIsAwaitingResponse, s != "Recording", s != "Transcribing" {
+                    if self.status != "Waiting for Beeper response" {
+                        self.status = "Waiting for Beeper response"
+                    }
                     return
                 }
                 if self.status != s { self.status = s }
@@ -688,6 +852,10 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTask = nil
         providerUpdateTimer?.invalidate()  // Clean up debounce timer
         providerUpdateTimer = nil
+        beeperResponseMonitorTask?.cancel()
+        beeperResponseMonitorTask = nil
+        beeperClipboardTask?.cancel()
+        beeperClipboardTask = nil
         // Provider cache will be cleaned up automatically when object is deallocated
     }
 
@@ -710,6 +878,11 @@ final class DictationViewModel: ObservableObject {
                let hermesPromptID = activeHermesPromptID,
                let sessionID = activeHermesRecordingSessionID {
                 await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
+                return
+            }
+            if case .recording = currentState,
+               let beeperPromptID = activeBeeperPromptID {
+                await finishBeeperRecording(promptID: beeperPromptID)
                 return
             }
 
@@ -780,6 +953,10 @@ final class DictationViewModel: ObservableObject {
                 await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
                 return
             }
+            if let beeperPromptID = activeBeeperPromptID {
+                await finishBeeperRecording(promptID: beeperPromptID)
+                return
+            }
 
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
@@ -821,6 +998,7 @@ final class DictationViewModel: ObservableObject {
                 self.recordingStartTimestamp = nil
                 self.recordingStartInProgress = false
                 self.clearActiveHermesRecording(cancelContext: true)
+                self.clearActiveBeeperRecording(cancelContext: true)
             }
             await controller.cancel()
 
@@ -1636,6 +1814,89 @@ final class DictationViewModel: ObservableObject {
     func setActiveOpenRouterModel(id: String) {
         simpleSelectedModel = id
     }
+
+    func compareRawTextAcrossModels(_ rawText: String,
+                                    models: [FavoriteOpenRouterModel],
+                                    reasoningByModel: [String: OpenRouterReasoningMode],
+                                    runConcurrently: Bool) async -> [ModelComparisonResult] {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !models.isEmpty else { return [] }
+
+        let prompt = prompts.first(where: { $0.id == SimplePromptKind.dictation.promptID })
+        let systemTemplate = prompt?.systemPrompt
+            ?? SimplePromptComposer.systemPrompt(for: .dictation, settings: simpleDictationSettings)
+        let renderedSystem = PromptBuilder.renderSystemPrompt(
+            template: systemTemplate,
+            customVocabulary: vocabCustom
+        )
+        let userMessage = PromptBuilder.buildUserMessage(
+            transcription: trimmed,
+            selectedText: nil,
+            activeTextField: nil,
+            appName: nil,
+            screenContents: nil,
+            customVocabulary: vocabCustom
+        )
+        let comparisonPrompt = prompt?.userPrompt ?? userPrompt
+        let timeout = max(5, min(120, transcriptionTimeoutSeconds))
+        let temperature = llmTemperature
+        let spellingRules = vocabSpelling
+        let routing = resolvedOpenRouterRouting(for: prompt)
+
+        let requests = models.map { favorite in
+            ModelComparisonRequest(
+                model: favorite,
+                reasoning: reasoningByModel[favorite.id] ?? .off
+            )
+        }
+
+        if runConcurrently {
+            return await withTaskGroup(of: ModelComparisonResult.self) { group in
+                for request in requests {
+                    group.addTask {
+                        await Self.runModelComparison(
+                            request: request,
+                            userMessage: userMessage,
+                            userPrompt: comparisonPrompt,
+                            systemPrompt: renderedSystem,
+                            timeout: timeout,
+                            temperature: temperature,
+                            spellingRules: spellingRules,
+                            routing: routing
+                        )
+                    }
+                }
+
+                var results: [ModelComparisonResult] = []
+                for await result in group {
+                    results.append(result)
+                }
+                return results.sorted { lhs, rhs in
+                    guard let lhsIndex = requests.firstIndex(where: { $0.model.id == lhs.modelID }),
+                          let rhsIndex = requests.firstIndex(where: { $0.model.id == rhs.modelID }) else {
+                        return lhs.modelName < rhs.modelName
+                    }
+                    return lhsIndex < rhsIndex
+                }
+            }
+        }
+
+        var results: [ModelComparisonResult] = []
+        for request in requests {
+            let result = await Self.runModelComparison(
+                request: request,
+                userMessage: userMessage,
+                userPrompt: comparisonPrompt,
+                systemPrompt: renderedSystem,
+                timeout: timeout,
+                temperature: temperature,
+                spellingRules: spellingRules,
+                routing: routing
+            )
+            results.append(result)
+        }
+        return results
+    }
     
     private func persistFavoriteOpenRouterModels() {
         if let data = try? JSONEncoder().encode(favoriteOpenRouterModels) {
@@ -1767,7 +2028,9 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .hermes, .microphone, .permissions, .settings: return nil
+        case .vocabulary, .history, .comparison, .hermes, .beeper,
+             .microphone, .permissions, .settings:
+            return nil
         }
     }
 
@@ -1884,13 +2147,19 @@ final class DictationViewModel: ObservableObject {
         promptHotkeyManager.unregisterAll()
         for prompt in prompts {
             if let selection = prompt.selection {
+                guard !(beeperEnabled && beeperSelection == selection) else { continue }
                 promptHotkeyManager.register(selection: selection, for: prompt.id)
             } else if let shortcut = prompt.shortcut {
                 promptHotkeyManager.register(shortcut: shortcut, for: prompt.id)
             }
         }
-        if hermesAgentEnabled, let hermesSelection {
+        if hermesAgentEnabled,
+           let hermesSelection,
+           !(beeperEnabled && beeperSelection == hermesSelection) {
             promptHotkeyManager.register(selection: hermesSelection, for: HermesAgentHotkey.promptID)
+        }
+        if beeperEnabled, let beeperSelection {
+            promptHotkeyManager.register(selection: beeperSelection, for: BeeperHotkey.promptID)
         }
     }
 
@@ -1957,6 +2226,16 @@ final class DictationViewModel: ObservableObject {
         Task {
             await submitHermesTextTurn(trimmed, sessionID: targetSessionID)
         }
+    }
+
+    func sendResponseWindowTextReply(_ text: String, sessionID: UUID) {
+        if activeBeeperResponseWindowID == sessionID {
+            Task {
+                await submitBeeperTextReply(text, responseWindowID: sessionID)
+            }
+            return
+        }
+        sendHermesTextReply(text, to: sessionID, dismissResponseWindow: true)
     }
 
     var selectedHermesSession: HermesChatSession? {
@@ -2137,13 +2416,73 @@ final class DictationViewModel: ObservableObject {
 
     func setHermesSelection(_ selection: HotkeyManager.Selection?) {
         if let selection,
-           selection == simpleDictationSettings.selection || selection == simpleCommandSettings.selection {
-            hermesConnectionStatus = "That shortcut is already assigned to Dictation or Command."
+           selection == simpleDictationSettings.selection
+            || selection == simpleCommandSettings.selection
+            || selection == beeperSelection {
+            hermesConnectionStatus = "That shortcut is already assigned to another voice flow."
             hermesConnectionSucceeded = false
             return
         }
         guard hermesSelection != selection else { return }
         hermesSelection = selection
+    }
+
+    var isBeeperRecording: Bool {
+        activeBeeperPromptID != nil
+    }
+
+    func startBeeperRecording() {
+        Task {
+            let state = await controller.currentState()
+            if case .recording = state, let beeperPromptID = activeBeeperPromptID {
+                await finishBeeperRecording(promptID: beeperPromptID)
+                return
+            }
+            guard isIdleOrError(state) else { return }
+            await beginBeeperRecording(promptID: SimplePromptKind.dictation.promptID)
+        }
+    }
+
+    func saveBeeperAccessToken(_ value: String) {
+        let kc = KeychainService()
+        do {
+            try kc.setSecret(value, forKey: AppConfig.beeperAccessTokenAlias)
+            beeperConnectionStatus = "Beeper access token saved."
+            beeperConnectionSucceeded = nil
+            settingsNotice = "Beeper access token saved."
+        } catch {
+            let message = "Could not save Beeper access token: \(error.localizedDescription)"
+            beeperConnectionStatus = message
+            beeperConnectionSucceeded = false
+            settingsNotice = message
+        }
+    }
+
+    func testBeeperConnection() async {
+        beeperConnectionStatus = "Testing Beeper connection..."
+        beeperConnectionSucceeded = nil
+        do {
+            try await beeperClient.checkConnection(settings: currentBeeperSettings())
+            beeperConnectionStatus = "Beeper Desktop API reachable and token accepted."
+            beeperConnectionSucceeded = true
+            settingsNotice = beeperConnectionStatus
+        } catch {
+            beeperConnectionStatus = "Beeper connection failed: \(error.localizedDescription)"
+            beeperConnectionSucceeded = false
+            settingsNotice = beeperConnectionStatus
+        }
+    }
+
+    func setBeeperSelection(_ selection: HotkeyManager.Selection?) {
+        if let selection,
+           selection == simpleDictationSettings.selection
+            || selection == simpleCommandSettings.selection {
+            beeperConnectionStatus = "That shortcut is already assigned to another voice flow."
+            beeperConnectionSucceeded = false
+            return
+        }
+        guard beeperSelection != selection else { return }
+        beeperSelection = selection
     }
 
     private func isIdleOrError(_ state: DictationController.State) -> Bool {
@@ -2159,6 +2498,14 @@ final class DictationViewModel: ObservableObject {
             profileName: hermesProfileName,
             conversationName: conversationName ?? hermesConversationName,
             timeout: HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds)
+        )
+    }
+
+    private func currentBeeperSettings() -> BeeperSettings {
+        BeeperSettings(
+            baseURLString: beeperBaseURLString,
+            chatID: beeperChatID,
+            timeout: 20
         )
     }
 
@@ -2192,6 +2539,37 @@ final class DictationViewModel: ObservableObject {
                     promptID: activeHermesPromptID ?? id,
                     sessionID: sessionID
                 )
+            }
+        }
+    }
+
+    private func handleBeeperPromptHotkey(id: UUID,
+                                          phase: PromptHotkeyManager.TriggerPhase,
+                                          currentState: DictationController.State) async {
+        switch phase {
+        case .down:
+            promptPressTimes[id] = Date()
+            if let beeperPromptID = activeBeeperPromptID {
+                AppLog.dictation.log("Beeper hotkey down finishing active recording")
+                await finishBeeperRecording(promptID: beeperPromptID)
+                return
+            }
+            switch currentState {
+            case .idle, .error:
+                AppLog.dictation.log("Beeper hotkey down beginning recording")
+                await beginBeeperRecording(promptID: id)
+            case .recording:
+                AppLog.dictation.log("Beeper hotkey down ignored recording state without active prompt")
+            default:
+                break
+            }
+        case .up:
+            guard let start = promptPressTimes.removeValue(forKey: id) else { return }
+            let duration = Date().timeIntervalSince(start)
+            guard duration >= promptPressThreshold else { return }
+            let state = await controller.currentState()
+            if case .recording = state, activeBeeperPromptID != nil {
+                await finishBeeperRecording(promptID: activeBeeperPromptID ?? id)
             }
         }
     }
@@ -2301,6 +2679,388 @@ final class DictationViewModel: ObservableObject {
             }
             await restoreOriginalPromptIfNeeded()
         }
+    }
+
+    private func beginBeeperRecording(promptID: UUID) async {
+        guard beeperEnabled else { return }
+        beeperIsAwaitingResponse = false
+        beeperResponseWindowIDForActiveRecording = activeBeeperResponseWindowID
+        AppLog.dictation.log(
+            "Beeper recording begin prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
+        )
+        prepareBeeperContextCapture()
+        await MainActor.run {
+            self.isRecording = true
+            self.recordingStartTimestamp = Date()
+            self.recordingStartInProgress = true
+            self.recordingStopInProgress = false
+            self.activeBeeperPromptID = promptID
+            self.beeperConnectionStatus = "Recording Beeper message..."
+            self.beeperConnectionSucceeded = nil
+        }
+
+        await MainActor.run {
+            if self.selectedPromptID != promptID {
+                self.suppressSimpleSidebarSync = true
+                self.selectedPromptID = promptID
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await MainActor.run {
+            self.suppressSimpleSidebarSync = false
+            self.updateProvidersImmediately()
+        }
+        await waitForLatestProviderUpdate()
+        await controller.updateLLMEnabled(false)
+        await controller.updateScreenContextEnabled(false)
+        await controller.updateClipboardContextEnabled(false)
+
+        let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        let state = await controller.currentState()
+        await MainActor.run {
+            self.recordingStartInProgress = false
+            if case .error = state {
+                AppLog.dictation.error("Beeper recording start ended in controller error")
+                self.clearActiveBeeperRecording(cancelContext: true)
+                self.isRecording = false
+            }
+        }
+    }
+
+    private func finishBeeperRecording(promptID: UUID) async {
+        AppLog.dictation.log(
+            "Beeper recording finish prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
+        )
+        await MainActor.run {
+            self.recordingStopInProgress = true
+            self.isRecording = false
+            self.recordingStartTimestamp = nil
+            self.recordingStartInProgress = false
+            self.beeperConnectionStatus = "Transcribing Beeper message..."
+            self.beeperConnectionSucceeded = nil
+        }
+
+        let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
+        do {
+            guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
+                AppLog.dictation.warning("Beeper finish produced no transcription result")
+                await MainActor.run {
+                    self.clearActiveBeeperRecording(cancelContext: true)
+                }
+                return
+            }
+            await MainActor.run {
+                self.activeBeeperPromptID = nil
+            }
+            await restoreOriginalPromptIfNeeded()
+            await submitBeeperTurn(result)
+        } catch {
+            AppLog.dictation.error("Beeper finish failed: \(error.localizedDescription, privacy: .public)")
+            await MainActor.run {
+                self.clearActiveBeeperRecording(cancelContext: true)
+                self.beeperConnectionStatus = "Beeper send failed: \(error.localizedDescription)"
+                self.beeperConnectionSucceeded = false
+                self.settingsNotice = self.beeperConnectionStatus
+            }
+            await restoreOriginalPromptIfNeeded()
+        }
+    }
+
+    private func submitBeeperTurn(_ turn: DictationController.TranscriptionOnlyResult) async {
+        let rawTranscript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTranscript.isEmpty else {
+            clearBeeperContextCapture(cancel: true)
+            beeperConnectionStatus = BeeperClientError.emptyInput.localizedDescription
+            beeperConnectionSucceeded = false
+            settingsNotice = beeperConnectionStatus
+            return
+        }
+
+        beeperIsSending = true
+        beeperConnectionStatus = "Sending to Beeper..."
+        beeperConnectionSucceeded = nil
+        defer { beeperIsSending = false }
+        let responseWindowIDToDismiss = beeperResponseWindowIDForActiveRecording
+            ?? activeBeeperResponseWindowID
+
+        do {
+            let clipboardText = await consumeBeeperClipboardContext()
+            let transcript = await postProcessBeeperTranscriptIfNeeded(rawTranscript, turn: turn)
+            let outboundText = HermesAgentAPIClient.enrichedInputText(
+                input: transcript,
+                imageAttachment: nil,
+                clipboardText: clipboardText
+            )
+            let settings = currentBeeperSettings()
+            if beeperResponseMonitoringEnabled {
+                ensureBeeperResponseMonitorRunning()
+            }
+            let start = Date()
+            AppLog.dictation.log(
+                "Beeper send starting chars=\(outboundText.count, privacy: .public) dismissWindow=\(responseWindowIDToDismiss?.uuidString ?? "none", privacy: .public)"
+            )
+            let response = try await beeperClient.send(
+                text: outboundText,
+                settings: settings
+            )
+            let sendSeconds = Date().timeIntervalSince(start)
+
+            dismissBeeperResponseWindow(responseWindowIDToDismiss)
+            beeperResponseWindowIDForActiveRecording = nil
+            beeperLastSentText = outboundText
+            beeperLastPendingMessageID = response.pendingMessageID
+            AppLog.dictation.log(
+                "Beeper send succeeded pending=\(response.pendingMessageID, privacy: .public)"
+            )
+            beeperConnectionStatus = beeperResponseMonitoringEnabled
+                ? "Sent to Beeper. Watching for response..."
+                : "Sent to Beeper."
+            beeperConnectionSucceeded = true
+            settingsNotice = beeperConnectionStatus
+
+            await history.append(
+                fileURL: turn.fileURL,
+                appName: turn.appName,
+                bundleID: turn.bundleID,
+                transcript: transcript,
+                output: "",
+                screenContext: nil,
+                screenContextMethod: nil,
+                screenImage: nil,
+                selectedText: turn.selectedText,
+                activeTextField: turn.activeTextField,
+                llmSystemMessage: nil,
+                llmUserMessage: outboundText,
+                transcriptionModel: turn.transcriptionModel,
+                llmModel: "Beeper Desktop API",
+                transcriptionSeconds: turn.transcriptionSeconds,
+                llmSeconds: sendSeconds,
+                totalSeconds: turn.totalSeconds + sendSeconds
+            )
+        } catch {
+            AppLog.dictation.error("Beeper send failed: \(error.localizedDescription, privacy: .public)")
+            beeperResponseWindowIDForActiveRecording = nil
+            beeperConnectionStatus = "Beeper send failed: \(error.localizedDescription)"
+            beeperConnectionSucceeded = false
+            settingsNotice = beeperConnectionStatus
+        }
+    }
+
+    private func submitBeeperTextReply(_ text: String, responseWindowID: UUID) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard beeperEnabled else {
+            beeperConnectionStatus = "Enable Beeper before sending a text reply."
+            beeperConnectionSucceeded = false
+            settingsNotice = beeperConnectionStatus
+            return
+        }
+
+        beeperIsSending = true
+        beeperConnectionStatus = "Sending to Beeper..."
+        beeperConnectionSucceeded = nil
+        defer { beeperIsSending = false }
+
+        do {
+            let settings = currentBeeperSettings()
+            if beeperResponseMonitoringEnabled {
+                ensureBeeperResponseMonitorRunning()
+            }
+
+            let response = try await beeperClient.send(
+                text: trimmed,
+                settings: settings
+            )
+
+            if activeBeeperResponseWindowID == responseWindowID {
+                dismissActiveBeeperResponseWindow()
+            }
+            beeperLastSentText = trimmed
+            beeperLastPendingMessageID = response.pendingMessageID
+            beeperConnectionStatus = beeperResponseMonitoringEnabled
+                ? "Sent to Beeper. Watching for response..."
+                : "Sent to Beeper."
+            beeperConnectionSucceeded = true
+            settingsNotice = beeperConnectionStatus
+
+            await history.append(
+                fileURL: nil,
+                appName: "Beeper",
+                bundleID: nil,
+                transcript: trimmed,
+                output: "",
+                screenContext: nil,
+                screenContextMethod: nil,
+                screenImage: nil,
+                selectedText: nil,
+                activeTextField: nil,
+                llmSystemMessage: nil,
+                llmUserMessage: trimmed,
+                transcriptionModel: nil,
+                llmModel: "Beeper Desktop API",
+                transcriptionSeconds: nil,
+                llmSeconds: nil,
+                totalSeconds: nil
+            )
+        } catch {
+            beeperConnectionStatus = "Beeper text reply failed: \(error.localizedDescription)"
+            beeperConnectionSucceeded = false
+            settingsNotice = beeperConnectionStatus
+        }
+    }
+
+    private func refreshBeeperResponseMonitor() {
+        beeperResponseMonitorTask?.cancel()
+        beeperResponseMonitorTask = nil
+        beeperIsAwaitingResponse = false
+        guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
+
+        let settings = currentBeeperSettings()
+        guard !settings.normalizedChatID.isEmpty else { return }
+
+        beeperResponseMonitorTask = Task { [weak self] in
+            guard let self else { return }
+            await self.monitorConfiguredBeeperChat(settings: settings)
+        }
+    }
+
+    private func ensureBeeperResponseMonitorRunning() {
+        guard beeperResponseMonitorTask == nil else { return }
+        refreshBeeperResponseMonitor()
+    }
+
+    private func monitorConfiguredBeeperChat(settings: BeeperSettings) async {
+        let interval = Self.clampedBeeperPollingInterval(beeperResponsePollingIntervalSeconds)
+        let baselineDate = Date()
+        var cursor: String?
+        var seenMessageIDs = Set<String>()
+
+        do {
+            let page = try await beeperClient.listMessages(settings: settings)
+            cursor = page.newestCursor
+            page.items.forEach { seenMessageIDs.insert($0.id) }
+            AppLog.dictation.log(
+                "Beeper ambient monitor started chat=\(settings.normalizedChatID, privacy: .public)"
+            )
+        } catch {
+            AppLog.dictation.error(
+                "Beeper ambient monitor baseline failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+
+        while !Task.isCancelled {
+            let cycleStartedAt = Date()
+            if beeperWebSocketMonitoringEnabled {
+                let socketTimeout = max(5, min(10, interval))
+                do {
+                    let message = try await beeperWebSocketClient.waitForIncomingMessage(
+                        settings: settings,
+                        sentPendingMessageID: "",
+                        sentAt: baselineDate,
+                        timeout: socketTimeout
+                    )
+                    guard !Task.isCancelled else { return }
+                    if !seenMessageIDs.contains(message.id) {
+                        seenMessageIDs.insert(message.id)
+                        showBeeperResponse(message)
+                        AppLog.dictation.log(
+                            "Beeper ambient monitor received WebSocket message id=\(message.id, privacy: .public)"
+                        )
+                    }
+                    if let page = try? await beeperClient.listMessages(settings: settings) {
+                        cursor = page.newestCursor
+                        page.items.forEach { seenMessageIDs.insert($0.id) }
+                    }
+                    continue
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    AppLog.dictation.log(
+                        "Beeper ambient WebSocket cycle ended: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+
+            let pollResult = await pollConfiguredBeeperChatOnce(
+                settings: settings,
+                baselineDate: baselineDate,
+                cursor: cursor,
+                seenMessageIDs: seenMessageIDs
+            )
+            cursor = pollResult.cursor
+            seenMessageIDs = pollResult.seenMessageIDs
+            let remainingInterval = interval - Date().timeIntervalSince(cycleStartedAt)
+            if remainingInterval > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remainingInterval * 1_000_000_000))
+            }
+        }
+    }
+
+    private func pollConfiguredBeeperChatOnce(settings: BeeperSettings,
+                                              baselineDate: Date,
+                                              cursor: String?,
+                                              seenMessageIDs: Set<String>)
+        async -> (cursor: String?, seenMessageIDs: Set<String>) {
+        var nextCursor = cursor
+        var nextSeenMessageIDs = seenMessageIDs
+        let hadCursor = cursor != nil
+        do {
+            let page = try await beeperClient.listMessages(
+                settings: settings,
+                cursor: nextCursor,
+                direction: cursor == nil ? nil : .after
+            )
+            if let newestCursor = page.newestCursor {
+                nextCursor = newestCursor
+            }
+
+            let candidates = page.items
+                .filter { !nextSeenMessageIDs.contains($0.id) }
+                .filter { message in
+                    if hadCursor { return true }
+                    guard let timestamp = message.timestamp else { return false }
+                    return timestamp >= baselineDate
+                }
+                .filter(\.isIncomingText)
+                .sorted(by: Self.sortBeeperMessagesAscending)
+
+            page.items.forEach { nextSeenMessageIDs.insert($0.id) }
+
+            if let response = candidates.first {
+                AppLog.dictation.log(
+                    "Beeper ambient monitor received polled message id=\(response.id, privacy: .public)"
+                )
+                showBeeperResponse(response)
+            }
+        } catch {
+            AppLog.dictation.error(
+                "Beeper ambient poll failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        return (nextCursor, nextSeenMessageIDs)
+    }
+
+    private func showBeeperResponse(_ message: BeeperMessage) {
+        let text = message.displayText
+        let sender = message.displaySender
+        let responseWindowID = UUID()
+        dismissActiveBeeperResponseWindow()
+        beeperLastResponseText = text
+        beeperLastResponseSender = sender
+        beeperIsAwaitingResponse = false
+        beeperConnectionStatus = "Beeper response received."
+        beeperConnectionSucceeded = true
+        settingsNotice = beeperConnectionStatus
+        activeBeeperResponseWindowID = responseWindowID
+        upsertHermesResponseWindow(
+            sessionID: responseWindowID,
+            title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
+            text: text,
+            isError: false,
+            supportsReply: false,
+            supportsTextReply: true
+        )
     }
 
     private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult,
@@ -2598,6 +3358,69 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    private func postProcessBeeperTranscriptIfNeeded(
+        _ rawTranscript: String,
+        turn: DictationController.TranscriptionOnlyResult
+    ) async -> String {
+        let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard beeperPostProcessingEnabled, simpleLLMEnabled else {
+            return trimmed
+        }
+
+        let prompt = prompts.first(where: { $0.id == SimplePromptKind.dictation.promptID })
+        let system = PromptBuilder.renderSystemPrompt(
+            template: prompt?.systemPrompt
+                ?? SimplePromptComposer.systemPrompt(
+                    for: .dictation,
+                    settings: simpleDictationSettings
+                ),
+            customVocabulary: vocabCustom
+        )
+        let userMessage = PromptBuilder.buildUserMessage(
+            transcription: trimmed,
+            selectedText: turn.selectedText,
+            activeTextField: turn.activeTextField,
+            appName: "Beeper",
+            screenContents: nil,
+            screenContextTerms: nil,
+            customVocabulary: vocabCustom,
+            clipboardText: nil
+        )
+
+        do {
+            let model = Self.canonicalLLMModel(for: resolvedLLMModel(for: prompt))
+            let provider = OpenRouterLLMProvider(
+                client: OpenRouterHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                })
+            )
+            let settings = LLMSettings(
+                endpoint: AppConfig.openrouterChatCompletions,
+                model: model,
+                systemPrompt: system,
+                timeout: max(30, min(120, transcriptionTimeoutSeconds)),
+                streaming: false,
+                temperature: llmTemperature,
+                openRouterReasoning: openrouterReasoning
+            )
+            var cleaned = try await provider.process(
+                text: userMessage,
+                userPrompt: prompt?.userPrompt ?? "",
+                settings: settings
+            )
+            let rules = vocabSpelling.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rules.isEmpty {
+                cleaned = TextReplacement.apply(to: cleaned, withRules: rules)
+            }
+            let final = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            return final.isEmpty ? trimmed : final
+        } catch {
+            AppLog.dictation.error("Beeper post-processing failed: \(error.localizedDescription)")
+            settingsNotice = "Beeper post-processing failed; sent raw transcript."
+            return trimmed
+        }
+    }
+
     private func generateHermesTitle(for sessionID: UUID, sourceText: String) {
         guard simpleLLMEnabled else { return }
 
@@ -2762,12 +3585,18 @@ final class DictationViewModel: ObservableObject {
     private func upsertHermesResponseWindow(sessionID: UUID,
                                             title: String,
                                             text: String,
-                                            isError: Bool) {
+                                            isError: Bool,
+                                            supportsReply: Bool = true,
+                                            supportsVoiceReply: Bool? = nil,
+                                            supportsTextReply: Bool? = nil) {
         let state = HermesResponseWindowState(
             id: sessionID,
             title: title,
             text: text,
-            isError: isError
+            isError: isError,
+            supportsReply: supportsReply,
+            supportsVoiceReply: supportsVoiceReply,
+            supportsTextReply: supportsTextReply
         )
         if let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }) {
             hermesResponseWindowStates[index] = state
@@ -2776,7 +3605,9 @@ final class DictationViewModel: ObservableObject {
         }
         hermesResponseWindowState = state
         focusedHermesResponseSessionID = sessionID
-        selectedHermesSessionID = sessionID
+        if supportsVoiceReply ?? supportsReply {
+            selectedHermesSessionID = sessionID
+        }
     }
 
     private func syncHermesResponseWindowTitle(for sessionID: UUID) {
@@ -2793,12 +3624,33 @@ final class DictationViewModel: ObservableObject {
 
     private func removeHermesResponseWindow(for sessionID: UUID) {
         hermesResponseWindowStates.removeAll { $0.id == sessionID }
+        if activeBeeperResponseWindowID == sessionID {
+            activeBeeperResponseWindowID = nil
+        }
+        if beeperResponseWindowIDForActiveRecording == sessionID {
+            beeperResponseWindowIDForActiveRecording = nil
+        }
         if hermesResponseWindowState?.id == sessionID {
             hermesResponseWindowState = hermesResponseWindowStates.last
         }
         if focusedHermesResponseSessionID == sessionID {
             focusedHermesResponseSessionID = hermesResponseWindowStates.last?.id
         }
+    }
+
+    private func dismissActiveBeeperResponseWindow() {
+        dismissBeeperResponseWindow(activeBeeperResponseWindowID)
+    }
+
+    private func dismissBeeperResponseWindow(_ windowID: UUID?) {
+        guard let windowID else {
+            AppLog.dictation.log("Beeper response window dismiss skipped: no window id")
+            return
+        }
+        AppLog.dictation.log(
+            "Beeper response window dismiss id=\(windowID.uuidString, privacy: .public)"
+        )
+        removeHermesResponseWindow(for: windowID)
     }
 
     private func hermesContextLabels(screenContext: String?,
@@ -2816,6 +3668,43 @@ final class DictationViewModel: ObservableObject {
             labels.append("Clipboard")
         }
         return labels
+    }
+
+    private func updateClipboardMonitorEnabled() {
+        let enabled = hermesClipboardContextEnabled || beeperClipboardContextEnabled
+        Task { await hermesClipboardMonitor.setMonitoringEnabled(enabled) }
+    }
+
+    private func prepareBeeperContextCapture() {
+        clearBeeperContextCapture(cancel: true)
+        guard beeperClipboardContextEnabled else { return }
+        let recordingStartedAt = Date()
+        let clipboardMonitor = hermesClipboardMonitor
+        let pasteboardChangeCount = Self.currentPasteboardChangeCount()
+        let retentionWindow = HermesClipboardContextPolicy.clampedRetentionWindow(
+            beeperClipboardTimeoutSeconds
+        )
+        beeperClipboardTask = Task.detached(priority: .userInitiated) {
+            await DictationViewModel.captureHermesClipboardContext(
+                recordingStartedAt: recordingStartedAt,
+                pasteboardChangeCount: pasteboardChangeCount,
+                retentionWindow: retentionWindow,
+                clipboardMonitor: clipboardMonitor
+            )
+        }
+    }
+
+    private func consumeBeeperClipboardContext() async -> String? {
+        let task = beeperClipboardTask
+        beeperClipboardTask = nil
+        return await task?.value
+    }
+
+    private func clearBeeperContextCapture(cancel: Bool) {
+        if cancel {
+            beeperClipboardTask?.cancel()
+        }
+        beeperClipboardTask = nil
     }
 
     private func prepareHermesContextCapture() {
@@ -2881,6 +3770,14 @@ final class DictationViewModel: ObservableObject {
         }
         if cancelContext {
             clearHermesContextCapture(cancel: true)
+        }
+    }
+
+    private func clearActiveBeeperRecording(cancelContext: Bool = false) {
+        activeBeeperPromptID = nil
+        beeperResponseWindowIDForActiveRecording = nil
+        if cancelContext {
+            clearBeeperContextCapture(cancel: true)
         }
     }
 
@@ -2962,7 +3859,16 @@ final class DictationViewModel: ObservableObject {
             )
             return
         }
-        if activeHermesPromptID != nil {
+        if id == BeeperHotkey.promptID {
+            guard beeperEnabled else { return }
+            await handleBeeperPromptHotkey(
+                id: SimplePromptKind.dictation.promptID,
+                phase: phase,
+                currentState: state
+            )
+            return
+        }
+        if activeHermesPromptID != nil || activeBeeperPromptID != nil {
             return
         }
 
@@ -3344,9 +4250,106 @@ private enum SimpleDefaultsKey {
     static let hermesClipboardContextEnabled = "hermes.context.clipboard.enabled"
     static let hermesClipboardTimeoutSeconds = "hermes.context.clipboard.timeoutSeconds"
     static let hermesPostProcessingEnabled = "hermes.postProcessing.enabled"
+    static let beeperSelection = "beeper.shortcut.selection"
+    static let beeperPostProcessingEnabled = "beeper.postProcessing.enabled"
+    static let beeperClipboardContextEnabled = "beeper.context.clipboard.enabled"
+    static let beeperClipboardTimeoutSeconds = "beeper.context.clipboard.timeoutSeconds"
+    static let beeperResponseMonitoringEnabled = "beeper.response.monitoring.enabled"
+    static let beeperWebSocketMonitoringEnabled = "beeper.response.websocket.enabled"
+    static let beeperResponsePollingIntervalSeconds = "beeper.response.polling.intervalSeconds"
+    static let beeperResponsePollingTimeoutSeconds = "beeper.response.polling.timeoutSeconds"
 }
 
 private extension DictationViewModel {
+    static func initialClipboardMonitorEnabled() -> Bool {
+        let hermesEnabled = UserDefaults.standard.object(
+            forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
+        ) as? Bool ?? true
+        let beeperEnabled = UserDefaults.standard.object(
+            forKey: SimpleDefaultsKey.beeperClipboardContextEnabled
+        ) as? Bool ?? true
+        return hermesEnabled || beeperEnabled
+    }
+
+    static func clampedBeeperPollingInterval(_ value: Double) -> Double {
+        max(2, min(60, value))
+    }
+
+    static func clampedBeeperPollingTimeout(_ value: Double) -> Double {
+        max(10, min(600, value))
+    }
+
+    static func sortBeeperMessagesAscending(_ lhs: BeeperMessage, _ rhs: BeeperMessage) -> Bool {
+        if let leftDate = lhs.timestamp, let rightDate = rhs.timestamp, leftDate != rightDate {
+            return leftDate < rightDate
+        }
+        if let leftSort = lhs.sortKey, let rightSort = rhs.sortKey, leftSort != rightSort {
+            return leftSort < rightSort
+        }
+        return lhs.id < rhs.id
+    }
+
+    static func durationLabel(_ seconds: TimeInterval) -> String {
+        if seconds >= 60, seconds.truncatingRemainder(dividingBy: 60) == 0 {
+            return "\(Int(seconds / 60)) min"
+        }
+        return "\(Int(seconds)) sec"
+    }
+
+    static func runModelComparison(request: ModelComparisonRequest,
+                                   userMessage: String,
+                                   userPrompt: String,
+                                   systemPrompt: String,
+                                   timeout: TimeInterval,
+                                   temperature: Double,
+                                   spellingRules: String,
+                                   routing: String) async -> ModelComparisonResult {
+        let start = Date()
+        do {
+            let provider = OpenRouterLLMProvider(
+                client: OpenRouterHTTPClient(apiKeyProvider: {
+                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                }),
+                routingPrefProvider: { routing }
+            )
+            let settings = LLMSettings(
+                endpoint: AppConfig.openrouterChatCompletions,
+                model: canonicalLLMModel(for: request.model.id),
+                systemPrompt: systemPrompt,
+                timeout: timeout,
+                streaming: false,
+                temperature: temperature,
+                openRouterReasoning: request.reasoning
+            )
+            var output = try await provider.process(
+                text: userMessage,
+                userPrompt: userPrompt,
+                settings: settings
+            )
+            let rules = spellingRules.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rules.isEmpty {
+                output = TextReplacement.apply(to: output, withRules: rules)
+            }
+            return ModelComparisonResult(
+                modelID: request.model.id,
+                modelName: request.model.name,
+                reasoning: request.reasoning,
+                output: output.trimmingCharacters(in: .whitespacesAndNewlines),
+                duration: Date().timeIntervalSince(start),
+                errorMessage: nil
+            )
+        } catch {
+            return ModelComparisonResult(
+                modelID: request.model.id,
+                modelName: request.model.name,
+                reasoning: request.reasoning,
+                output: "",
+                duration: Date().timeIntervalSince(start),
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
     static func loadSimpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
         let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = UserDefaults.standard.data(forKey: key),
@@ -3453,6 +4456,21 @@ private extension DictationViewModel {
             UserDefaults.standard.set(hermesSelection.rawValue, forKey: SimpleDefaultsKey.hermesSelection)
         } else {
             UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.hermesSelection)
+        }
+    }
+
+    static func loadBeeperSelection() -> HotkeyManager.Selection? {
+        guard let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.beeperSelection) else {
+            return nil
+        }
+        return HotkeyManager.Selection(rawValue: raw)
+    }
+
+    func persistBeeperSelection() {
+        if let beeperSelection {
+            UserDefaults.standard.set(beeperSelection.rawValue, forKey: SimpleDefaultsKey.beeperSelection)
+        } else {
+            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.beeperSelection)
         }
     }
 }

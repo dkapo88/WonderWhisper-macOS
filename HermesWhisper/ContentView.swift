@@ -39,12 +39,18 @@ struct ContentView: View {
             case .hermes:
                 HermesAgentView(vm: vm)
                     .navigationTitle("Hermes")
+            case .beeper:
+                BeeperIntegrationView(vm: vm)
+                    .navigationTitle("Beeper")
             case .vocabulary:
                 VocabularyView(vm: vm)
                     .navigationTitle("Vocabulary")
             case .history:
                 SimpleHistoryView(vm: vm)
                     .navigationTitle("History")
+            case .comparison:
+                ModelComparisonView(vm: vm)
+                    .navigationTitle("Compare")
             case .microphone:
                 MicrophoneSelectionView(vm: vm)
                     .navigationTitle("Microphone")

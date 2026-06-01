@@ -252,6 +252,40 @@ you start the Hermes recording within 20 seconds of copying it. The timer is
 checked when recording starts, not when the recording finishes. A shorter timeout
 reduces the chance of accidentally sending stale clipboard data.
 
+## Beeper Mode
+
+Beeper Mode sends a transcribed voice message into one configured Beeper chat.
+It uses Beeper Desktop's local API, so Beeper Desktop must be running and the
+Desktop API must be enabled.
+
+1. Open **Beeper** in HermesWhisper.
+2. Enter the Beeper API URL, usually `http://localhost:23373`.
+3. Enter the target Beeper chat ID.
+4. Save a Beeper access token from Beeper Desktop **Settings -> Integrations**.
+5. Pick a dedicated Beeper shortcut.
+6. Optionally enable **Show response window**. The response watcher attaches to
+   the configured chat, tries Beeper's experimental WebSocket stream first, then
+   falls back to polling at the configured interval.
+
+The core flow is send-first: press the Beeper shortcut, speak, press it again or
+use the overlay send control, and HermesWhisper sends the final text directly to
+the configured chat. Optional LLM post-processing uses the Dictation cleanup
+prompt before sending. If copied-text context is enabled, text copied within the
+configured freshness window before recording starts is appended to the Beeper
+message as clipboard context. When a prior Beeper response window is open, a
+successful new Beeper send dismisses that window before the next incoming reply.
+
+When response monitoring is enabled, HermesWhisper records the current Beeper
+message cursor when the monitor starts, subscribes to the configured chat over
+Beeper's experimental WebSocket stream, and shows new incoming text messages in
+the response window even if you replied directly in Beeper. If the WebSocket does
+not deliver a usable message quickly, HermesWhisper falls back to polling. Beeper
+response windows include the same text reply composer used by Hermes response
+windows; sending from that composer posts the text back to the configured Beeper
+chat, dismisses the current response window, and keeps watching for the next
+Beeper response. Pressing Return in the text composer sends the reply; Shift +
+Return inserts a newline.
+
 ## Prompt Customization
 
 The Dictation and Command sidebar pages let you customize:
@@ -300,8 +334,8 @@ when no Hermes requests are waiting.
 
 ## Local Data and Privacy
 
-HermesWhisper stores local history, screenshots, audio references, and Hermes
-chat state in:
+HermesWhisper stores local history, screenshots, audio references, Hermes chat
+state, and Beeper integration preferences in:
 
 ```text
 ~/Library/Application Support/HermesWhisper/
@@ -318,8 +352,11 @@ from:
 
 Context features can send screenshots, OCR text, selected text, active field
 text, and clipboard text to the cloud providers or Hermes server you configure.
-Review the context toggles for each mode before using the app with sensitive
-material.
+Beeper Mode sends only the final message text to the configured Beeper Desktop
+chat plus optional copied-text context when enabled. When response monitoring is
+enabled, it reads newer incoming text messages from that configured chat for
+display in response windows. Review the context toggles for each mode before
+using the app with sensitive material.
 
 ## Install
 

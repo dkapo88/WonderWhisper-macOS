@@ -24,7 +24,9 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case hermes
+  case beeper
   case history
+  case comparison
   case dictation
   case command
   case vocabulary
@@ -34,7 +36,9 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
 
   static let displayOrder: [SimpleSidebarItem] = [
     .hermes,
+    .beeper,
     .history,
+    .comparison,
     .dictation,
     .command,
     .vocabulary,
@@ -50,8 +54,10 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .dictation: return "Dictation"
     case .command: return "Command"
     case .hermes: return "Hermes"
+    case .beeper: return "Beeper"
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
+    case .comparison: return "Compare"
     case .microphone: return "Microphone"
     case .permissions: return "Permissions"
     case .settings: return "Settings"
@@ -63,8 +69,10 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .dictation: return "mic.fill"
     case .command: return "wand.and.stars"
     case .hermes: return "sparkles"
+    case .beeper: return "paperplane.fill"
     case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
+    case .comparison: return "rectangle.split.3x1"
     case .microphone: return "waveform"
     case .permissions: return "checkmark.shield"
     case .settings: return "gearshape.fill"
@@ -74,6 +82,10 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
 
 enum HermesAgentHotkey {
   static let promptID = UUID(uuidString: "0A613210-344E-4B5C-9515-F0E9CA54A5D2")!
+}
+
+enum BeeperHotkey {
+  static let promptID = UUID(uuidString: "F7E9C20B-4D76-44E8-8B37-B9FA35E5F7D7")!
 }
 
 enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
@@ -428,16 +440,14 @@ SYSTEM REQUIREMENTS:
   }
 
   private static let dictationRules: [String] = [
-    "**Voice & Tone**\n- Maintain my natural speaking style and word choice\n- Reduce verbosity while keeping my meaning intact\n- Example: \"um so basically what I'm trying to say is we need more time\" → \"We need more time\"",
-    "**Numbers & Symbols**\n- Convert all numbers to digits: \"twenty dollars\" → \"$20\"\n- Convert symbols: \"percent\" → \"%\", \"times\" → \"×\", \"equals\" → \"=\"\n- Convert emojis: \"fire emoji\" → 🔥",
-    "**Names & Terms**\n- Use `<VOCABULARY>` and `<SCREEN_CONTENTS>` for spelling corrections\n- Only correct when there's a clear phonetic match\n- Example: transcript says \"Eloise\" and vocabulary shows \"Eloise\" → use \"Eloise\"\n- In Slack, always use @ before first names: \"Eloise\" → \"@eloise\"\n- If I say \"at [name]\", always use @: \"at Eloise\" → \"@eloise\" (any app)",
-    "**Punctuation & Formatting**\n- Use British spelling: \"colour\", \"analyse\", \"centre\"\n- Currency is Singapore dollars: \"five dollars\" → \"$5\"\n- Never use em-dashes or n-dashes, use commas or periods instead. For example, replace \"This is important—really important\" with \"This is important, really important\" or \"This is important. Really important.\"\n- Don't start sentences with \"And\" — either merge with previous sentence or remove it\n- Example: \"We're ready. And we should go.\" → \"We're ready and we should go.\"",
-    "**Filler Words**\n- Remove: \"um\", \"uh\", \"err\", \"ah\", \"hmm\"\n- Remove excessive \"like\" when it's repetitive filler\n- Keep \"yeah\", \"okay\", \"right\", \"no problem\" when they add context or tone\n- Example: \"yeah um so like I think we should like move forward\" → \"Yeah, I think we should move forward\"",
-    "**Self-Correction**\n- Use the final version when I correct myself\n- Example: \"call them, no actually email them\" → \"Email them\"\n- Keywords: \"scratch that\", \"no\", \"actually\"",
-    "**Paragraphs & Structure**\n- Break text into readable paragraphs — no massive blocks\n- Start new paragraph for topic changes or natural pauses\n- For long technical dictation, add headings and structure for readability",
-    "**Lists**\n- Convert enumerated items to bullet points or numbered lists using asterisks or numbers without using any type of dash for bullets\n- Example: \"there are three issues first login is slow second payment fails third images won't load\" →\n\nThere are 3 issues:\n1. Login is slow\n2. Payment fails\n3. Images won't load",
-    "**Application-Specific Formatting**\n- **Email apps** (Gmail, Shortwave, Spark, Notion Mail, Mimestream, Front, Missive): Start with greeting, use paragraph breaks\n- **Chat apps** (Slack, Telegram, WhatsApp, Beeper): Casual tone, shorter paragraphs, readable structure\n- **Note-taking apps** (Notion, Granary, Notes, Upnote): Use headings and structure for longer content",
-    "**Repetition & Rambling**\n- Remove duplicate phrases from restarts or corrections\n- Keep only the final, complete version\n- Example: \"we should... we should... okay we should go\" → \"We should go\"\n- Preserve deliberate emphasis: \"very, very important\" stays as is"
+    "**Voice & Tone**\n- Preserve my natural voice, intent, and word choice\n- Clean the wording without turning it into a generic rewrite\n- Cut filler and repetition aggressively, but keep meaning and deliberate emphasis\n- Example: \"um so basically what I'm trying to say is we need more time\" → \"We need more time\"",
+    "**Brevity & Cleanup**\n- Optimise for a reader to understand the output in 1 pass\n- Remove restarts, duplicate phrases, and abandoned fragments\n- Use the final version when I correct myself: \"call them, no actually email them\" → \"Email them\"\n- Remove filler sounds: \"um\", \"uh\", \"err\", \"ah\", \"hmm\"\n- Remove repetitive filler \"like\", but keep \"yeah\", \"okay\", \"right\", and \"no problem\" when they add tone",
+    "**Structure & Paragraphs**\n- Do not output a giant paragraph\n- Use short paragraphs by default\n- Start a new paragraph for topic changes, natural pauses, or a new action/request\n- Add headings for longer technical notes, planning notes, or multi-topic dictation\n- Keep short chat messages compact when headings would feel unnatural",
+    "**Lists & Extraction**\n- Prefer lists whenever they improve clarity, brevity, or scanability\n- Convert spoken sequences into numbered lists, bullets, or sub-bullets\n- Use multi-level structure when the content has hierarchy, such as 1, 1A, 1B\n- Pull out actions, options, issues, requirements, examples, risks, and decisions into lists when useful\n- Example: \"there are three issues first login is slow second payment fails third images won't load\" →\n\nThere are 3 issues:\n1. Login is slow\n2. Payment fails\n3. Images won't load",
+    "**Numbers & Symbols**\n- Convert numbers to digits: \"twenty\" → \"20\"\n- Treat currency as Singapore dollars: \"five dollars\" → \"$5\"\n- Convert common symbols: \"percent\" → \"%\", \"times\" → \"×\", \"equals\" → \"=\"\n- Convert spoken emoji names: \"fire emoji\" → 🔥",
+    "**Names & Terms**\n- Use `<VOCABULARY>` first and `<SCREEN_CONTENTS>` second for name and term corrections\n- Only correct when there is a clear phonetic or contextual match\n- Preserve the casing and spelling from the trusted context\n- When `<ACTIVE_APPLICATION>` is \"Slack\" or \"slack\", use @ before first names when they are clearly being addressed: \"Eloise\" → \"@eloise\". Only do this in Slack, not other apps\n- In any app, if I say \"at [name]\", format it as a mention: \"at Eloise\" → \"@eloise\"",
+    "**Punctuation & Formatting**\n- Use British spelling: \"colour\", \"analyse\", \"centre\"\n- Use commas, periods, question marks, and line breaks to make the output easy to read\n- Never use em dashes or en dashes, use commas or periods instead\n- Do not start sentences with \"And\". Merge with the previous sentence or remove it\n- Example: \"We're ready. And we should go.\" → \"We're ready and we should go.\"",
+    "**Application-Specific Formatting**\n- Email apps (Gmail, Shortwave, Spark, Notion Mail, Mimestream, Front, Missive): use a greeting when appropriate, then clear paragraphs or lists\n- Chat apps (Slack, Telegram, WhatsApp, Beeper): keep it casual, concise, and easy to scan\n- Note apps (Notion, Granary, Notes, Upnote): use headings, paragraphs, and lists for longer content"
   ]
 
   private static let commandRules: [String] = [

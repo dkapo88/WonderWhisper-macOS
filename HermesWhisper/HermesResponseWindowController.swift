@@ -8,17 +8,26 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var text: String
   var isError: Bool
   var isRecordingReply: Bool
+  var supportsReply: Bool
+  var supportsVoiceReply: Bool
+  var supportsTextReply: Bool
 
   init(id: UUID = UUID(),
        title: String,
        text: String,
        isError: Bool = false,
-       isRecordingReply: Bool = false) {
+       isRecordingReply: Bool = false,
+       supportsReply: Bool = true,
+       supportsVoiceReply: Bool? = nil,
+       supportsTextReply: Bool? = nil) {
     self.id = id
     self.title = title
     self.text = text
     self.isError = isError
     self.isRecordingReply = isRecordingReply
+    self.supportsReply = supportsReply
+    self.supportsVoiceReply = supportsVoiceReply ?? supportsReply
+    self.supportsTextReply = supportsTextReply ?? supportsReply
   }
 }
 
@@ -245,7 +254,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     textReplyDrafts[sessionID]?.text = ""
     textReplyDrafts[sessionID] = nil
     textReplySessionIDs.remove(sessionID)
-    viewModel?.sendHermesTextReply(trimmed, to: sessionID, dismissResponseWindow: true)
+    viewModel?.sendResponseWindowTextReply(trimmed, sessionID: sessionID)
   }
 
   private func makePanel(sessionID: UUID) -> HermesResponsePanel {
@@ -409,21 +418,25 @@ private struct HermesResponsePanelView: View {
           Label("Copy Formatted", systemImage: "doc.richtext")
         }
 
-        Button(action: onReply) {
-          Label(
-            state.isRecordingReply ? "Send" : "Voice Reply",
-            systemImage: state.isRecordingReply ? "paperplane.fill" : "mic.fill"
-          )
+        if state.supportsVoiceReply {
+          Button(action: onReply) {
+            Label(
+              state.isRecordingReply ? "Send" : "Voice Reply",
+              systemImage: state.isRecordingReply ? "paperplane.fill" : "mic.fill"
+            )
+          }
+          .disabled(state.isError && !state.isRecordingReply)
         }
-        .disabled(state.isError && !state.isRecordingReply)
 
-        Button(action: onToggleTextReply) {
-          Label(
-            isTextReplyVisible ? "Hide Text" : "Text Reply",
-            systemImage: isTextReplyVisible ? "text.bubble.fill" : "text.bubble"
-          )
+        if state.supportsTextReply {
+          Button(action: onToggleTextReply) {
+            Label(
+              isTextReplyVisible ? "Hide Text" : "Text Reply",
+              systemImage: isTextReplyVisible ? "text.bubble.fill" : "text.bubble"
+            )
+          }
+          .disabled(state.isError || state.isRecordingReply)
         }
-        .disabled(state.isError || state.isRecordingReply)
 
         Button(action: onMinimize) {
           Label("Minimize", systemImage: "minus.circle")
@@ -506,9 +519,13 @@ private struct HermesResponsePanelView: View {
 
   private var textReplyComposer: some View {
     VStack(alignment: .leading, spacing: 8) {
-      TextEditor(text: $textReplyDraft.text)
-        .font(.body)
-        .scrollContentBackground(.hidden)
+      HermesReplyTextView(
+        text: $textReplyDraft.text,
+        shouldFocus: true,
+        onSubmit: {
+          onSendTextReply(textReplyDraft.text)
+        }
+      )
         .frame(minHeight: 72, idealHeight: 90, maxHeight: 130)
         .padding(6)
         .background(
@@ -539,7 +556,6 @@ private struct HermesResponsePanelView: View {
           Label("Send Text", systemImage: "paperplane.fill")
         }
         .disabled(textReplyDraft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .keyboardShortcut(.return, modifiers: [.command])
       }
     }
     .padding(10)
@@ -547,5 +563,98 @@ private struct HermesResponsePanelView: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(Color.secondary.opacity(0.08))
     )
+  }
+}
+
+private struct HermesReplyTextView: NSViewRepresentable {
+  @Binding var text: String
+  var shouldFocus: Bool
+  var onSubmit: () -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(text: $text)
+  }
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scrollView = NSScrollView()
+    scrollView.hasVerticalScroller = true
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+
+    let textView = ReplyNSTextView()
+    textView.delegate = context.coordinator
+    textView.onSubmit = onSubmit
+    textView.string = text
+    textView.font = .systemFont(ofSize: NSFont.systemFontSize)
+    textView.textColor = .labelColor
+    textView.backgroundColor = .clear
+    textView.drawsBackground = false
+    textView.isRichText = false
+    textView.isEditable = true
+    textView.isSelectable = true
+    textView.allowsUndo = true
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    textView.textContainer?.widthTracksTextView = true
+    textView.textContainerInset = NSSize(width: 2, height: 4)
+    scrollView.documentView = textView
+    context.coordinator.textView = textView
+    return scrollView
+  }
+
+  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    guard let textView = scrollView.documentView as? ReplyNSTextView else { return }
+    context.coordinator.text = $text
+    textView.onSubmit = onSubmit
+    if textView.string != text {
+      textView.string = text
+    }
+    guard shouldFocus else { return }
+    DispatchQueue.main.async {
+      guard let window = textView.window else { return }
+      window.makeFirstResponder(textView)
+    }
+  }
+
+  final class Coordinator: NSObject, NSTextViewDelegate {
+    var text: Binding<String>
+    weak var textView: NSTextView?
+
+    init(text: Binding<String>) {
+      self.text = text
+    }
+
+    func textDidChange(_ notification: Notification) {
+      guard let textView = notification.object as? NSTextView else { return }
+      text.wrappedValue = textView.string
+    }
+  }
+
+  final class ReplyNSTextView: NSTextView {
+    var onSubmit: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+      if event.isReturnKey {
+        if event.textReplyModifierFlags.contains(.shift) {
+          super.keyDown(with: event)
+          return
+        }
+        if event.textReplyModifierFlags.isEmpty {
+          onSubmit?()
+          return
+        }
+      }
+      super.keyDown(with: event)
+    }
+  }
+}
+
+private extension NSEvent {
+  var textReplyModifierFlags: NSEvent.ModifierFlags {
+    modifierFlags.intersection([.shift, .control, .option, .command])
+  }
+
+  var isReturnKey: Bool {
+    keyCode == 36 || keyCode == 76 || charactersIgnoringModifiers == "\r"
   }
 }

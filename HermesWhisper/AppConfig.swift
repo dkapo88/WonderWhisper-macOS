@@ -66,6 +66,9 @@ struct AppConfig {
     static let defaultHermesBaseURLString = ""
     static let defaultHermesModel = "hermes-agent"
     static let defaultHermesConversationName = "hermeswhisper-mac"
+    // Keychain alias for the Beeper Desktop API access token
+    static let beeperAccessTokenAlias = "BEEPER_ACCESS_TOKEN"
+    static let defaultBeeperBaseURLString = "http://localhost:23373"
     // OpenRouter header defaults
     static let openrouterTitle = "HermesWhisper"
     static let openrouterReferer = "https://github.com/dkapo88/HermesWhisper"

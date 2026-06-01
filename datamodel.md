@@ -310,7 +310,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "hermes, history, dictation, command, vocabulary, microphone, permissions, settings"
+        String value "hermes, beeper, history, comparison, dictation, command, vocabulary, microphone, permissions, settings"
     }
     
     SimpleVoiceEngine {
@@ -360,6 +360,14 @@ erDiagram
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
         Bool hermesAgentEnabled
+        Bool beeperEnabled
+        String beeperChatID
+        Bool beeperClipboardContextEnabled
+        Double beeperClipboardTimeoutSeconds
+        Bool beeperResponseMonitoringEnabled
+        Bool beeperWebSocketMonitoringEnabled
+        Double beeperResponsePollingIntervalSeconds
+        Double beeperResponsePollingTimeoutSeconds
         UUID selectedHermesSessionID FK "optional"
         HermesChatSession[] hermesSessions
         HermesChatMessage[] hermesChatMessages
@@ -477,6 +485,17 @@ erDiagram
 | `hermes.postProcessing.enabled` | Bool | Clean Hermes dictations through the OpenRouter post-processing flow before sending |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 | `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
+| `beeper.enabled` | Bool | Enable the dedicated Beeper voice-send hotkey |
+| `beeper.api.baseURL` | String | Beeper Desktop API base URL; defaults to `http://localhost:23373`, root and `/v1` URLs are both accepted |
+| `beeper.chat.id` | String | Target Beeper chat ID for send-only voice messages |
+| `beeper.shortcut.selection` | String | Dedicated Beeper activation key; accepts `backslash`, `f5`, and modifier-key selections |
+| `beeper.postProcessing.enabled` | Bool | Clean Beeper dictations through the Dictation OpenRouter post-processing flow before sending |
+| `beeper.context.clipboard.enabled` | Bool | Attach recently copied text to Beeper voice messages as clipboard context |
+| `beeper.context.clipboard.timeoutSeconds` | Double | Beeper copied text freshness timeout; default 20 seconds, clamped from 1 to 600 seconds |
+| `beeper.response.monitoring.enabled` | Bool | Watch the configured Beeper chat and show new incoming text replies in response windows |
+| `beeper.response.websocket.enabled` | Bool | Try Beeper's experimental WebSocket stream before falling back to polling |
+| `beeper.response.polling.intervalSeconds` | Double | Beeper response polling interval; default 10 seconds, clamped from 2 to 60 seconds |
+| `beeper.response.polling.timeoutSeconds` | Double | Legacy bounded-response timeout retained for compatibility; default 120 seconds, clamped from 10 to 600 seconds |
 
 ### Keychain Storage
 
@@ -492,6 +511,7 @@ legacy access, keys may need to be saved once under the new app identity.
 | `XAI_API_KEY` | xAI API authentication (Grok Speech-to-Text) |
 | `SONIOX_API_KEY` | Soniox API authentication |
 | `HERMES_API_SERVER_KEY` | Hermes API server bearer token |
+| `BEEPER_ACCESS_TOKEN` | Beeper Desktop API access token |
 
 ---
 
@@ -520,6 +540,15 @@ erDiagram
         Bool hermesScreenContextEnabled
         Bool hermesScreenshotEnabled
         Bool hermesClipboardContextEnabled
+        Bool beeperEnabled
+        String beeperChatID
+        String beeperBaseURLString
+        Bool beeperClipboardContextEnabled
+        Double beeperClipboardTimeoutSeconds
+        Bool beeperResponseMonitoringEnabled
+        Bool beeperWebSocketMonitoringEnabled
+        Double beeperResponsePollingIntervalSeconds
+        Double beeperResponsePollingTimeoutSeconds
         UUID selectedHermesSessionID "optional"
         HermesChatSession[] hermesSessions
         HermesChatMessage[] hermesChatMessages
@@ -557,6 +586,8 @@ struct AppConfig {
     static let defaultHermesBaseURLString: String = ""
     static let defaultHermesModel: String = "hermes-agent"
     static let defaultHermesConversationName: String = "hermeswhisper-mac"
+    static let beeperAccessTokenAlias: String = "BEEPER_ACCESS_TOKEN"
+    static let defaultBeeperBaseURLString: String = "http://localhost:23373"
     
     // Network
     static let httpProtocolPreference: HTTPProtocolPreference
@@ -573,6 +604,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.10 (June 1, 2026)**: Made Beeper response monitoring ambient for the configured chat and aligned response-window text replies with immediate focus, Return-to-send, and Shift-Return newline behavior.
+- **v1.9 (May 31, 2026)**: Added Beeper voice integration settings, chat ID storage, shortcut selection, keychain token alias, copied-text context, bounded response polling, and experimental WebSocket-first monitoring.
 - **v1.8.2 (May 19, 2026)**: Added reusable dictation prompt templates with custom template persistence.
 - **v1.8.1 (May 19, 2026)**: Added `permissions` to `SimpleSidebarItem` for the macOS permissions checker tab.
 - **v1.8 (May 8, 2026)**: Added Hermes LLM title generation, optional Hermes post-processing, clearer response-window focus/reply state, selectable message bodies, and raw/formatted copy actions.
@@ -838,6 +871,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.5
-**Last Updated**: May 7, 2026
+**Document Version**: 1.10
+**Last Updated**: June 1, 2026
 **Maintainer**: HermesWhisper Development Team
