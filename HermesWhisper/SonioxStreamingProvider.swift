@@ -520,6 +520,9 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       } catch {
         if isActiveSession(sessionID, task: task) {
           AppLog.dictation.error("SonioxStreaming: Receive error: \(error.localizedDescription)")
+          // The socket is gone; unblock endRealtime's catch-up loop immediately instead of
+          // spinning the full timeout, so the pipeline falls back to file transcription fast.
+          isServerFinished = true
         }
         break
       }
@@ -664,8 +667,11 @@ private actor SonioxTokenAccumulator {
   private var currentNonFinal: String = ""
 
   func addToken(text: String, isFinal: Bool) {
-    // Skip the <fin> marker token or any xml tags that might appear due to hallucinations
-    if text == "<fin>" || text.contains("<") || text.contains(">") { return }
+    // Skip only Soniox's control/endpoint sentinel tokens. Do NOT drop every token that
+    // merely contains an angle bracket — that silently eats legitimate dictation ("less
+    // than", arrows, code) and in the worst case empties the whole transcript.
+    let trimmedToken = text.trimmingCharacters(in: .whitespaces)
+    if trimmedToken == "<fin>" || trimmedToken == "<end>" { return }
     
     if isFinal {
       // Final token - append to finalized text

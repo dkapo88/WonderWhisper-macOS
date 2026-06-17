@@ -716,6 +716,12 @@ final class DictationViewModel: ObservableObject {
         let recorder = AudioRecorder()
         let inserter = InsertionService()
         inserter.useAXInsertion = persistedUseAXInsertion
+        // File-capable fallback so an empty streaming result (esp. Soniox, which can't
+        // transcribe files) recovers from the always-on backup recording instead of
+        // silently dropping the utterance. Degrades gracefully if no Groq key is set.
+        let fileFallbackTranscriber = GroqTranscriptionProvider(
+            client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) })
+        )
         controller = DictationController(
             recorder: recorder,
             transcriber: transcriber,
@@ -723,7 +729,8 @@ final class DictationViewModel: ObservableObject {
             llm: llm,
             llmSettings: llmSettings,
             inserter: inserter,
-            history: history
+            history: history,
+            fileFallbackTranscriber: fileFallbackTranscriber
         )
         isApplyingPromptFromSelection = true
         prompts = promptBootstrap.prompts
@@ -871,8 +878,24 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    private var toggleInFlight = false
+
     func toggle() {
         Task {
+            // Guard against rapid re-entry. The start path has a >100ms async preamble during which
+            // the controller is still .idle; without this, a second press reads .idle too and spins
+            // up a duplicate session that lands as a near-empty stop -> "Transcription empty".
+            let proceed = await MainActor.run { () -> Bool in
+                if self.toggleInFlight { return false }
+                self.toggleInFlight = true
+                return true
+            }
+            guard proceed else {
+                AppLog.dictation.log("toggle() ignored: a toggle transition is already in flight")
+                return
+            }
+            defer { Task { @MainActor in self.toggleInFlight = false } }
+
             let currentState = await controller.currentState()
             if case .recording = currentState,
                let hermesPromptID = activeHermesPromptID,
@@ -925,7 +948,16 @@ final class DictationViewModel: ObservableObject {
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
                 await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
-                await MainActor.run { self.recordingStartInProgress = false }
+                // If the controller failed to start, clear the optimistic recording UI right away
+                // (mirrors the Hermes/Beeper paths) instead of waiting on the polling-timer grace.
+                let postState = await controller.currentState()
+                await MainActor.run {
+                    if case .error = postState {
+                        self.isRecording = false
+                        self.recordingStartTimestamp = nil
+                    }
+                    self.recordingStartInProgress = false
+                }
 
             case .recording:
                 await MainActor.run { 
@@ -1181,7 +1213,10 @@ final class DictationViewModel: ObservableObject {
 
     private func updateInsertion() {
         UserDefaults.standard.set(useAXInsertion, forKey: "insertion.useAX")
-        // InsertionService instance is held inside controller; no direct setter. This flag will be refreshed on next controller creation.
+        // Propagate to the live InsertionService inside the controller so the toggle takes
+        // effect immediately instead of only after the next app launch.
+        let enabled = useAXInsertion
+        Task { await controller.setUseAXInsertion(enabled) }
     }
 
     // MARK: - Prompt management

@@ -39,13 +39,34 @@ final class StreamingTranscriptOverlay {
     positionAtTopCenter()
     window.orderFrontRegardless()
 
-    // Reposition on screen changes
-    NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-      guard let self = self else { return }
-      Task { @MainActor in
-        self.positionAtTopCenter()
+    // Drive visibility and text directly from the view model, independent of any SwiftUI
+    // view lifecycle. Previously these were `.onReceive` modifiers on ContentView, so the
+    // overlay silently stopped showing whenever the main window was closed (while the
+    // waveform, which self-subscribes like this, kept working). Single predicate so a
+    // mid-session engine switch (or a non-live engine) also hides correctly.
+    viewModel.$isRecording
+      .combineLatest(viewModel.$simpleVoiceEngine)
+      .map { isRecording, engine in isRecording && engine.showsLiveTranscript }
+      .removeDuplicates()
+      .sink { [weak self] shouldShow in
+        guard let self else { return }
+        if shouldShow { self.show() } else { self.hide() }
       }
-    }
+      .store(in: &cancellables)
+
+    viewModel.$sonioxPreviewText
+      .sink { [weak self] text in
+        self?.updateText(text)
+      }
+      .store(in: &cancellables)
+
+    // Reposition on screen changes (routed through cancellables so it is not leaked)
+    NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+      .sink { [weak self] _ in
+        guard let self else { return }
+        Task { @MainActor in self.positionAtTopCenter() }
+      }
+      .store(in: &cancellables)
   }
 
   /// Show the overlay with animation
@@ -70,26 +91,31 @@ final class StreamingTranscriptOverlay {
     guard isVisible else { return }
     isVisible = false
 
-    NSAnimationContext.runAnimationGroup { ctx in
+    NSAnimationContext.runAnimationGroup({ ctx in
       ctx.duration = 0.2
       ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
       ctx.allowsImplicitAnimation = true
       window.animator().alphaValue = 0
-    }
+    }, completionHandler: { [weak self] in
+      // Clear stale preview so it can't flash on the next session before the first token.
+      self?.contentView.setText("")
+    })
   }
 
   /// Update the displayed transcript text
   func updateText(_ text: String) {
-    contentView.setText(text)
+    // Skip redundant work when the preview hasn't changed (provider can re-emit identical text).
+    guard contentView.setText(text) else { return }
 
-    // Auto-resize based on content
+    // Auto-resize based on content. Use animate:false for live token updates — animating a
+    // setFrame on every token is janky and O(n^2) over a sentence; reserve animation for show/hide.
     let newHeight = contentView.preferredHeight()
     if abs(window.frame.height - newHeight) > 10 {
       var frame = window.frame
       let heightDiff = newHeight - frame.height
       frame.size.height = newHeight
       frame.origin.y -= heightDiff // Keep top position stable
-      window.setFrame(frame, display: true, animate: true)
+      window.setFrame(frame, display: true, animate: false)
     }
   }
 
@@ -109,6 +135,19 @@ private final class TranscriptContentView: NSView {
   private let textView: NSTextView
   private let scrollView: NSScrollView
   private var currentText: String = ""
+  private var hasRendered = false
+
+  // Built once; identical for every token render.
+  private static let textAttributes: [NSAttributedString.Key: Any] = {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 4
+    paragraphStyle.alignment = .left
+    return [
+      .font: NSFont.systemFont(ofSize: 15, weight: .medium),
+      .foregroundColor: NSColor.white,
+      .paragraphStyle: paragraphStyle
+    ]
+  }()
 
   override init(frame frameRect: NSRect) {
     // Create scroll view for text
@@ -154,26 +193,21 @@ private final class TranscriptContentView: NSView {
     scrollView.frame = bounds
   }
 
-  func setText(_ text: String) {
+  /// Renders the text. Returns false (and does nothing) when the text is unchanged.
+  @discardableResult
+  func setText(_ text: String) -> Bool {
+    guard !hasRendered || text != currentText else { return false }
+    hasRendered = true
     currentText = text
 
-    let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 4
-    paragraphStyle.alignment = .left
-
-    let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.systemFont(ofSize: 15, weight: .medium),
-      .foregroundColor: NSColor.white,
-      .paragraphStyle: paragraphStyle
-    ]
-
     let displayText = text.isEmpty ? "Listening..." : text
-    let attrString = NSAttributedString(string: displayText, attributes: attributes)
+    let attrString = NSAttributedString(string: displayText, attributes: Self.textAttributes)
 
     textView.textStorage?.setAttributedString(attrString)
 
     // Scroll to end
     textView.scrollToEndOfDocument(nil)
+    return true
   }
 
   func preferredHeight() -> CGFloat {

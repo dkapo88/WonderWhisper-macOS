@@ -233,23 +233,24 @@ final class GroqStreamingProvider: TranscriptionProvider {
         // Upload any remaining audio in buffer as final chunk if we have meaningful data
         let minFlushBytes = Int(0.25 * chunkDurationSeconds * Double(bytesPerSecond)) // ~25% of chunk size
         if let remainder = await chunker.flushRemainder(minBytes: minFlushBytes) {
-            AppLog.dictation.log("GroqStreaming: Uploading final chunk with \(remainder.payload.count) bytes")
-            do {
-                let wavData = try createWAVFile(from: remainder.payload)
-                let filename = "final_chunk_\(remainder.number)_\(Int(Date().timeIntervalSince1970)).wav"
-                guard let settings = currentSettings else {
-                    AppLog.dictation.error("GroqStreaming: No settings available for final chunk")
-                    return ""
+            if let settings = currentSettings {
+                AppLog.dictation.log("GroqStreaming: Uploading final chunk with \(remainder.payload.count) bytes")
+                do {
+                    let wavData = try createWAVFile(from: remainder.payload)
+                    let filename = "final_chunk_\(remainder.number)_\(Int(Date().timeIntervalSince1970)).wav"
+                    let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
+                    let maxPromptChars = promptChars > 0 ? max(80, min(600, promptChars)) : 200
+                    let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
+                    var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
+                    transcript = stripGroqThankYouSuffix(transcript)
+                    transcript = postprocessLocalIfRequested(transcript)
+                    await acc.addChunkResult(chunkNumber: remainder.number, transcript: transcript, isFinal: true)
+                } catch {
+                    AppLog.dictation.error("GroqStreaming: Final chunk upload failed: \(error)")
                 }
-                let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
-                let maxPromptChars = promptChars > 0 ? max(80, min(600, promptChars)) : 200
-                let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
-                var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
-                transcript = stripGroqThankYouSuffix(transcript)
-                transcript = postprocessLocalIfRequested(transcript)
-                await acc.addChunkResult(chunkNumber: remainder.number, transcript: transcript, isFinal: true)
-            } catch {
-                AppLog.dictation.error("GroqStreaming: Final chunk upload failed: \(error)")
+            } else {
+                // Don't discard the transcript we already assembled — just skip the final chunk.
+                AppLog.dictation.error("GroqStreaming: No settings for final chunk; using accumulated transcript")
             }
         }
 

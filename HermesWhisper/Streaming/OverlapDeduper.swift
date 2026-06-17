@@ -32,7 +32,12 @@ enum OverlapDeduper {
         let drop = dropCount(prevTokens: pT, nextTokens: nT, maxK: maxK)
         if drop == 0 { return prev + " " + next }
         let words = next.split(whereSeparator: { $0.isWhitespace })
-        let trimmed = words.count > drop ? words.dropFirst(drop).joined(separator: " ") : ""
+        // `drop` counts alphanumeric tokens, while `words` splits on whitespace only. Punctuation
+        // and contractions ("it's" -> it/s) make the token count exceed the word count, which would
+        // otherwise drop the entire `next` chunk. When the units don't line up, keep `next` whole
+        // rather than risk losing real words (a duplicated boundary word is the lesser evil).
+        guard words.count > drop else { return prev + " " + next }
+        let trimmed = words.dropFirst(drop).joined(separator: " ")
         return trimmed.isEmpty ? prev : prev + " " + trimmed
     }
 }

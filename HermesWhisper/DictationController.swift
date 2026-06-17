@@ -53,7 +53,14 @@ actor DictationController {
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
     private var autoMuteEnabled: Bool = false
 
-    // Removed memory recording feature due to unreliable output
+    /// The streaming provider instance captured at session start. Finalizing this exact
+    /// instance (instead of re-reading `transcriber`) prevents a mid-session provider swap
+    /// from finalizing the wrong object and discarding the audio.
+    private var activeStreamingProvider: TranscriptionProvider?
+    /// File-capable transcriber used to recover an empty streaming result. Soniox cannot
+    /// transcribe files, so without this an empty Soniox stream silently drops the whole
+    /// utterance even though a backup recording exists. Typically a Groq provider.
+    private let fileFallbackTranscriber: TranscriptionProvider?
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -62,7 +69,8 @@ actor DictationController {
          llmSettings: LLMSettings,
          inserter: InsertionService,
          screenContext: ScreenContextService = ScreenContextService(),
-         history: HistoryStore? = nil) {
+         history: HistoryStore? = nil,
+         fileFallbackTranscriber: TranscriptionProvider? = nil) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.transcriberSettings = transcriberSettings
@@ -71,6 +79,7 @@ actor DictationController {
         self.inserter = inserter
         self.screenContext = screenContext
         self.history = history
+        self.fileFallbackTranscriber = fileFallbackTranscriber
         self.conversationHistoryStore = ConversationHistoryStore()
     }
 
@@ -120,16 +129,36 @@ actor DictationController {
                     await soniox.updateSettings(transcriberSettings)
                     await soniox.setInputSampleRate(16_000)
                     try await soniox.beginRealtime()
-                    try recorder.startStreamingPCM16 { data in
-                        soniox.enqueuePCM16(data)
+                    do {
+                        try recorder.startStreamingPCM16 { data in
+                            soniox.enqueuePCM16(data)
+                        }
+                    } catch {
+                        AppLog.dictation.error("Soniox streaming audio start failed; continuing with file fallback: \(error.localizedDescription)")
+                        await soniox.abort()
                     }
                 }
 
                 if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
                     try await xaiStreaming.beginRealtime(settings: transcriberSettings)
-                    try recorder.startStreamingPCM16 { data in
-                        xaiStreaming.enqueuePCM16(data)
+                    do {
+                        try recorder.startStreamingPCM16 { data in
+                            xaiStreaming.enqueuePCM16(data)
+                        }
+                    } catch {
+                        AppLog.dictation.error("xAI streaming audio start failed; continuing with file fallback: \(error.localizedDescription)")
+                        await xaiStreaming.abort()
                     }
+                }
+
+                // Capture the streaming instance we just started so finalization targets *this*
+                // object even if the active provider is swapped mid-session (settings change, etc.).
+                if transcriber is GroqStreamingProvider
+                    || transcriber is SonioxStreamingProvider
+                    || transcriber is XAIStreamingTranscriptionProvider {
+                    activeStreamingProvider = transcriber
+                } else {
+                    activeStreamingProvider = nil
                 }
 
                 // Pre-capture screen context early so it is ready once recording stops
@@ -183,6 +212,88 @@ actor DictationController {
         return t.rangeOfCharacter(from: .alphanumerics) == nil
     }
 
+    /// Finalizes the active streaming provider (or transcribes the file for non-streaming
+    /// providers) and ALWAYS attempts a file-based recovery when streaming yields nothing
+    /// usable. This is the single safety net that guarantees a recorded utterance is never
+    /// silently dropped — covering Soniox (which can't transcribe files), websocket drops,
+    /// thrown finalizers, and mid-session provider swaps.
+    private func finalizeTranscript(recordingFileURL: URL?, settings: TranscriptionSettings) async throws -> String {
+        let streamer = activeStreamingProvider ?? transcriber
+
+        // Non-streaming providers transcribe the recorded file directly. Errors here propagate
+        // to the caller's error handler exactly as before (there is nothing to recover from).
+        let isStreamingProvider = streamer is GroqStreamingProvider
+            || streamer is SonioxStreamingProvider
+            || streamer is XAIStreamingTranscriptionProvider
+        guard isStreamingProvider else {
+            guard let fileURL = recordingFileURL else {
+                throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
+            }
+            AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
+            await Self.waitUntilFileIsStable(fileURL)
+            AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(settings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
+            return try await transcriber.transcribe(fileURL: fileURL, settings: settings)
+        }
+
+        // Streaming providers: finalize, but never let a thrown finalizer lose the utterance —
+        // fall through to the file fallback instead.
+        var transcript = ""
+        do {
+            if let groq = streamer as? GroqStreamingProvider {
+                // Groq feeds frames as detached tasks; give the last ones a beat to land in the
+                // chunker before assembling the final transcript (avoids dropped tail words).
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                transcript = try await groq.endRealtime()
+            } else if let soniox = streamer as? SonioxStreamingProvider {
+                transcript = try await soniox.endRealtime()
+            } else if let xaiStreaming = streamer as? XAIStreamingTranscriptionProvider {
+                transcript = try await xaiStreaming.endRealtime()
+            }
+        } catch {
+            AppLog.dictation.error("Streaming finalize failed: \(error.localizedDescription, privacy: .public); attempting file fallback")
+            await abortStreamer(streamer)
+            transcript = ""
+        }
+
+        // Safety net: streaming produced nothing usable -> transcribe the backup recording.
+        if looksEmptyOrPunctuation(transcript) {
+            guard let fileURL = recordingFileURL else {
+                AppLog.dictation.warning("Streaming empty and no backup recording available")
+                return transcript
+            }
+            guard let fallback = fileCapableFallback(for: streamer) else {
+                AppLog.dictation.warning("Streaming empty and no file-capable fallback (set a Groq API key to recover Soniox failures)")
+                return transcript
+            }
+            AppLog.dictation.log("Streaming empty/punctuation-only; recovering via file transcription")
+            await Self.waitUntilFileIsStable(fileURL)
+            if let recovered = try? await fallback.transcribe(fileURL: fileURL, settings: settings),
+               !looksEmptyOrPunctuation(recovered) {
+                AppLog.dictation.log("Recovered \(recovered.count) chars via file fallback")
+                transcript = recovered
+            } else {
+                AppLog.dictation.warning("File fallback produced empty/failed result")
+            }
+        }
+
+        return transcript
+    }
+
+    /// A file-capable transcriber used to recover an empty streaming result. Soniox cannot
+    /// transcribe files, so it uses the injected fallback (Groq); Groq/xAI streaming providers
+    /// can transcribe their own backup recording directly.
+    private func fileCapableFallback(for streamer: TranscriptionProvider) -> TranscriptionProvider? {
+        if streamer is SonioxStreamingProvider { return fileFallbackTranscriber }
+        return streamer
+    }
+
+    /// Best-effort abort of whichever streaming provider is active (used when finalize throws).
+    private func abortStreamer(_ streamer: TranscriptionProvider) async {
+        if let groq = streamer as? GroqStreamingProvider { await groq.abort() }
+        else if let soniox = streamer as? SonioxStreamingProvider { await soniox.abort() }
+        else if let xaiStreaming = streamer as? XAIStreamingTranscriptionProvider { await xaiStreaming.abort() }
+    }
+
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
         AppLog.dictation.log("Stop requested provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
@@ -233,41 +344,7 @@ actor DictationController {
             )
 
             os_signpost(.begin, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
-            if let groq = transcriber as? GroqStreamingProvider {
-                // Prefer Groq chunked streaming transcript for speed
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await groq.endRealtime()
-                // Fallback to file if streaming gave empty or punctuation-only result
-                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Streaming empty/punctuation-only; fallback to file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else if let soniox = transcriber as? SonioxStreamingProvider {
-                // Soniox real-time streaming - use preview text immediately
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await soniox.endRealtime()
-                // Fallback to Groq file transcription if Soniox gave empty result
-                if looksEmptyOrPunctuation(transcript), recordingFileURL != nil {
-                    AppLog.dictation.log("Soniox streaming empty; no file fallback available")
-                    // Soniox doesn't support file transcription, so just use empty
-                }
-            } else if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await xaiStreaming.endRealtime()
-                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
-                    AppLog.dictation.log("xAI streaming empty/punctuation-only; fallback to async file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else {
-                // Standard file-based transcription for non-streaming providers
-                guard let fileURL = recordingFileURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
-                // Ensure the recorded file is fully finalized before reading to avoid rare
-                // issues on some systems where the file appears complete but is still being flushed.
-                AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
-                await Self.waitUntilFileIsStable(fileURL)
-                AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(hotkeySettings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
-                transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-            }
+            transcript = try await finalizeTranscript(recordingFileURL: recordingFileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
@@ -390,7 +467,6 @@ actor DictationController {
                     AppLog.dictation.error("LLM error after \(llmDT, format: .fixed(precision: 3))s: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
                     // Fallback to raw transcript on LLM failure
                     output = transcript
-                    state = .transcribing
                 }
             }
 
@@ -498,6 +574,7 @@ actor DictationController {
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
     func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
+    func setUseAXInsertion(_ enabled: Bool) { inserter.useAXInsertion = enabled }
 
     private func applyVocabularyCorrections(to transcript: String) -> String {
         let vocabulary = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
@@ -509,6 +586,7 @@ actor DictationController {
     }
 
     private func resetTransientSessionState() {
+        activeStreamingProvider = nil
         currentRecordingURL = nil
         insertionTargetProcessIdentifier = nil
         preCapturedScreenSnapshot = nil
@@ -562,33 +640,7 @@ actor DictationController {
             )
 
             os_signpost(.begin, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
-            if let groq = transcriber as? GroqStreamingProvider {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await groq.endRealtime()
-                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Hermes flow streaming empty/punctuation-only; fallback to file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else if let soniox = transcriber as? SonioxStreamingProvider {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await soniox.endRealtime()
-                if looksEmptyOrPunctuation(transcript) {
-                    AppLog.dictation.log("Hermes flow Soniox streaming empty; no file fallback available")
-                }
-            } else if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await xaiStreaming.endRealtime()
-                if looksEmptyOrPunctuation(transcript), let fileURL = recordingFileURL {
-                    AppLog.dictation.log("Hermes flow xAI streaming empty/punctuation-only; fallback to async file transcription")
-                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-                }
-            } else {
-                guard let fileURL = recordingFileURL else {
-                    throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
-                }
-                await Self.waitUntilFileIsStable(fileURL)
-                transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
-            }
+            transcript = try await finalizeTranscript(recordingFileURL: recordingFileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
             transcript = applyVocabularyCorrections(to: transcript)
@@ -625,16 +677,9 @@ actor DictationController {
         guard state == .recording else { return }
         // Stop live mic streaming if active
         recorder.stopStreamingPCM16()
-        // Abort any active streaming provider sessions immediately (best-effort)
-        if let groq = transcriber as? GroqStreamingProvider {
-            await groq.abort()
-        }
-        if let soniox = transcriber as? SonioxStreamingProvider {
-            await soniox.abort()
-        }
-        if let xaiStreaming = transcriber as? XAIStreamingTranscriptionProvider {
-            await xaiStreaming.abort()
-        }
+        // Abort the active streaming provider session immediately (best-effort)
+        await abortStreamer(activeStreamingProvider ?? transcriber)
+        activeStreamingProvider = nil
         // Stop file recording and delete any created file
         _ = recorder.stopRecording()
         
@@ -944,7 +989,7 @@ extension DictationController {
 
         lastSize = currentSize()
         while Date() < deadline {
-            usleep(pollInterval)
+            try? await Task.sleep(nanoseconds: UInt64(pollInterval) * 1_000)
             let s = currentSize()
             if s == lastSize {
                 stableFor += pollInterval

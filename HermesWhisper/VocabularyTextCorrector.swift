@@ -6,6 +6,14 @@ enum VocabularyTextCorrector {
       .filter { !$0.contains(" ") && !$0.contains("\t") }
     guard !terms.isEmpty, !text.isEmpty else { return text }
 
+    // Pre-normalize the term list once instead of recomputing normalized(term) for every
+    // (matched word x term) pair. Terms shorter than 4 normalized chars can never match.
+    let normalizedTerms: [(term: String, normalized: String)] = terms.compactMap {
+      let n = normalized($0)
+      return n.count >= 4 ? (term: $0, normalized: n) : nil
+    }
+    guard !normalizedTerms.isEmpty else { return text }
+
     let pattern = #"[A-Za-z][A-Za-z'’-]*"#
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
 
@@ -15,7 +23,7 @@ enum VocabularyTextCorrector {
 
     for match in matches.reversed() {
       let word = nsText.substring(with: match.range)
-      guard let replacement = bestReplacement(for: word, vocabularyTerms: terms) else { continue }
+      guard let replacement = bestReplacement(for: word, vocabularyTerms: normalizedTerms) else { continue }
       corrected = (corrected as NSString).replacingCharacters(in: match.range, with: replacement)
     }
 
@@ -38,15 +46,14 @@ enum VocabularyTextCorrector {
     return result
   }
 
-  private static func bestReplacement(for word: String, vocabularyTerms: [String]) -> String? {
+  private static func bestReplacement(for word: String, vocabularyTerms: [(term: String, normalized: String)]) -> String? {
     let normalizedWord = normalized(word)
     guard normalizedWord.count >= 4 else { return nil }
     guard !commonWords.contains(normalizedWord) else { return nil }
 
     var best: (term: String, distance: Int)?
-    for term in vocabularyTerms {
-      let normalizedTerm = normalized(term)
-      guard normalizedTerm.count >= 4 else { continue }
+    for entry in vocabularyTerms {
+      let normalizedTerm = entry.normalized
       guard abs(normalizedWord.count - normalizedTerm.count) <= 2 else { continue }
       guard normalizedWord.first == normalizedTerm.first else { continue }
       guard normalizedWord != normalizedTerm else { continue }
@@ -56,7 +63,7 @@ enum VocabularyTextCorrector {
       guard distance <= limit else { continue }
 
       if best == nil || distance < best!.distance {
-        best = (term, distance)
+        best = (entry.term, distance)
       }
     }
 

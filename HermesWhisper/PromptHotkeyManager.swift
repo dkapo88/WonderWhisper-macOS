@@ -165,6 +165,12 @@ final class PromptHotkeyManager {
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (_, type, event, userInfo) -> Unmanaged<CGEvent>? in
             guard let userInfo = userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<PromptHotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+            // The OS disables an event tap if a callback runs too long or on user input; it must
+            // be explicitly re-enabled or prompt hotkeys silently stop working.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                manager.reenableSelectionTap()
+                return Unmanaged.passUnretained(event)
+            }
             var shouldSuppress = false
             if type == .flagsChanged {
                 manager.handleFlagsChanged(event: event)
@@ -193,6 +199,12 @@ final class PromptHotkeyManager {
                 "Installed prompt selection event tap axTrusted=\(trusted, privacy: .public)"
             )
         }
+    }
+
+    fileprivate func reenableSelectionTap() {
+        guard let tap = selectionTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        AppLog.hotkeys.error("Prompt selection event tap was disabled by the system; re-enabled")
     }
 
     private func tearDownSelectionTap() {

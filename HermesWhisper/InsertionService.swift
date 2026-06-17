@@ -228,8 +228,11 @@ final class InsertionService {
         let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: keyCmd, keyDown: false)
         cmdUp?.post(tap: .cghidEventTap)
 
-        // Restore previously held modifiers
+        // Restore previously held modifiers — but ONLY those the user is still physically
+        // holding. Re-pressing a modifier the user has since released (common when the dictation
+        // hotkey itself is a modifier let go to end push-to-talk) would leave it stuck down.
         for code in modsToTempRelease {
+            guard CGEventSource.keyState(.hidSystemState, key: code) else { continue }
             let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)
             down?.post(tap: .cghidEventTap)
         }

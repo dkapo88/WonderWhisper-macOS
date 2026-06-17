@@ -229,6 +229,12 @@ final class HotkeyManager {
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+            // The OS disables an event tap if a callback runs too long or on user input; it must
+            // be explicitly re-enabled or the dictation hotkey silently stops working entirely.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                manager.reenableEventTap()
+                return Unmanaged.passUnretained(event)
+            }
             var shouldSuppress = false
             if type == .flagsChanged {
                 manager.handleFlagsChanged(event: event)
@@ -264,6 +270,12 @@ final class HotkeyManager {
         selectionActive = false
         cancelPendingActivation()
         activateCalledOnThisPress = false
+    }
+
+    fileprivate func reenableEventTap() {
+        guard let tap = eventTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        AppLog.hotkeys.error("Toggle event tap was disabled by the system; re-enabled")
     }
 
     // MARK: - Helpers

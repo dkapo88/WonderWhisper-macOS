@@ -52,13 +52,13 @@ final class WaveformOverlayController {
             }
             .store(in: &cancellables)
 
-        // Reposition on screen changes
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor in
-                self.positionAtTopCenter()
+        // Reposition on screen changes (routed through cancellables to avoid a leaked observer)
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in self.positionAtTopCenter() }
             }
-        }
+            .store(in: &cancellables)
 
         // Button actions
         waveformView.onCancel = { [weak self] in self?.vm?.cancel() }
