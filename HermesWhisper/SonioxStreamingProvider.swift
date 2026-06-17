@@ -13,7 +13,7 @@ import OSLog
 /// - Supports vocabulary terms via context.terms
 /// - Supports language hints for improved accuracy
 actor SonioxStreamingProvider: TranscriptionProvider {
-  private static let defaultRealtimeModel = "stt-rt-v4"
+  private static let defaultRealtimeModel = "stt-rt-v5"
   private static let verboseLoggingDefaultsKey = "soniox.debugMessages"
   private static let previewUpdateInterval: TimeInterval = 0.05
   private static let finalizeSilenceMs = 200
@@ -44,7 +44,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   // Audio format - dynamically set based on actual input
   private var inputSampleRate: Double = 16_000 // Default to 16k, but will be updated
 
-  // Configuration - use the active V4 realtime model per Soniox documentation.
+  // Configuration - use the active V5 realtime model per Soniox documentation.
   private var currentModel: String = SonioxStreamingProvider.defaultRealtimeModel
 
   // Callback for live transcript updates
@@ -366,9 +366,13 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   // MARK: - Private Methods
 
-  private static func apiModel(for storedModel: String) -> String {
+  static func apiModel(for storedModel: String) -> String {
     let trimmed = storedModel.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty || trimmed == "soniox-streaming" {
+    let normalized = trimmed.lowercased()
+    if trimmed.isEmpty
+      || normalized == "soniox-streaming"
+      || normalized == "stt-rt-v3"
+      || normalized == "stt-rt-v4" {
       return defaultRealtimeModel
     }
     return trimmed

@@ -44,7 +44,7 @@ You can choose the transcription engine in **Settings -> Transcription engine**:
 - **Parakeet V3 (On-device)**: local speech-to-text on your Mac. No cloud API key
   required.
 - **Groq Whisper Turbo (Cloud)**: Groq-hosted Whisper Large V3 Turbo.
-- **Soniox V4 (Real-time Cloud)**: streaming speech-to-text with live preview.
+- **Soniox V5 (Real-time Cloud)**: streaming speech-to-text with live preview.
 - **OpenRouter Voice (Cloud)**: OpenRouter speech-to-text models such as
   `openai/gpt-4o-mini-transcribe`.
 - **Grok STT / xAI (Cloud)**: xAI speech-to-text endpoint.

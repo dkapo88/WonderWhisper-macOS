@@ -2,7 +2,7 @@
 
 Scope: Entire repository  
 Owner: HermesWhisper Development Team
-Last updated: May 9, 2026
+Last updated: June 17, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
@@ -17,7 +17,7 @@ The app includes a persistent microphone selection feature accessible from the s
 
 ## Feature Scope & Providers
 - The app ships a single window with ten sidebar tabs: Hermes, Beeper, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V4 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
+- Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
 ## Build, Test, and Development Commands
@@ -48,6 +48,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-06-17: Routed F5 prompt hotkeys through the event-tap path so bare F5 and function-row F5 variants can trigger dictation.
+- 2026-06-17: Updated Soniox real-time transcription to V5 and mapped legacy V4 model settings to the V5 default.
 - 2026-06-01: Made Beeper response monitoring ambient for the configured chat, surfacing new incoming replies even when the user replies directly in Beeper.
 - 2026-05-31: Added a dedicated Beeper voice-send integration with chat ID storage, token storage, configurable shortcut, copied-text context, bounded response polling, and experimental WebSocket-first monitoring.
 - 2026-05-21: Added LLM-only history reprocessing for real-time transcripts and a Compare sidebar tab for favorite-model output and timing tests.

@@ -14,6 +14,15 @@ struct SimpleModeModelTests {
     #expect(SimpleVoiceEngine.xaiStreamingSpeechToText.showsLiveTranscript == true)
   }
 
+  @Test func sonioxStreamingEngineUsesV5RealtimeModel() {
+    #expect(SimpleVoiceEngine.sonioxStreaming.displayName == "Soniox V5 (Real-time Cloud)")
+    #expect(SonioxStreamingProvider.apiModel(for: "") == "stt-rt-v5")
+    #expect(SonioxStreamingProvider.apiModel(for: "soniox-streaming") == "stt-rt-v5")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v3") == "stt-rt-v5")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v4") == "stt-rt-v5")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v5") == "stt-rt-v5")
+  }
+
   @Test func openRouterChatRequestOmitsReasoningByDefault() throws {
     let request = OpenRouterHTTPClient.ChatRequest(
       model: "google/gemini-3.5-flash",

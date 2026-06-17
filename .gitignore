@@ -48,3 +48,6 @@ project.xcworkspace/xcuserdata/*.xcuserstate
 .roo/
 .kilocodemodes
 docs/superpowers/
+
+# Build/distribution artifacts
+dist/

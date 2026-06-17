@@ -238,7 +238,7 @@ erDiagram
 | `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
 | `openrouter-transcription` | OpenRouter speech-to-text endpoint for cloud voice models | `openai/gpt-4o-mini-transcribe` by default |
 | `xai-stt` | xAI Grok Speech-to-Text over HTTPS multipart upload | `xai-stt` service endpoint |
-| `soniox-streaming` | Soniox V4 real-time streaming with live preview | `stt-rt-v4` |
+| `soniox-streaming` | Soniox V5 real-time streaming with live preview | `stt-rt-v5` |
 
 ---
 
@@ -850,7 +850,7 @@ protocol LLMProvider {
   - `OpenRouterTranscriptionProvider` (OpenRouter speech-to-text JSON API)
   - `XAITranscriptionProvider` (xAI Grok Speech-to-Text REST API)
   - `ParakeetTranscriptionProvider` (local V3 on-device)
-  - `SonioxStreamingProvider` (Soniox V4 real-time streaming)
+  - `SonioxStreamingProvider` (Soniox V5 real-time streaming)
 
 - **LLMProvider**:
   - `OpenRouterLLMProvider` (OpenRouter multiplexed models)
@@ -871,6 +871,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.10
-**Last Updated**: June 1, 2026
+**Document Version**: 1.11
+**Last Updated**: June 17, 2026
 **Maintainer**: HermesWhisper Development Team
