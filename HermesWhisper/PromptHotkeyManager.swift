@@ -2,6 +2,7 @@ import Foundation
 import Carbon.HIToolbox
 import Cocoa
 import ApplicationServices
+import IOKit.hidsystem
 
 final class PromptHotkeyManager {
     enum TriggerPhase {
@@ -63,10 +64,18 @@ final class PromptHotkeyManager {
 
     func register(selection: HotkeyManager.Selection, for promptID: UUID) {
         unregister(promptID: promptID)
+        if selection == .f5 {
+            registerKeyEventSelection(selection, for: promptID)
+            return
+        }
         if let shortcut = selection.directShortcut {
             register(shortcut: shortcut, for: promptID)
             return
         }
+        registerKeyEventSelection(selection, for: promptID)
+    }
+
+    private func registerKeyEventSelection(_ selection: HotkeyManager.Selection, for promptID: UUID) {
         ensureSelectionTap()
         guard selectionTap != nil else {
             AppLog.hotkeys.error(
@@ -152,6 +161,7 @@ final class PromptHotkeyManager {
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
+            | CGEventMask(1 << NX_SYSDEFINED)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (_, type, event, userInfo) -> Unmanaged<CGEvent>? in
             guard let userInfo = userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<PromptHotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
@@ -162,6 +172,8 @@ final class PromptHotkeyManager {
                 shouldSuppress = manager.handleKeyDown(event: event)
             } else if type == .keyUp {
                 shouldSuppress = manager.handleKeyUp(event: event)
+            } else if type.rawValue == NX_SYSDEFINED {
+                shouldSuppress = manager.handleSystemDefined(event: event)
             }
             if shouldSuppress { return nil }
             return Unmanaged.passUnretained(event)
@@ -347,6 +359,9 @@ final class PromptHotkeyManager {
         if keyCode == CGKeyCode(kVK_ANSI_Backslash) {
             return handleBackslashDown(event: event)
         }
+        if keyCode == CGKeyCode(kVK_F5) {
+            return handleF5Down(flags: event.flags)
+        }
         guard !HotkeyManager.isModifierKey(keyCode) else { return false }
         guard !pendingSelectionWorkItems.isEmpty else { return false }
         cancelAllPendingSelectionActivations()
@@ -355,6 +370,9 @@ final class PromptHotkeyManager {
 
     private func handleKeyUp(event: CGEvent) -> Bool {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if keyCode == CGKeyCode(kVK_F5) {
+            return handleF5Up(flags: event.flags)
+        }
         guard keyCode == CGKeyCode(kVK_ANSI_Backslash) else { return false }
         guard let promptIDs = selectionBindings[.backslash], !promptIDs.isEmpty else {
             return false
@@ -381,12 +399,73 @@ final class PromptHotkeyManager {
         return true
     }
 
+    private func handleF5Down(flags: CGEventFlags = []) -> Bool {
+        guard let promptIDs = selectionBindings[.f5], !promptIDs.isEmpty else {
+            return false
+        }
+        guard !hasDisallowedF5Modifiers(flags) else { return false }
+        guard !HotkeyManager.isActivationSuppressed else { return true }
+        guard selectionActiveStates[.f5] != true else { return true }
+        AppLog.hotkeys.log("Observed F5 keyDown via prompt event tap")
+        fireSelectionActivation(.f5, promptIDs: promptIDs)
+        return true
+    }
+
+    private func handleF5Up(flags: CGEventFlags = []) -> Bool {
+        guard let promptIDs = selectionBindings[.f5], !promptIDs.isEmpty else {
+            return false
+        }
+        let wasActive = selectionActiveStates[.f5] ?? false
+        let shouldCapture = wasActive || !hasDisallowedF5Modifiers(flags)
+        if wasActive {
+            AppLog.hotkeys.log("Observed F5 keyUp via prompt event tap")
+            selectionActiveStates[.f5] = false
+            for id in promptIDs {
+                onPromptEvent?(id, .up)
+            }
+        }
+        return shouldCapture
+    }
+
     private func hasDisallowedKeyModifiers(_ flags: CGEventFlags) -> Bool {
         flags.contains(.maskCommand)
             || flags.contains(.maskAlternate)
             || flags.contains(.maskControl)
             || flags.contains(.maskShift)
             || flags.contains(.maskSecondaryFn)
+    }
+
+    private func hasDisallowedF5Modifiers(_ flags: CGEventFlags) -> Bool {
+        flags.contains(.maskCommand)
+            || flags.contains(.maskAlternate)
+            || flags.contains(.maskControl)
+            || flags.contains(.maskShift)
+    }
+
+    private func handleSystemDefined(event: CGEvent) -> Bool {
+        guard let nsEvent = NSEvent(cgEvent: event),
+              nsEvent.subtype.rawValue == NX_SUBTYPE_AUX_CONTROL_BUTTONS else {
+            return false
+        }
+        let keyType = (nsEvent.data1 & 0xFFFF0000) >> 16
+        let keyState = (nsEvent.data1 & 0x0000FF00) >> 8
+        guard keyType == NX_KEYTYPE_ILLUMINATION_DOWN else {
+            if selectionBindings[.f5]?.isEmpty == false {
+                AppLog.hotkeys.log(
+                    "Observed system-defined key type=\(keyType, privacy: .public) state=\(keyState, privacy: .public)"
+                )
+            }
+            return false
+        }
+        if keyState == 0x0A {
+            AppLog.hotkeys.log("Observed F5 system-defined keyDown")
+            return handleF5Down()
+        }
+        if keyState == 0x0B {
+            AppLog.hotkeys.log("Observed F5 system-defined keyUp")
+            return handleF5Up()
+        }
+        return false
     }
 
     private func fireSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {

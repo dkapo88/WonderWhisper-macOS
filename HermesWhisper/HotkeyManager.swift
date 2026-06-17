@@ -62,7 +62,12 @@ final class HotkeyManager {
 
         // Whether this selection requires an accessibility event tap
         var requiresAX: Bool {
-            directShortcut == nil
+            switch self {
+            case .f5:
+                return true
+            default:
+                return directShortcut == nil
+            }
         }
 
         var needsChordGuard: Bool {
@@ -415,6 +420,9 @@ final class HotkeyManager {
         if selection == .backslash, keyCode == CGKeyCode(kVK_ANSI_Backslash) {
             return handleBackslashDown(event: event)
         }
+        if selection == .f5, keyCode == CGKeyCode(kVK_F5) {
+            return handleF5Down(event: event)
+        }
         guard !Self.isModifierKey(keyCode) else { return false }
         guard pendingActivationWorkItem != nil else { return false }
 
@@ -427,6 +435,9 @@ final class HotkeyManager {
 
     private func handleKeyUp(event: CGEvent) -> Bool {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if selection == .f5, keyCode == CGKeyCode(kVK_F5) {
+            return handleF5Up(event: event)
+        }
         guard selection == .backslash, keyCode == CGKeyCode(kVK_ANSI_Backslash) else {
             return false
         }
@@ -447,12 +458,37 @@ final class HotkeyManager {
         return true
     }
 
+    private func handleF5Down(event: CGEvent) -> Bool {
+        guard !hasDisallowedF5Modifiers(event.flags) else { return false }
+        guard !Self.isActivationSuppressed else { return true }
+        guard !selectionActive else { return true }
+        selectionActive = true
+        handleHotkeyDown()
+        return true
+    }
+
+    private func handleF5Up(event: CGEvent) -> Bool {
+        let shouldCapture = selectionActive || !hasDisallowedF5Modifiers(event.flags)
+        if selectionActive {
+            selectionActive = false
+            handleHotkeyUp()
+        }
+        return shouldCapture
+    }
+
     private func hasDisallowedKeyModifiers(_ flags: CGEventFlags) -> Bool {
         flags.contains(.maskCommand)
             || flags.contains(.maskAlternate)
             || flags.contains(.maskControl)
             || flags.contains(.maskShift)
             || flags.contains(.maskSecondaryFn)
+    }
+
+    private func hasDisallowedF5Modifiers(_ flags: CGEventFlags) -> Bool {
+        flags.contains(.maskCommand)
+            || flags.contains(.maskAlternate)
+            || flags.contains(.maskControl)
+            || flags.contains(.maskShift)
     }
 
     private func scheduleHotkeyDown() {
