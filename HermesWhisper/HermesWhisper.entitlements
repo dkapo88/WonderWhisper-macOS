@@ -2,8 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- App Sandbox disabled: distributed via Developer ID, not the Mac App Store.
+	     The app needs unsandboxed Accessibility (global hotkeys + text insertion),
+	     screen capture, and Apple Events, which are awkward or impossible to grant
+	     inside the sandbox. Trade-off: cannot ship to the Mac App Store while false. -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<false/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 	<key>com.apple.security.device.screen-capture</key>
