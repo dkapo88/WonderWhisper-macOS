@@ -48,6 +48,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-06-21: Bumped FluidAudio to 0.15.4 and added Parakeet Unified 0.6B (English, offline-batch via `UnifiedAsrManager`) as a user-selectable on-device model alongside v3 (multilingual); dropped v2. Model choice persists under `parakeet.version` ("unified"/"v3", default unified) and is picked in the Parakeet settings section.
 - 2026-06-17: Routed F5 prompt hotkeys through the event-tap path so bare F5 and function-row F5 variants can trigger dictation.
 - 2026-06-17: Updated Soniox real-time transcription to V5 and mapped legacy V4 model settings to the V5 default.
 - 2026-06-01: Made Beeper response monitoring ambient for the configured chat, surfacing new incoming replies even when the user replies directly in Beeper.

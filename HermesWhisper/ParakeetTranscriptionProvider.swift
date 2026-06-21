@@ -6,7 +6,10 @@ import FluidAudio
 import OSLog
 
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
+    // TDT backend (Parakeet v3, multilingual)
     private var asrManager: AsrManager?
+    // Unified backend (Parakeet Unified 0.6B, English, offline batch)
+    private var unifiedManager: UnifiedAsrManager?
     private var vadManager: VadManager?
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
@@ -15,8 +18,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private let idleSeconds: TimeInterval = 300 // 5 minutes
     // Coalesce model loading to avoid duplicate work/logs
     private var loadTask: Task<Void, Error>?
-    // Track which ASR model version is loaded to allow switching between v2 and v3
-    private var loadedVersion: AsrModelVersion?
+    // Track which model is loaded to allow switching between Unified and v3
+    private var loadedKind: ParakeetModelKind?
     // Track the loaded VAD threshold to allow dynamic updates for auto mode
     private var loadedVadThreshold: Double?
     
@@ -37,7 +40,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // Public warm-up to preload models on recording start
     func warmUp() async {
         do {
-            try await ensureModelsLoaded(version: preferredVersion())
+            try await ensureModelsLoaded(kind: preferredKind())
             scheduleIdleUnload()
         } catch {
             let ns = error as NSError
@@ -53,40 +56,76 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             // Sleep for idle window; cancel will abort
             try? await Task.sleep(nanoseconds: UInt64(self.idleSeconds * 1_000_000_000))
             if Task.isCancelled { return }
-            if let mgr = self.asrManager {
+            let hadModels = (self.asrManager != nil) || (self.unifiedManager != nil)
+            if hadModels {
                 self.log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
                 AppLog.dictation.log("[Parakeet] idle unload")
+            }
+            if let mgr = self.asrManager {
                 await mgr.cleanup()
                 self.asrManager = nil
             }
+            // UnifiedAsrManager releases its CoreML models when deallocated.
+            self.unifiedManager = nil
+            if hadModels { self.loadedKind = nil }
         }
     }
 
-    private func ensureModelsLoaded(version: AsrModelVersion) async throws {
-        if asrManager != nil, loadedVersion == version {
-            // Already loaded with the requested version
+    private func isLoaded(_ kind: ParakeetModelKind) -> Bool {
+        switch kind {
+        case .unified: return unifiedManager != nil
+        case .v3: return asrManager != nil
+        }
+    }
+
+    private func ensureModelsLoaded(kind: ParakeetModelKind) async throws {
+        if loadedKind == kind, isLoaded(kind) {
+            // Already loaded with the requested model
             return
         }
         if let t = loadTask {
             // If a load is in-flight, await it then re-check
             try await t.value
-            if asrManager != nil, loadedVersion == version { return }
+            if loadedKind == kind, isLoaded(kind) { return }
         }
         loadTask = Task { [weak self] in
             guard let self else { return }
             defer { self.loadTask = nil }
-            try await self.performModelLoad(version: version)
+            try await self.performModelLoad(kind: kind)
         }
         try await loadTask?.value
     }
 
-    private func performModelLoad(version: AsrModelVersion) async throws {
+    private func performModelLoad(kind: ParakeetModelKind) async throws {
+        // Free the other backend to keep only one model resident in memory.
+        await unloadOtherBackend(keeping: kind)
+        switch kind {
+        case .v3:
+            try await loadTdtModel(version: .v3)
+        case .unified:
+            try await loadUnifiedModel()
+        }
+        loadedKind = kind
+        scheduleIdleUnload()
+    }
+
+    private func unloadOtherBackend(keeping kind: ParakeetModelKind) async {
+        if kind != .v3, let mgr = asrManager {
+            await mgr.cleanup()
+            asrManager = nil
+        }
+        if kind != .unified {
+            unifiedManager = nil
+        }
+    }
+
+    private func loadTdtModel(version: AsrModelVersion) async throws {
         try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
         // If models exist in a different known location, prefer that
-        let discovered = ParakeetManager.effectiveModelsDirectory
+        let discovered = ParakeetManager.effectiveModelsDirectory(for: .v3)
         if discovered != modelsDirectory { modelsDirectory = discovered }
-        log.notice("[Parakeet] ensureModelsLoaded dir=\(self.modelsDirectory.path, privacy: .public)")
-        AppLog.dictation.log("[Parakeet] ensureModelsLoaded dir=\(self.modelsDirectory.path)")
+        log.notice("[Parakeet] ensureModelsLoaded (v3) dir=\(self.modelsDirectory.path, privacy: .public)")
+        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (v3) dir=\(self.modelsDirectory.path)")
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: modelsDirectory.path)) ?? []
         log.notice("[Parakeet] dir contents count=\(contents.count, privacy: .public) items=\(String(describing: contents.prefix(5)), privacy: .public)")
         AppLog.dictation.log("[Parakeet] contents count=\(contents.count) items=\(String(describing: contents.prefix(5)))")
@@ -98,23 +137,79 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
             AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
         }
-        // Use selected model version (v2 or v3). FluidAudio 0.14.x defaults to the
-        // stable int8 encoder; keep that for reliability over the newer int4 option.
+        // FluidAudio defaults to the stable int8 encoder; keep that for
+        // reliability over the newer int4 option.
         let models = try await AsrModels.downloadAndLoad(version: version)
         let mgr = AsrManager(config: .default)
         try await mgr.loadModels(models)
-        self.loadedVersion = version
         let available = await mgr.isAvailable
         log.notice("[Parakeet] manager available=\(available, privacy: .public)")
         AppLog.dictation.log("[Parakeet] manager available=\(available)")
         asrManager = mgr
-        scheduleIdleUnload()
+    }
+
+    private func loadUnifiedModel() async throws {
+        let baseDir = ParakeetManager.modelsDirectory
+        let unifiedDir = ParakeetManager.modelDirectory(for: .unified)
+        log.notice("[Parakeet] ensureModelsLoaded (unified) dir=\(unifiedDir.path, privacy: .public)")
+        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (unified) dir=\(unifiedDir.path)")
+        // int8 encoder (default): identical WER to fp16, half the download.
+        let mgr = UnifiedAsrManager()
+        // Downloads the "offline" (full-attention 15 s) variant if missing,
+        // then loads it. `baseDir` is the FluidAudio/Models root; the manager
+        // appends the repo folder itself.
+        try await mgr.loadModels(to: baseDir)
+        unifiedManager = mgr
+        AppLog.dictation.log("[Parakeet] unified manager loaded")
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        try await ensureModelsLoaded(version: preferredVersion(for: settings))
+        let kind = preferredKind(for: settings)
+        try await ensureModelsLoaded(kind: kind)
         scheduleIdleUnload()
-        guard let mgr = asrManager else { throw ProviderError.notImplemented }
+        switch kind {
+        case .unified:
+            guard let mgr = unifiedManager else { throw ProviderError.notImplemented }
+            return try await transcribeUnified(mgr: mgr, fileURL: fileURL)
+        case .v3:
+            guard let mgr = asrManager else { throw ProviderError.notImplemented }
+            return try await transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
+        }
+    }
+
+    /// Parakeet Unified offline-batch path: hand the recording to the
+    /// FastConformer-RNNT manager via an `AVAudioPCMBuffer` (it resamples to
+    /// 16 kHz mono itself and handles long-form windowing). We deliberately use
+    /// the buffer API rather than a hand-rolled Float decode, which proved
+    /// fragile (threw `_GenericObjCError`) on real recordings.
+    private func transcribeUnified(mgr: UnifiedAsrManager, fileURL: URL) async throws -> String {
+        AppLog.dictation.log("[Parakeet] Unified ASR begin file=\(fileURL.lastPathComponent)")
+        let file = try AVAudioFile(forReading: fileURL)
+        let frameCount = AVAudioFrameCount(file.length)
+        guard frameCount > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
+            log.notice("[Parakeet] Unified: empty/invalid audio file frames=\(file.length, privacy: .public)")
+            AppLog.dictation.log("[Parakeet] Unified: empty/invalid audio file")
+            return ""
+        }
+        try file.read(into: buffer)
+        let result: String
+        do {
+            result = try await mgr.transcribe(buffer)
+        } catch {
+            let ns = error as NSError
+            log.notice("[Parakeet] Unified transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public)")
+            AppLog.dictation.error("[Parakeet] Unified transcribe error domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+            throw error
+        }
+        let preview = result.prefix(120)
+        log.notice("[Parakeet] Unified result length=\(result.count, privacy: .public) preview=\(String(preview), privacy: .public)")
+        AppLog.dictation.log("[Parakeet] Unified result length=\(result.count) preview=\(String(preview))")
+        scheduleIdleUnload()
+        return result
+    }
+
+    private func transcribeTdt(mgr: AsrManager, fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         
         // Raw mode: VoiceInk-style minimal processing path
         if rawMode {
@@ -180,14 +275,14 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return Language(rawValue: primary)
     }
 
-    // Determine preferred ASR model version from settings or user defaults
-    private func preferredVersion(for settings: TranscriptionSettings? = nil) -> AsrModelVersion {
+    // Determine preferred Parakeet model from settings or user defaults
+    private func preferredKind(for settings: TranscriptionSettings? = nil) -> ParakeetModelKind {
         if let model = settings?.model.lowercased() {
-            if model.contains("v2") { return .v2 }
+            if model.contains("unified") { return .unified }
             if model.contains("v3") { return .v3 }
+            if model.contains("v2") { return .v3 } // v2 retired -> nearest multilingual TDT
         }
-        let pref = (UserDefaults.standard.string(forKey: "parakeet.version") ?? "v3").lowercased()
-        return (pref == "v2") ? .v2 : .v3
+        return ParakeetModelKind.selected
     }
 
     // MARK: - VAD (Silero) integration
@@ -246,91 +341,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let endIdx = min(samples.count, Int(last.endTime * sr))
         guard endIdx > startIdx else { return nil }
         return Array(samples[startIdx..<endIdx])
-    }
-
-    // Decode arbitrary audio to mono 16k Float32 samples
-    private static func decodeAudioToFloatMono16k(url: URL) throws -> [Float] {
-        let inputFile = try AVAudioFile(forReading: url)
-        let inFormat = inputFile.processingFormat
-        guard let outFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: false
-        ) else {
-            throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to create output audio format"
-            ])
-        }
-        var samples: [Float] = []
-        if inFormat == outFormat {
-            // Fast path: read directly
-            let capacity: AVAudioFrameCount = 4096
-            while true {
-                guard let buf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
-                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                        NSLocalizedDescriptionKey: "Failed to allocate PCM buffer"
-                    ])
-                }
-                try inputFile.read(into: buf, frameCount: capacity)
-                if buf.frameLength == 0 { break }
-                guard let channelData = buf.floatChannelData else {
-                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                        NSLocalizedDescriptionKey: "Missing float channel data"
-                    ])
-                }
-                samples.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: Int(buf.frameLength)))
-            }
-        } else {
-            // Convert
-            guard let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
-                throw NSError(domain: "Parakeet", code: -1, userInfo: [NSLocalizedDescriptionKey: "Audio format conversion failed"])
-            }
-            let inputFrameCapacity: AVAudioFrameCount = 4096
-            guard let inputBuffer = AVAudioPCMBuffer(
-                pcmFormat: inFormat,
-                frameCapacity: inputFrameCapacity
-            ) else {
-                throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                    NSLocalizedDescriptionKey: "Failed to allocate input PCM buffer"
-                ])
-            }
-            while true {
-                try inputFile.read(into: inputBuffer, frameCount: inputFrameCapacity)
-                if inputBuffer.frameLength == 0 { break }
-                var inputDone = false
-                guard let outputBuffer = AVAudioPCMBuffer(
-                    pcmFormat: outFormat,
-                    frameCapacity: 8192
-                ) else {
-                    throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                        NSLocalizedDescriptionKey: "Failed to allocate output PCM buffer"
-                    ])
-                }
-                let status = converter.convert(to: outputBuffer, error: nil, withInputFrom: { inNumPackets, outStatus in
-                    if inputDone {
-                        outStatus.pointee = .noDataNow
-                        return nil
-                    }
-                    outStatus.pointee = .haveData
-                    inputDone = true
-                    return inputBuffer
-                })
-                if status == .haveData {
-                    guard let channelData = outputBuffer.floatChannelData else {
-                        throw NSError(domain: "Parakeet", code: -1, userInfo: [
-                            NSLocalizedDescriptionKey: "Missing converted float channel data"
-                        ])
-                    }
-                    samples.append(contentsOf: UnsafeBufferPointer(
-                        start: channelData[0],
-                        count: Int(outputBuffer.frameLength)
-                    ))
-                }
-                inputBuffer.frameLength = 0
-            }
-        }
-        return samples
     }
 
     private static func decodeFastPCM16(url: URL) throws -> [Float]? {

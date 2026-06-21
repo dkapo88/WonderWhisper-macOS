@@ -15,7 +15,10 @@ struct SimpleModeSettingsView: View {
   @State private var openRouterTranscriptionModelError: String?
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
+  @State private var parakeetDownloadError: String?
   @State private var showModelBrowser: Bool = false
+  // Selected on-device Parakeet model (persisted under "parakeet.version").
+  @AppStorage("parakeet.version") private var parakeetModel: ParakeetModelKind = .unified
 
   private let keychain = KeychainService()
 
@@ -444,23 +447,42 @@ struct SimpleModeSettingsView: View {
   private var parakeetSection: some View {
     GroupBox("Parakeet voice model") {
       VStack(alignment: .leading, spacing: 12) {
+        Picker("Model", selection: $parakeetModel) {
+          ForEach(ParakeetModelKind.allCases) { kind in
+            Text(kind.displayName).tag(kind)
+          }
+        }
+        .pickerStyle(.segmented)
+
+        Text(parakeetModel.detail)
+          .font(.caption)
+          .foregroundColor(.secondary)
+
         HStack(spacing: 10) {
           statusLabel(title: "Framework", ok: ParakeetManager.isLinked)
-          statusLabel(title: "Models", ok: ParakeetManager.modelsPresent())
+          statusLabel(title: "Model downloaded", ok: ParakeetManager.modelsPresent(for: parakeetModel))
         }
 
         HStack(spacing: 12) {
-          Button(isDownloadingParakeet ? "Downloading…" : "Download / Update Parakeet") {
+          Button(isDownloadingParakeet ? "Downloading…" : "Download / Update Model") {
             downloadParakeet()
           }
           .disabled(isDownloadingParakeet)
 
           Button("Show in Finder") {
-            NSWorkspace.shared.selectFile(ParakeetManager.effectiveModelsDirectory.path, inFileViewerRootedAtPath: "")
+            NSWorkspace.shared.selectFile(
+              ParakeetManager.effectiveModelsDirectory(for: parakeetModel).path,
+              inFileViewerRootedAtPath: "")
           }
         }
 
-        Text("Simple Mode always uses Parakeet v3 locally for transcription. Downloading ensures the model is ready before the first dictation.")
+        if let parakeetDownloadError {
+          Text("Download failed: \(parakeetDownloadError)")
+            .font(.caption)
+            .foregroundColor(.red)
+        }
+
+        Text("The selected model is downloaded and used for all on-device dictation. Switch models any time; downloading ahead of a first dictation avoids a cold-start delay.")
           .font(.caption)
           .foregroundColor(.secondary)
       }
@@ -506,13 +528,22 @@ struct SimpleModeSettingsView: View {
   private func downloadParakeet() {
     #if canImport(FluidAudio)
     isDownloadingParakeet = true
+    parakeetDownloadError = nil
+    let kind = parakeetModel
     Task {
       defer { isDownloadingParakeet = false }
       do {
-        _ = try await AsrModels.downloadAndLoad(version: .v2)
-        _ = try await AsrModels.downloadAndLoad(version: .v3)
+        switch kind {
+        case .v3:
+          _ = try await AsrModels.downloadAndLoad(version: .v3)
+        case .unified:
+          let mgr = UnifiedAsrManager()
+          try await mgr.loadModels(to: ParakeetManager.modelsDirectory)
+        }
       } catch {
-        // Swallow errors; status badges reflect current state.
+        // Surface the failure so a silent error can't masquerade as success.
+        parakeetDownloadError = (error as NSError).localizedDescription
+        AppLog.dictation.error("[Parakeet] \(kind.rawValue) download failed: \((error as NSError).localizedDescription)")
       }
     }
     #endif

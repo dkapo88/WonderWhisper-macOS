@@ -100,7 +100,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
 
   var displayName: String {
     switch self {
-    case .parakeetLocal: return "Parakeet V3 (On-device)"
+    case .parakeetLocal: return "Parakeet (On-device)"
     case .groqStreaming: return "Groq Whisper Turbo (Cloud)"
     case .sonioxStreaming: return "Soniox V5 (Real-time Cloud)"
     case .openRouterTranscription: return "OpenRouter Voice (Cloud)"

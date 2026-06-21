@@ -1,5 +1,61 @@
 import Foundation
 
+/// User-selectable on-device Parakeet model.
+///
+/// The choice is persisted under the `parakeet.version` UserDefaults key and read
+/// by both `ParakeetTranscriptionProvider` (which model to load/run) and the
+/// settings UI (which model to download / show status for).
+enum ParakeetModelKind: String, CaseIterable, Identifiable {
+    /// Parakeet Unified 0.6B. English-only, but the highest on-device accuracy
+    /// and throughput and the only model that emits punctuation/capitalization
+    /// natively. Loaded via FluidAudio's `UnifiedAsrManager` (offline batch).
+    case unified
+    /// Parakeet TDT 0.6B v3. Multilingual (25 languages + Japanese), no native
+    /// punctuation/capitalization. Loaded via FluidAudio's `AsrManager`.
+    case v3
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .unified: return "Parakeet Unified (English)"
+        case .v3: return "Parakeet v3 (Multilingual)"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .unified:
+            return "English only. Highest on-device accuracy and speed, with automatic punctuation and capitalization."
+        case .v3:
+            return "Multilingual (25 languages + Japanese). No automatic punctuation or capitalization."
+        }
+    }
+
+    /// On-disk model folder under `FluidAudio/Models`, matching FluidAudio's
+    /// `Repo.folderName`. As of 0.15.4 neither repo has an explicit `folderName`
+    /// case, so both hit the default branch which strips the `-coreml` suffix
+    /// from the repo slug (`name.replacingOccurrences(of: "-coreml", with: "")`).
+    /// Re-verify these against `Repo.folderName` when bumping FluidAudio.
+    var folderName: String {
+        switch self {
+        case .unified: return "parakeet-unified-en-0.6b"
+        case .v3: return "parakeet-tdt-0.6b-v3"
+        }
+    }
+
+    /// Currently selected model. Only "v3" selects v3; everything else (unset,
+    /// "unified", the retired "v2", or any unknown value) resolves to the
+    /// `.unified` default. This mirrors the @AppStorage fallback used by the
+    /// settings picker so both readers always agree on the active model.
+    static var selected: ParakeetModelKind {
+        switch (UserDefaults.standard.string(forKey: "parakeet.version") ?? "").lowercased() {
+        case "v3": return .v3
+        default: return .unified
+        }
+    }
+}
+
 enum ParakeetManager {
     // Preferred location to place/download models
     static var modelsDirectory: URL {
@@ -37,6 +93,31 @@ enum ParakeetManager {
     static func modelsPresent() -> Bool {
         guard let dir = discoverInstalledModelDirectory() else { return false }
         return validateModels(at: dir).ok
+    }
+
+    // MARK: - Per-model helpers
+
+    /// Canonical install directory for a given model under `FluidAudio/Models`.
+    static func modelDirectory(for kind: ParakeetModelKind) -> URL {
+        modelsDirectory.appendingPathComponent(kind.folderName, isDirectory: true)
+    }
+
+    /// Whether the given model is downloaded and valid. v3 also honours legacy
+    /// install locations via discovery; Unified is only ever placed canonically.
+    static func modelsPresent(for kind: ParakeetModelKind) -> Bool {
+        if validateModels(at: modelDirectory(for: kind)).ok { return true }
+        if kind == .v3, let dir = discoverInstalledModelDirectory() {
+            return validateModels(at: dir).ok
+        }
+        return false
+    }
+
+    /// Best directory to point diagnostics / Finder at for the given model.
+    static func effectiveModelsDirectory(for kind: ParakeetModelKind) -> URL {
+        let canonical = modelDirectory(for: kind)
+        if validateModels(at: canonical).ok { return canonical }
+        if kind == .v3, let found = discoverInstalledModelDirectory() { return found }
+        return canonical
     }
 
     // MARK: - Discovery
