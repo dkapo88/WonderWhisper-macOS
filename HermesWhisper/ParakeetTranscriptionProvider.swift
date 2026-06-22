@@ -10,7 +10,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
     private var unifiedManager: UnifiedAsrManager?
-    private var vadManager: VadManager?
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
@@ -20,9 +19,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var loadTask: Task<Void, Error>?
     // Track which model is loaded to allow switching between Unified and v3
     private var loadedKind: ParakeetModelKind?
-    // Track the loaded VAD threshold to allow dynamic updates for auto mode
-    private var loadedVadThreshold: Double?
-    
+
     // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
     private var rawMode: Bool {
         (UserDefaults.standard.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
@@ -285,138 +282,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return ParakeetModelKind.selected
     }
 
-    // MARK: - VAD (Silero) integration
-    private func ensureVadManager(preferredThreshold: Double? = nil) async throws -> VadManager? {
-        let desired = preferredThreshold ?? (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double ?? 0.5)
-        // If a manager exists and threshold hasn't changed materially, reuse it
-        if let v = vadManager, let loaded = loadedVadThreshold, abs(loaded - desired) < 0.01 {
-            return v
-        }
-        do {
-            let cfg = VadConfig(
-                defaultThreshold: Float(desired),
-                debugMode: false,
-                computeUnits: .cpuAndNeuralEngine
-            )
-            let v = try await VadManager(config: cfg)
-            vadManager = v
-            loadedVadThreshold = desired
-            return v
-        } catch {
-            return nil
-        }
-    }
-
-    // Returns trimmed samples if VAD finds speech; nil otherwise
-    private func applyVADIfAvailable(_ samples: [Float]) async throws -> [Float]? {
-        // Adaptive VAD threshold: use higher threshold for longer audio
-        let audioDurationSeconds = Double(samples.count) / 16_000.0
-        let baseThreshold = (UserDefaults.standard.object(forKey: "parakeet.vad.threshold") as? Double) ?? 0.5
-        
-        let adaptiveThreshold: Double
-        if audioDurationSeconds > 20.0 {
-            // Longer audio: use stricter threshold to filter background noise
-            adaptiveThreshold = max(baseThreshold, 0.7)
-            AppLog.dictation.log("[Parakeet] VAD using adaptive threshold \(String(format: "%.2f", adaptiveThreshold)) for long audio (\(String(format: "%.1f", audioDurationSeconds))s)")
-        } else {
-            adaptiveThreshold = baseThreshold
-        }
-        
-        guard let vad = try await ensureVadManager(preferredThreshold: adaptiveThreshold) else { return nil }
-        if samples.isEmpty { return nil }
-        // Use 0.6 segmentation API for robust trimming
-        var segCfg = VadSegmentationConfig.default
-        // Tunable parameters via UserDefaults with safe clamps
-        let minSpeech = max(0.05, min(1.0, (UserDefaults.standard.object(forKey: "parakeet.vad.minSpeech") as? Double ?? 0.25)))
-        let minSilence = max(0.10, min(1.5, (UserDefaults.standard.object(forKey: "parakeet.vad.minSilence") as? Double ?? 0.35)))
-        let padding = max(0.0, min(0.8, (UserDefaults.standard.object(forKey: "parakeet.vad.padding") as? Double ?? 0.10)))
-        segCfg.minSpeechDuration = minSpeech
-        segCfg.minSilenceDuration = minSilence
-        segCfg.speechPadding = padding
-        let segments = try await vad.segmentSpeech(samples, config: segCfg)
-        guard let first = segments.first, let last = segments.last else { return nil }
-        // Convert seconds to sample indices at 16kHz
-        let sr = 16_000.0
-        let startIdx = max(0, Int(first.startTime * sr))
-        let endIdx = min(samples.count, Int(last.endTime * sr))
-        guard endIdx > startIdx else { return nil }
-        return Array(samples[startIdx..<endIdx])
-    }
-
-    private static func decodeFastPCM16(url: URL) throws -> [Float]? {
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        guard data.count >= 44 else { return nil }
-        guard data[0...3] == Data([82, 73, 70, 70]) else { return nil }
-        guard data[8...11] == Data([87, 65, 86, 69]) else { return nil }
-        let fmtOffset = findChunkOffset(in: data, id: Data([102, 109, 116, 32]))
-        guard fmtOffset >= 0 else { return nil }
-        let fmtSize = Int(readUInt32(data, offset: fmtOffset + 4))
-        guard fmtSize >= 16, fmtOffset + 8 + fmtSize <= data.count else { return nil }
-        let fmtDataOffset = fmtOffset + 8
-        let audioFormat = readUInt16(data, offset: fmtDataOffset)
-        let channels = readUInt16(data, offset: fmtDataOffset + 2)
-        let sampleRate = readUInt32(data, offset: fmtDataOffset + 4)
-        let bitsPerSample = readUInt16(data, offset: fmtDataOffset + 14)
-        // Accept standard PCM and WAVE_FORMAT_EXTENSIBLE when the packed payload is
-        // mono 16-bit 16 kHz PCM. The subtype is omitted because this is only a fast path.
-        guard (audioFormat == 1 || audioFormat == 0xFFFE),
-              channels == 1,
-              sampleRate == 16_000,
-              bitsPerSample == 16 else { return nil }
-        let dataOffset = findDataChunkOffset(in: data)
-        guard dataOffset >= 0 else { return nil }
-        let start = dataOffset + 8
-        guard start <= data.count else { return nil }
-        // Respect the declared WAV data chunk size to avoid reading trailing metadata
-        let declaredDataSize = Int(readUInt32(data, offset: dataOffset + 4))
-        let available = data.count - start
-        let length = max(0, min(declaredDataSize, available))
-        guard length > 0 else { return [] }
-        let count = length / MemoryLayout<Int16>.size
-        var result = [Float](repeating: 0, count: count)
-        let clamp: (Float) -> Float = { min(max($0, -1.0), 1.0) }
-        result.withUnsafeMutableBufferPointer { dst in
-            data.withUnsafeBytes { raw in
-                guard let base = raw.baseAddress else { return }
-                let samples = base.advanced(by: start).assumingMemoryBound(to: Int16.self)
-                for i in 0..<count {
-                    let value = Float(Int16(littleEndian: samples[i])) / 32767.0
-                    dst[i] = clamp(value)
-                }
-            }
-        }
-        return result
-    }
-
-    private static func findDataChunkOffset(in data: Data) -> Int {
-        findChunkOffset(in: data, id: Data([100, 97, 116, 97]))
-    }
-
-    private static func findChunkOffset(in data: Data, id: Data) -> Int {
-        var offset = 12
-        while offset + 8 <= data.count {
-            let chunkID = data[offset..<(offset + 4)]
-            let size = Int(readUInt32(data, offset: offset + 4))
-            if chunkID == id { return offset }
-            offset += 8 + size + (size % 2)
-        }
-        return -1
-    }
-
-    private static func readUInt16(_ data: Data, offset: Int) -> UInt16 {
-        data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return 0 }
-            return base.advanced(by: offset).assumingMemoryBound(to: UInt16.self).pointee.littleEndian
-        }
-    }
-
-    private static func readUInt32(_ data: Data, offset: Int) -> UInt32 {
-        data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return 0 }
-            return base.advanced(by: offset).assumingMemoryBound(to: UInt32.self).pointee.littleEndian
-        }
-    }
-
     private static func stats(samples: [Float]) -> (meanAbs: Double, peak: Double) {
         guard !samples.isEmpty else { return (0, 0) }
         var sum: Double = 0
@@ -429,65 +294,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         return (sum / Double(samples.count), peak)
     }
 
-    // First-order high-pass filter
-    private static func highPass(_ input: [Float], cutoffHz: Double, sampleRate: Double) -> [Float] {
-        guard !input.isEmpty else { return input }
-        let rc = 1.0 / (2.0 * Double.pi * cutoffHz)
-        let dt = 1.0 / sampleRate
-        let alpha = rc / (rc + dt)
-        var out = Array(repeating: Float(0), count: input.count)
-        var yPrev = 0.0
-        var xPrev = 0.0
-        for i in 0..<input.count {
-            let x = Double(input[i])
-            let y = alpha * (yPrev + x - xPrev)
-            out[i] = Float(y)
-            yPrev = y
-            xPrev = x
-        }
-        return out
-    }
-
-    // Simple pre-emphasis
-    private static func preEmphasis(_ input: [Float], coeff: Float) -> [Float] {
-        guard !input.isEmpty else { return input }
-        var out = input
-        var prev: Float = 0
-        for i in 0..<out.count {
-            let cur = out[i]
-            out[i] = cur - coeff * prev
-            prev = cur
-        }
-        return out
-    }
-
-    private static func normalizeRMS(_ input: [Float], targetRMS: Double, peakLimit: Double, maxGain: Double) -> [Float] {
-        guard !input.isEmpty else { return input }
-        // Compute RMS and peak
-        var sumSq: Double = 0
-        var peak: Double = 0
-        for v in input {
-            let d = Double(v)
-            sumSq += d * d
-            let a = abs(d)
-            if a > peak { peak = a }
-        }
-        let rms = sqrt(sumSq / Double(input.count))
-        if rms <= 0 { return input }
-        var gain = targetRMS / rms
-        // Respect peak limit
-        if peak * gain > peakLimit { gain = peakLimit / max(peak, 1e-9) }
-        gain = min(gain, maxGain)
-        if abs(gain - 1.0) < 1e-3 { return input }
-        var out = input
-        for i in 0..<out.count {
-            let v = Double(out[i]) * gain
-            out[i] = Float(max(-1.0, min(1.0, v)))
-        }
-        return out
-    }
-
-    // Robust decode path using AVAssetReader
     // MARK: - Raw Mode (VoiceInk-style)
     
     /// Raw mode transcription: minimal processing like VoiceInk reference implementation
@@ -570,28 +376,6 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         
         return samples.isEmpty ? nil : samples
-    }
-    
-    /// VAD for raw mode: simple threshold 0.7 like VoiceInk
-    private func applyVADRawMode(_ samples: [Float]) async throws -> [Float]? {
-        let threshold = 0.7  // Fixed threshold like VoiceInk
-        guard let vad = try? await ensureVadManager(preferredThreshold: threshold) else { return nil }
-        if samples.isEmpty { return nil }
-        
-        var segCfg = VadSegmentationConfig.default
-        segCfg.minSpeechDuration = 0.25
-        segCfg.minSilenceDuration = 0.35
-        segCfg.speechPadding = 0.10
-        
-        let segments = try await vad.segmentSpeech(samples, config: segCfg)
-        guard let first = segments.first, let last = segments.last else { return nil }
-        
-        let sr = 16_000.0
-        let startIdx = max(0, Int(first.startTime * sr))
-        let endIdx = min(samples.count, Int(last.endTime * sr))
-        guard endIdx > startIdx else { return nil }
-        
-        return Array(samples[startIdx..<endIdx])
     }
 }
 #else

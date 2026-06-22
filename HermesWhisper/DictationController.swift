@@ -40,7 +40,6 @@ actor DictationController {
     private var activeTextFieldEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var insertionTargetProcessIdentifier: pid_t?
-    private var preCapturedScreenSnapshot: ScreenCaptureSnapshot?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
     private var preCapturedSelectedText: String?
@@ -162,7 +161,6 @@ actor DictationController {
                 }
 
                 // Pre-capture screen context early so it is ready once recording stops
-                preCapturedScreenSnapshot = nil
                 preCapturedScreenText = nil
                 preCapturedScreenMethod = nil
                 preCapturedSelectedText = nil
@@ -206,10 +204,8 @@ actor DictationController {
 
     // Helper to detect effectively empty transcripts (empty or punctuation-only)
     private func looksEmptyOrPunctuation(_ s: String) -> Bool {
-        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.isEmpty { return true }
-        // Treat strings like "...", "—", "…", etc. as empty
-        return t.rangeOfCharacter(from: .alphanumerics) == nil
+        // Empty/whitespace and punctuation-only ("...", "—", "…") both have no alphanumerics.
+        return s.trimmingCharacters(in: .whitespacesAndNewlines).rangeOfCharacter(from: .alphanumerics) == nil
     }
 
     /// Finalizes the active streaming provider (or transcribes the file for non-streaming
@@ -323,7 +319,6 @@ actor DictationController {
         }
 
         let captureModeForSession: ScreenContextCaptureMode = {
-            if preCapturedScreenSnapshot != nil { return .image }
             if preCapturedScreenText != nil { return .text }
             return screenContextCaptureMode
         }()
@@ -391,7 +386,6 @@ actor DictationController {
             
             var screenContentsForPrompt: String? = nil
             var screenMethod: String? = nil
-            var screenAttachment: LLMImageAttachment? = nil
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
             if llmEnabled {
@@ -441,7 +435,7 @@ actor DictationController {
                         }
 
                         // Send to LLM with full context
-                        output = try await llm.process(text: fullPrompt, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+                        output = try await llm.process(text: fullPrompt, userPrompt: userPrompt, settings: llmSettings, imageAttachment: nil)
 
                         // Store both user and assistant messages
                         await conversationHistoryStore.addMessages(to: prompt.id, messages: [
@@ -455,7 +449,7 @@ actor DictationController {
                         AppLog.dictation.log("Conversation mode: stored \(contextMessages.count) context messages")
                     } else {
                         // Standard non-conversation mode
-                        output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: screenAttachment)
+                        output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings, imageAttachment: nil)
                     }
 
                     llmDT = Date().timeIntervalSince(t1)
@@ -589,7 +583,6 @@ actor DictationController {
         activeStreamingProvider = nil
         currentRecordingURL = nil
         insertionTargetProcessIdentifier = nil
-        preCapturedScreenSnapshot = nil
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
         preCapturedSelectedText = nil
@@ -690,7 +683,6 @@ actor DictationController {
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
         // Reset any pre-captured context
-        preCapturedScreenSnapshot = nil
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
         preCapturedActiveTextField = nil
@@ -930,7 +922,6 @@ extension DictationController {
             .isEmpty == false
 
         // Always capture screen text for OCR context
-        self.preCapturedScreenSnapshot = nil
         self.preCapturedScreenText = nil
         self.preCapturedScreenMethod = nil
         self.preCapturedActiveTextField = nil

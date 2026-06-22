@@ -72,10 +72,6 @@ actor ClipboardContextMonitor {
         return snapshot.text
     }
 
-    func peekClipboardIfRecent(referenceDate: Date, window: TimeInterval) async -> String? {
-        clipboardSnapshotIfRecent(referenceDate: referenceDate, window: window)?.text
-    }
-
     func peekClipboardSnapshotIfRecent(referenceDate: Date,
                                        window: TimeInterval) async -> (text: String, copiedAt: Date)? {
         clipboardSnapshotIfRecent(referenceDate: referenceDate, window: window)
@@ -87,16 +83,13 @@ actor ClipboardContextMonitor {
               let text = lastCapturedText else {
             return nil
         }
-        guard let recentText = ClipboardContextPolicy.contextText(
-            text,
-            copiedAt: captureDate,
-            recordingStartedAt: referenceDate,
-            retentionWindow: window
-        ) else {
+        let ageAtRecordingStart = referenceDate.timeIntervalSince(captureDate)
+        guard ageAtRecordingStart >= 0, ageAtRecordingStart <= window else {
             lastCapturedText = nil
             lastCaptureDate = nil
             return nil
         }
+        let recentText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return (recentText, captureDate)
     }
 
@@ -177,20 +170,6 @@ actor ClipboardContextMonitor {
     }
 }
 
-enum ClipboardContextPolicy {
-    static func contextText(_ text: String?,
-                            copiedAt: Date,
-                            recordingStartedAt: Date,
-                            retentionWindow: TimeInterval) -> String? {
-        let ageAtRecordingStart = recordingStartedAt.timeIntervalSince(copiedAt)
-        guard ageAtRecordingStart >= 0,
-              ageAtRecordingStart <= retentionWindow else {
-            return nil
-        }
-        return text?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
 enum HermesClipboardContextPolicy {
     static let minimumRetentionWindow: TimeInterval = 1
     static let maximumRetentionWindow: TimeInterval = 600
@@ -206,12 +185,10 @@ enum HermesClipboardContextPolicy {
                             recordingStartedAt: Date,
                             requestSentAt _: Date? = nil,
                             retentionWindow: TimeInterval = retentionWindow) -> String? {
-        guard let recentText = ClipboardContextPolicy.contextText(
-            text,
-            copiedAt: copiedAt,
-            recordingStartedAt: recordingStartedAt,
-            retentionWindow: retentionWindow
-        ) else {
+        let ageAtRecordingStart = recordingStartedAt.timeIntervalSince(copiedAt)
+        guard ageAtRecordingStart >= 0,
+              ageAtRecordingStart <= retentionWindow,
+              let recentText = text?.trimmingCharacters(in: .whitespacesAndNewlines) else {
             return nil
         }
         return HermesAgentAPIClient.normalizedClipboardText(recentText)

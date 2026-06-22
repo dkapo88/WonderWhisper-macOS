@@ -27,7 +27,6 @@ struct BeeperSendResponse: Equatable {
 struct BeeperMessagePage: Equatable {
   var items: [BeeperMessage]
   var newestCursor: String?
-  var oldestCursor: String?
 }
 
 struct BeeperMessage: Equatable, Identifiable {
@@ -334,8 +333,7 @@ final class BeeperAPIClient {
     let decoded = try JSONDecoder().decode(ListMessagesResponse.self, from: data)
     return BeeperMessagePage(
       items: decoded.items.map(\.message),
-      newestCursor: decoded.newestCursor,
-      oldestCursor: decoded.oldestCursor
+      newestCursor: decoded.newestCursor
     )
   }
 
@@ -399,7 +397,6 @@ final class BeeperAPIClient {
   private struct ListMessagesResponse: Decodable {
     var items: [MessageResponse]
     var newestCursor: String?
-    var oldestCursor: String?
   }
 
   private struct MessageResponse: Decodable {

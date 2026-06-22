@@ -7,7 +7,6 @@ import Accelerate
 final class AudioRecorder: NSObject {
     enum CaptureProfile {
         case standard16k            // default for cloud/local Whisper providers
-        case appleNativeHighQuality // optimized for Apple's native Speech on macOS 26
     }
 
     private var recorder: AVAudioRecorder?
@@ -17,8 +16,7 @@ final class AudioRecorder: NSObject {
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
     private var finishContinuation: CheckedContinuation<URL?, Never>?
-    private var previousDefaultInputUIDForStreaming: String?
-    
+
     // Temporary file cleanup
     private static var lastCleanupTime: Date?
     private static let cleanupInterval: TimeInterval = 300  // 5 minutes
@@ -36,33 +34,15 @@ final class AudioRecorder: NSObject {
     private let bufferLock = NSLock()  // Synchronize buffer access
     private var cleanupComplete = DispatchSemaphore(value: 1)  // Track cleanup completion
 
-    // Health monitoring
-    private var lastAudioTime: AVAudioTime?
-    private var totalFramesProcessed: Int = 0
-    private var framesDropped: Int = 0
-    private var recordingStartTime: Date?
-    private var sessionConfigured = false
-
     // Audio processing callbacks
     private var onPCM16Frame: ((Data) -> Void)?
 
     // Current capture profile (selected by controller based on active provider)
     var captureProfile: CaptureProfile = .standard16k
 
-    // Track sample rate emitted to streaming providers.
-    private(set) var actualInputSampleRate: Double = 16000.0
-
     override init() {
         super.init()
         audioQueue.setSpecific(key: audioQueueKey, value: ())
-    }
-    
-    // MARK: - Audio Session Setup (CRITICAL FIX)
-    private func setupAudioSession() throws {
-        // On macOS, AVAudioSession is not available. We configure the audio engine directly
-        // to handle 16kHz sample rate without real-time conversion.
-        sessionConfigured = true
-        print("✅ Audio session configured: 16kHz at engine level")
     }
 
     // MARK: - Microphone Selection Override
@@ -95,103 +75,26 @@ final class AudioRecorder: NSObject {
         }
     }
 
-    private func applyInputSelectionOverrideForStreaming() {
-        let selection = AudioInputSelection.load()
-        switch selection {
-        case .systemDefault:
-            return
-        case .deviceUID(let uid):
-            let current = AudioDeviceManager.currentDefaultInputUID()
-            if current != uid {
-                previousDefaultInputUIDForStreaming = current
-                if AudioDeviceManager.setSystemDefaultInput(toUID: uid) {
-                    _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: uid, timeout: 1.0)
-                    print("🎙️ [Streaming] Default input set to \(uid)")
-                } else {
-                    print("⚠️ [Streaming] Failed to set default input to \(uid)")
-                }
-            }
-        }
-    }
-
-    private func restoreInputSelectionForStreaming() {
-        guard let prev = previousDefaultInputUIDForStreaming else { return }
-        previousDefaultInputUIDForStreaming = nil
-        if AudioDeviceManager.currentDefaultInputUID() != prev {
-            _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
-            _ = AudioDeviceManager.waitForDefaultInputSwitch(toUID: prev, timeout: 1.0)
-            print("🔁 [Streaming] Default input restored to \(prev)")
-        }
-    }
-
     // MARK: - Audio Format Configuration
-    private func audioFormatSettings(format: String) throws -> (filename: String, settings: [String: Any]) {
-        // When capturing for Apple's native Speech (Tahoe), prefer a high-quality,
-        // uncompressed 48 kHz mono WAV so the transcriber avoids resampling and
-        // keeps high‑frequency cues for better accuracy.
-        if captureProfile == .appleNativeHighQuality {
-            return ("wav", [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48_000.0,
-                AVNumberOfChannelsKey: 1,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsBigEndianKey: false
-            ])
-        }
-        switch format {
-        case "mp3":
-            // Note: macOS doesn't natively support MP3 recording via AVAudioRecorder
-            // Fall back to AAC with aggressive compression for similar file sizes
-            return ("m4a", [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 16_000.0,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 16_000 // Aggressive AAC compression = ~2 KB/s, similar to MP3
-            ])
-        case "ogg":
-            // Note: macOS doesn't natively support OGG recording via AVAudioRecorder
-            // Fall back to AAC with very low bitrate for similar compression
-            return ("m4a", [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 16_000.0,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 16_000 // Aggressive AAC compression = ~2 KB/s
-            ])
-        case "aac":
-            return ("m4a", [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 16_000.0,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 32_000 // Original 32 kbps = ~4 KB/s
-            ])
-        default: // "wav"
-            return ("wav", [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 16_000.0,
-                AVNumberOfChannelsKey: 1,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-                AVLinearPCMIsBigEndianKey: false
-            ])
-        }
+    private func audioFormatSettings() -> (filename: String, settings: [String: Any]) {
+        return ("wav", [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16_000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false
+        ])
     }
 
     func startRecording() throws -> URL {
-        // Ensure audio session is properly configured
-        if !sessionConfigured {
-            try setupAudioSession()
-        }
-        
         // Periodically clean up old temporary recording files to prevent accumulation
         Self.cleanupOldTemporaryFilesIfNeeded()
 
         let tempDir = FileManager.default.temporaryDirectory
-        let format = UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav"
-        let formatLower = format.lowercased()
 
         // Determine filename and extension based on format
-        let (filename, settings) = try audioFormatSettings(format: formatLower)
+        let (filename, settings) = audioFormatSettings()
         let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
 
         // Apply microphone selection override before starting recording
@@ -355,23 +258,13 @@ extension AudioRecorder {
             stopStreamingPCM16()
         }
 
-        // Ensure audio session is properly configured for streaming
-        if !sessionConfigured {
-            try setupAudioSession()
-        }
-
         // Apply microphone selection override before starting streaming
-        applyInputSelectionOverrideForStreaming()
+        applyInputSelectionOverrideIfNeeded()
 
         isStreaming = true
         self.onPCM16Frame = onFrame
 
-        // Reset health monitoring
         bufferIndex = 0
-        totalFramesProcessed = 0
-        framesDropped = 0
-        recordingStartTime = Date()
-        lastAudioTime = nil
 
         setupAudioEngine()
 
@@ -380,7 +273,7 @@ extension AudioRecorder {
             print("❌ Audio engine setup failed - cannot start streaming")
             isStreaming = false
             onPCM16Frame = nil
-            restoreInputSelectionForStreaming()
+            restoreInputSelectionIfNeeded()
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [
                 NSLocalizedDescriptionKey: "Audio engine setup failed"
             ])
@@ -431,9 +324,8 @@ extension AudioRecorder {
             return
         }
         audioFormat = format
-        actualInputSampleRate = format.sampleRate
         audioConverter = AVAudioConverter(from: inputFormat, to: format)
-        print("🎤 Streaming output sample rate: \(actualInputSampleRate) Hz")
+        print("🎤 Streaming output sample rate: \(format.sampleRate) Hz")
 
         // Tap buffer size: ~100ms of hardware audio. xAI recommends 100ms PCM
         // frames, and AVAudioEngine may deliver larger buffers than requested, so
@@ -474,24 +366,7 @@ extension AudioRecorder {
     }
 
     // MARK: - Audio Processing (NEW)
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
-        // Check for audio gaps (indicates dropped frames)
-        if let lastTime = lastAudioTime {
-            let sampleTime = time.sampleTime
-            let lastSampleTime = lastTime.sampleTime
-            let sampleRate = time.sampleRate
-
-            if sampleRate > 0 {
-                let gap = Double(sampleTime - lastSampleTime) / sampleRate
-                // With 50ms buffers, gaps > 100ms indicate actual frame drops
-                if gap > 0.15 {
-                    framesDropped += 1
-                    print("⚠️ Audio gap: \(String(format: "%.3f", gap))s")
-                }
-            }
-        }
-        lastAudioTime = time
-
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, at _: AVAudioTime) {
         onLevel?(Self.visualMeterLevel(from: buffer))
 
         // Suppress low-energy buffers to reduce transmission of near-silence (optional)
@@ -530,8 +405,6 @@ extension AudioRecorder {
         // Send audio data
         let audioData = bufferToData(convertedBuffer)
         onPCM16Frame?(audioData)
-
-        totalFramesProcessed += Int(convertedBuffer.frameLength)
     }
 
     private func convertBuffer(_ inputBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -630,11 +503,10 @@ extension AudioRecorder {
         inputNode?.removeTap(onBus: 0)
 
         if logHealth {
-            logAudioHealth()
             print("🛑 Streaming stopped")
         }
 
-        restoreInputSelectionForStreaming()
+        restoreInputSelectionIfNeeded()
 
         audioEngine = nil
         inputNode = nil
@@ -644,30 +516,6 @@ extension AudioRecorder {
         audioBufferList.removeAll(keepingCapacity: false)
         bufferLock.unlock()
         onPCM16Frame = nil
-
-        lastAudioTime = nil
-        totalFramesProcessed = 0
-        framesDropped = 0
-        recordingStartTime = nil
-    }
-
-    // MARK: - Health Monitoring (NEW)
-    private func logAudioHealth() {
-        guard let startTime = recordingStartTime else { return }
-
-        let duration = Date().timeIntervalSince(startTime)
-        let dropRate = totalFramesProcessed > 0 ?
-            Double(framesDropped) / Double(totalFramesProcessed) * 100 : 0
-
-        print("\n" + String(repeating: "=", count: 50))
-        print("📊 AUDIO HEALTH REPORT")
-        print(String(repeating: "=", count: 50))
-        print("⏱️  Duration: \(String(format: "%.2f", duration))s")
-        print("🎵 Frames Processed: \(totalFramesProcessed)")
-        print("📉 Frames Dropped: \(framesDropped)")
-        print("📈 Drop Rate: \(String(format: "%.2f", dropRate))%")
-        print("🎯 Average Speed: \(String(format: "%.2f", Double(totalFramesProcessed) / duration / 16000))x real-time")
-        print(String(repeating: "=", count: 50) + "\n")
     }
 }
 
@@ -753,12 +601,5 @@ extension AudioRecorder {
             let mbDeleted = Double(deletedBytes) / 1_048_576.0
             print("🧹 Cleaned up \(deletedCount) old temporary recording files (\(String(format: "%.2f", mbDeleted)) MB)")
         }
-    }
-}
-
-// Safe index helper for EQ band access (legacy support)
-private extension Collection {
-    subscript(safe index: Index) -> Element? {
-        return indices.contains(index) ? self[index] : nil
     }
 }

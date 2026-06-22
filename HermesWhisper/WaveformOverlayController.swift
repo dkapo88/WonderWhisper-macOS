@@ -4,7 +4,7 @@ import Combine
 @MainActor
 final class WaveformOverlayController {
     private let window: NSWindow
-    private let waveformView = WaveformView(style: .pillBars)
+    private let waveformView = WaveformView()
     private var cancellables: Set<AnyCancellable> = []
     private weak var vm: DictationViewModel?
 
@@ -124,13 +124,6 @@ enum AudioVisualizerSensitivity {
 }
 
 private final class WaveformView: NSView {
-    enum Style {
-        case pillBars      // vertical bars inside a rounded capsule
-        case dotTrail      // marching dots that swell with level
-        case centerMirror  // mirrored bars from center (oscilloscope vibe)
-    }
-
-    private let style: Style
     // Buttons
     var onCancel: (() -> Void)?
     var onFinish: (() -> Void)?
@@ -138,15 +131,13 @@ private final class WaveformView: NSView {
     private let finishButton = CircleButton(kind: .finish)
     private let backgroundLayer = CAGradientLayer()
     private var barLayers: [CALayer] = []
-    private var dotLayers: [CALayer] = []
     private var noiseSeeds: [CGFloat] = []
     private var displayLevel: CGFloat = 0
     private var timer: Timer?
     private let barCount = 14
     private var level: CGFloat = 0
 
-    init(style: Style) {
-        self.style = style
+    init() {
         super.init(frame: .zero)
         wantsLayer = true
         layer = CALayer()
@@ -161,10 +152,7 @@ private final class WaveformView: NSView {
         layer?.shadowRadius = 10
         isHidden = false
         buildChrome()
-        switch style {
-        case .pillBars, .centerMirror: buildBars()
-        case .dotTrail: buildDots()
-        }
+        buildBars()
 
         // Hook up buttons
         addSubview(cancelButton)
@@ -295,20 +283,6 @@ private final class WaveformView: NSView {
         }
     }
 
-    private func buildDots() {
-        dotLayers.forEach { $0.removeFromSuperlayer() }
-        dotLayers.removeAll()
-        guard let root = layer else { return }
-        let count = 10
-        for _ in 0..<count {
-            let dot = CALayer()
-            dot.cornerCurve = .continuous
-            dot.backgroundColor = NSColor.systemRed.cgColor
-            root.addSublayer(dot)
-            dotLayers.append(dot)
-        }
-    }
-
     private func tick() {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.09)
@@ -342,10 +316,6 @@ private final class WaveformView: NSView {
                 var amp = max(idleShape, liveShape)
                 if displayLevel == 0 { amp = idleShape }
                 amp = max(0, min(1, amp))
-                if style == .centerMirror {
-                    let falloff = 1 - min(1, abs(CGFloat(i) - center) / center)
-                    amp = amp * (0.65 + 0.35 * falloff)
-                }
                 let h = minH + (maxH - minH) * amp
                 var r = bar.frame
                 r.size.height = h
@@ -357,24 +327,6 @@ private final class WaveformView: NSView {
                     of: .white
                 )?.withAlphaComponent(alpha).cgColor
                 bar.shadowOpacity = Float(0.08 + 0.22 * displayLevel)
-            }
-        } else if !dotLayers.isEmpty {
-            let count = dotLayers.count
-            let spacing: CGFloat = 6
-            let dotSize: CGFloat = 3
-            let startX = (bounds.width - (CGFloat(count - 1) * spacing)) / 2
-            for (i, dot) in dotLayers.enumerated() {
-                let t = CGFloat(i) / CGFloat(max(1, count - 1))
-                let delay = Double(t) * 0.25
-                // Manual clamp instead of unavailable .clamped
-                let sVal = sin((now - delay) * 8)
-                let sClamped = max(-1.0, min(1.0, sVal))
-                let swell = 0.6 + 0.8 * CGFloat(sClamped)
-                let scale = max(0.5, min(1.6, swell * (0.6 + 0.8 * displayLevel)))
-                let size = dotSize * scale
-                let x = startX + CGFloat(i) * spacing
-                dot.frame = NSRect(x: x - size/2, y: (bounds.height - size)/2, width: size, height: size)
-                dot.cornerRadius = size/2
             }
         }
         CATransaction.commit()

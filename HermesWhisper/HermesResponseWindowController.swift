@@ -32,20 +32,6 @@ struct HermesResponseWindowState: Equatable, Identifiable {
 }
 
 enum HermesResponseWindowLifecycle {
-  static func replyRecordingStarted(
-    _ state: HermesResponseWindowState?
-  ) -> HermesResponseWindowState? {
-    guard var state else { return nil }
-    state.isRecordingReply = true
-    return state
-  }
-
-  static func replyRecordingFinished(
-    _ state: HermesResponseWindowState?
-  ) -> HermesResponseWindowState? {
-    nil
-  }
-
   static func replyRecordingCancelled(
     _ state: HermesResponseWindowState?
   ) -> HermesResponseWindowState? {
@@ -96,19 +82,6 @@ enum HermesResponseWindowLayout {
     .resizable,
     .fullSizeContentView
   ]
-}
-
-protocol HermesResponseWindowControlling: AnyObject {
-  func orderOut(_ sender: Any?)
-  func miniaturize(_ sender: Any?)
-}
-
-extension NSWindow: HermesResponseWindowControlling {}
-
-enum HermesResponseWindowControls {
-  static func minimize(_ window: HermesResponseWindowControlling?) {
-    window?.orderOut(nil)
-  }
 }
 
 @MainActor
@@ -224,7 +197,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         onSendTextReply: { [weak self] text in
           self?.sendTextReply(text, sessionID: state.id)
         },
-        onMinimize: { [weak panel] in HermesResponseWindowControls.minimize(panel) },
+        onMinimize: { [weak panel] in panel?.orderOut(nil) },
         onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: state.id) }
       )
     )

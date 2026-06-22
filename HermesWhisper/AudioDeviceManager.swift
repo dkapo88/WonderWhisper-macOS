@@ -60,19 +60,24 @@ enum AudioDeviceManager {
     }
 
     // MARK: - Input Volume (Gain)
+    /// Volume property addresses to try in order: master element first, then channel 1.
+    /// Only addresses the device actually exposes are returned, preserving the
+    /// "try master element else fall back to channel 1" semantics shared by get/set.
+    private static func volumePropertyAddresses(for dev: AudioObjectID) -> [AudioObjectPropertyAddress] {
+        let elements: [AudioObjectPropertyElement] = [kAudioObjectPropertyElementMain, 1]
+        var addresses: [AudioObjectPropertyAddress] = []
+        for element in elements {
+            var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: element)
+            if AudioObjectHasProperty(dev, &addr) {
+                addresses.append(addr)
+            }
+        }
+        return addresses
+    }
+
     static func inputVolume(uid: String) -> Float? {
         guard let dev = deviceID(forUID: uid) else { return nil }
-        // Try master element first
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
-        if AudioObjectHasProperty(dev, &addr) {
-            var vol: Float = 0
-            var size = UInt32(MemoryLayout<Float>.size)
-            let status = AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &vol)
-            if status == noErr { return vol }
-        }
-        // Fallback to channel 1
-        addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: 1)
-        if AudioObjectHasProperty(dev, &addr) {
+        for var addr in volumePropertyAddresses(for: dev) {
             var vol: Float = 0
             var size = UInt32(MemoryLayout<Float>.size)
             let status = AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &vol)
@@ -85,15 +90,7 @@ enum AudioDeviceManager {
     static func setInputVolume(uid: String, volume: Float) -> Bool {
         guard let dev = deviceID(forUID: uid) else { return false }
         var vol = max(0, min(1, volume))
-        // Try master element first
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
-        if AudioObjectHasProperty(dev, &addr) {
-            var size = UInt32(MemoryLayout<Float>.size)
-            if AudioObjectSetPropertyData(dev, &addr, 0, nil, size, &vol) == noErr { return true }
-        }
-        // Fallback to channel 1
-        addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: 1)
-        if AudioObjectHasProperty(dev, &addr) {
+        for var addr in volumePropertyAddresses(for: dev) {
             var size = UInt32(MemoryLayout<Float>.size)
             if AudioObjectSetPropertyData(dev, &addr, 0, nil, size, &vol) == noErr { return true }
         }

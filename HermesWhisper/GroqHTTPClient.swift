@@ -1,6 +1,5 @@
 import Foundation
 import OSLog
-import Compression
 import os.signpost
 
 struct GroqHTTPClient {
@@ -26,18 +25,6 @@ struct GroqHTTPClient {
                 // Ignore pre-warming errors
             }
         }
-    }
-
-    // MARK: - Request Compression
-    private static func compressData(_ data: Data) throws -> Data {
-        // Simple implementation - for now just return original data
-        // Real compression would require more complex implementation
-        return data
-    }
-
-    private static func shouldCompressRequest(contentLength: Int) -> Bool {
-        // Only compress larger payloads where the benefit outweighs the CPU cost
-        return contentLength > 2048 // 2KB minimum
     }
 
     static let session: URLSession = {
@@ -80,108 +67,6 @@ struct GroqHTTPClient {
         return "Bearer \(key)"
     }
 
-    func postJSON(to url: URL, body: [String: Any], timeout: TimeInterval, context: String? = nil) async throws -> Data {
-        let start = Date()
-        let reqId = UUID().uuidString
-        AppLog.network.log("POST JSON [\(context ?? "-")] to \(url.absoluteString, privacy: .public) req=\(reqId)")
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("gzip, br", forHTTPHeaderField: "Accept-Encoding")
-        request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
-        request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
-        request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-
-        return try await performWithRetry(request: request, start: start, context: context)
-    }
-
-    // Typed JSON encoder variant to avoid bridging to Foundation types
-    func postJSONEncodable<T: Encodable>(to url: URL, body: T, timeout: TimeInterval, context: String? = nil) async throws -> Data {
-        let start = Date()
-        let reqId = UUID().uuidString
-        AppLog.network.log("POST JSON [\(context ?? "-")] to \(url.absoluteString, privacy: .public) req=\(reqId)")
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("gzip, br", forHTTPHeaderField: "Accept-Encoding")
-        request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
-        request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
-        request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
-        let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(body)
-
-        return try await performWithRetry(request: request, start: start, context: context)
-    }
-    // Streaming JSON (SSE) variant for chat completions. Returns the accumulated content string.
-    func postJSONEncodableStream<T: Encodable>(to url: URL, body: T, timeout: TimeInterval, context: String? = nil) async throws -> String {
-        let start = Date()
-        let reqId = UUID().uuidString
-        AppLog.network.log("POST JSON STREAM [\(context ?? "-")] to \(url.absoluteString, privacy: .public) req=\(reqId)")
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        // Do not set Accept-Encoding for SSE; allow immediate flushes
-        request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
-        request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
-        request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
-        let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(body)
-
-        // Enforce per-attempt wall-clock timeout for streaming
-        return try await withThrowingTaskGroup(of: String.self) { group in
-            // Network streaming task
-            group.addTask {
-                var aggregated = ""
-                let (bytes, response) = try await GroqHTTPClient.session.bytes(for: request)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    // Read any available body into string for diagnostics
-                    var bodySample = ""
-                    for try await line in bytes.lines {
-                        bodySample += line + "\n"
-                        if bodySample.count > 8_192 { break }
-                    }
-                    throw ProviderError.http(status: http.statusCode, body: bodySample)
-                }
-                for try await line in bytes.lines {
-                    if line.hasPrefix(":") { continue } // comment/keepalive
-                    guard line.hasPrefix("data:") else { continue }
-                    var payload = String(line.dropFirst(5)) // after "data:"
-                    if payload.hasPrefix(" ") { payload.removeFirst() }
-                    if payload == "[DONE]" { break }
-                    // Parse JSON chunk and extract choices[0].delta.content if present
-                    if let data = payload.data(using: .utf8),
-                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let choices = obj["choices"] as? [[String: Any]],
-                       let first = choices.first {
-                        if let delta = first["delta"] as? [String: Any], let part = delta["content"] as? String {
-                            aggregated += part
-                        } else if let msg = first["message"] as? [String: Any], let part = msg["content"] as? String {
-                            // Some implementations may send full message objects mid-stream
-                            aggregated += part
-                        }
-                    }
-                }
-                AppLog.network.log("STREAM completed req=\(reqId) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                return aggregated
-            }
-            // Timeout task
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(max(1.0, timeout) * 1_000_000_000))
-                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: [NSLocalizedDescriptionKey: "Stream timed out after \(Int(timeout))s"])
-            }
-            defer { group.cancelAll() }
-            guard let result = try await group.next() else {
-                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown, userInfo: [NSLocalizedDescriptionKey: "No stream result"])
-            }
-            return result
-        }
-    }
-
-
     struct MultipartFile {
         let fieldName: String
         let filename: String
@@ -194,15 +79,6 @@ struct GroqHTTPClient {
             self.filename = filename
             self.mimeType = mimeType
             self.data = data
-        }
-
-        // Convenience initializer from file URL (existing behavior)
-        init(fieldName: String, filename: String, mimeType: String, fileURL: URL) throws {
-            self.fieldName = fieldName
-            self.filename = filename
-            self.mimeType = mimeType
-            // Avoid mmapped Data here as well for stability when files are freshly written.
-            self.data = try Data(contentsOf: fileURL)
         }
     }
 
@@ -237,25 +113,6 @@ struct GroqHTTPClient {
 
         append("--\(boundary)--\r\n")
 
-        // Optional compression for large payloads
-        var finalBody = body
-        var shouldCompress = Self.shouldCompressRequest(contentLength: body.count)
-        if shouldCompress {
-            do {
-                let compressedBody = try Self.compressData(body)
-                // Only use compression if it actually reduces size significantly
-                if compressedBody.count < body.count * 9 / 10 { // 10% reduction minimum
-                    finalBody = compressedBody
-                    AppLog.network.log("Compressed multipart body: \(body.count) -> \(compressedBody.count) bytes (\(String(format: "%.1f", Double(compressedBody.count)/Double(body.count)*100))%)")
-                } else {
-                    shouldCompress = false
-                }
-            } catch {
-                AppLog.network.error("Compression failed, using uncompressed body: \(error)")
-                shouldCompress = false
-            }
-        }
-
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -266,14 +123,9 @@ struct GroqHTTPClient {
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .voice
 
-        // Set compression headers if body was compressed
-        if shouldCompress {
-            request.setValue("lzfse", forHTTPHeaderField: "Content-Encoding")
-        }
+        request.httpBody = body
 
-        request.httpBody = finalBody
-
-        AppLog.network.log("Multipart body ready req=\(reqId, privacy: .public) bytes=\(finalBody.count, privacy: .public) timeout=\(timeout, format: .fixed(precision: 1), privacy: .public)s")
+        AppLog.network.log("Multipart body ready req=\(reqId, privacy: .public) bytes=\(body.count, privacy: .public) timeout=\(timeout, format: .fixed(precision: 1), privacy: .public)s")
         return try await performWithRetry(request: request, start: start, context: context)
     }
 }

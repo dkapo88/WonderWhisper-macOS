@@ -158,28 +158,10 @@ enum AudioPreprocessor {
     }
 
     static func process(_ url: URL) throws -> URL {
-        let sr: Double = 16_000
         var samples = try decodeToFloatMono16k(url: url)
         if samples.isEmpty { return url }
 
-        applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
-        // Mains hum removal: narrow notch at 50/60 Hz (+ optional 2nd harmonic)
-        let defaultHum = 60
-        let humHz = {
-            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
-            return v == 50 || v == 60 ? v : defaultHum
-        }()
-        let applySecondHarmonic = {
-            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
-            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
-        }()
-        // Use a fairly narrow notch (Q ~ 8–10). Apply twice for deeper attenuation.
-        applyNotch(in: &samples, centerHz: Double(humHz),    Q: 10.0, sampleRate: sr, cascades: 2)
-        if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
-            applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
-        }
-        applyPreEmphasis(in: &samples, coeff: 0.97)
-        let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
+        let appliedGain = applyPipeline(samples: &samples)
 
         let outURL = url.deletingLastPathComponent()
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_proc.wav")
@@ -226,23 +208,7 @@ enum AudioPreprocessor {
             }
 
             // Apply preprocessing
-            let sr: Double = 16_000
-            applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
-            let defaultHum = 60
-            let humHz = {
-                let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
-                return v == 50 || v == 60 ? v : defaultHum
-            }()
-            let applySecondHarmonic = {
-                if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
-                return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
-            }()
-            applyNotch(in: &samples, centerHz: Double(humHz), Q: 10.0, sampleRate: sr, cascades: 2)
-            if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
-                applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
-            }
-            applyPreEmphasis(in: &samples, coeff: 0.97)
-            let appliedGain = normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
+            let appliedGain = applyPipeline(samples: &samples)
 
             let wavData = try samplesAsWavData(samples)
             if debugLoggingEnabled {
@@ -255,6 +221,33 @@ enum AudioPreprocessor {
             }
             return nil
         }
+    }
+
+    // MARK: - DSP pipeline
+    // Shared analyze/highpass/hum-notch/pre-emphasis/normalize pipeline used by both the
+    // disk path (process) and the in-memory path (processToData). Returns the applied
+    // normalization gain (used only for debug logging by callers).
+    @discardableResult
+    private static func applyPipeline(samples: inout [Float]) -> Double {
+        let sr: Double = 16_000
+        applyHighPass(in: &samples, cutoffHz: 90, sampleRate: sr)
+        // Mains hum removal: narrow notch at 50/60 Hz (+ optional 2nd harmonic)
+        let defaultHum = 60
+        let humHz = {
+            let v = UserDefaults.standard.integer(forKey: "audio.preprocess.humHz")
+            return v == 50 || v == 60 ? v : defaultHum
+        }()
+        let applySecondHarmonic = {
+            if UserDefaults.standard.object(forKey: "audio.preprocess.hum2nd") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "audio.preprocess.hum2nd")
+        }()
+        // Use a fairly narrow notch (Q ~ 8–10). Apply twice for deeper attenuation.
+        applyNotch(in: &samples, centerHz: Double(humHz),    Q: 10.0, sampleRate: sr, cascades: 2)
+        if applySecondHarmonic, Double(humHz) * 2.0 < sr * 0.49 {
+            applyNotch(in: &samples, centerHz: Double(humHz) * 2.0, Q: 8.0, sampleRate: sr, cascades: 1)
+        }
+        applyPreEmphasis(in: &samples, coeff: 0.97)
+        return normalizeRMS(in: &samples, targetRMS: 0.08, peakLimit: 0.98, maxGain: 8.0)
     }
 
     // MARK: - DSP helpers

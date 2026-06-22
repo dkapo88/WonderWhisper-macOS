@@ -37,7 +37,6 @@ enum TextReplacement {
         var offset = 0
         for m in matches {
             let range = NSRange(location: m.range.location + offset, length: m.range.length)
-            _ = (out as NSString).substring(with: range)
             // Output must exactly match the 'to' string as provided by the user
             let replacement = to
             out = (out as NSString).replacingCharacters(in: range, with: replacement)

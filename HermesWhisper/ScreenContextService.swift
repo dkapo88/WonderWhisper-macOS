@@ -111,15 +111,6 @@ final class ScreenContextService {
         return extractString(from: selected)
     }
 
-    private func copySelectedRangeValue(from element: AXUIElement) -> AXValue? {
-        var rangeValue: AnyObject?
-        let res = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
-        guard res == .success,
-              let rangeValue,
-              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
-        return (rangeValue as! AXValue)
-    }
-
     private func numberOfCharacters(in element: AXUIElement) -> Int? {
         var lengthValue: AnyObject?
         let lenErr = AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &lengthValue)
@@ -216,32 +207,6 @@ final class ScreenContextService {
             }
         }
         return nil
-    }
-
-    func captureActiveWindowText(preferAccurate: Bool) async -> String? {
-        // Perform OCR in background
-        return await withCheckedContinuation { continuation in
-            backgroundQueue.async {
-                let svc = ScreenCaptureService()
-                let correctionHints = ScreenContextPreprocessor.defaultCorrectionHints()
-                Task {
-                    guard let snapshot = await svc.captureActiveWindowImage(
-                        maxDimension: 4096,
-                        lossless: true
-                    ) else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    
-                    let text = await svc.recognizeText(
-                        from: snapshot,
-                        preferAccurate: preferAccurate,
-                        customWords: correctionHints
-                    )
-                    continuation.resume(returning: text)
-                }
-            }
-        }
     }
 
     func captureFullScreenContextTerms(preferAccurate: Bool) async -> ScreenContextPreprocessingResult? {
@@ -349,23 +314,6 @@ private extension ScreenContextService {
         return nil
     }
 
-    func copyActiveTextFieldViaClipboard(from element: AXUIElement) -> String? {
-        return nil
-    }
-
-    func copyFrontmostTextFieldViaClipboard() -> String? {
-        return nil
-    }
-
-    func synthesizeArrowRight() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        let key: CGKeyCode = CGKeyCode(kVK_RightArrow)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true)
-        let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
-    }
-
     private func waitForPasteboardChange(since base: Int, timeout: TimeInterval) -> Int? {
         let pb = NSPasteboard.general
         let deadline = Date().addingTimeInterval(timeout)
@@ -438,17 +386,6 @@ private extension ScreenContextService {
         let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
         down?.flags = .maskCommand
         let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
-        up?.flags = .maskCommand
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
-    }
-
-    func synthesizeCmdA() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        let keyA: CGKeyCode = CGKeyCode(kVK_ANSI_A)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: keyA, keyDown: true)
-        down?.flags = .maskCommand
-        let up = CGEvent(keyboardEventSource: src, virtualKey: keyA, keyDown: false)
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)

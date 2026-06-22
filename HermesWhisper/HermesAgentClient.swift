@@ -17,8 +17,7 @@ struct HermesAgentSettings: Equatable {
   }
 
   var normalizedBaseURLString: String {
-    let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed
+    return baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   var normalizedModel: String {
@@ -55,34 +54,14 @@ struct HermesAgentResponse: Equatable {
 struct HermesAgentImageAttachment: Equatable {
   var data: Data
   var mimeType: String
-  var width: Int
-  var height: Int
-  var method: ScreenCaptureSnapshot.Method
-  var suggestedFilename: String
 
-  init(data: Data,
-       mimeType: String,
-       width: Int,
-       height: Int,
-       method: ScreenCaptureSnapshot.Method,
-       suggestedFilename: String) {
+  init(data: Data, mimeType: String) {
     self.data = data
     self.mimeType = mimeType
-    self.width = width
-    self.height = height
-    self.method = method
-    self.suggestedFilename = suggestedFilename
   }
 
   init(snapshot: ScreenCaptureSnapshot) {
-    self.init(
-      data: snapshot.data,
-      mimeType: snapshot.mimeType,
-      width: snapshot.width,
-      height: snapshot.height,
-      method: snapshot.method,
-      suggestedFilename: snapshot.suggestedFilename
-    )
+    self.init(data: snapshot.data, mimeType: snapshot.mimeType)
   }
 
   var dataURL: String {

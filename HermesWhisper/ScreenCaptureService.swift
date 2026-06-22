@@ -266,22 +266,16 @@ private extension ScreenCaptureService {
     let width = CGFloat(image.width)
     let height = CGFloat(image.height)
     let maxSide = max(width, height)
-    var scaledImage = image
 
+    var scaledImage = image
     if maxSide > maxDimension {
       let scale = maxDimension / maxSide
       let scaledSize = CGSize(width: (width * scale).rounded(), height: (height * scale).rounded())
-      guard let downsized = downscale(image: image, to: scaledSize) else {
+      if let downsized = downscale(image: image, to: scaledSize) {
+        scaledImage = downsized
+      } else {
         AppLog.screen.warning("Downscale failed; using original image")
-        scaledImage = image
-        return encode(
-          image: scaledImage,
-          method: method,
-          compression: compression,
-          lossless: lossless
-        )
       }
-      scaledImage = downsized
     }
 
     return encode(
@@ -783,11 +777,5 @@ private final class ScreenSampleWaiter: @unchecked Sendable {
     lock.unlock()
 
     continuation?.resume(returning: sample)
-  }
-}
-
-extension ScreenCaptureSnapshot {
-  func asAttachment(detail: LLMImageAttachment.Detail = .high) -> LLMImageAttachment {
-    LLMImageAttachment(data: data, mimeType: mimeType, detail: detail, filename: suggestedFilename)
   }
 }

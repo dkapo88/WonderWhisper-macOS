@@ -125,11 +125,6 @@ final class MenuBarController: NSObject {
         }
     }
 
-    private func setMenuItemTarget(_ item: NSMenuItem) -> NSMenuItem {
-        item.target = self
-        return item
-    }
-
     private func makeCheckedMenuItem(title: String,
                                      action: Selector,
                                      representedObject: Any?,
@@ -214,11 +209,13 @@ final class MenuBarController: NSObject {
             ))
         }
         sub.addItem(.separator())
-        sub.addItem(setMenuItemTarget(NSMenuItem(
+        let customItem = NSMenuItem(
             title: "Custom Model ID…",
             action: #selector(promptForOpenRouterVoiceModel),
             keyEquivalent: ""
-        )))
+        )
+        customItem.target = self
+        sub.addItem(customItem)
         modelMenu.submenu = sub
         return modelMenu
     }
@@ -251,11 +248,13 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        menu.addItem(setMenuItemTarget(NSMenuItem(
+        let quitItem = NSMenuItem(
             title: "Quit HermesWhisper",
             action: #selector(quitApp),
             keyEquivalent: "q"
-        )))
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
         return menu
     }
 

@@ -135,11 +135,7 @@ struct HermesAgentClientTests {
   @Test func requestBodyIncludesScreenshotAttachmentAndFootnote() throws {
     let attachment = HermesAgentImageAttachment(
       data: Data([0x01, 0x02, 0x03]),
-      mimeType: "image/jpeg",
-      width: 640,
-      height: 480,
-      method: .window,
-      suggestedFilename: "screen.jpg"
+      mimeType: "image/jpeg"
     )
     let data = try HermesAgentAPIClient.requestBodyData(
       input: "What should I do next?",

@@ -696,11 +696,6 @@ private actor SonioxTokenAccumulator {
     return (finalizedText + currentNonFinal).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  /// Get only finalized text
-  func getFinalizedTranscript() -> String {
-    return finalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
   func reset() {
     finalizedText = ""
     currentNonFinal = ""

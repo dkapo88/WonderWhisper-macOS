@@ -16,28 +16,6 @@ struct HermesResponseWindowLifecycleTests {
     #expect(HermesResponseWindowLayout.styleMask.contains(.resizable))
   }
 
-  @Test func customMinimizeButtonHidesPanelWithoutNativeMiniaturizeControl() {
-    let panel = HermesResponseWindowControlSpy()
-
-    HermesResponseWindowControls.minimize(panel)
-
-    #expect(panel.didOrderOut)
-    #expect(!panel.didMiniaturize)
-  }
-
-  @Test func replyRecordingKeepsResponseVisibleUntilRecordingFinishes() {
-    let response = HermesResponseWindowState(
-      id: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!,
-      title: "Hermes",
-      text: "Use this response as context while replying."
-    )
-    var recordingResponse = response
-    recordingResponse.isRecordingReply = true
-
-    #expect(HermesResponseWindowLifecycle.replyRecordingStarted(response) == recordingResponse)
-    #expect(HermesResponseWindowLifecycle.replyRecordingFinished(response) == nil)
-  }
-
   @Test func replyRecordingCancelKeepsResponseVisibleAndClearsRecordingState() {
     let response = HermesResponseWindowState(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000124")!,
@@ -81,18 +59,5 @@ struct HermesResponseWindowLifecycleTests {
       )
       == [target, other]
     )
-  }
-}
-
-private final class HermesResponseWindowControlSpy: HermesResponseWindowControlling {
-  private(set) var didOrderOut = false
-  private(set) var didMiniaturize = false
-
-  func orderOut(_ sender: Any?) {
-    didOrderOut = true
-  }
-
-  func miniaturize(_ sender: Any?) {
-    didMiniaturize = true
   }
 }

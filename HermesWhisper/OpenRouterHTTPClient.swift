@@ -16,12 +16,6 @@ struct OpenRouterHTTPClient {
         return "Bearer \(key)"
     }
 
-    // Fetch available model IDs from OpenRouter (legacy method)
-    func fetchModelIDs() async throws -> [String] {
-        let models = try await fetchModels()
-        return models.map { $0.id }
-    }
-    
     // Fetch full model information from OpenRouter
     func fetchModels() async throws -> [OpenRouterModel] {
         var req = URLRequest(url: AppConfig.openrouterModels, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)

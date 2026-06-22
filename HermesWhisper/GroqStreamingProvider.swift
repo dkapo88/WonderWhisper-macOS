@@ -566,5 +566,4 @@ private actor RateLimiter {
         inFlight += 1
     }
     func release() { inFlight = Swift.max(0, inFlight - 1) }
-    func current() -> Int { inFlight }
 }

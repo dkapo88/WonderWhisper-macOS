@@ -63,29 +63,34 @@ final class InsertionService {
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
         AppLog.insertion.log("Insertion pasteboard prepared changeCount=\(ourChange, privacy: .public) frontBundle=\(frontBundle, privacy: .public)")
         let preferAppleScript = shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste")
-        if preferAppleScript {
-            if !pasteUsingAppleScript() {
-                // Try AX paste, then CGEvent as last resort
-                if !axPressPasteInFrontApp() {
-                    synthesizeCmdV()
-                    AppLog.dictation.log("Insertion: AppleScript and AX paste failed; synthesized Cmd+V")
-                } else {
-                    AppLog.dictation.log("Insertion: AX menu paste succeeded after AppleScript failed")
-                }
-            } else {
-                AppLog.dictation.log("Insertion: AppleScript paste succeeded")
+        // Ordered paste-method fallback. Each entry carries its own success logs for the
+        // primary (first-tried) and fallback (second-tried) positions, so the messages match
+        // the previous explicit branches exactly.
+        let appleScriptStep = (
+            run: { self.pasteUsingAppleScript() },
+            primaryLog: "Insertion: AppleScript paste succeeded",
+            fallbackLog: "Insertion: AppleScript paste succeeded after AX failed"
+        )
+        let axStep = (
+            run: { self.axPressPasteInFrontApp() },
+            primaryLog: "Insertion: AX menu paste succeeded",
+            fallbackLog: "Insertion: AX menu paste succeeded after AppleScript failed"
+        )
+        let steps = preferAppleScript ? [appleScriptStep, axStep] : [axStep, appleScriptStep]
+        let allFailedLog = preferAppleScript
+            ? "Insertion: AppleScript and AX paste failed; synthesized Cmd+V"
+            : "Insertion: AX and AppleScript paste failed; synthesized Cmd+V"
+        var pasted = false
+        for (index, step) in steps.enumerated() {
+            if step.run() {
+                AppLog.dictation.log("\(index == 0 ? step.primaryLog : step.fallbackLog, privacy: .public)")
+                pasted = true
+                break
             }
-        } else {
-            if !axPressPasteInFrontApp() {
-                if !pasteUsingAppleScript() {
-                    synthesizeCmdV()
-                    AppLog.dictation.log("Insertion: AX and AppleScript paste failed; synthesized Cmd+V")
-                } else {
-                    AppLog.dictation.log("Insertion: AppleScript paste succeeded after AX failed")
-                }
-            } else {
-                AppLog.dictation.log("Insertion: AX menu paste succeeded")
-            }
+        }
+        if !pasted {
+            synthesizeCmdV()
+            AppLog.dictation.log("\(allFailedLog, privacy: .public)")
         }
         let fast = UserDefaults.standard.bool(forKey: "insertion.fastMode")
         let delay: TimeInterval = fast ? 0.12 : 0.45
@@ -291,13 +296,6 @@ final class InsertionService {
     // MARK: - Formatting helpers
     private func buildHTMLData(from text: String) -> Data? {
         // Convert double newlines to paragraphs, single newlines to <br>
-        func htmlEscape(_ s: String) -> String {
-            var out = s
-            out = out.replacingOccurrences(of: "&", with: "&amp;")
-            out = out.replacingOccurrences(of: "<", with: "&lt;")
-            out = out.replacingOccurrences(of: ">", with: "&gt;")
-            return out
-        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return nil }
         // Split paragraphs on 2+ consecutive newlines
@@ -306,7 +304,10 @@ final class InsertionService {
         let collapsed = normalized.replacingOccurrences(of: "\\n{2,}", with: paraDelimiter, options: .regularExpression)
         let paras = collapsed.components(separatedBy: paraDelimiter)
         let body = paras.map { p in
-            let esc = htmlEscape(p)
+            let esc = p
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
             let withBR = esc.replacingOccurrences(of: "\n", with: "<br>")
             return "<p>\(withBR)</p>"
         }.joined()

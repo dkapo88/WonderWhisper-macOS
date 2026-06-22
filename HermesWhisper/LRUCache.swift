@@ -73,13 +73,6 @@ final class LRUCache<Key: Hashable, Value> {
             list.remove(node)
         }
     }
-    
-    // Clear all entries from the cache
-    func removeAll() {
-        lock.lock(); defer { lock.unlock() }
-        dict.removeAll(keepingCapacity: false)
-        list = LinkedList<Entry>()
-    }
 }
 
 // Minimal doubly linked list

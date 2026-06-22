@@ -8,15 +8,13 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
   let description: String?
   let contextLength: Int
   let pricing: Pricing
-  let architecture: Architecture?
-  
+
   enum CodingKeys: String, CodingKey {
     case id
     case name
     case description
     case contextLength = "context_length"
     case pricing
-    case architecture
   }
   
   struct Pricing: Codable, Hashable {
@@ -29,18 +27,6 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     
     var completionCostPerMillion: Double {
       (Double(completion) ?? 0) * 1_000_000
-    }
-  }
-  
-  struct Architecture: Codable, Hashable {
-    let inputModalities: [String]?
-    let outputModalities: [String]?
-    let tokenizer: String?
-    
-    enum CodingKeys: String, CodingKey {
-      case inputModalities = "input_modalities"
-      case outputModalities = "output_modalities"
-      case tokenizer
     }
   }
   

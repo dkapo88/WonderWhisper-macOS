@@ -16,10 +16,6 @@ private enum HermesSessionListScope: String, CaseIterable, Identifiable {
 
 enum HermesChatScrollBehavior {
   static let bottomAnchorID = "hermes-chat-bottom"
-
-  static func shouldScrollToLatestOnAppear(messageCount: Int) -> Bool {
-    messageCount > 0
-  }
 }
 
 struct HermesAgentView: View {
@@ -438,9 +434,7 @@ struct HermesAgentView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .defaultScrollAnchor(.bottom)
       .onAppear {
-        if HermesChatScrollBehavior.shouldScrollToLatestOnAppear(
-          messageCount: messages.count
-        ) {
+        if !messages.isEmpty {
           scrollChatToBottom(proxy, animated: false)
         }
       }
