@@ -344,6 +344,15 @@ final class DictationViewModel: ObservableObject {
             refreshBeeperResponseMonitor()
         }
     }
+    /// Comma/newline-separated terms; an incoming Beeper reply containing any of them
+    /// (e.g. tool-call indicators like "running" or "bash") is suppressed instead of
+    /// popping a response window, so only the final message surfaces.
+    @Published var beeperResponseFilterKeywords: String =
+        UserDefaults.standard.string(forKey: "beeper.response.filterKeywords") ?? "" {
+        didSet {
+            UserDefaults.standard.set(beeperResponseFilterKeywords, forKey: "beeper.response.filterKeywords")
+        }
+    }
     @Published var beeperSelection: HotkeyManager.Selection? = DictationViewModel.loadBeeperSelection() {
         didSet {
             persistBeeperSelection()
@@ -3076,8 +3085,30 @@ final class DictationViewModel: ObservableObject {
         return (nextCursor, nextSeenMessageIDs)
     }
 
+    /// Splits the user's filter setting into normalized, lowercased terms.
+    static func beeperResponseFilterTerms(_ raw: String) -> [String] {
+        raw.split(whereSeparator: { $0 == "," || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+    }
+
+    /// True when an incoming reply matches any filter term (case-insensitive substring),
+    /// meaning it's an intermediate tool-call notice that should not open a window.
+    static func beeperResponseIsFiltered(_ text: String, keywords raw: String) -> Bool {
+        let terms = beeperResponseFilterTerms(raw)
+        guard !terms.isEmpty else { return false }
+        let haystack = text.lowercased()
+        return terms.contains { haystack.contains($0) }
+    }
+
     private func showBeeperResponse(_ message: BeeperMessage) {
         let text = message.displayText
+        guard !Self.beeperResponseIsFiltered(text, keywords: beeperResponseFilterKeywords) else {
+            AppLog.dictation.log(
+                "Beeper response suppressed by keyword filter id=\(message.id, privacy: .public)"
+            )
+            return
+        }
         let sender = message.displaySender
         let responseWindowID = UUID()
         dismissActiveBeeperResponseWindow()

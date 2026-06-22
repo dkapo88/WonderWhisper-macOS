@@ -169,6 +169,17 @@ struct BeeperIntegrationView: View {
               step: 10
             )
             .frame(maxWidth: 320, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Ignore replies containing")
+                .font(.callout.weight(.semibold))
+              TextField("running, bash, tool", text: $vm.beeperResponseFilterKeywords)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 440)
+              Text("Comma-separated terms. Intermediate tool-call messages matching any term are skipped, so only the final reply opens a window.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
           }
           .font(.callout)
         }
