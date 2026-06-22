@@ -20,4 +20,10 @@ struct BeeperResponseFilterTests {
     let terms = DictationViewModel.beeperResponseFilterTerms("running,\n bash , , Tool ")
     #expect(terms == ["running", "bash", "tool"])
   }
+
+  @Test func parsesChatIDsOrderedTrimmedDeduped() {
+    let ids = DictationViewModel.parseBeeperChatIDs(" chat1,\n chat2 , , chat1\nchat3 ")
+    #expect(ids == ["chat1", "chat2", "chat3"])  // order kept, blanks dropped, chat1 deduped
+    #expect(DictationViewModel.parseBeeperChatIDs("  \n , ").isEmpty)
+  }
 }

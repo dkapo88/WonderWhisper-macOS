@@ -274,7 +274,9 @@ final class BeeperAPIClient {
     self.accessTokenProvider = accessTokenProvider
   }
 
-  func send(text: String, settings: BeeperSettings) async throws -> BeeperSendResponse {
+  func send(text: String,
+            replyToMessageID: String? = nil,
+            settings: BeeperSettings) async throws -> BeeperSendResponse {
     let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !cleanedText.isEmpty else { throw BeeperClientError.emptyInput }
     guard !settings.normalizedChatID.isEmpty else { throw BeeperClientError.missingChatID }
@@ -287,7 +289,9 @@ final class BeeperAPIClient {
     request.timeoutInterval = settings.normalizedTimeout
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     try applyAuthorization(to: &request)
-    request.httpBody = try JSONEncoder().encode(SendRequest(text: cleanedText))
+    request.httpBody = try JSONEncoder().encode(
+      SendRequest(text: cleanedText, replyToMessageID: replyToMessageID)
+    )
 
     let (data, response) = try await session.data(for: request)
     try validateHTTPResponse(response, data: data)
@@ -387,6 +391,7 @@ final class BeeperAPIClient {
 
   private struct SendRequest: Encodable {
     var text: String
+    var replyToMessageID: String?  // omitted from JSON when nil
   }
 
   private struct SendResponse: Decodable {

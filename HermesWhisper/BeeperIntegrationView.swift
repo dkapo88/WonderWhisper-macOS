@@ -31,10 +31,18 @@ struct BeeperIntegrationView: View {
           .frame(maxWidth: 440)
           .help("Beeper Desktop API usually runs locally on port 23373.")
 
-        TextField("Beeper chat ID", text: $vm.beeperChatID)
-          .textFieldStyle(.roundedBorder)
-          .frame(maxWidth: 520)
-          .help("The specific Beeper chat that voice messages should be sent to.")
+        VStack(alignment: .leading, spacing: 4) {
+          TextEditor(text: $vm.beeperChatID)
+            .font(.body.monospaced())
+            .frame(maxWidth: 520, minHeight: 56, maxHeight: 96)
+            .overlay(
+              RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.3))
+            )
+          Text("One chat ID per line (or comma-separated). All are monitored; the first is the default for new voice messages.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
 
         HStack(spacing: 6) {
           Text(hasSavedToken ? "Access token: Saved" : "Access token: Not saved")

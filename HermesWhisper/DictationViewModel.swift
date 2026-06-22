@@ -503,7 +503,9 @@ final class DictationViewModel: ObservableObject {
     private var activeHermesPromptID: UUID?
     private var activeHermesRecordingSessionID: UUID?
     private var activeBeeperPromptID: UUID?
-    private var beeperResponseMonitorTask: Task<Void, Never>?
+    // ponytail: one monitor task per chat. Fine for a handful of chats; if the
+    // list ever grows large, collapse into a single multi-chat WS subscription.
+    private var beeperResponseMonitorTasks: [Task<Void, Never>] = []
     private var focusedHermesResponseSessionID: UUID?
     private var hermesInFlightSessionIDs: Set<UUID> = []
     private var hermesActiveRequestIDs: [UUID: UUID] = [:]
@@ -511,7 +513,13 @@ final class DictationViewModel: ObservableObject {
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
     private var beeperClipboardTask: Task<String?, Never>?
-    private var activeBeeperResponseWindowID: UUID?
+    private struct BeeperReplyTarget {
+        let chatID: String
+        let messageID: String
+    }
+    /// Per-window reply target: which chat + message a Beeper response window
+    /// replies to (and threads onto) when you reply from it.
+    private var beeperResponseWindowTargets: [UUID: BeeperReplyTarget] = [:]
     private var beeperResponseWindowIDForActiveRecording: UUID?
     private let hermesClipboardMonitor = ClipboardContextMonitor(
         maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow,
@@ -813,8 +821,8 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTask = nil
         providerUpdateTimer?.invalidate()  // Clean up debounce timer
         providerUpdateTimer = nil
-        beeperResponseMonitorTask?.cancel()
-        beeperResponseMonitorTask = nil
+        beeperResponseMonitorTasks.forEach { $0.cancel() }
+        beeperResponseMonitorTasks = []
         beeperClipboardTask?.cancel()
         beeperClipboardTask = nil
         // Provider cache will be cleaned up automatically when object is deallocated
@@ -2129,9 +2137,9 @@ final class DictationViewModel: ObservableObject {
     }
 
     func sendResponseWindowTextReply(_ text: String, sessionID: UUID) {
-        if activeBeeperResponseWindowID == sessionID {
+        if let target = beeperResponseWindowTargets[sessionID] {
             Task {
-                await submitBeeperTextReply(text, responseWindowID: sessionID)
+                await submitBeeperTextReply(text, responseWindowID: sessionID, target: target)
             }
             return
         }
@@ -2391,12 +2399,37 @@ final class DictationViewModel: ObservableObject {
         )
     }
 
-    private func currentBeeperSettings() -> BeeperSettings {
+    private func currentBeeperSettings(chatID: String? = nil) -> BeeperSettings {
         BeeperSettings(
             baseURLString: beeperBaseURLString,
-            chatID: beeperChatID,
+            chatID: chatID ?? defaultBeeperChatID,
             timeout: 20
         )
+    }
+
+    /// Ordered, de-duplicated chat IDs parsed from the (newline/comma-separated)
+    /// setting. The first entry is the default target for new voice messages.
+    var beeperChatIDList: [String] {
+        Self.parseBeeperChatIDs(beeperChatID)
+    }
+
+    var defaultBeeperChatID: String { beeperChatIDList.first ?? "" }
+
+    static func parseBeeperChatIDs(_ raw: String) -> [String] {
+        var seen = Set<String>()
+        return raw
+            .split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
+    }
+
+    /// The focused response window, but only when it's a Beeper window; else nil.
+    /// Drives "reply to whatever window is on top" for the voice hotkey.
+    private func focusedBeeperResponseWindowID() -> UUID? {
+        guard let id = focusedHermesResponseSessionID,
+              beeperResponseWindowTargets[id] != nil else { return nil }
+        return id
     }
 
     private func handleHermesPromptHotkey(id: UUID,
@@ -2574,7 +2607,7 @@ final class DictationViewModel: ObservableObject {
     private func beginBeeperRecording(promptID: UUID) async {
         guard beeperEnabled else { return }
         beeperIsAwaitingResponse = false
-        beeperResponseWindowIDForActiveRecording = activeBeeperResponseWindowID
+        beeperResponseWindowIDForActiveRecording = focusedBeeperResponseWindowID()
         AppLog.dictation.log(
             "Beeper recording begin prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
@@ -2673,7 +2706,7 @@ final class DictationViewModel: ObservableObject {
         beeperConnectionSucceeded = nil
         defer { beeperIsSending = false }
         let responseWindowIDToDismiss = beeperResponseWindowIDForActiveRecording
-            ?? activeBeeperResponseWindowID
+        let replyTarget = responseWindowIDToDismiss.flatMap { beeperResponseWindowTargets[$0] }
 
         do {
             let clipboardText = await consumeBeeperClipboardContext()
@@ -2683,16 +2716,17 @@ final class DictationViewModel: ObservableObject {
                 imageAttachment: nil,
                 clipboardText: clipboardText
             )
-            let settings = currentBeeperSettings()
+            let settings = currentBeeperSettings(chatID: replyTarget?.chatID)
             if beeperResponseMonitoringEnabled {
                 ensureBeeperResponseMonitorRunning()
             }
             let start = Date()
             AppLog.dictation.log(
-                "Beeper send starting chars=\(outboundText.count, privacy: .public) dismissWindow=\(responseWindowIDToDismiss?.uuidString ?? "none", privacy: .public)"
+                "Beeper send starting chars=\(outboundText.count, privacy: .public) chat=\(settings.normalizedChatID, privacy: .public) dismissWindow=\(responseWindowIDToDismiss?.uuidString ?? "none", privacy: .public)"
             )
             let response = try await beeperClient.send(
                 text: outboundText,
+                replyToMessageID: replyTarget?.messageID,
                 settings: settings
             )
             let sendSeconds = Date().timeIntervalSince(start)
@@ -2738,7 +2772,9 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func submitBeeperTextReply(_ text: String, responseWindowID: UUID) async {
+    private func submitBeeperTextReply(_ text: String,
+                                       responseWindowID: UUID,
+                                       target: BeeperReplyTarget) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard beeperEnabled else {
@@ -2754,19 +2790,18 @@ final class DictationViewModel: ObservableObject {
         defer { beeperIsSending = false }
 
         do {
-            let settings = currentBeeperSettings()
+            let settings = currentBeeperSettings(chatID: target.chatID)
             if beeperResponseMonitoringEnabled {
                 ensureBeeperResponseMonitorRunning()
             }
 
             let response = try await beeperClient.send(
                 text: trimmed,
+                replyToMessageID: target.messageID,
                 settings: settings
             )
 
-            if activeBeeperResponseWindowID == responseWindowID {
-                dismissActiveBeeperResponseWindow()
-            }
+            dismissBeeperResponseWindow(responseWindowID)
             beeperLastSentText = trimmed
             beeperLastPendingMessageID = response.pendingMessageID
             beeperConnectionStatus = beeperResponseMonitoringEnabled
@@ -2802,22 +2837,25 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func refreshBeeperResponseMonitor() {
-        beeperResponseMonitorTask?.cancel()
-        beeperResponseMonitorTask = nil
+        beeperResponseMonitorTasks.forEach { $0.cancel() }
+        beeperResponseMonitorTasks = []
         beeperIsAwaitingResponse = false
         guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
 
-        let settings = currentBeeperSettings()
-        guard !settings.normalizedChatID.isEmpty else { return }
+        let chatIDs = beeperChatIDList
+        guard !chatIDs.isEmpty else { return }
 
-        beeperResponseMonitorTask = Task { [weak self] in
-            guard let self else { return }
-            await self.monitorConfiguredBeeperChat(settings: settings)
+        beeperResponseMonitorTasks = chatIDs.map { chatID in
+            let settings = currentBeeperSettings(chatID: chatID)
+            return Task { [weak self] in
+                guard let self else { return }
+                await self.monitorConfiguredBeeperChat(settings: settings)
+            }
         }
     }
 
     private func ensureBeeperResponseMonitorRunning() {
-        guard beeperResponseMonitorTask == nil else { return }
+        guard beeperResponseMonitorTasks.isEmpty else { return }
         refreshBeeperResponseMonitor()
     }
 
@@ -2957,14 +2995,16 @@ final class DictationViewModel: ObservableObject {
         }
         let sender = message.displaySender
         let responseWindowID = UUID()
-        dismissActiveBeeperResponseWindow()
         beeperLastResponseText = text
         beeperLastResponseSender = sender
         beeperIsAwaitingResponse = false
         beeperConnectionStatus = "Beeper response received."
         beeperConnectionSucceeded = true
         settingsNotice = beeperConnectionStatus
-        activeBeeperResponseWindowID = responseWindowID
+        beeperResponseWindowTargets[responseWindowID] = BeeperReplyTarget(
+            chatID: message.chatID,
+            messageID: message.id
+        )
         upsertHermesResponseWindow(
             sessionID: responseWindowID,
             title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
@@ -3507,9 +3547,7 @@ final class DictationViewModel: ObservableObject {
 
     private func removeHermesResponseWindow(for sessionID: UUID) {
         hermesResponseWindowStates.removeAll { $0.id == sessionID }
-        if activeBeeperResponseWindowID == sessionID {
-            activeBeeperResponseWindowID = nil
-        }
+        beeperResponseWindowTargets[sessionID] = nil
         if beeperResponseWindowIDForActiveRecording == sessionID {
             beeperResponseWindowIDForActiveRecording = nil
         }
@@ -3519,10 +3557,6 @@ final class DictationViewModel: ObservableObject {
         if focusedHermesResponseSessionID == sessionID {
             focusedHermesResponseSessionID = hermesResponseWindowStates.last?.id
         }
-    }
-
-    private func dismissActiveBeeperResponseWindow() {
-        dismissBeeperResponseWindow(activeBeeperResponseWindowID)
     }
 
     private func dismissBeeperResponseWindow(_ windowID: UUID?) {
