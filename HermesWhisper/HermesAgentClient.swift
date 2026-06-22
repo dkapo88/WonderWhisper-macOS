@@ -1,5 +1,4 @@
 import Foundation
-import Network
 
 struct HermesAgentSettings: Equatable {
   static let minimumTimeout: TimeInterval = 15
@@ -200,23 +199,21 @@ final class HermesAgentAPIClient {
   }
 
   private func perform(_ request: URLRequest) async throws -> HermesHTTPResponse {
-    guard request.url?.scheme?.lowercased() == "http" else {
-      let (data, response) = try await session.data(for: request)
-      guard let http = response as? HTTPURLResponse else {
-        throw HermesAgentClientError.invalidResponse
-      }
-      return HermesHTTPResponse(
-        statusCode: http.statusCode,
-        headers: http.allHeaderFields.reduce(into: [:]) { result, item in
-          if let key = item.key as? String, let value = item.value as? String {
-            result[key.lowercased()] = value
-          }
-        },
-        data: data
-      )
+    // URLSession handles both http and https here: ATS allows arbitrary/local
+    // loads (see Info.plist), and these calls are unary request/response.
+    let (data, response) = try await session.data(for: request)
+    guard let http = response as? HTTPURLResponse else {
+      throw HermesAgentClientError.invalidResponse
     }
-
-    return try await HermesPlainHTTPTransport.perform(request)
+    return HermesHTTPResponse(
+      statusCode: http.statusCode,
+      headers: http.allHeaderFields.reduce(into: [:]) { result, item in
+        if let key = item.key as? String, let value = item.value as? String {
+          result[key.lowercased()] = value
+        }
+      },
+      data: data
+    )
   }
 
   private func validateHTTPResponse(_ response: HermesHTTPResponse) throws {
@@ -243,213 +240,6 @@ private struct HermesHTTPResponse {
   let statusCode: Int
   let headers: [String: String]
   let data: Data
-}
-
-private enum HermesPlainHTTPTransport {
-  static func perform(_ request: URLRequest) async throws -> HermesHTTPResponse {
-    guard let url = request.url,
-          let host = url.host,
-          let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 80)) else {
-      throw HermesAgentClientError.invalidResponse
-    }
-
-    return try await withCheckedThrowingContinuation { continuation in
-      let state = TransportState(continuation: continuation)
-      let connection = NWConnection(
-        host: NWEndpoint.Host(host),
-        port: port,
-        using: .tcp
-      )
-      state.connection = connection
-
-      connection.stateUpdateHandler = { newState in
-        switch newState {
-        case .ready:
-          do {
-            let payload = try requestData(for: request)
-            connection.send(content: payload, completion: .contentProcessed { error in
-              if let error {
-                state.finish(.failure(error))
-                return
-              }
-              receive(on: connection, state: state, buffer: Data())
-            })
-          } catch {
-            state.finish(.failure(error))
-          }
-        case .failed(let error):
-          state.finish(.failure(error))
-        case .cancelled:
-          break
-        default:
-          break
-        }
-      }
-
-      DispatchQueue.global(qos: .userInitiated).asyncAfter(
-        deadline: .now() + max(1, request.timeoutInterval)
-      ) {
-        state.finish(.failure(URLError(.timedOut)))
-      }
-
-      connection.start(queue: .global(qos: .userInitiated))
-    }
-  }
-
-  private static func requestData(for request: URLRequest) throws -> Data {
-    guard let url = request.url, let host = url.host else {
-      throw HermesAgentClientError.invalidResponse
-    }
-
-    let path = url.path.isEmpty ? "/" : url.path
-    let target = url.query.map { "\(path)?\($0)" } ?? path
-    let method = request.httpMethod ?? "GET"
-    let body = request.httpBody ?? Data()
-    let hostHeader = url.port.map { "\(host):\($0)" } ?? host
-
-    var headers = request.allHTTPHeaderFields ?? [:]
-    headers["Host"] = headers["Host"] ?? hostHeader
-    headers["Connection"] = "close"
-    headers["Accept"] = headers["Accept"] ?? "application/json"
-    if !body.isEmpty {
-      headers["Content-Length"] = "\(body.count)"
-    }
-
-    var head = "\(method) \(target) HTTP/1.1\r\n"
-    for (key, value) in headers {
-      head += "\(key): \(value)\r\n"
-    }
-    head += "\r\n"
-
-    var data = Data(head.utf8)
-    data.append(body)
-    return data
-  }
-
-  private static func receive(
-    on connection: NWConnection,
-    state: TransportState,
-    buffer: Data
-  ) {
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
-      data,
-      _,
-      isComplete,
-      error in
-      if let error {
-        state.finish(.failure(error))
-        return
-      }
-
-      var nextBuffer = buffer
-      if let data {
-        nextBuffer.append(data)
-      }
-
-      if isComplete {
-        do {
-          state.finish(.success(try parseResponse(nextBuffer)))
-        } catch {
-          state.finish(.failure(error))
-        }
-        return
-      }
-
-      receive(on: connection, state: state, buffer: nextBuffer)
-    }
-  }
-
-  private static func parseResponse(_ data: Data) throws -> HermesHTTPResponse {
-    let separator = Data("\r\n\r\n".utf8)
-    guard let headerRange = data.range(of: separator),
-          let headerText = String(
-            data: data.subdata(in: data.startIndex..<headerRange.lowerBound),
-            encoding: .utf8
-          ) else {
-      throw HermesAgentClientError.invalidResponse
-    }
-
-    let lines = headerText.components(separatedBy: "\r\n")
-    guard let statusLine = lines.first else {
-      throw HermesAgentClientError.invalidResponse
-    }
-    let parts = statusLine.split(separator: " ", maxSplits: 2)
-    guard parts.count >= 2, let statusCode = Int(parts[1]) else {
-      throw HermesAgentClientError.invalidResponse
-    }
-
-    let headers = lines.dropFirst().reduce(into: [String: String]()) { result, line in
-      guard let separator = line.firstIndex(of: ":") else { return }
-      let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-      let value = line[line.index(after: separator)...]
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      result[key.lowercased()] = value
-    }
-
-    var body = data.subdata(in: headerRange.upperBound..<data.endIndex)
-    if headers["transfer-encoding"]?.lowercased().contains("chunked") == true {
-      body = try decodeChunkedBody(body)
-    }
-
-    return HermesHTTPResponse(statusCode: statusCode, headers: headers, data: body)
-  }
-
-  private static func decodeChunkedBody(_ data: Data) throws -> Data {
-    let newline = Data("\r\n".utf8)
-    var offset = data.startIndex
-    var output = Data()
-
-    while offset < data.endIndex {
-      guard let sizeRange = data[offset...].range(of: newline),
-            let sizeText = String(data: data[offset..<sizeRange.lowerBound], encoding: .utf8),
-            let chunkSize = Int(sizeText.split(separator: ";")[0], radix: 16) else {
-        throw HermesAgentClientError.invalidResponse
-      }
-      offset = sizeRange.upperBound
-      if chunkSize == 0 { break }
-
-      let chunkEnd = offset + chunkSize
-      guard chunkEnd <= data.endIndex else {
-        throw HermesAgentClientError.invalidResponse
-      }
-      output.append(data[offset..<chunkEnd])
-      offset = min(chunkEnd + newline.count, data.endIndex)
-    }
-
-    return output
-  }
-}
-
-private final class TransportState: @unchecked Sendable {
-  private let lock = NSLock()
-  private var completed = false
-  var connection: NWConnection?
-
-  private let continuation: CheckedContinuation<HermesHTTPResponse, Error>
-
-  init(continuation: CheckedContinuation<HermesHTTPResponse, Error>) {
-    self.continuation = continuation
-  }
-
-  func finish(_ result: Result<HermesHTTPResponse, Error>) {
-    lock.lock()
-    if completed {
-      lock.unlock()
-      return
-    }
-    completed = true
-    let connection = connection
-    lock.unlock()
-
-    connection?.cancel()
-
-    switch result {
-    case .success(let response):
-      continuation.resume(returning: response)
-    case .failure(let error):
-      continuation.resume(throwing: error)
-    }
-  }
 }
 
 extension HermesAgentAPIClient {
