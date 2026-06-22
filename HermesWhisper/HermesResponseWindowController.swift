@@ -75,6 +75,9 @@ enum HermesResponseWindowLifecycle {
 enum HermesResponseWindowLayout {
   static let defaultContentSize = NSSize(width: 660, height: 540)
   static let minimumContentSize = NSSize(width: 520, height: 360)
+  static let bubbleSize = NSSize(width: 60, height: 60)
+  static let bubbleSpacing: CGFloat = 12
+  static let bubbleEdgeInset: CGFloat = 16
   static let styleMask: NSWindow.StyleMask = [
     .titled,
     .closable,
@@ -97,6 +100,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private var focusedSessionID: UUID?
   private var textReplyDrafts: [UUID: HermesTextReplyDraft] = [:]
   private var textReplySessionIDs: Set<UUID> = []
+  private var minimizedOrder: [UUID] = []
+  private var preMinimizeFrames: [UUID: NSRect] = [:]
   private var cancellable: AnyCancellable?
 
   init(viewModel: DictationViewModel) {
@@ -140,6 +145,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       panels[sessionID] = nil
       textReplyDrafts[sessionID] = nil
       textReplySessionIDs.remove(sessionID)
+      minimizedOrder.removeAll { $0 == sessionID }
+      preMinimizeFrames[sessionID] = nil
     }
 
     for state in states {
@@ -184,6 +191,15 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
                       in panel: HermesResponsePanel,
                       isForeground: Bool) {
     panel.title = state.title
+    guard !minimizedOrder.contains(state.id) else {
+      panel.contentView = NSHostingView(
+        rootView: HermesResponseBubbleView(
+          state: state,
+          onRestore: { [weak self] in self?.restorePanel(sessionID: state.id) }
+        )
+      )
+      return
+    }
     panel.contentView = NSHostingView(
       rootView: HermesResponsePanelView(
         state: state,
@@ -197,10 +213,54 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         onSendTextReply: { [weak self] text in
           self?.sendTextReply(text, sessionID: state.id)
         },
-        onMinimize: { [weak panel] in panel?.orderOut(nil) },
+        onMinimize: { [weak self] in self?.minimizePanel(sessionID: state.id) },
         onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: state.id) }
       )
     )
+  }
+
+  private func minimizePanel(sessionID: UUID) {
+    guard let panel = panels[sessionID], !minimizedOrder.contains(sessionID) else { return }
+    preMinimizeFrames[sessionID] = panel.frame
+    minimizedOrder.append(sessionID)
+    panel.contentMinSize = HermesResponseWindowLayout.bubbleSize
+    if let state = latestStates.first(where: { $0.id == sessionID }) {
+      render(state, in: panel, isForeground: false)
+    }
+    panel.setContentSize(HermesResponseWindowLayout.bubbleSize)
+    layoutBubbles()
+    panel.orderFront(nil)
+  }
+
+  private func restorePanel(sessionID: UUID) {
+    guard let panel = panels[sessionID], minimizedOrder.contains(sessionID) else { return }
+    minimizedOrder.removeAll { $0 == sessionID }
+    panel.contentMinSize = HermesResponseWindowLayout.minimumContentSize
+    if let state = latestStates.first(where: { $0.id == sessionID }) {
+      render(state, in: panel, isForeground: true)
+    }
+    if let frame = preMinimizeFrames[sessionID] {
+      preMinimizeFrames[sessionID] = nil
+      panel.setFrame(frame, display: true)
+    } else {
+      panel.setContentSize(HermesResponseWindowLayout.defaultContentSize)
+      position(panel)
+    }
+    layoutBubbles()
+    present(panel, shouldPosition: false)
+  }
+
+  // Stack minimized bubbles down the top-right edge of the active screen.
+  private func layoutBubbles() {
+    let screenFrame = targetScreenFrame()
+    let size = HermesResponseWindowLayout.bubbleSize
+    for (index, sessionID) in minimizedOrder.enumerated() {
+      guard let panel = panels[sessionID] else { continue }
+      let x = screenFrame.maxX - size.width - HermesResponseWindowLayout.bubbleEdgeInset
+      let y = screenFrame.maxY - size.height - HermesResponseWindowLayout.bubbleEdgeInset
+              - CGFloat(index) * (size.height + HermesResponseWindowLayout.bubbleSpacing)
+      panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
   }
 
   private func textReplyDraft(for sessionID: UUID) -> HermesTextReplyDraft {
@@ -536,6 +596,29 @@ private struct HermesResponsePanelView: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(Color.secondary.opacity(0.08))
     )
+  }
+}
+
+private struct HermesResponseBubbleView: View {
+  var state: HermesResponseWindowState
+  var onRestore: () -> Void
+
+  var body: some View {
+    Button(action: onRestore) {
+      ZStack {
+        Circle().fill(.regularMaterial)
+        Circle().stroke((state.isError ? Color.red : Color.accentColor).opacity(0.55), lineWidth: 2)
+        Image(systemName: state.isError ? "exclamationmark.triangle.fill" : "waveform.and.sparkles")
+          .font(.title3)
+          .foregroundStyle(state.isError ? .red : .blue)
+      }
+    }
+    .buttonStyle(.plain)
+    .frame(
+      width: HermesResponseWindowLayout.bubbleSize.width,
+      height: HermesResponseWindowLayout.bubbleSize.height
+    )
+    .help(state.title)
   }
 }
 
