@@ -465,13 +465,6 @@ private extension SimplePromptEditorView {
     HotkeyManager.Selection.allCases
   }
 
-  var includeImageBinding: Binding<Bool> {
-    Binding(
-      get: { kind == .command ? vm.simpleCommand.includeScreenImage : false },
-      set: { vm.setSimpleIncludeImage($0, for: kind) }
-    )
-  }
-
   var headerBinding: Binding<String> {
     Binding(
       get: { settings.header },

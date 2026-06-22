@@ -277,48 +277,10 @@ struct SimplePromptSettings: Codable, Equatable {
     try container.encode(includeScreenImage, forKey: .includeScreenImage)
   }
 
-  /// Returns a copy with no modifications. Trimming is deferred to prompt composition time
-  /// so users can freely edit text with leading/trailing whitespace.
-  func sanitized() -> SimplePromptSettings {
-    return self
-  }
-}
-
-struct SimpleModelOption: Identifiable, Hashable {
-  var id: String { modelID }
-  let modelID: String
-  let displayName: String
-
-  init(modelID: String, displayName: String) {
-    self.modelID = modelID
-    self.displayName = displayName
-  }
 }
 
 enum SimpleModeDefaults {
   static let defaultModelID = "moonshotai/kimi-k2-0905"
-
-  static func modelOptions(custom: [String]) -> [SimpleModelOption] {
-    var options: [SimpleModelOption] = [
-      SimpleModelOption(modelID: "moonshotai/kimi-k2-0905", displayName: "Moonshot · Kimi K2"),
-      SimpleModelOption(modelID: "meta-llama/llama-4-scout", displayName: "Meta · LLaMA 4 Scout"),
-      SimpleModelOption(modelID: "openai/gpt-oss-120b", displayName: "OpenAI · GPT-OSS 120B"),
-      SimpleModelOption(modelID: "openai/gpt-5-chat", displayName: "OpenAI · GPT-5 Chat"),
-      SimpleModelOption(modelID: "google/gemini-2.0-flash-001", displayName: "Google · Gemini 2.0 Flash"),
-      SimpleModelOption(modelID: "anthropic/claude-haiku-4.5", displayName: "Anthropic · Claude Haiku 4.5"),
-      SimpleModelOption(modelID: "google/gemini-2.0-flash-lite-001", displayName: "Google · Gemini 2.0 Flash Lite"),
-      SimpleModelOption(modelID: "mistralai/magistral-small-2506", displayName: "Mistral · Magistral Small")
-    ]
-
-    for id in custom {
-      guard !id.isEmpty else { continue }
-      if options.contains(where: { $0.modelID.caseInsensitiveCompare(id) == .orderedSame }) {
-        continue
-      }
-      options.append(SimpleModelOption(modelID: id, displayName: id))
-    }
-    return options
-  }
 
   static func defaultRules(for kind: SimplePromptKind) -> String {
     switch kind {
@@ -471,7 +433,7 @@ SYSTEM REQUIREMENTS:
 }
 
 enum SimplePromptComposer {
-  static func systemPrompt(for kind: SimplePromptKind, settings: SimplePromptSettings) -> String {
+  static func systemPrompt(settings: SimplePromptSettings) -> String {
     let header = settings.header.trimmingCharacters(in: .whitespacesAndNewlines)
     let footer = settings.footer.trimmingCharacters(in: .whitespacesAndNewlines)
     let rules = settings.rules.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -485,7 +447,7 @@ enum SimplePromptComposer {
                             llmModel: String,
                             provider: String,
                             voiceModel: String) -> PromptConfiguration {
-    let system = systemPrompt(for: kind, settings: settings)
+    let system = systemPrompt(settings: settings)
     var prompt = PromptConfiguration(
       id: kind.promptID,
       name: kind.title,

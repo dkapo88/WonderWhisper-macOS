@@ -4,22 +4,6 @@ import Carbon.HIToolbox
 import AppKit
 import ApplicationServices
 
-struct FavoriteLLMModel: Identifiable, Codable, Hashable {
-    var id: UUID
-    var provider: String
-    var model: String
-
-    init(id: UUID = UUID(), provider: String, model: String) {
-        self.id = id
-        self.provider = provider
-        self.model = model
-    }
-
-    var normalizedProvider: String { provider.lowercased() }
-    var normalizedModel: String { model.trimmingCharacters(in: .whitespacesAndNewlines) }
-    var key: String { "\(normalizedProvider)::\(normalizedModel.lowercased())" }
-}
-
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
@@ -145,7 +129,6 @@ final class DictationViewModel: ObservableObject {
 
     var simpleDictation: SimplePromptSettings { simpleDictationSettings }
     var simpleCommand: SimplePromptSettings { simpleCommandSettings }
-    var simpleModelOptions: [SimpleModelOption] { SimpleModeDefaults.modelOptions(custom: simpleCustomModels) }
     var dictationPromptTemplates: [SimplePromptTemplate] {
         SimplePromptTemplateLibrary.builtInDictationTemplates + customDictationPromptTemplates
     }
@@ -209,10 +192,6 @@ final class DictationViewModel: ObservableObject {
             updateProviders()
         }
     }
-    @Published var favoriteLLMModels: [FavoriteLLMModel] = DictationViewModel.loadFavoriteLLMModels() {
-        didSet { persistFavoriteLLMModels() }
-    }
-    
     @Published var favoriteOpenRouterModels: [FavoriteOpenRouterModel] = DictationViewModel.loadFavoriteOpenRouterModels() {
         didSet { persistFavoriteOpenRouterModels() }
     }
@@ -443,25 +422,6 @@ final class DictationViewModel: ObservableObject {
             refreshBeeperResponseMonitor()
         }
     }
-    @Published var beeperResponsePollingTimeoutSeconds: Double = {
-        let key = SimpleDefaultsKey.beeperResponsePollingTimeoutSeconds
-        let stored = UserDefaults.standard.object(forKey: key) as? Double ?? 120
-        return DictationViewModel.clampedBeeperPollingTimeout(stored)
-    }() {
-        didSet {
-            let clamped = Self.clampedBeeperPollingTimeout(
-                beeperResponsePollingTimeoutSeconds
-            )
-            if clamped != beeperResponsePollingTimeoutSeconds {
-                beeperResponsePollingTimeoutSeconds = clamped
-                return
-            }
-            UserDefaults.standard.set(
-                clamped,
-                forKey: SimpleDefaultsKey.beeperResponsePollingTimeoutSeconds
-            )
-        }
-    }
     @Published var beeperConnectionStatus: String?
     @Published var beeperConnectionSucceeded: Bool?
     @Published var beeperIsSending: Bool = false
@@ -471,19 +431,6 @@ final class DictationViewModel: ObservableObject {
     @Published var beeperLastResponseText: String = ""
     @Published var beeperLastResponseSender: String = ""
 
-    @Published var audioStreamEQEnabled: Bool = {
-        if UserDefaults.standard.object(forKey: "audio.stream.eq.enabled") == nil { return false }
-        return UserDefaults.standard.bool(forKey: "audio.stream.eq.enabled")
-    }() { didSet { UserDefaults.standard.set(audioStreamEQEnabled, forKey: "audio.stream.eq.enabled") } }
-    @Published var audioStreamDynamicsEnabled: Bool = {
-        if UserDefaults.standard.object(forKey: "audio.stream.dynamics.enabled") == nil { return false }
-        return UserDefaults.standard.bool(forKey: "audio.stream.dynamics.enabled")
-    }() { didSet { UserDefaults.standard.set(audioStreamDynamicsEnabled, forKey: "audio.stream.dynamics.enabled") } }
-    @Published var audioStreamChunkMs: Int = {
-        let v = UserDefaults.standard.integer(forKey: "audio.stream.chunkMs")
-        return v > 0 ? v : 20
-    }() { didSet { UserDefaults.standard.set(audioStreamChunkMs, forKey: "audio.stream.chunkMs") } }
-
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
         let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
@@ -492,8 +439,6 @@ final class DictationViewModel: ObservableObject {
     @Published var httpProtocolPreference: HTTPProtocolPreference = AppConfig.httpProtocolPreference {
         didSet {
             UserDefaults.standard.set(httpProtocolPreference.rawValue, forKey: "network.http_protocol_preference")
-            // Notify providers to recreate sessions with new preference
-            NotificationCenter.default.post(name: .networkProtocolPreferenceChanged, object: nil)
         }
     }
 
@@ -707,9 +652,9 @@ final class DictationViewModel: ObservableObject {
         let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
         let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: legacyBasePrompt)
 
-        let renderedInitial = PromptBuilder.renderSystemPrompt(template: promptBootstrap.activeSystem, customVocabulary: persistedVocabCustom)
+        let renderedInitial = promptBootstrap.activeSystem
 
-        let canonicalPersistedModel = Self.canonicalLLMModel(for: activeLLMModel)
+        let canonicalPersistedModel = activeLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
         let llmSettings = LLMSettings(
             endpoint: AppConfig.openrouterChatCompletions,
@@ -1012,10 +957,7 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run {
                     // Temporarily apply the selected text prompt to ensure providers use it
                     if let override = self.selectedTextPromptOverride {
-                        self.isApplyingPromptFromSelection = true
-                        self.systemPrompt = override.systemPrompt
-                        self.userPrompt = override.userPrompt
-                        self.isApplyingPromptFromSelection = false
+                        self.applySelectedTextPromptOverride(override)
                     }
                 }
                 await updateProvidersWithSelectedTextOverride()
@@ -1399,22 +1341,6 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    func addFavoriteLLMModel(provider: String, model: String) {
-        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedModel.isEmpty else { return }
-        let normalizedProvider = (trimmedProvider.isEmpty ? llmProvider : trimmedProvider).lowercased()
-        let candidate = FavoriteLLMModel(provider: normalizedProvider, model: trimmedModel)
-        if favoriteLLMModels.contains(where: { $0.key == candidate.key }) {
-            return
-        }
-        favoriteLLMModels.append(candidate)
-    }
-
-    func removeFavoriteLLMModel(id: UUID) {
-        favoriteLLMModels.removeAll { $0.id == id }
-    }
-
     func updateScreenContextOverride(for id: UUID, to override: Bool?) {
         guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
         var updated = prompts[idx]
@@ -1482,40 +1408,6 @@ final class DictationViewModel: ObservableObject {
         newPrompts[idx].triggerOnSelectedText = enabled
 
         prompts = newPrompts
-    }
-
-    private func shouldUseSelectedTextPrompt() async -> Bool {
-        let screenContext = ScreenContextService()
-        let selectedText = screenContext.selectedText()
-        let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-
-        // Only override if we have both selected text and a designated prompt for it
-        return hasSelectedText && getSelectedTextPrompt() != nil
-    }
-
-    private func checkAndApplySelectedTextPrompt() async {
-        // Import ScreenContextService to check for selected text
-        let screenContext = ScreenContextService()
-
-        // Check if there's text currently selected
-        let selectedText = screenContext.selectedText()
-        let hasSelectedText = !(selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-
-        if hasSelectedText {
-            // Check if there's a prompt designated for selected text
-            if let selectedTextPrompt = getSelectedTextPrompt() {
-                // Temporarily switch to this prompt for this dictation session
-                selectedTextPromptOverride = selectedTextPrompt
-                isApplyingPromptFromSelection = true
-                systemPrompt = selectedTextPrompt.systemPrompt
-                userPrompt = selectedTextPrompt.userPrompt
-                isApplyingPromptFromSelection = false
-                updateProviders()
-            }
-        } else {
-            // Clear any override if no text is selected
-            selectedTextPromptOverride = nil
-        }
     }
 
     private func restoreOriginalPromptIfNeeded() async {
@@ -1625,31 +1517,6 @@ final class DictationViewModel: ObservableObject {
         updateProviders()
     }
 
-    private func persistFavoriteLLMModels() {
-        var normalized: [FavoriteLLMModel] = []
-        var seen: Set<String> = []
-        for item in favoriteLLMModels {
-            let trimmedModel = item.model.trimmingCharacters(in: .whitespacesAndNewlines)
-            let trimmedProvider = item.provider.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedModel.isEmpty else { continue }
-            let normalizedProvider = trimmedProvider.isEmpty ? llmProvider : trimmedProvider
-            let normalizedEntry = FavoriteLLMModel(id: item.id, provider: normalizedProvider.lowercased(), model: trimmedModel)
-            let key = normalizedEntry.key
-            if seen.insert(key).inserted {
-                normalized.append(normalizedEntry)
-            }
-        }
-        if normalized != favoriteLLMModels {
-            favoriteLLMModels = normalized
-            return
-        }
-        let defaults = UserDefaults.standard
-        if let data = try? JSONEncoder().encode(normalized) {
-            defaults.set(data, forKey: Self.favoritesDataKey)
-        }
-        defaults.removeObject(forKey: Self.favoritesLegacyKey)
-    }
-
     private func persistPromptLibrary() {
         if isApplyingPromptFromSelection { return }
         persistSimplePromptSelection()
@@ -1672,7 +1539,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func sanitizedSimpleSettings(_ settings: SimplePromptSettings, for kind: SimplePromptKind) -> SimplePromptSettings {
-        var sanitized = settings.sanitized()
+        var sanitized = settings
         if sanitized.rules.isEmpty {
             sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
         }
@@ -1733,14 +1600,6 @@ final class DictationViewModel: ObservableObject {
         var settings = simpleSettings(for: kind)
         guard settings.selection != selection else { return }
         settings.selection = selection
-        applySimpleSettings(settings, for: kind)
-    }
-
-    func setSimpleIncludeImage(_ include: Bool, for kind: SimplePromptKind) {
-        guard kind == .command else { return }
-        var settings = simpleSettings(for: kind)
-        guard settings.includeScreenImage != include else { return }
-        settings.includeScreenImage = include
         applySimpleSettings(settings, for: kind)
     }
 
@@ -1868,11 +1727,8 @@ final class DictationViewModel: ObservableObject {
 
         let prompt = prompts.first(where: { $0.id == SimplePromptKind.dictation.promptID })
         let systemTemplate = prompt?.systemPrompt
-            ?? SimplePromptComposer.systemPrompt(for: .dictation, settings: simpleDictationSettings)
-        let renderedSystem = PromptBuilder.renderSystemPrompt(
-            template: systemTemplate,
-            customVocabulary: vocabCustom
-        )
+            ?? SimplePromptComposer.systemPrompt(settings: simpleDictationSettings)
+        let renderedSystem = systemTemplate
         let userMessage = PromptBuilder.buildUserMessage(
             transcription: trimmed,
             selectedText: nil,
@@ -2304,18 +2160,8 @@ final class DictationViewModel: ObservableObject {
         selectedHermesSessionID = sessionID
     }
 
-    func dismissHermesResponse() {
-        hermesResponseWindowState = nil
-        hermesResponseWindowStates.removeAll()
-        focusedHermesResponseSessionID = nil
-    }
-
     func dismissHermesResponse(sessionID: UUID) {
         removeHermesResponseWindow(for: sessionID)
-    }
-
-    func closeHermesSession(_ sessionID: UUID) {
-        archiveHermesSession(sessionID)
     }
 
     func archiveHermesSession(_ sessionID: UUID) {
@@ -3365,96 +3211,67 @@ final class DictationViewModel: ObservableObject {
         screenContext: String?,
         clipboardText: String?
     ) async -> String {
-        let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hermesPostProcessingEnabled, simpleLLMEnabled else {
-            return trimmed
-        }
-
-        let prompt = prompts.first(where: { $0.id == SimplePromptKind.dictation.promptID })
-        let system = PromptBuilder.renderSystemPrompt(
-            template: prompt?.systemPrompt
-                ?? SimplePromptComposer.systemPrompt(
-                    for: .dictation,
-                    settings: simpleDictationSettings
-                ),
-            customVocabulary: vocabCustom
-        )
-        let userMessage = PromptBuilder.buildUserMessage(
-            transcription: trimmed,
+        await postProcessTranscriptIfNeeded(
+            rawTranscript,
+            enabled: hermesPostProcessingEnabled,
+            appName: turn.appName,
             selectedText: turn.selectedText,
             activeTextField: turn.activeTextField,
-            appName: turn.appName,
-            screenContents: nil,
             screenContextTerms: screenContext,
-            customVocabulary: vocabCustom,
-            clipboardText: clipboardText
+            clipboardText: clipboardText,
+            label: "Hermes"
         )
-
-        do {
-            let model = Self.canonicalLLMModel(for: resolvedLLMModel(for: prompt))
-            let provider = OpenRouterLLMProvider(
-                client: OpenRouterHTTPClient(apiKeyProvider: {
-                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
-                })
-            )
-            let settings = LLMSettings(
-                endpoint: AppConfig.openrouterChatCompletions,
-                model: model,
-                systemPrompt: system,
-                timeout: max(30, min(120, transcriptionTimeoutSeconds)),
-                streaming: false,
-                temperature: llmTemperature,
-                openRouterReasoning: openrouterReasoning
-            )
-            var cleaned = try await provider.process(
-                text: userMessage,
-                userPrompt: prompt?.userPrompt ?? "",
-                settings: settings
-            )
-            let rules = vocabSpelling.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !rules.isEmpty {
-                cleaned = TextReplacement.apply(to: cleaned, withRules: rules)
-            }
-            let final = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-            return final.isEmpty ? trimmed : final
-        } catch {
-            AppLog.dictation.error("Hermes post-processing failed: \(error.localizedDescription)")
-            settingsNotice = "Hermes post-processing failed; sent raw transcript."
-            return trimmed
-        }
     }
 
     private func postProcessBeeperTranscriptIfNeeded(
         _ rawTranscript: String,
         turn: DictationController.TranscriptionOnlyResult
     ) async -> String {
+        await postProcessTranscriptIfNeeded(
+            rawTranscript,
+            enabled: beeperPostProcessingEnabled,
+            appName: "Beeper",
+            selectedText: turn.selectedText,
+            activeTextField: turn.activeTextField,
+            screenContextTerms: nil,
+            clipboardText: nil,
+            label: "Beeper"
+        )
+    }
+
+    private func postProcessTranscriptIfNeeded(
+        _ rawTranscript: String,
+        enabled: Bool,
+        appName: String?,
+        selectedText: String?,
+        activeTextField: String?,
+        screenContextTerms: String?,
+        clipboardText: String?,
+        label: String
+    ) async -> String {
         let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard beeperPostProcessingEnabled, simpleLLMEnabled else {
+        guard enabled, simpleLLMEnabled else {
             return trimmed
         }
 
         let prompt = prompts.first(where: { $0.id == SimplePromptKind.dictation.promptID })
-        let system = PromptBuilder.renderSystemPrompt(
-            template: prompt?.systemPrompt
-                ?? SimplePromptComposer.systemPrompt(
-                    for: .dictation,
-                    settings: simpleDictationSettings
-                ),
-            customVocabulary: vocabCustom
-        )
+        let system = prompt?.systemPrompt
+            ?? SimplePromptComposer.systemPrompt(
+                settings: simpleDictationSettings
+            )
         let userMessage = PromptBuilder.buildUserMessage(
             transcription: trimmed,
-            selectedText: turn.selectedText,
-            activeTextField: turn.activeTextField,
-            appName: "Beeper",
+            selectedText: selectedText,
+            activeTextField: activeTextField,
+            appName: appName,
             screenContents: nil,
-            screenContextTerms: nil,
+            screenContextTerms: screenContextTerms,
             customVocabulary: vocabCustom,
-            clipboardText: nil
+            clipboardText: clipboardText
         )
 
         do {
-            let model = Self.canonicalLLMModel(for: resolvedLLMModel(for: prompt))
+            let model = resolvedLLMModel(for: prompt).trimmingCharacters(in: .whitespacesAndNewlines)
             let provider = OpenRouterLLMProvider(
                 client: OpenRouterHTTPClient(apiKeyProvider: {
                     KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
@@ -3481,8 +3298,8 @@ final class DictationViewModel: ObservableObject {
             let final = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
             return final.isEmpty ? trimmed : final
         } catch {
-            AppLog.dictation.error("Beeper post-processing failed: \(error.localizedDescription)")
-            settingsNotice = "Beeper post-processing failed; sent raw transcript."
+            AppLog.dictation.error("\(label) post-processing failed: \(error.localizedDescription)")
+            settingsNotice = "\(label) post-processing failed; sent raw transcript."
             return trimmed
         }
     }
@@ -3516,7 +3333,7 @@ final class DictationViewModel: ObservableObject {
             )
             let settings = LLMSettings(
                 endpoint: AppConfig.openrouterChatCompletions,
-                model: Self.canonicalLLMModel(for: simpleSelectedModel),
+                model: simpleSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines),
                 systemPrompt: "You create concise titles for task conversations.",
                 timeout: 30,
                 streaming: false,
@@ -3992,10 +3809,7 @@ final class DictationViewModel: ObservableObject {
                     await MainActor.run {
                         // Temporarily apply the selected text prompt to ensure providers use it
                         if let override = self.selectedTextPromptOverride {
-                            self.isApplyingPromptFromSelection = true
-                            self.systemPrompt = override.systemPrompt
-                            self.userPrompt = override.userPrompt
-                            self.isApplyingPromptFromSelection = false
+                            self.applySelectedTextPromptOverride(override)
                         }
                     }
                     await updateProvidersWithSelectedTextOverride()
@@ -4027,10 +3841,7 @@ final class DictationViewModel: ObservableObject {
                         await MainActor.run {
                             // Temporarily apply the selected text prompt to ensure providers use it
                             if let override = self.selectedTextPromptOverride {
-                                self.isApplyingPromptFromSelection = true
-                                self.systemPrompt = override.systemPrompt
-                                self.userPrompt = override.userPrompt
-                                self.isApplyingPromptFromSelection = false
+                                self.applySelectedTextPromptOverride(override)
                             }
                         }
                         await updateProvidersWithSelectedTextOverride()
@@ -4091,7 +3902,7 @@ final class DictationViewModel: ObservableObject {
         )
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
         let providerForActivePrompt = resolvedLLMProvider(for: prompt)
-        let canonicalModelForActivePrompt = Self.canonicalLLMModel(for: modelForActivePrompt)
+        let canonicalModelForActivePrompt = modelForActivePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Get cached transcription provider
         let provider = getCachedTranscriptionProvider(for: voiceModel)
@@ -4146,7 +3957,7 @@ final class DictationViewModel: ObservableObject {
             )
         }
 
-        let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
+        let renderedSystem = systemPrompt
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
         var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
@@ -4323,26 +4134,11 @@ private enum SimpleDefaultsKey {
     static let beeperResponseMonitoringEnabled = "beeper.response.monitoring.enabled"
     static let beeperWebSocketMonitoringEnabled = "beeper.response.websocket.enabled"
     static let beeperResponsePollingIntervalSeconds = "beeper.response.polling.intervalSeconds"
-    static let beeperResponsePollingTimeoutSeconds = "beeper.response.polling.timeoutSeconds"
 }
 
 private extension DictationViewModel {
-    static func initialClipboardMonitorEnabled() -> Bool {
-        let hermesEnabled = UserDefaults.standard.object(
-            forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
-        ) as? Bool ?? true
-        let beeperEnabled = UserDefaults.standard.object(
-            forKey: SimpleDefaultsKey.beeperClipboardContextEnabled
-        ) as? Bool ?? true
-        return hermesEnabled || beeperEnabled
-    }
-
     static func clampedBeeperPollingInterval(_ value: Double) -> Double {
         max(2, min(60, value))
-    }
-
-    static func clampedBeeperPollingTimeout(_ value: Double) -> Double {
-        max(10, min(600, value))
     }
 
     static func sortBeeperMessagesAscending(_ lhs: BeeperMessage, _ rhs: BeeperMessage) -> Bool {
@@ -4353,13 +4149,6 @@ private extension DictationViewModel {
             return leftSort < rightSort
         }
         return lhs.id < rhs.id
-    }
-
-    static func durationLabel(_ seconds: TimeInterval) -> String {
-        if seconds >= 60, seconds.truncatingRemainder(dividingBy: 60) == 0 {
-            return "\(Int(seconds / 60)) min"
-        }
-        return "\(Int(seconds)) sec"
     }
 
     static func runModelComparison(request: ModelComparisonRequest,
@@ -4380,7 +4169,7 @@ private extension DictationViewModel {
             )
             let settings = LLMSettings(
                 endpoint: AppConfig.openrouterChatCompletions,
-                model: canonicalLLMModel(for: request.model.id),
+                model: request.model.id.trimmingCharacters(in: .whitespacesAndNewlines),
                 systemPrompt: systemPrompt,
                 timeout: timeout,
                 streaming: false,
@@ -4420,7 +4209,7 @@ private extension DictationViewModel {
         let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = UserDefaults.standard.data(forKey: key),
            let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
-            var sanitized = decoded.sanitized()
+            var sanitized = decoded
             if sanitized.rules.isEmpty {
                 sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
             }
@@ -4542,41 +4331,8 @@ private extension DictationViewModel {
 }
 
 private extension DictationViewModel {
-    static let favoritesDataKey = "llm.models.favorites.data"
-    static let favoritesLegacyKey = "llm.models.favorites"
     static let favoriteOpenRouterModelsKey = "simple.openrouter.favorites"
 
-    static func loadFavoriteLLMModels() -> [FavoriteLLMModel] {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: favoritesDataKey),
-           let decoded = try? JSONDecoder().decode([FavoriteLLMModel].self, from: data) {
-            var seen: Set<String> = []
-            var result: [FavoriteLLMModel] = []
-            for item in decoded {
-                let normalized = FavoriteLLMModel(id: item.id, provider: item.provider.lowercased(), model: item.model)
-                if seen.insert(normalized.key).inserted {
-                    result.append(normalized)
-                }
-            }
-            return result
-        }
-        if let legacyArray = defaults.stringArray(forKey: favoritesLegacyKey) {
-            let provider = (defaults.string(forKey: "llm.provider") ?? "groq").lowercased()
-            var seen: Set<String> = []
-            var result: [FavoriteLLMModel] = []
-            for model in legacyArray {
-                let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                let entry = FavoriteLLMModel(provider: provider, model: trimmed)
-                if seen.insert(entry.key).inserted {
-                    result.append(entry)
-                }
-            }
-            return result
-        }
-        return []
-    }
-    
     static func loadFavoriteOpenRouterModels() -> [FavoriteOpenRouterModel] {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: favoriteOpenRouterModelsKey),
@@ -4638,11 +4394,6 @@ private extension DictationViewModel {
 
     func resolvedLLMProvider(for prompt: PromptConfiguration?) -> String {
         return "openrouter"
-    }
-
-    private static func canonicalLLMModel(for model: String) -> String {
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed
     }
 
     func resolvedClipboardContext(for prompt: PromptConfiguration?) -> Bool {

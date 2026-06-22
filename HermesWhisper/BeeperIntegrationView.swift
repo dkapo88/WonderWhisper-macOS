@@ -162,14 +162,6 @@ struct BeeperIntegrationView: View {
             )
             .frame(maxWidth: 320, alignment: .leading)
 
-            Stepper(
-              "Stop after \(responseTimeoutLabel)",
-              value: $vm.beeperResponsePollingTimeoutSeconds,
-              in: 10...600,
-              step: 10
-            )
-            .frame(maxWidth: 320, alignment: .leading)
-
             VStack(alignment: .leading, spacing: 4) {
               Text("Ignore replies containing")
                 .font(.callout.weight(.semibold))
@@ -250,14 +242,6 @@ struct BeeperIntegrationView: View {
       }
       .padding(.top, 4)
     }
-  }
-
-  private var responseTimeoutLabel: String {
-    let seconds = Int(vm.beeperResponsePollingTimeoutSeconds)
-    if seconds >= 60, seconds % 60 == 0 {
-      return "\(seconds / 60) min"
-    }
-    return "\(seconds) sec"
   }
 
   private var beeperSelectionBinding: Binding<HotkeyManager.Selection?> {

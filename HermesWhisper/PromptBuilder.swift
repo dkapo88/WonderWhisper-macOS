@@ -1,22 +1,6 @@
 import Foundation
 
 struct PromptBuilder {
-    // Builds the system message with clear instructions about the INPUT/CONTEXT structure.
-    // Context usage instructions are kept minimal - the structure itself signals intent.
-    static func buildSystemMessage(base: String, customVocabulary: String, customSpelling: String) -> String {
-        let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        var out = ""
-        out += "<SYSTEM_PROMPT>\n"
-        out += trimmedBase
-        out += "\n</SYSTEM_PROMPT>\n\n"
-
-        out += "**Output Format:**\n"
-        out += "Place your entire, final output inside `<OUTPUT>` tags and nothing else.\n\n"
-        out += "**Example:**\n"
-        out += "Output: <OUTPUT>We need $3,000 to analyse the data.</OUTPUT>"
-        return out
-    }
-
     // Builds a structured user message with clear INPUT/CONTEXT hierarchy.
     // INPUT contains the primary content to transform.
     // CONTEXT contains reference-only material (only non-empty fields are included).
@@ -88,10 +72,5 @@ struct PromptBuilder {
         }
 
         return out
-    }
-
-    // Render a user-configurable system prompt template.
-    static func renderSystemPrompt(template: String, customVocabulary: String) -> String {
-        return template
     }
 }

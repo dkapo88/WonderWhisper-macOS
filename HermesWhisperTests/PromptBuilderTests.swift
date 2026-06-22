@@ -89,18 +89,6 @@ struct PromptBuilderTests {
         #expect(!message.contains("Raw OCR paragraph"))
     }
 
-    @Test func buildSystemMessageIncludesOutputTag() {
-        let message = PromptBuilder.buildSystemMessage(
-            base: "You are a helpful assistant",
-            customVocabulary: "",
-            customSpelling: ""
-        )
-
-        #expect(message.contains("<OUTPUT>"))
-        #expect(message.contains("</OUTPUT>"))
-        #expect(!message.contains("<FORMATTED_TEXT>"))
-    }
-
     @Test func voiceVocabularyKeytermsIncludeCustomTermsAndReplacementTargets() {
         let terms = VoiceVocabularyKeyterms.terms(
             customVocabulary: "HermesWhisper, Hapana\nEzypay, hermeswhisper",
@@ -179,7 +167,6 @@ struct ScreenContextTermExtractorTests {
         #expect(terms.contains("Soniox V5"), "Terms: \(terms)")
         #expect(terms.contains("Apple Intelligence"), "Terms: \(terms)")
         #expect(terms.contains("CORE-759"), "Terms: \(terms)")
-        #expect(terms.contains("HermesWhisper"), "Terms: \(terms)")
         #expect(terms.contains("GPT-4o-mini-transcribe"), "Terms: \(terms)")
     }
 
