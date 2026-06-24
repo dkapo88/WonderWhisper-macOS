@@ -72,6 +72,40 @@ enum HermesResponseWindowLifecycle {
   }
 }
 
+enum HermesEscapeAction: Equatable {
+  case cancelRecording
+  case dismissResponseWindow(UUID)
+  case ignore
+}
+
+enum HermesEscapeResolver {
+  static let escapeKeyCode: UInt16 = 53
+
+  /// Decide what an Escape press should do. Recording always wins (and never
+  /// dismisses a window); otherwise dismiss the frontmost (topmost z-order)
+  /// response window; otherwise do nothing.
+  static func resolve(
+    isRecording: Bool,
+    responseWindowsFrontToBack: [UUID]
+  ) -> HermesEscapeAction {
+    if isRecording { return .cancelRecording }
+    guard let front = responseWindowsFrontToBack.first else { return .ignore }
+    return .dismissResponseWindow(front)
+  }
+
+  static func shouldConsumeKeyDown(
+    keyCode: UInt16,
+    isRecording: Bool,
+    responseWindowsFrontToBack: [UUID]
+  ) -> Bool {
+    guard keyCode == escapeKeyCode else { return false }
+    return resolve(
+      isRecording: isRecording,
+      responseWindowsFrontToBack: responseWindowsFrontToBack
+    ) != .ignore
+  }
+}
+
 enum HermesResponseWindowLayout {
   static let defaultContentSize = NSSize(width: 660, height: 540)
   static let minimumContentSize = NSSize(width: 520, height: 360)
@@ -98,11 +132,15 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private var panels: [UUID: HermesResponsePanel] = [:]
   private var latestStates: [HermesResponseWindowState] = []
   private var focusedSessionID: UUID?
+  private var panelFrontToBackOrder: [UUID] = []
   private var textReplyDrafts: [UUID: HermesTextReplyDraft] = [:]
   private var textReplySessionIDs: Set<UUID> = []
   private var minimizedOrder: [UUID] = []
   private var preMinimizeFrames: [UUID: NSRect] = [:]
   private var cancellable: AnyCancellable?
+  private var localEscapeMonitor: Any?
+  private var globalEscapeMonitor: Any?
+  private var escapeEventTap: HermesEscapeEventTap?
 
   init(viewModel: DictationViewModel) {
     self.viewModel = viewModel
@@ -112,6 +150,98 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         self?.render(states)
       }
     }
+    // Local monitor covers events delivered to HermesWhisper. The global
+    // monitor covers floating response windows while another app has focus.
+    localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard let self, event.keyCode == HermesEscapeResolver.escapeKeyCode else { return event }
+      return self.handleEscape() ? nil : event
+    }
+    let eventTap = HermesEscapeEventTap()
+    eventTap.onEscape = { [weak self] in
+      self?.handleEscape() ?? false
+    }
+    if eventTap.start() {
+      escapeEventTap = eventTap
+      AppLog.hotkeys.log("Hermes response Escape event tap installed")
+    } else {
+      AppLog.hotkeys.warning(
+        "Hermes response Escape event tap unavailable; falling back to global monitor axTrusted=\(AXIsProcessTrusted(), privacy: .public)"
+      )
+      globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard let self, event.keyCode == HermesEscapeResolver.escapeKeyCode else { return }
+        _ = self.handleEscape()
+      }
+    }
+  }
+
+  deinit {
+    if let localEscapeMonitor { NSEvent.removeMonitor(localEscapeMonitor) }
+    if let globalEscapeMonitor { NSEvent.removeMonitor(globalEscapeMonitor) }
+    escapeEventTap?.stop()
+  }
+
+  /// Front-to-back z-ordered IDs of visible, non-minimized response panels.
+  private func responseWindowsFrontToBack() -> [UUID] {
+    var seen = Set<UUID>()
+    var orderedIDs: [UUID] = []
+
+    let appKitOrderedIDs = NSApp.orderedWindows.compactMap { window -> UUID? in
+      guard let panel = window as? HermesResponsePanel,
+            let sessionID = panel.sessionID,
+            isDismissibleResponsePanel(panel, sessionID: sessionID) else { return nil }
+      return sessionID
+    }
+    for sessionID in appKitOrderedIDs {
+      guard seen.insert(sessionID).inserted else { continue }
+      orderedIDs.append(sessionID)
+    }
+
+    for sessionID in panelFrontToBackOrder {
+      guard seen.insert(sessionID).inserted else { continue }
+      guard let panel = panels[sessionID],
+            isDismissibleResponsePanel(panel, sessionID: sessionID) else { continue }
+      orderedIDs.append(sessionID)
+    }
+
+    for state in latestStates.reversed() {
+      let sessionID = state.id
+      guard seen.insert(sessionID).inserted else { continue }
+      guard let panel = panels[sessionID],
+            isDismissibleResponsePanel(panel, sessionID: sessionID) else { continue }
+      orderedIDs.append(sessionID)
+    }
+
+    return orderedIDs
+  }
+
+  private func isDismissibleResponsePanel(_ panel: HermesResponsePanel, sessionID: UUID) -> Bool {
+    panel.isVisible && !minimizedOrder.contains(sessionID)
+  }
+
+  /// Escape priority: cancel an active recording first, else dismiss the
+  /// topmost response window, else no-op. Returns true if the press was consumed.
+  @discardableResult
+  func handleEscape() -> Bool {
+    switch HermesEscapeResolver.resolve(
+      isRecording: viewModel?.isRecording ?? false,
+      responseWindowsFrontToBack: responseWindowsFrontToBack()
+    ) {
+    case .cancelRecording:
+      AppLog.hotkeys.log("Escape cancelling active recording")
+      viewModel?.cancel()
+      return true
+    case .dismissResponseWindow(let sessionID):
+      AppLog.hotkeys.log(
+        "Escape dismissing response window id=\(sessionID.uuidString, privacy: .public)"
+      )
+      viewModel?.dismissHermesResponse(sessionID: sessionID)
+      return true
+    case .ignore:
+      AppLog.hotkeys.log(
+        "Escape ignored recording=\(self.viewModel?.isRecording ?? false, privacy: .public) visibleResponses=\(self.responseWindowsFrontToBack().count, privacy: .public) panels=\(self.panels.count, privacy: .public) orderedPanels=\(self.panelFrontToBackOrder.count, privacy: .public)"
+      )
+      return false
+    }
   }
 
   func windowWillClose(_ notification: Notification) {
@@ -120,6 +250,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       return
     }
     panels[sessionID] = nil
+    panelFrontToBackOrder.removeAll { $0 == sessionID }
     viewModel?.dismissHermesResponse(sessionID: sessionID)
   }
 
@@ -146,6 +277,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       textReplyDrafts[sessionID] = nil
       textReplySessionIDs.remove(sessionID)
       minimizedOrder.removeAll { $0 == sessionID }
+      panelFrontToBackOrder.removeAll { $0 == sessionID }
       preMinimizeFrames[sessionID] = nil
     }
 
@@ -179,6 +311,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private func focusPanel(sessionID: UUID, syncSelection: Bool) {
     let didChangeFocus = focusedSessionID != sessionID
     focusedSessionID = sessionID
+    markPanelFront(sessionID)
     if didChangeFocus {
       refreshPanelFocus()
     }
@@ -250,6 +383,12 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     present(panel, shouldPosition: false)
   }
 
+  private func markPanelFront(_ sessionID: UUID?) {
+    guard let sessionID else { return }
+    panelFrontToBackOrder.removeAll { $0 == sessionID }
+    panelFrontToBackOrder.insert(sessionID, at: 0)
+  }
+
   // Stack minimized bubbles down the top-right edge of the active screen.
   private func layoutBubbles() {
     let screenFrame = targetScreenFrame()
@@ -298,6 +437,9 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       defer: false
     )
     panel.sessionID = sessionID
+    panel.onEscape = { [weak self] in
+      self?.handleEscape() ?? false
+    }
     panel.onFocusRequested = { [weak self] sessionID in
       Task { @MainActor [weak self] in
         self?.focusPanel(sessionID: sessionID, syncSelection: false)
@@ -352,6 +494,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     NSApp.activate()
     panel.makeKeyAndOrderFront(nil)
     focusedSessionID = panel.sessionID
+    markPanelFront(panel.sessionID)
     refreshPanelFocus()
 
     if appWasHidden {
@@ -389,10 +532,18 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
 
 private final class HermesResponsePanel: NSPanel {
   var sessionID: UUID?
+  var onEscape: (() -> Bool)?
   var onFocusRequested: ((UUID) -> Void)?
 
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { false }
+
+  override func keyDown(with event: NSEvent) {
+    if event.keyCode == HermesEscapeResolver.escapeKeyCode, onEscape?() == true {
+      return
+    }
+    super.keyDown(with: event)
+  }
 
   override func sendEvent(_ event: NSEvent) {
     switch event.type {
@@ -404,6 +555,78 @@ private final class HermesResponsePanel: NSPanel {
       break
     }
     super.sendEvent(event)
+  }
+}
+
+private final class HermesEscapeEventTap {
+  private var eventTap: CFMachPort?
+  private var runLoopSource: CFRunLoopSource?
+  var onEscape: (() -> Bool)?
+
+  deinit {
+    stop()
+  }
+
+  func start() -> Bool {
+    guard AXIsProcessTrusted() else { return false }
+
+    let callback: CGEventTapCallBack = { _, type, event, refcon in
+      guard let refcon else { return Unmanaged.passUnretained(event) }
+      let interceptor = Unmanaged<HermesEscapeEventTap>
+        .fromOpaque(refcon)
+        .takeUnretainedValue()
+
+      if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let tap = interceptor.eventTap {
+          CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        return Unmanaged.passUnretained(event)
+      }
+
+      guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+      let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+      guard keyCode == HermesEscapeResolver.escapeKeyCode else {
+        return Unmanaged.passUnretained(event)
+      }
+
+      return interceptor.onEscape?() == true ? nil : Unmanaged.passUnretained(event)
+    }
+
+    let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+    guard let tap = CGEvent.tapCreate(
+      tap: .cgSessionEventTap,
+      place: .headInsertEventTap,
+      options: .defaultTap,
+      eventsOfInterest: mask,
+      callback: callback,
+      userInfo: refcon
+    ) else {
+      return false
+    }
+
+    guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+      CFMachPortInvalidate(tap)
+      return false
+    }
+
+    eventTap = tap
+    runLoopSource = source
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+    return true
+  }
+
+  func stop() {
+    if let tap = eventTap {
+      CGEvent.tapEnable(tap: tap, enable: false)
+      CFMachPortInvalidate(tap)
+    }
+    eventTap = nil
+    if let source = runLoopSource {
+      CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
+    }
+    runLoopSource = nil
   }
 }
 
@@ -479,7 +702,8 @@ private struct HermesResponsePanelView: View {
         Button(action: onClose) {
           Label("Close", systemImage: "xmark.circle.fill")
         }
-        .keyboardShortcut(.cancelAction)
+        // Escape is handled centrally in HermesResponsePanel.keyDown so it
+        // targets the topmost window and yields to active recordings.
       }
     }
     .padding(18)
