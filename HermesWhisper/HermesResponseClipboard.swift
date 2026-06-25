@@ -16,9 +16,18 @@ enum HermesResponseClipboard {
 
   @discardableResult
   @MainActor
-  static func copyFormatted(_ markdown: String, to pasteboard: NSPasteboard = .general) -> Bool {
-    let attributed = HermesMarkdownContent.nsAttributedString(from: markdown)
-    let plainFallback = HermesMarkdownContent.plainFormattedString(from: markdown)
+  static func copyFormatted(_ markdown: String,
+                            isHTML: Bool = false,
+                            to pasteboard: NSPasteboard = .general) -> Bool {
+    let attributed: NSAttributedString
+    let plainFallback: String
+    if isHTML, let html = HermesMarkdownContent.htmlAttributedString(from: markdown) {
+      attributed = html
+      plainFallback = html.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+      attributed = HermesMarkdownContent.nsAttributedString(from: markdown)
+      plainFallback = HermesMarkdownContent.plainFormattedString(from: markdown)
+    }
     let fullRange = NSRange(location: 0, length: attributed.length)
     let item = NSPasteboardItem()
     item.setString(plainFallback, forType: .string)

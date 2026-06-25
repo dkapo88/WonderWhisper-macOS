@@ -3044,7 +3044,8 @@ final class DictationViewModel: ObservableObject {
         upsertHermesResponseWindow(
             sessionID: responseWindowID,
             title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
-            text: text,
+            text: message.richDisplayText,
+            isHTML: message.hasHTMLBody,
             isError: false,
             supportsReply: false,
             supportsTextReply: true
@@ -3544,6 +3545,7 @@ final class DictationViewModel: ObservableObject {
     private func upsertHermesResponseWindow(sessionID: UUID,
                                             title: String,
                                             text: String,
+                                            isHTML: Bool = false,
                                             isError: Bool,
                                             supportsReply: Bool = true,
                                             supportsVoiceReply: Bool? = nil,
@@ -3552,6 +3554,7 @@ final class DictationViewModel: ObservableObject {
             id: sessionID,
             title: title,
             text: text,
+            isHTML: isHTML,
             isError: isError,
             supportsReply: supportsReply,
             supportsVoiceReply: supportsVoiceReply,

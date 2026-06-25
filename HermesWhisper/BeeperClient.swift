@@ -60,6 +60,20 @@ struct BeeperMessage: Equatable, Identifiable {
     BeeperMessageTextFormatter.displayText(from: text)
   }
 
+  /// True when the raw body carries HTML formatting (Beeper surfaces the Matrix
+  /// `formatted_body` here for rich messages).
+  var hasHTMLBody: Bool {
+    guard let text else { return false }
+    return BeeperMessageTextFormatter.containsHTMLTags(text)
+  }
+
+  /// Body for the response window: the raw HTML when present (rendered natively),
+  /// otherwise the cleaned plain text. Keeps `displayText` for plain-text uses
+  /// like keyword filtering and the settings preview.
+  var richDisplayText: String {
+    hasHTMLBody ? (text ?? "") : displayText
+  }
+
   var isIncomingText: Bool {
     let messageType = type?.uppercased()
     return isSender != true
@@ -83,6 +97,16 @@ struct BeeperMessage: Equatable, Identifiable {
 }
 
 enum BeeperMessageTextFormatter {
+  /// Detects a recognized HTML formatting tag (e.g. `<p>`, `<strong>`, `</code>`).
+  /// Matching a known tag list avoids false positives on `a < b` or `Array<Int>`,
+  /// which would otherwise be mangled by the HTML importer.
+  static func containsHTMLTags(_ value: String) -> Bool {
+    value.range(
+      of: #"(?i)</?(?:p|br|div|span|strong|b|em|i|u|s|code|pre|h[1-6]|ul|ol|li|a|blockquote|hr|table|thead|tbody|tr|td|th)\b[^>]*>"#,
+      options: .regularExpression
+    ) != nil
+  }
+
   static func displayText(from rawValue: String?) -> String {
     guard let rawValue else { return "" }
     var text = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

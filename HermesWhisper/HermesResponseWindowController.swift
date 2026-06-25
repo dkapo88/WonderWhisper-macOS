@@ -6,6 +6,9 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   let id: UUID
   var title: String
   var text: String
+  /// When true, `text` is an HTML fragment (e.g. a Beeper reply) and is rendered
+  /// natively rather than as markdown.
+  var isHTML: Bool
   var isError: Bool
   var isRecordingReply: Bool
   var supportsReply: Bool
@@ -15,6 +18,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   init(id: UUID = UUID(),
        title: String,
        text: String,
+       isHTML: Bool = false,
        isError: Bool = false,
        isRecordingReply: Bool = false,
        supportsReply: Bool = true,
@@ -23,6 +27,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.id = id
     self.title = title
     self.text = text
+    self.isHTML = isHTML
     self.isError = isError
     self.isRecordingReply = isRecordingReply
     self.supportsReply = supportsReply
@@ -340,7 +345,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         textReplyDraft: textReplyDraft(for: state.id),
         isTextReplyVisible: textReplySessionIDs.contains(state.id),
         onCopyRaw: { HermesResponseClipboard.copyRaw(state.text) },
-        onCopyFormatted: { HermesResponseClipboard.copyFormatted(state.text) },
+        onCopyFormatted: { HermesResponseClipboard.copyFormatted(state.text, isHTML: state.isHTML) },
         onReply: { [weak self] in self?.viewModel?.startHermesReply(to: state.id) },
         onToggleTextReply: { [weak self] in self?.toggleTextReply(for: state.id) },
         onSendTextReply: { [weak self] text in
@@ -652,7 +657,7 @@ private struct HermesResponsePanelView: View {
       }
 
       ScrollView {
-        HermesMarkdownView(text: state.text)
+        HermesMarkdownView(text: state.text, isHTML: state.isHTML)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.trailing, 4)
       }

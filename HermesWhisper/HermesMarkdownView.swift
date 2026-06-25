@@ -3,17 +3,77 @@ import SwiftUI
 
 struct HermesMarkdownView: View {
   var text: String
+  /// When true, `text` is an HTML fragment and is rendered via the native
+  /// AppKit HTML importer instead of the markdown parser.
+  var isHTML: Bool = false
 
   var body: some View {
-    Text(HermesMarkdownContent.attributedString(from: text))
+    Text(HermesMarkdownContent.attributedString(from: text, isHTML: isHTML))
       .textSelection(.enabled)
       .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
 enum HermesMarkdownContent {
-  static func attributedString(from markdown: String) -> AttributedString {
-    AttributedString(nsAttributedString(from: markdown))
+  static func attributedString(from markdown: String, isHTML: Bool = false) -> AttributedString {
+    if isHTML, let html = htmlAttributedString(from: markdown) {
+      return AttributedString(html)
+    }
+    return AttributedString(nsAttributedString(from: markdown))
+  }
+
+  // ponytail: NSAttributedString(html:) parses on the main thread (cheap for the
+  // small fragments Beeper sends). If large messages jank, pre-render into the
+  // window state off the SwiftUI body instead.
+  static func htmlAttributedString(from html: String) -> NSAttributedString? {
+    guard let data = html.data(using: .utf8) else { return nil }
+    let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+      .documentType: NSAttributedString.DocumentType.html,
+      .characterEncoding: String.Encoding.utf8.rawValue
+    ]
+    guard let parsed = try? NSMutableAttributedString(
+      data: data, options: options, documentAttributes: nil
+    ) else {
+      return nil
+    }
+    normalizeImportedHTML(parsed)
+    while parsed.string.hasSuffix("\n") {
+      parsed.deleteCharacters(in: NSRange(location: parsed.length - 1, length: 1))
+    }
+    return parsed
+  }
+
+  /// The HTML importer uses Times/Helvetica and hard-coded black text. Remap to
+  /// the system font (preserving bold/italic/monospace traits and heading sizes)
+  /// and `labelColor` so it matches the app and works in dark mode. Links keep
+  /// their own color.
+  private static func normalizeImportedHTML(_ attributed: NSMutableAttributedString) {
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    attributed.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+      guard let font = value as? NSFont else { return }
+      let traits = font.fontDescriptor.symbolicTraits
+      let size = font.pointSize <= 14 ? NSFont.systemFontSize : font.pointSize
+      var replacement: NSFont
+      if traits.contains(.monoSpace) {
+        replacement = NSFont.monospacedSystemFont(
+          ofSize: size, weight: traits.contains(.bold) ? .bold : .regular
+        )
+      } else {
+        replacement = NSFont.systemFont(ofSize: size)
+        if traits.contains(.bold) {
+          replacement = NSFontManager.shared.convert(replacement, toHaveTrait: .boldFontMask)
+        }
+        if traits.contains(.italic) {
+          replacement = NSFontManager.shared.convert(replacement, toHaveTrait: .italicFontMask)
+        }
+      }
+      attributed.addAttribute(.font, value: replacement, range: range)
+    }
+    attributed.enumerateAttribute(.foregroundColor, in: fullRange) { _, range, _ in
+      if attributed.attribute(.link, at: range.location, effectiveRange: nil) == nil {
+        attributed.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+      }
+    }
   }
 
   static func nsAttributedString(from markdown: String) -> NSAttributedString {
