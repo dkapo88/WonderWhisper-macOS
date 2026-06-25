@@ -272,6 +272,22 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     refreshPanelFocus()
   }
 
+  private var isAligningPanelFrame = false
+
+  /// These borderless, transparent panels render blurry text when their layer
+  /// lands on a fractional (non-device-pixel) origin while being dragged. Snap
+  /// every move back to a backing-aligned frame so the text stays crisp wherever
+  /// it's dropped. The guard prevents the resulting setFrame from recursing.
+  func windowDidMove(_ notification: Notification) {
+    guard !isAligningPanelFrame,
+          let window = notification.object as? HermesResponsePanel else { return }
+    let aligned = window.backingAlignedRect(window.frame, options: .alignAllEdgesNearest)
+    guard aligned.origin != window.frame.origin else { return }
+    isAligningPanelFrame = true
+    window.setFrameOrigin(aligned.origin)
+    isAligningPanelFrame = false
+  }
+
   private func render(_ states: [HermesResponseWindowState]) {
     latestStates = states
     let activeIDs = Set(states.map(\.id))
@@ -523,7 +539,11 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       x: screenFrame.midX - frame.width / 2 + cascadeOffset,
       y: screenFrame.midY - frame.height / 2 - cascadeOffset
     )
-    panel.setFrameOrigin(origin)
+    // Align to device pixels so text is crisp from first paint (midX can be fractional).
+    let aligned = panel.backingAlignedRect(
+      NSRect(origin: origin, size: frame.size), options: .alignAllEdgesNearest
+    )
+    panel.setFrameOrigin(aligned.origin)
   }
 
   private func targetScreenFrame() -> NSRect {
