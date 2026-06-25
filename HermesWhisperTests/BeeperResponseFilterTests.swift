@@ -26,4 +26,15 @@ struct BeeperResponseFilterTests {
     #expect(ids == ["chat1", "chat2", "chat3"])  // order kept, blanks dropped, chat1 deduped
     #expect(DictationViewModel.parseBeeperChatIDs("  \n , ").isEmpty)
   }
+
+  @Test func dedupedChatIDsTrimsDropsBlanksAndDuplicates() {
+    let chats = [
+      BeeperChatEntry(chatID: " chat1 ", alias: "Mum"),
+      BeeperChatEntry(chatID: "", alias: "blank row"),
+      BeeperChatEntry(chatID: "chat2", alias: "Work"),
+      BeeperChatEntry(chatID: "chat1", alias: "dup"),
+    ]
+    // Gates monitor spawning: order kept, blanks dropped, chat1 deduped.
+    #expect(DictationViewModel.dedupedChatIDs(chats) == ["chat1", "chat2"])
+  }
 }

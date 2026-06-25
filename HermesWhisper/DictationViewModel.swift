@@ -4,6 +4,14 @@ import Carbon.HIToolbox
 import AppKit
 import ApplicationServices
 
+/// A monitored Beeper chat: the opaque chat ID plus a human-readable alias so the
+/// user can tell which chat each ID maps to in settings.
+struct BeeperChatEntry: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var chatID: String = ""
+    var alias: String = ""
+}
+
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
@@ -317,10 +325,14 @@ final class DictationViewModel: ObservableObject {
             refreshBeeperResponseMonitor()
         }
     }
-    @Published var beeperChatID: String = UserDefaults.standard.string(forKey: "beeper.chat.id") ?? "" {
+    @Published var beeperChats: [BeeperChatEntry] = DictationViewModel.loadBeeperChats() {
         didSet {
-            UserDefaults.standard.set(beeperChatID, forKey: "beeper.chat.id")
-            refreshBeeperResponseMonitor()
+            DictationViewModel.saveBeeperChats(beeperChats)
+            // Only disrupt live monitors when the actual chat IDs change, not when
+            // the user is just editing an alias label.
+            if Self.dedupedChatIDs(beeperChats) != Self.dedupedChatIDs(oldValue) {
+                refreshBeeperResponseMonitor()
+            }
         }
     }
     /// Comma/newline-separated terms; an incoming Beeper reply containing any of them
@@ -2407,13 +2419,37 @@ final class DictationViewModel: ObservableObject {
         )
     }
 
-    /// Ordered, de-duplicated chat IDs parsed from the (newline/comma-separated)
-    /// setting. The first entry is the default target for new voice messages.
-    var beeperChatIDList: [String] {
-        Self.parseBeeperChatIDs(beeperChatID)
+    /// Ordered, de-duplicated, non-empty chat IDs from the configured chats.
+    /// The first entry is the default target for new voice messages.
+    var beeperChatIDList: [String] { Self.dedupedChatIDs(beeperChats) }
+
+    static func dedupedChatIDs(_ chats: [BeeperChatEntry]) -> [String] {
+        var seen = Set<String>()
+        return chats
+            .map { $0.chatID.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
     }
 
     var defaultBeeperChatID: String { beeperChatIDList.first ?? "" }
+
+    private static let beeperChatsKey = "beeper.chats"
+
+    static func loadBeeperChats() -> [BeeperChatEntry] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: beeperChatsKey),
+           let entries = try? JSONDecoder().decode([BeeperChatEntry].self, from: data) {
+            return entries
+        }
+        // Migrate legacy newline/comma-separated chat IDs (no aliases yet).
+        let legacy = defaults.string(forKey: "beeper.chat.id") ?? ""
+        return parseBeeperChatIDs(legacy).map { BeeperChatEntry(chatID: $0) }
+    }
+
+    static func saveBeeperChats(_ chats: [BeeperChatEntry]) {
+        guard let data = try? JSONEncoder().encode(chats) else { return }
+        UserDefaults.standard.set(data, forKey: beeperChatsKey)
+    }
 
     static func parseBeeperChatIDs(_ raw: String) -> [String] {
         var seen = Set<String>()

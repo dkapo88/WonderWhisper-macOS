@@ -31,18 +31,7 @@ struct BeeperIntegrationView: View {
           .frame(maxWidth: 440)
           .help("Beeper Desktop API usually runs locally on port 23373.")
 
-        VStack(alignment: .leading, spacing: 4) {
-          TextEditor(text: $vm.beeperChatID)
-            .font(.body.monospaced())
-            .frame(maxWidth: 520, minHeight: 56, maxHeight: 96)
-            .overlay(
-              RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.3))
-            )
-          Text("One chat ID per line (or comma-separated). All are monitored; the first is the default for new voice messages.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
+        chatListSection
 
         HStack(spacing: 6) {
           Text(hasSavedToken ? "Access token: Saved" : "Access token: Not saved")
@@ -91,6 +80,74 @@ struct BeeperIntegrationView: View {
       }
       .padding(.top, 4)
     }
+  }
+
+  private var chatListSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Monitored chats")
+          .font(.callout.weight(.semibold))
+        Spacer()
+        Button {
+          vm.beeperChats.append(BeeperChatEntry())
+        } label: {
+          Label("Add chat", systemImage: "plus")
+        }
+        .buttonStyle(.borderless)
+      }
+
+      if vm.beeperChats.isEmpty {
+        Text("No chats yet. Add a chat ID and give it a label so you know which is which.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      } else {
+        ForEach($vm.beeperChats) { $entry in
+          HStack(spacing: 8) {
+            TextField("Label (e.g. Mum, Work group)", text: $entry.alias)
+              .textFieldStyle(.roundedBorder)
+              .frame(maxWidth: 180)
+
+            TextField("Chat ID", text: $entry.chatID)
+              .textFieldStyle(.roundedBorder)
+              .font(.body.monospaced())
+              .frame(maxWidth: 260)
+
+            if entry.id == defaultChatEntryID {
+              Text("Default")
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(.secondary)
+            } else {
+              Button("Make default") { makeDefault(entry) }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+
+            Button {
+              vm.beeperChats.removeAll { $0.id == entry.id }
+            } label: {
+              Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove this chat")
+          }
+        }
+      }
+
+      Text("All chats are monitored. The first is the default for new voice messages.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+  }
+
+  /// The entry whose chat ID is actually used as the default target: the first
+  /// row with a non-blank chat ID (matches `vm.defaultBeeperChatID`).
+  private var defaultChatEntryID: UUID? {
+    vm.beeperChats.first { !$0.chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.id
+  }
+
+  private func makeDefault(_ entry: BeeperChatEntry) {
+    guard let index = vm.beeperChats.firstIndex(where: { $0.id == entry.id }) else { return }
+    vm.beeperChats.insert(vm.beeperChats.remove(at: index), at: 0)
   }
 
   private var hotkeySection: some View {
