@@ -69,6 +69,8 @@ struct AppConfig {
     // Keychain alias for the Beeper Desktop API access token
     static let beeperAccessTokenAlias = "BEEPER_ACCESS_TOKEN"
     static let defaultBeeperBaseURLString = "http://localhost:23373"
+    // Configurable base font size for response-window content
+    static let responseWindowFontSizeKey = "response.window.fontSize"
     // OpenRouter header defaults
     static let openrouterTitle = "HermesWhisper"
     static let openrouterReferer = "https://github.com/dkapo88/HermesWhisper"

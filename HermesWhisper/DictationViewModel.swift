@@ -335,6 +335,17 @@ final class DictationViewModel: ObservableObject {
             }
         }
     }
+    /// Base font size (pt) for response-window content. Drives the markdown and
+    /// HTML renderers via `HermesMarkdownContent.baseFontSize`.
+    @Published var responseWindowFontSize: Double =
+        (UserDefaults.standard.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double)
+        ?? Double(NSFont.systemFontSize) {
+        didSet {
+            UserDefaults.standard.set(responseWindowFontSize, forKey: AppConfig.responseWindowFontSizeKey)
+            // The renderer reads this on each render; new/reopened windows pick it up.
+            HermesMarkdownContent.baseFontSize = CGFloat(responseWindowFontSize)
+        }
+    }
     /// Comma/newline-separated terms; an incoming Beeper reply containing any of them
     /// (e.g. tool-call indicators like "running" or "bash") is suppressed instead of
     /// popping a response window, so only the final message surfaces.

@@ -213,6 +213,15 @@ struct BeeperIntegrationView: View {
           .toggleStyle(.checkbox)
           .help("Watch Beeper after sending and show the first incoming text reply.")
 
+        Stepper(
+          "Response window font size: \(Int(vm.responseWindowFontSize)) pt",
+          value: $vm.responseWindowFontSize,
+          in: 11...28,
+          step: 1
+        )
+        .frame(maxWidth: 360, alignment: .leading)
+        .help("Base text size for response windows. Headings and code scale with it. Applies to newly opened windows.")
+
         if vm.beeperResponseMonitoringEnabled {
           VStack(alignment: .leading, spacing: 8) {
             Toggle("Use WebSocket first", isOn: $vm.beeperWebSocketMonitoringEnabled)

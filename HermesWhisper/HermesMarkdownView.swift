@@ -3,23 +3,89 @@ import SwiftUI
 
 struct HermesMarkdownView: View {
   var text: String
-  /// When true, `text` is an HTML fragment and is rendered via the native
-  /// AppKit HTML importer instead of the markdown parser.
+  /// When true, `text` is an HTML fragment and is rendered through AppKit's text
+  /// engine (NSTextView) so block-level structure — tables, headings, lists —
+  /// survives. SwiftUI `Text` only honors inline attributes and flattens those.
   var isHTML: Bool = false
 
   var body: some View {
-    Text(HermesMarkdownContent.attributedString(from: text, isHTML: isHTML))
-      .textSelection(.enabled)
-      .frame(maxWidth: .infinity, alignment: .leading)
+    if isHTML, let html = HermesMarkdownContent.htmlAttributedString(from: text) {
+      HermesAttributedTextView(attributed: html)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      Text(HermesMarkdownContent.attributedString(from: text))
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+}
+
+/// Read-only, selectable NSTextView host that sizes its height to the content at
+/// the proposed width. Used for HTML replies whose tables/lists/headings need the
+/// full text engine (SwiftUI `Text` can't lay those out).
+struct HermesAttributedTextView: NSViewRepresentable {
+  let attributed: NSAttributedString
+
+  func makeNSView(context: Context) -> NSTextView {
+    let textView = NSTextView()
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.drawsBackground = false
+    textView.textContainerInset = .zero
+    textView.textContainer?.lineFragmentPadding = 0
+    textView.textContainer?.widthTracksTextView = true
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    return textView
+  }
+
+  func updateNSView(_ textView: NSTextView, context: Context) {
+    textView.textStorage?.setAttributedString(attributed)
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize, nsView textView: NSTextView, context: Context) -> CGSize? {
+    let width = proposal.width ?? 480
+    guard let container = textView.textContainer, let manager = textView.layoutManager else {
+      return nil
+    }
+    if textView.textStorage?.length != attributed.length {
+      textView.textStorage?.setAttributedString(attributed)
+    }
+    textView.frame.size.width = width
+    container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+    manager.ensureLayout(for: container)
+    let used = manager.usedRect(for: container)
+    return CGSize(width: width, height: ceil(used.height))
   }
 }
 
 enum HermesMarkdownContent {
-  static func attributedString(from markdown: String, isHTML: Bool = false) -> AttributedString {
-    if isHTML, let html = htmlAttributedString(from: markdown) {
-      return AttributedString(html)
+  /// Base body point size for response-window content. Configurable in settings;
+  /// headings, code, and imported HTML all scale relative to this. Seeded from
+  /// UserDefaults and kept in sync by DictationViewModel.responseWindowFontSize.
+  static var baseFontSize: CGFloat = {
+    let stored = UserDefaults.standard.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double
+    return stored.map { CGFloat($0) } ?? NSFont.systemFontSize
+  }()
+
+  static func attributedString(from markdown: String) -> AttributedString {
+    AttributedString(nsAttributedString(from: markdown))
+  }
+
+  /// System font at `size` carrying the given bold/italic/monospace traits.
+  static func styledSystemFont(ofSize size: CGFloat,
+                               traits: NSFontDescriptor.SymbolicTraits) -> NSFont {
+    if traits.contains(.monoSpace) {
+      return .monospacedSystemFont(ofSize: size, weight: traits.contains(.bold) ? .bold : .regular)
     }
-    return AttributedString(nsAttributedString(from: markdown))
+    var font = NSFont.systemFont(ofSize: size)
+    if traits.contains(.bold) {
+      font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+    }
+    if traits.contains(.italic) {
+      font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+    }
+    return font
   }
 
   // ponytail: NSAttributedString(html:) parses on the main thread (cheap for the
@@ -43,31 +109,32 @@ enum HermesMarkdownContent {
     return parsed
   }
 
-  /// The HTML importer uses Times/Helvetica and hard-coded black text. Remap to
-  /// the system font (preserving bold/italic/monospace traits and heading sizes)
-  /// and `labelColor` so it matches the app and works in dark mode. Links keep
-  /// their own color.
+  /// The HTML importer uses Times/Helvetica and hard-coded black text. Remap each
+  /// run to the system font (preserving bold/italic/monospace traits) and set
+  /// `labelColor` so it matches the app and works in dark mode. Links keep their
+  /// own color. Sizes are scaled so the dominant (body) size becomes the app's
+  /// system size, which keeps headings proportionally larger.
+  // ponytail: assumes the most common run size is body text; true for chat HTML.
   private static func normalizeImportedHTML(_ attributed: NSMutableAttributedString) {
     let fullRange = NSRange(location: 0, length: attributed.length)
+
+    // Find the body size = the point size covering the most characters.
+    var lengthBySize: [CGFloat: Int] = [:]
     attributed.enumerateAttribute(.font, in: fullRange) { value, range, _ in
       guard let font = value as? NSFont else { return }
-      let traits = font.fontDescriptor.symbolicTraits
-      let size = font.pointSize <= 14 ? NSFont.systemFontSize : font.pointSize
-      var replacement: NSFont
-      if traits.contains(.monoSpace) {
-        replacement = NSFont.monospacedSystemFont(
-          ofSize: size, weight: traits.contains(.bold) ? .bold : .regular
-        )
-      } else {
-        replacement = NSFont.systemFont(ofSize: size)
-        if traits.contains(.bold) {
-          replacement = NSFontManager.shared.convert(replacement, toHaveTrait: .boldFontMask)
-        }
-        if traits.contains(.italic) {
-          replacement = NSFontManager.shared.convert(replacement, toHaveTrait: .italicFontMask)
-        }
-      }
-      attributed.addAttribute(.font, value: replacement, range: range)
+      lengthBySize[font.pointSize, default: 0] += range.length
+    }
+    let bodySize = lengthBySize.max { $0.value < $1.value }?.key ?? 12
+    let scale = min(max(baseFontSize / bodySize, 0.8), 3.0)
+
+    attributed.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+      guard let font = value as? NSFont else { return }
+      let size = (font.pointSize * scale).rounded()
+      attributed.addAttribute(
+        .font,
+        value: styledSystemFont(ofSize: size, traits: font.fontDescriptor.symbolicTraits),
+        range: range
+      )
     }
     attributed.enumerateAttribute(.foregroundColor, in: fullRange) { _, range, _ in
       if attributed.attribute(.link, at: range.location, effectiveRange: nil) == nil {
@@ -149,7 +216,7 @@ enum HermesMarkdownContent {
       return result
     case .code(let text):
       let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+        .font: NSFont.monospacedSystemFont(ofSize: baseFontSize, weight: .regular),
         .foregroundColor: NSColor.labelColor,
         .paragraphStyle: paragraphStyle
       ]
@@ -169,6 +236,13 @@ enum HermesMarkdownContent {
     ) {
       let attributed = NSMutableAttributedString(parsed)
       let fullRange = NSRange(location: 0, length: attributed.length)
+      // Resize inline runs to the configured base size, keeping bold/italic/code traits.
+      attributed.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+        let traits = (value as? NSFont)?.fontDescriptor.symbolicTraits ?? []
+        attributed.addAttribute(
+          .font, value: styledSystemFont(ofSize: baseFontSize, traits: traits), range: range
+        )
+      }
       attributed.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
       attributed.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
       return attributed
@@ -180,7 +254,7 @@ enum HermesMarkdownContent {
   }
 
   private static func headingAttributes(level: Int) -> [NSAttributedString.Key: Any] {
-    let size = level == 1 ? NSFont.systemFontSize + 4 : NSFont.systemFontSize + 2
+    let size = level == 1 ? baseFontSize + 4 : baseFontSize + 2
     return [
       .font: NSFont.boldSystemFont(ofSize: size),
       .foregroundColor: NSColor.labelColor,
@@ -190,7 +264,7 @@ enum HermesMarkdownContent {
 
   private static var baseAttributes: [NSAttributedString.Key: Any] {
     [
-      .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+      .font: NSFont.systemFont(ofSize: baseFontSize),
       .foregroundColor: NSColor.labelColor,
       .paragraphStyle: paragraphStyle
     ]
