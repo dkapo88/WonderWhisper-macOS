@@ -5,11 +5,30 @@ import AppKit
 import ApplicationServices
 
 /// A monitored Beeper chat: the opaque chat ID plus a human-readable alias so the
-/// user can tell which chat each ID maps to in settings.
+/// user can tell which chat each ID maps to in settings, and whether it's actively
+/// monitored.
 struct BeeperChatEntry: Codable, Identifiable, Equatable {
     var id = UUID()
     var chatID: String = ""
     var alias: String = ""
+    var isEnabled: Bool = true
+
+    init(id: UUID = UUID(), chatID: String = "", alias: String = "", isEnabled: Bool = true) {
+        self.id = id
+        self.chatID = chatID
+        self.alias = alias
+        self.isEnabled = isEnabled
+    }
+
+    // Decode defensively so chats persisted before a field existed still load
+    // (e.g. entries saved without `isEnabled` default to enabled).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        chatID = try container.decodeIfPresent(String.self, forKey: .chatID) ?? ""
+        alias = try container.decodeIfPresent(String.self, forKey: .alias) ?? ""
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
 }
 
 @MainActor
@@ -411,6 +430,19 @@ final class DictationViewModel: ObservableObject {
                 forKey: SimpleDefaultsKey.beeperResponseMonitoringEnabled
             )
             refreshBeeperResponseMonitor()
+        }
+    }
+    /// When on, suppress the Beeper response window if Telegram or Beeper is the
+    /// frontmost app (you're likely already reading the reply in that chat app).
+    @Published var beeperSuppressWhenChatAppFrontmost: Bool = {
+        let key = SimpleDefaultsKey.beeperSuppressWhenChatAppFrontmost
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? false
+    }() {
+        didSet {
+            UserDefaults.standard.set(
+                beeperSuppressWhenChatAppFrontmost,
+                forKey: SimpleDefaultsKey.beeperSuppressWhenChatAppFrontmost
+            )
         }
     }
     @Published var beeperWebSocketMonitoringEnabled: Bool = {
@@ -2437,6 +2469,7 @@ final class DictationViewModel: ObservableObject {
     static func dedupedChatIDs(_ chats: [BeeperChatEntry]) -> [String] {
         var seen = Set<String>()
         return chats
+            .filter { $0.isEnabled }
             .map { $0.chatID.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { seen.insert($0).inserted }
@@ -3032,6 +3065,15 @@ final class DictationViewModel: ObservableObject {
         return terms.contains { haystack.contains($0) }
     }
 
+    /// True when the frontmost app is a chat client (Telegram or Beeper), matched
+    /// loosely by bundle id or name so the various Telegram/Beeper builds all count.
+    static func isChatAppFrontmost() -> Bool {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return false }
+        let id = (app.bundleIdentifier ?? "").lowercased()
+        let name = (app.localizedName ?? "").lowercased()
+        return ["telegram", "beeper"].contains { id.contains($0) || name.contains($0) }
+    }
+
     private func showBeeperResponse(_ message: BeeperMessage) {
         let text = message.displayText
         guard !Self.beeperResponseIsFiltered(text, keywords: beeperResponseFilterKeywords) else {
@@ -3041,6 +3083,15 @@ final class DictationViewModel: ObservableObject {
             return
         }
         let sender = message.displaySender
+        if beeperSuppressWhenChatAppFrontmost, Self.isChatAppFrontmost() {
+            beeperLastResponseText = text
+            beeperLastResponseSender = sender
+            beeperIsAwaitingResponse = false
+            AppLog.dictation.log(
+                "Beeper response window suppressed (chat app frontmost) id=\(message.id, privacy: .public)"
+            )
+            return
+        }
         let responseWindowID = UUID()
         beeperLastResponseText = text
         beeperLastResponseSender = sender
@@ -4218,6 +4269,7 @@ private enum SimpleDefaultsKey {
     static let beeperResponseMonitoringEnabled = "beeper.response.monitoring.enabled"
     static let beeperWebSocketMonitoringEnabled = "beeper.response.websocket.enabled"
     static let beeperResponsePollingIntervalSeconds = "beeper.response.polling.intervalSeconds"
+    static let beeperSuppressWhenChatAppFrontmost = "beeper.response.suppressWhenChatAppFrontmost"
 }
 
 private extension DictationViewModel {

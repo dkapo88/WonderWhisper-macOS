@@ -103,6 +103,11 @@ struct BeeperIntegrationView: View {
       } else {
         ForEach($vm.beeperChats) { $entry in
           HStack(spacing: 8) {
+            Toggle("", isOn: $entry.isEnabled)
+              .toggleStyle(.checkbox)
+              .labelsHidden()
+              .help(entry.isEnabled ? "Monitored. Uncheck to pause this chat." : "Paused — not monitored.")
+
             TextField("Label (e.g. Mum, Work group)", text: $entry.alias)
               .textFieldStyle(.roundedBorder)
               .frame(maxWidth: 180)
@@ -120,6 +125,7 @@ struct BeeperIntegrationView: View {
               Button("Make default") { makeDefault(entry) }
                 .buttonStyle(.borderless)
                 .font(.caption)
+                .disabled(!entry.isEnabled)
             }
 
             Button {
@@ -130,19 +136,22 @@ struct BeeperIntegrationView: View {
             .buttonStyle(.borderless)
             .help("Remove this chat")
           }
+          .opacity(entry.isEnabled ? 1 : 0.5)
         }
       }
 
-      Text("All chats are monitored. The first is the default for new voice messages.")
+      Text("Checked chats are monitored. The first checked chat is the default for new voice messages.")
         .font(.caption)
         .foregroundColor(.secondary)
     }
   }
 
   /// The entry whose chat ID is actually used as the default target: the first
-  /// row with a non-blank chat ID (matches `vm.defaultBeeperChatID`).
+  /// enabled row with a non-blank chat ID (matches `vm.defaultBeeperChatID`).
   private var defaultChatEntryID: UUID? {
-    vm.beeperChats.first { !$0.chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.id
+    vm.beeperChats.first {
+      $0.isEnabled && !$0.chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }?.id
   }
 
   private func makeDefault(_ entry: BeeperChatEntry) {
@@ -221,6 +230,10 @@ struct BeeperIntegrationView: View {
         )
         .frame(maxWidth: 360, alignment: .leading)
         .help("Base text size for response windows. Headings and code scale with it. Applies to newly opened windows.")
+
+        Toggle("Don't show when Telegram or Beeper is focused", isOn: $vm.beeperSuppressWhenChatAppFrontmost)
+          .toggleStyle(.checkbox)
+          .help("If a chat app is frontmost when a reply arrives, skip the response window — you're likely already reading it there.")
 
         if vm.beeperResponseMonitoringEnabled {
           VStack(alignment: .leading, spacing: 8) {

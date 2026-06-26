@@ -60,6 +60,25 @@ struct BeeperResponseFilterTests {
     #expect(hasMono)  // <code> survived normalization
   }
 
+  @Test func chatEntryDecodesLegacyJSONWithoutIsEnabled() {
+    // Chats persisted before isEnabled existed must still load (and default to on).
+    let json = #"[{"id":"5E9F1C3A-0000-0000-0000-000000000001","chatID":"826380","alias":"Hermes"}]"#
+    let chats = try! JSONDecoder().decode([BeeperChatEntry].self, from: Data(json.utf8))
+    #expect(chats.count == 1)
+    #expect(chats[0].chatID == "826380")
+    #expect(chats[0].alias == "Hermes")
+    #expect(chats[0].isEnabled == true)
+  }
+
+  @Test func dedupedChatIDsExcludesDisabledChats() {
+    let chats = [
+      BeeperChatEntry(chatID: "chat1", alias: "On", isEnabled: true),
+      BeeperChatEntry(chatID: "chat2", alias: "Paused", isEnabled: false),
+      BeeperChatEntry(chatID: "chat3", alias: "On", isEnabled: true),
+    ]
+    #expect(DictationViewModel.dedupedChatIDs(chats) == ["chat1", "chat3"])  // chat2 paused
+  }
+
   @Test func dedupedChatIDsTrimsDropsBlanksAndDuplicates() {
     let chats = [
       BeeperChatEntry(chatID: " chat1 ", alias: "Mum"),
