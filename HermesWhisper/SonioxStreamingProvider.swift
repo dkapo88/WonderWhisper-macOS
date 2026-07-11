@@ -2,6 +2,14 @@ import Foundation
 import AVFoundation
 import OSLog
 
+struct SonioxRealtimeToken: Equatable, Sendable {
+  let text: String
+  let startMs: Int?
+  let endMs: Int?
+  let isFinal: Bool
+  let speaker: String?
+}
+
 /// SonioxStreamingProvider implements real-time streaming transcription via Soniox WebSocket API.
 /// Unlike batch providers, this streams audio in real-time and receives preview/final tokens continuously.
 ///
@@ -13,17 +21,47 @@ import OSLog
 /// - Supports vocabulary terms via context.terms
 /// - Supports language hints for improved accuracy
 actor SonioxStreamingProvider: TranscriptionProvider {
+  struct RealtimeOptions: Sendable {
+    let enableEndpointDetection: Bool
+    let maxEndpointDelayMs: Int?
+    let enableSpeakerDiarization: Bool
+    let waitForFinished: Bool
+    let finalizationWaitMs: Int
+
+    init(
+      enableEndpointDetection: Bool = true,
+      maxEndpointDelayMs: Int? = nil,
+      enableSpeakerDiarization: Bool = false,
+      waitForFinished: Bool = false,
+      finalizationWaitMs: Int = 1_800
+    ) {
+      self.enableEndpointDetection = enableEndpointDetection
+      self.maxEndpointDelayMs = maxEndpointDelayMs
+      self.enableSpeakerDiarization = enableSpeakerDiarization
+      self.waitForFinished = waitForFinished
+      self.finalizationWaitMs = finalizationWaitMs
+    }
+
+    static let meeting = RealtimeOptions(
+      enableEndpointDetection: true,
+      maxEndpointDelayMs: 1_500,
+      enableSpeakerDiarization: false,
+      waitForFinished: true,
+      finalizationWaitMs: 15_000
+    )
+  }
+
   private static let defaultRealtimeModel = "stt-rt-v5"
   private static let verboseLoggingDefaultsKey = "soniox.debugMessages"
   private static let previewUpdateInterval: TimeInterval = 0.05
   private static let finalizeSilenceMs = 200
   private static let endOfAudioToleranceMs = 300
   private static let previewQuietMs = 250
-  private static let maxPreviewCatchupWaitMs = 1_800
 
   private let apiKeyProvider: () -> String?
   private let vocabularyProvider: () -> String?
   private let languageProvider: () -> String?
+  private let realtimeOptions: RealtimeOptions
   private nonisolated let audioChunkSource = SonioxStreamingAudioChunkSource()
 
   private var webSocketTask: URLSessionWebSocketTask?
@@ -33,8 +71,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   // Streaming state
   private var activeSessionID: UUID?
   private var isStreaming: Bool = false
+  private var isEnding: Bool = false
   private var isConfigSent: Bool = false  // Track if config has been sent (audio must wait)
   private var isServerFinished: Bool = false // Track if server signaled end of stream
+  private var didReceiveFinished: Bool = false
   private var pendingAudioBuffer: [Data] = []  // Buffer audio until config is sent
   private let accumulator = SonioxTokenAccumulator()
 
@@ -49,6 +89,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   // Callback for live transcript updates
   private var onPreviewUpdate: ((String) -> Void)?
+  private var onFinalTokens: (@Sendable ([SonioxRealtimeToken]) async -> Void)?
+  private var onNonFinalTokens: (@Sendable ([SonioxRealtimeToken]) async -> Void)?
+  private var onStreamError: (@Sendable (String) async -> Void)?
+  private var lastStreamError: (message: String, date: Date)?
   private var lastPreviewUpdateTime: Date = .distantPast
   private var lastTokenMessageTime: Date?
 
@@ -59,10 +103,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   init(apiKeyProvider: @escaping () -> String?,
        vocabularyProvider: @escaping () -> String? = { nil },
-       languageProvider: @escaping () -> String? = { nil }) {
+       languageProvider: @escaping () -> String? = { nil },
+       realtimeOptions: RealtimeOptions = RealtimeOptions()) {
     self.apiKeyProvider = apiKeyProvider
     self.vocabularyProvider = vocabularyProvider
     self.languageProvider = languageProvider
+    self.realtimeOptions = realtimeOptions
   }
 
   // MARK: - TranscriptionProvider (file-based fallback)
@@ -77,6 +123,24 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   func setOnPreviewUpdate(_ callback: @escaping (String) -> Void) {
     self.onPreviewUpdate = callback
+  }
+
+  func setOnFinalTokens(
+    _ callback: @escaping @Sendable ([SonioxRealtimeToken]) async -> Void
+  ) {
+    onFinalTokens = callback
+  }
+
+  func setOnNonFinalTokens(
+    _ callback: @escaping @Sendable ([SonioxRealtimeToken]) async -> Void
+  ) {
+    onNonFinalTokens = callback
+  }
+
+  func setOnStreamError(
+    _ callback: @escaping @Sendable (String) async -> Void
+  ) {
+    onStreamError = callback
   }
 
   /// Update the model to use for streaming
@@ -114,6 +178,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     sendTask?.cancel()
     sendTask = nil
     await accumulator.reset()
+    await onNonFinalTokens?([])
     onPreviewUpdate?("")
     pendingAudioBuffer.removeAll()
     totalBytesSent = 0
@@ -121,12 +186,15 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     firstAudioSent = false
     isConfigSent = false
     isServerFinished = false
+    didReceiveFinished = false
     lastTotalAudioProcMs = 0
     lastPreviewUpdateTime = .distantPast
     lastTokenMessageTime = nil
+    lastStreamError = nil
     let sessionID = UUID()
     activeSessionID = sessionID
     isStreaming = true
+    isEnding = false
     let audioStream = audioChunkSource.startSession()
     sendTask = Task { [weak self] in
       guard let self else { return }
@@ -137,8 +205,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
     // Create URLSession with delegate for WebSocket
     let config = URLSessionConfiguration.default
-    config.timeoutIntervalForRequest = 300 // 5 minutes max
-    config.timeoutIntervalForResource = 300
+    config.timeoutIntervalForRequest = 60
+    // Soniox supports five-hour streams. Keep URLSession from imposing its old
+    // five-minute resource timeout during long meetings.
+    config.timeoutIntervalForResource = 18_600
     
     let delegate = SonioxSessionDelegate()
     self.sessionDelegate = delegate
@@ -180,7 +250,20 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   private var firstAudioSent: Bool = false
 
   nonisolated func enqueuePCM16(_ data: Data) {
-    audioChunkSource.send(data)
+    switch audioChunkSource.send(data) {
+    case .enqueued:
+      break
+    case .dropped:
+      Task { [weak self] in
+        await self?.reportStreamError(
+          "Soniox audio queue overflowed; some audio must be recovered from the saved CAF."
+        )
+      }
+    case .terminated:
+      Task { [weak self] in
+        await self?.reportStreamError("Soniox audio queue closed before recording ended.")
+      }
+    }
   }
 
   /// Feed PCM16 audio data to the streaming session
@@ -196,6 +279,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     // Soniox requires the text config message BEFORE any binary audio
     if !isConfigSent {
       pendingAudioBuffer.append(data)
+      if pendingAudioBuffer.count > 6_000 {
+        pendingAudioBuffer.removeFirst(500)
+        await reportStreamError(
+          "Soniox startup buffering fell behind; some earliest audio was dropped."
+        )
+      }
       if pendingAudioBuffer.count == 1 {
         AppLog.dictation.log("SonioxStreaming: Buffering audio until config is sent...")
       }
@@ -229,6 +318,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       }
     } catch {
       AppLog.dictation.error("SonioxStreaming: Failed to send audio: \(error.localizedDescription)")
+      await reportStreamError(error.localizedDescription)
     }
   }
 
@@ -241,23 +331,34 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     }
 
     AppLog.dictation.log("SonioxStreaming: Ending session - finalizing stream")
-    stopKeepaliveTimer()
+    isEnding = true
+    let endingKeepaliveTask = keepaliveTask
+    keepaliveTask = nil
+    endingKeepaliveTask?.cancel()
     audioChunkSource.finish()
     await sendTask?.value
     sendTask = nil
     await startupTask?.value
     startupTask = nil
+    await endingKeepaliveTask?.value
 
     // Calculate how much audio we sent (in milliseconds)
     let bytesPerMs = inputSampleRate * 2.0 / 1000.0  // 16-bit = 2 bytes/sample
     let initialAudioSentMs = Int(Double(totalBytesSent) / bytesPerMs)
     AppLog.dictation.log("SonioxStreaming: Audio sent: \(initialAudioSentMs)ms, server processed: \(self.lastTotalAudioProcMs)ms")
 
-    // Signal end of audio stream by sending empty frame
+    // Signal end of audio with an empty text frame. Soniox accepts empty text or binary,
+    // but URLSession may not put a zero-byte Data frame on the wire.
     if let task = webSocketTask {
-      await sendTrailingSilence(to: task, durationMs: Self.finalizeSilenceMs)
-      try? await task.send(.data(Data()))
-      await sendFinalizeSignal(to: task, trailingSilenceMs: Self.finalizeSilenceMs)
+      do {
+        try await sendTrailingSilence(to: task, durationMs: Self.finalizeSilenceMs)
+        try await task.send(.string(""))
+      } catch {
+        let message = "Soniox could not send the final audio frame: \(error.localizedDescription)"
+        await reportStreamError(message)
+        closeTransport()
+        throw ProviderError.networkError(message)
+      }
     }
 
     let audioSentMs = Int(Double(totalBytesSent) / bytesPerMs)
@@ -268,7 +369,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     while !isServerFinished {
       // Check timeout
       let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-      if elapsed > Self.maxPreviewCatchupWaitMs {
+      if elapsed > realtimeOptions.finalizationWaitMs {
         AppLog.dictation.log("SonioxStreaming: Timeout waiting for preview catch-up (waited \(elapsed)ms)")
         break
       }
@@ -283,7 +384,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
         }
         return Int(Date().timeIntervalSince(lastTokenMessageTime) * 1000) >= Self.previewQuietMs
       }()
-      if processedCaughtUp && previewIsQuiet {
+      if !realtimeOptions.waitForFinished && processedCaughtUp && previewIsQuiet {
         break
       }
 
@@ -292,25 +393,23 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       try? await Task.sleep(nanoseconds: 15_000_000) // 15ms poll
     }
 
+    if realtimeOptions.waitForFinished, !didReceiveFinished {
+      let message = "Soniox did not confirm the completed transcript within "
+        + "\(realtimeOptions.finalizationWaitMs / 1_000) seconds."
+      await reportStreamError(message)
+      closeTransport()
+      throw ProviderError.networkError(message)
+    }
+
     let finalProcMs = lastTotalAudioProcMs
     AppLog.dictation.log("SonioxStreaming: Processing complete - sent: \(audioSentMs)ms, processed: \(finalProcMs)ms")
 
-    isStreaming = false
-    activeSessionID = nil
-
-    // Close the connection
-    if let task = webSocketTask {
-      task.cancel(with: .normalClosure, reason: nil)
-    }
-
-    webSocketTask = nil
-    urlSession?.invalidateAndCancel()
-    urlSession = nil
-    sessionDelegate = nil
+    closeTransport()
 
     // Get the accumulated preview text
     let transcript = await accumulator.getPreviewTranscript()
     await accumulator.reset()
+    await onNonFinalTokens?([])
 
     AppLog.dictation.log("SonioxStreaming: Session ended, transcript length: \(transcript.count)")
     return transcript
@@ -319,6 +418,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   /// Abort streaming session immediately without processing
   func abort() async {
     isStreaming = false
+    isEnding = false
 
     stopKeepaliveTimer()
     audioChunkSource.finish()
@@ -333,8 +433,11 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     sessionDelegate = nil
 
     await accumulator.reset()
+    await onNonFinalTokens?([])
     pendingAudioBuffer.removeAll()
     lastTokenMessageTime = nil
+    lastStreamError = nil
+    didReceiveFinished = false
     activeSessionID = nil
   }
 
@@ -344,16 +447,29 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     stopKeepaliveTimer()
     keepaliveTask = Task {
       while !Task.isCancelled && isStreaming {
-        try? await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds
-        guard isActiveSession(sessionID, task: task) else { break }
+        do {
+          try await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds
+        } catch {
+          break
+        }
+        guard !Task.isCancelled,
+              isActiveSession(sessionID, task: task) else { break }
 
         // Send keepalive message per Soniox docs
         let keepalive = ["type": "keepalive"]
         if let data = try? JSONSerialization.data(withJSONObject: keepalive),
            let jsonString = String(data: data, encoding: .utf8) {
           let message = URLSessionWebSocketTask.Message.string(jsonString)
-          try? await task.send(message)
-          AppLog.dictation.log("SonioxStreaming: Sent keepalive")
+          do {
+            try await task.send(message)
+            AppLog.dictation.log("SonioxStreaming: Sent keepalive")
+          } catch {
+            isServerFinished = true
+            await reportStreamError(
+              "Soniox keepalive failed: \(error.localizedDescription)"
+            )
+            break
+          }
         }
       }
     }
@@ -362,6 +478,17 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   private func stopKeepaliveTimer() {
     keepaliveTask?.cancel()
     keepaliveTask = nil
+  }
+
+  private func closeTransport() {
+    isStreaming = false
+    isEnding = false
+    activeSessionID = nil
+    webSocketTask?.cancel(with: .normalClosure, reason: nil)
+    webSocketTask = nil
+    urlSession?.invalidateAndCancel()
+    urlSession = nil
+    sessionDelegate = nil
   }
 
   // MARK: - Private Methods
@@ -378,20 +505,93 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     return trimmed
   }
 
+  nonisolated static func realtimeTokens(from text: String) -> [SonioxRealtimeToken] {
+    guard let data = text.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return []
+    }
+    return realtimeTokens(from: json)
+  }
+
+  nonisolated static func serverError(from text: String) -> String? {
+    guard let data = text.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    return serverError(from: json)
+  }
+
+  private nonisolated static func realtimeTokens(
+    from json: [String: Any]
+  ) -> [SonioxRealtimeToken] {
+    guard let tokens = json["tokens"] as? [[String: Any]] else { return [] }
+    return tokens.compactMap { token in
+      guard let text = token["text"] as? String else { return nil }
+      return SonioxRealtimeToken(
+        text: text,
+        startMs: (token["start_ms"] as? NSNumber)?.intValue,
+        endMs: (token["end_ms"] as? NSNumber)?.intValue,
+        isFinal: token["is_final"] as? Bool ?? false,
+        speaker: token["speaker"] as? String
+      )
+    }
+  }
+
+  nonisolated static func isControlToken(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed == "<fin>" || trimmed == "<end>"
+  }
+
+  private nonisolated static func serverError(from json: [String: Any]) -> String? {
+    if let error = json["error"] as? String { return error }
+    if let error = json["error"] as? [String: Any],
+       let message = error["message"] as? String {
+      return message
+    }
+    if let message = json["error_message"] as? String {
+      let type = json["error_type"] as? String
+      let code = (json["error_code"] as? NSNumber)?.intValue
+      let prefix = [code.map(String.init), type]
+        .compactMap { $0 }
+        .joined(separator: " ")
+      return prefix.isEmpty ? message : "\(prefix): \(message)"
+    }
+    if let status = json["status"] as? String, status != "ok" {
+      return "Soniox status: \(status)"
+    }
+    return nil
+  }
+
   private var shouldLogVerboseMessages: Bool {
     UserDefaults.standard.bool(forKey: Self.verboseLoggingDefaultsKey)
+  }
+
+  private func reportStreamError(_ message: String) async {
+    let now = Date()
+    if let lastStreamError,
+       lastStreamError.message == message,
+       now.timeIntervalSince(lastStreamError.date) < 5 {
+      return
+    }
+    lastStreamError = (message, now)
+    onPreviewUpdate?("[Error: \(message)]")
+    await onNonFinalTokens?([])
+    await onStreamError?(message)
   }
 
   private func finishStartup(apiKey: String, task: URLSessionWebSocketTask, sessionID: UUID) async {
     do {
       try await sendConfiguration(apiKey: apiKey)
       guard isActiveSession(sessionID, task: task) else { return }
-      startKeepaliveTimer(for: task, sessionID: sessionID)
+      if !isEnding {
+        startKeepaliveTimer(for: task, sessionID: sessionID)
+      }
       AppLog.dictation.log("SonioxStreaming: Session initialized")
     } catch {
       if isActiveSession(sessionID, task: task) {
         AppLog.dictation.error("SonioxStreaming: Startup failed: \(error.localizedDescription)")
         isServerFinished = true
+        await reportStreamError(error.localizedDescription)
       }
     }
   }
@@ -426,8 +626,11 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       config["enable_language_identification"] = true
     }
     
-    // Enable endpoint detection for faster finalization per docs
-    config["enable_endpoint_detection"] = true
+    config["enable_endpoint_detection"] = realtimeOptions.enableEndpointDetection
+    if let maxEndpointDelayMs = realtimeOptions.maxEndpointDelayMs {
+      config["max_endpoint_delay_ms"] = maxEndpointDelayMs
+    }
+    config["enable_speaker_diarization"] = realtimeOptions.enableSpeakerDiarization
 
     // Add vocabulary terms as context
     if let vocab = vocabularyProvider(), !vocab.isEmpty {
@@ -457,20 +660,31 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
     AppLog.dictation.log("SonioxStreaming: Configuration sent successfully")
 
-    // Mark config as sent and flush any buffered audio
-    isConfigSent = true
-    if !pendingAudioBuffer.isEmpty {
-      AppLog.dictation.log("SonioxStreaming: Flushing \(self.pendingAudioBuffer.count) buffered audio chunks")
-      for audioData in pendingAudioBuffer {
-        let audioMessage = URLSessionWebSocketTask.Message.data(audioData)
-        try? await task.send(audioMessage)
-        totalBytesSent += audioData.count
+    // Flush every buffered frame successfully before allowing direct sends. New frames can
+    // arrive while each WebSocket send suspends, so drain snapshots until the actor queue is empty.
+    while !pendingAudioBuffer.isEmpty {
+      let buffered = pendingAudioBuffer
+      pendingAudioBuffer.removeAll(keepingCapacity: true)
+      AppLog.dictation.log(
+        "SonioxStreaming: Flushing \(buffered.count) buffered audio chunks"
+      )
+      for (index, audioData) in buffered.enumerated() {
+        do {
+          try await task.send(.data(audioData))
+          totalBytesSent += audioData.count
+        } catch {
+          pendingAudioBuffer = Array(buffered[index...]) + pendingAudioBuffer
+          throw error
+        }
       }
-      pendingAudioBuffer.removeAll()
     }
+    isConfigSent = true
   }
 
-  private func sendTrailingSilence(to task: URLSessionWebSocketTask, durationMs: Int) async {
+  private func sendTrailingSilence(
+    to task: URLSessionWebSocketTask,
+    durationMs: Int
+  ) async throws {
     let sampleCount = Int((inputSampleRate * Double(durationMs) / 1000.0).rounded())
     guard sampleCount > 0 else { return }
 
@@ -481,25 +695,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       AppLog.dictation.log("SonioxStreaming: Sent \(durationMs)ms trailing silence before finalize")
     } catch {
       AppLog.dictation.error("SonioxStreaming: Failed to send trailing silence: \(error.localizedDescription)")
-    }
-  }
-
-  private func sendFinalizeSignal(to task: URLSessionWebSocketTask, trailingSilenceMs: Int) async {
-    let finalizeMessage: [String: Any] = [
-      "type": "finalize",
-      "trailing_silence_ms": trailingSilenceMs
-    ]
-    guard let data = try? JSONSerialization.data(withJSONObject: finalizeMessage),
-          let jsonString = String(data: data, encoding: .utf8) else {
-      AppLog.dictation.error("SonioxStreaming: Failed to encode finalize message")
-      return
-    }
-
-    do {
-      try await task.send(.string(jsonString))
-      AppLog.dictation.log("SonioxStreaming: Sent finalize signal")
-    } catch {
-      AppLog.dictation.error("SonioxStreaming: Failed to send finalize signal: \(error.localizedDescription)")
+      throw error
     }
   }
 
@@ -518,11 +714,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
           break
         }
       } catch {
-        if isActiveSession(sessionID, task: task) {
+        if isActiveSession(sessionID, task: task), !isServerFinished {
           AppLog.dictation.error("SonioxStreaming: Receive error: \(error.localizedDescription)")
           // The socket is gone; unblock endRealtime's catch-up loop immediately instead of
           // spinning the full timeout, so the pipeline falls back to file transcription fast.
           isServerFinished = true
+          await reportStreamError(error.localizedDescription)
         }
         break
       }
@@ -547,32 +744,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       return
     }
 
-    // Check for error response and surface to UI
-    if let error = json["error"] as? String {
+    if let error = Self.serverError(from: json) {
       AppLog.dictation.error("SonioxStreaming: Server error: \(error, privacy: .public)")
-      onPreviewUpdate?("[Error: \(error)]")
-      return
-    }
-
-    // Check for error in different format
-    if let errorObj = json["error"] as? [String: Any], let message = errorObj["message"] as? String {
-      AppLog.dictation.error("SonioxStreaming: Server error: \(message, privacy: .public)")
-      onPreviewUpdate?("[Error: \(message)]")
-      return
-    }
-
-    // Check for status field indicating error
-    if let status = json["status"] as? String, status != "ok" {
-      AppLog.dictation.error("SonioxStreaming: Status not ok: \(status, privacy: .public), full response: \(truncated, privacy: .public)")
-      onPreviewUpdate?("[Status: \(status)]")
-      return
-    }
-
-    // Check for error_code/error_message format (Soniox API error response)
-    if let errorCode = json["error_code"] as? Int, errorCode != 0 {
-      let errorMessage = json["error_message"] as? String ?? "Unknown error"
-      AppLog.dictation.error("SonioxStreaming: API error \(errorCode): \(errorMessage, privacy: .public)")
-      onPreviewUpdate?("[API Error \(errorCode): \(errorMessage)]")
+      isServerFinished = true
+      await reportStreamError(error)
       return
     }
 
@@ -586,6 +761,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     if let finished = json["finished"] as? Bool, finished {
       AppLog.dictation.log("SonioxStreaming: Received finished signal")
       isServerFinished = true
+      didReceiveFinished = true
+      await onNonFinalTokens?([])
       let preview = await accumulator.getPreviewTranscript()
       if !preview.isEmpty {
         onPreviewUpdate?(preview)
@@ -594,7 +771,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     }
 
     // Parse tokens array
-    guard let tokens = json["tokens"] as? [[String: Any]] else {
+    guard json["tokens"] is [[String: Any]] else {
       // Log unrecognized message types for debugging
       let keys = json.keys.sorted().joined(separator: ", ")
       AppLog.dictation.log("SonioxStreaming: No tokens in message, keys: [\(keys, privacy: .public)]")
@@ -622,14 +799,24 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     var newTokenCount = 0
     var finalCount = 0
     var nonFinalCount = 0
+    let tokens = Self.realtimeTokens(from: json)
     for token in tokens {
-      guard let tokenText = token["text"] as? String else { continue }
-      let isFinal = token["is_final"] as? Bool ?? false
       newTokenCount += 1
-      if isFinal { finalCount += 1 } else { nonFinalCount += 1 }
+      if token.isFinal { finalCount += 1 } else { nonFinalCount += 1 }
 
-      await accumulator.addToken(text: tokenText, isFinal: isFinal)
+      await accumulator.addToken(text: token.text, isFinal: token.isFinal)
     }
+
+    let finalTokens = tokens.filter {
+      $0.isFinal && !Self.isControlToken($0.text)
+    }
+    let nonFinalTokens = tokens.filter {
+      !$0.isFinal && !Self.isControlToken($0.text)
+    }
+    if !finalTokens.isEmpty {
+      await onFinalTokens?(finalTokens)
+    }
+    await onNonFinalTokens?(nonFinalTokens)
 
     if newTokenCount > 0 {
       lastTokenMessageTime = Date()
@@ -724,6 +911,12 @@ private class SonioxSessionDelegate: NSObject, URLSessionWebSocketDelegate {
 }
 
 private final class SonioxStreamingAudioChunkSource: @unchecked Sendable {
+  enum SendResult {
+    case enqueued
+    case dropped
+    case terminated
+  }
+
   private let lock = NSLock()
   private var continuation: AsyncStream<Data>.Continuation?
 
@@ -733,19 +926,30 @@ private final class SonioxStreamingAudioChunkSource: @unchecked Sendable {
     continuation = nil
     lock.unlock()
 
-    return AsyncStream(bufferingPolicy: .unbounded) { [weak self] continuation in
+    return AsyncStream(bufferingPolicy: .bufferingNewest(6_000)) {
+      [weak self] continuation in
       self?.lock.lock()
       self?.continuation = continuation
       self?.lock.unlock()
     }
   }
 
-  func send(_ data: Data) {
-    guard !data.isEmpty else { return }
+  func send(_ data: Data) -> SendResult {
+    guard !data.isEmpty else { return .enqueued }
     lock.lock()
     let continuation = continuation
     lock.unlock()
-    continuation?.yield(data)
+    guard let continuation else { return .terminated }
+    switch continuation.yield(data) {
+    case .enqueued:
+      return .enqueued
+    case .dropped:
+      return .dropped
+    case .terminated:
+      return .terminated
+    @unknown default:
+      return .terminated
+    }
   }
 
   func finish() {

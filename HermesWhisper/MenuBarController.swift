@@ -13,6 +13,8 @@ final class MenuBarController: NSObject {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
+        let meetingCoordinator = viewModel.meetingCoordinator
+
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
             button.image = Self.templateHermesMicImage
@@ -46,33 +48,76 @@ final class MenuBarController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshStatusAndMenu() }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest3(
+            meetingCoordinator.$activeSessionID,
+            meetingCoordinator.$isStarting,
+            meetingCoordinator.$isStopping
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _, _, _ in
+            self?.refreshStatusAndMenu()
+        }
+        .store(in: &cancellables)
+
+        meetingCoordinator.$isLoadingSessions
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshStatusAndMenu() }
+            .store(in: &cancellables)
     }
 
     private func refreshStatusAndMenu() {
         guard let vm else { return }
-        updateStatusIcon(isRecording: vm.isRecording, pendingCount: vm.hermesPendingResponseCount)
+        let meetingCoordinator = vm.meetingCoordinator
+        updateStatusIcon(
+            isRecording: vm.isRecording,
+            isMeetingActive: meetingCoordinator.activeSessionID != nil || meetingCoordinator.isStarting,
+            pendingCount: vm.hermesPendingResponseCount
+        )
         let menu = buildMenu()
         menu.delegate = self
         statusItem.menu = menu
     }
 
-    private func updateStatusIcon(isRecording: Bool, pendingCount: Int) {
+    private func updateStatusIcon(
+        isRecording: Bool,
+        isMeetingActive: Bool,
+        pendingCount: Int
+    ) {
         guard let button = statusItem.button else { return }
         if pendingCount > 0 {
             button.image = nil
             button.imagePosition = .noImage
-            button.title = pendingCount > 99 ? "99+" : "\(pendingCount)"
+            button.title = ""
+            let countTitle = pendingCount > 99 ? "99+" : "\(pendingCount)"
+            button.attributedTitle = NSAttributedString(
+                string: countTitle,
+                attributes: [
+                    .foregroundColor: isRecording || isMeetingActive
+                        ? NSColor.systemRed
+                        : NSColor.labelColor,
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+                ]
+            )
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
             button.contentTintColor = nil
             let suffix = pendingCount == 1 ? "response" : "responses"
-            button.toolTip = "HermesWhisper — \(pendingCount) pending \(suffix)"
+            let activity = isMeetingActive
+                ? "Meeting recording • "
+                : (isRecording ? "Recording • " : "")
+            button.toolTip = "HermesWhisper — \(activity)\(pendingCount) pending \(suffix)"
         } else {
+            button.attributedTitle = NSAttributedString(string: "")
             button.title = ""
             button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             button.imagePosition = .imageOnly
             button.image = Self.templateHermesMicImage
-            button.contentTintColor = isRecording ? .systemRed : nil
-            button.toolTip = isRecording ? "HermesWhisper — Recording" : "HermesWhisper — Idle"
+            button.contentTintColor = isRecording || isMeetingActive ? .systemRed : nil
+            if isMeetingActive {
+                button.toolTip = "HermesWhisper — Meeting recording"
+            } else {
+                button.toolTip = isRecording ? "HermesWhisper — Recording" : "HermesWhisper — Idle"
+            }
         }
     }
 
@@ -233,6 +278,29 @@ final class MenuBarController: NSObject {
         toggle.target = self
         menu.addItem(toggle)
 
+        let meetingCoordinator = vm?.meetingCoordinator
+        let meetingTitle: String
+        if meetingCoordinator?.isStarting == true {
+            meetingTitle = "Starting Meeting…"
+        } else if meetingCoordinator?.isStopping == true {
+            meetingTitle = "Stopping Meeting…"
+        } else if meetingCoordinator?.activeSessionID != nil {
+            meetingTitle = "Stop Meeting"
+        } else {
+            meetingTitle = "Start Meeting"
+        }
+        let meeting = NSMenuItem(
+            title: meetingTitle,
+            action: #selector(toggleMeetingRecording),
+            keyEquivalent: "m"
+        )
+        meeting.keyEquivalentModifierMask = [.command, .shift]
+        meeting.target = self
+        meeting.isEnabled = meetingCoordinator.map {
+            !$0.isLoadingSessions && !$0.isStarting && !$0.isStopping
+        } ?? false
+        menu.addItem(meeting)
+
         let addDict = NSMenuItem(title: "Add to Dictionary", action: #selector(addClipboardToVocabulary), keyEquivalent: "")
         addDict.target = self
         // Enable lazily when the menu opens (avoid pasteboard reads on every rebuild)
@@ -259,6 +327,19 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func menuToggleDictation() { vm?.toggle() }
+    @objc private func toggleMeetingRecording() {
+        guard let coordinator = vm?.meetingCoordinator,
+              !coordinator.isLoadingSessions,
+              !coordinator.isStarting,
+              !coordinator.isStopping else { return }
+        Task { @MainActor in
+            if coordinator.activeSessionID == nil {
+                await coordinator.startManualMeeting()
+            } else {
+                await coordinator.stopMeeting()
+            }
+        }
+    }
     @objc private func selectSystemDefault() {
         vm?.audioInputSelection = .systemDefault
         refreshMenu()

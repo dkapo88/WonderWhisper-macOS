@@ -10,14 +10,29 @@ Note to agents and contributors: Keep this document up to date with any changes.
 HermesWhisper stores SwiftUI sources under `HermesWhisper/`, with views, view models, and helpers grouped by feature. Shared assets live in `HermesWhisper/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `HermesWhisperTests/`, and UI automation lives in `HermesWhisperUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
 ### Architecture Overview
-Core components: `DictationViewModel` (orchestrates recording → transcription → LLM → insertion), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), provider protocols (`TranscriptionProvider`, `LLMProvider`), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `HotkeyManager`). Storage paths: `~/Library/Application Support/HermesWhisper/` for history entries, audio files, screen captures, and conversation state. On first launch after the rename, local app support data is copied from the legacy `WonderWhisper` directory if needed. API keys stored in macOS Keychain via `KeychainService`.
+Core components: `DictationViewModel` (orchestrates recording → transcription → LLM → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), provider protocols (`TranscriptionProvider`, `LLMProvider`), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `HotkeyManager`). Storage paths: `~/Library/Application Support/HermesWhisper/` for history entries, meeting manifests/audio segments, screen captures, and conversation state. On first launch after the rename, local app support data is copied from the legacy `WonderWhisper` directory if needed. API keys stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with ten sidebar tabs: Hermes, Beeper, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with eleven sidebar tabs: Hermes, Beeper, Meetings, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
+- Meetings use two source-specific transcription streams, one each for microphone and system audio.
+  Parakeet Unified remains the free on-device default; Soniox V5 is an opt-in cloud beta
+  that uses two WebSockets and costs approximately $0.24 per meeting hour at current rates. Audio
+  is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
+  all Mac system audio; automatically detected sessions restrict capture to the detected
+  application scope. Trigger apps are editable: Slack and supported browsers retain strict
+  Huddle/Google Meet evidence, while explicitly configured standalone apps may start on microphone
+  use. Automatic starts remain strict, while an active meeting tolerates browser
+  title and individual audio-signal dropouts before a two-minute confirmed stop. Soniox non-final
+  text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
+  export finish in a session-scoped background task. Failed live-stream tails are recovered from
+  retained CAF segments with local Parakeet Unified. Generated notes are cloud opt-in. Optional live
+  context uses its own fast OpenRouter model and sends a bounded recent transcript window to extract useful
+  subjects at a rate-limited cadence, ranks Markdown locally inside the chosen Obsidian vault, and
+  sends only bounded matching excerpts back to OpenRouter in one batched brief request.
 - All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
 
 ## Build, Test, and Development Commands
@@ -48,6 +63,12 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-11: Ported the alternate meeting HUD's compact translucent presentation and trigger-app UX, added menu-bar controls, automatic-start Keep/Discard, meeting-safe dictation muting, separate context/final-note models, local CAF tail recovery, generated titles, and Markdown/audio conveniences.
+- 2026-07-11: Prevented Meet detector flapping from stopping and restarting live calls, added transient Soniox non-final captions, fixed the end-of-audio keepalive race, and moved transcript finalization behind an immediate meeting stop.
+- 2026-07-11: Reduced automatic meeting confirmation to two one-second observations, replaced the blanket post-meeting cooldown with same-call suppression, and added an opt-in dual-stream Soniox V5 meeting transcription engine while retaining Parakeet as the default.
+- 2026-07-11: Resolved Dia's anonymous Arc-branded audio helpers with `proc_pidpath`, added rate-limited subject-aware Obsidian retrieval and batched context briefs, surfaced ticket links and vault errors, suppressed timestamp-aligned system-audio echo from rendered microphone transcripts, and relabeled transcript sources as Microphone/System audio rather than implying speaker diarization.
+- 2026-07-10: Fixed equal-timestamp Parakeet token ordering, changed Google Meet detection to a matching foreground or background browser tab plus microphone activity, added detector diagnostics, and made live Obsidian ticket matching tolerate spaced initials and identifiers found in note filenames.
+- 2026-07-10: Added Meetings with durable dual-source system/microphone capture, streaming Parakeet Unified transcription, source-separated transcripts, automatic Slack Huddle and Google Meet detection, a floating transcript/context companion, generated notes, and Obsidian Markdown export.
 - 2026-06-21: Bumped FluidAudio to 0.15.4 and added Parakeet Unified 0.6B (English, offline-batch via `UnifiedAsrManager`) as a user-selectable on-device model alongside v3 (multilingual); dropped v2. Model choice persists under `parakeet.version` ("unified"/"v3", default unified) and is picked in the Parakeet settings section.
 - 2026-06-17: Routed F5 prompt hotkeys through the event-tap path so bare F5 and function-row F5 variants can trigger dictation.
 - 2026-06-17: Updated Soniox real-time transcription to V5 and mapped legacy V4 model settings to the V5 default.

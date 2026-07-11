@@ -48,7 +48,7 @@ struct PermissionsView: View {
     VStack(alignment: .leading, spacing: 6) {
       Text("Permissions")
         .font(.title2.weight(.semibold))
-      Text("HermesWhisper needs these macOS permissions for recording, context capture, hotkeys, and text insertion.")
+      Text("HermesWhisper needs these macOS permissions for dictation, meeting audio, context capture, hotkeys, and text insertion.")
         .font(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -201,9 +201,9 @@ private enum AppPermission: String, CaseIterable, Identifiable {
   var detail: String {
     switch self {
     case .microphone:
-      return "Required to record dictation audio and Hermes voice replies."
+      return "Required to record dictation, Hermes voice replies, and your side of meetings."
     case .screenRecording:
-      return "Required when screen context or screenshot image context is enabled."
+      return "Required for meeting system audio and when screen context or screenshots are enabled."
     case .accessibility:
       return "Required for global shortcut handling, selected text capture, and text insertion."
     case .inputMonitoring:

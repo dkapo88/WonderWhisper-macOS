@@ -16,6 +16,7 @@ struct HermesWhisperApp: App {
     @State private var waveformOverlay: WaveformOverlayController? = nil
     @State private var streamingTranscriptOverlay: StreamingTranscriptOverlay? = nil
     @State private var hermesResponseWindow: HermesResponseWindowController? = nil
+    @State private var meetingOverlay: MeetingOverlayWindowController? = nil
     var body: some Scene {
         WindowGroup {
             ContentView(vm: vm)
@@ -28,6 +29,7 @@ struct HermesWhisperApp: App {
                     // is closed — unlike the old .onReceive wiring which died with the view.
                     if streamingTranscriptOverlay == nil { streamingTranscriptOverlay = StreamingTranscriptOverlay(viewModel: vm) }
                     if hermesResponseWindow == nil { hermesResponseWindow = HermesResponseWindowController(viewModel: vm) }
+                    if meetingOverlay == nil { meetingOverlay = MeetingOverlayWindowController(coordinator: vm.meetingCoordinator) }
                 }
         }
     }

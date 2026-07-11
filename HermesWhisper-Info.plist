@@ -33,6 +33,6 @@
   <key>NSHumanReadableCopyright</key>
   <string>Copyright 2026 Dane Kapoor.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>HermesWhisper needs microphone access to transcribe your speech.</string>
+  <string>HermesWhisper needs microphone access to transcribe dictation and meeting audio.</string>
 </dict>
 </plist>

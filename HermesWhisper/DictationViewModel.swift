@@ -33,6 +33,8 @@ struct BeeperChatEntry: Codable, Identifiable, Equatable {
 
 @MainActor
 final class DictationViewModel: ObservableObject {
+    let meetingCoordinator = MeetingCoordinator()
+
     @Published var status: String = "Idle"
     @Published var settingsNotice: String?
     @Published var isRecording: Bool = false {
@@ -1991,7 +1993,7 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .comparison, .hermes, .beeper,
+        case .vocabulary, .history, .comparison, .hermes, .beeper, .meetings,
              .microphone, .permissions, .settings:
             return nil
         }

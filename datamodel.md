@@ -197,7 +197,79 @@ separate remote delete operation.
 
 ---
 
-### 4. Simple Mode System
+### 4. Meeting Notes System
+
+```mermaid
+erDiagram
+    MeetingSession ||--o{ MeetingTranscriptToken : "contains"
+
+    MeetingSession {
+        UUID id PK
+        String title
+        Date startedAt
+        Date endedAt "optional"
+        String detectedApp "optional"
+        Bool automaticallyStarted
+        String transcriptionEngine "optional, parakeet or soniox"
+        String status "recording, processing, completed, interrupted, failed"
+        String notesMarkdown "optional"
+        String[] audioFiles
+        String exportedMarkdownPath "optional"
+        String errorMessage "optional"
+    }
+
+    MeetingTranscriptToken {
+        UUID id PK
+        String source "microphone or systemAudio"
+        Double startTime
+        Double endTime
+        String text
+    }
+```
+
+**MeetingSession**: One manually or automatically captured meeting. The manifest is saved
+throughout recording so an app restart can recover an unfinished session as `interrupted`.
+System and microphone audio are kept as separate one-minute, 16 kHz mono CAF segments while
+their source-tagged tokens from the selected transcription engine are combined into a chronological
+transcript. Parakeet Unified is the on-device default. Soniox V5 is an opt-in cloud beta
+that opens one real-time stream per audio source. The optional `transcriptionEngine` manifest field
+keeps older meeting manifests decodable. Manual meetings capture all Mac system audio;
+automatically detected meetings restrict system capture to the detected application scope.
+Persisted `MeetingTriggerRule` values keep Slack and browser rules on strict Huddle/Google Meet
+evidence; explicitly configured standalone applications may start from that scoped application's
+microphone activity. Automatic Meet starts use a strict window plus dual-audio signal, while active-call
+liveness accepts matching microphone activity or a matching call window with system output and
+requires two minutes of complete absence before stopping. Stopping ends local capture and
+dismisses the companion first;
+the session remains `processing` while transcription, optional notes, and export finish in a
+session-scoped background task. When a live transcription source fails, local Parakeet Unified
+re-transcribes only the final overlapping CAF segment and later segments for that source, replacing
+the incomplete tail while preserving earlier finalized tokens and the other source.
+
+**MeetingTranscriptToken**: A timestamped local transcription token whose source preserves the
+honest `Microphone`/`System audio` capture distinction. Matching phrases heard acoustically by the
+microphone and captured directly from system audio are suppressed from the rendered microphone
+transcript. This is source separation and echo deduplication, not speaker diarization among
+multiple remote participants. Soniox non-final tokens are shown only as a replaceable transient
+live tail. They are never persisted or used for context; only final tokens enter the manifest.
+
+Generated Markdown notes use OpenRouter only when the opt-in `meeting.notes.generate` setting is
+enabled. A generated title replaces the initial automatic/default title only if the user did not
+edit it while notes were being produced. Obsidian
+exports are ordinary local `.md` files; the chosen export folder may be inside a vault. Live
+context scans Markdown files from the nearest parent containing `.obsidian`. Ticket identifiers
+such as `BC-1425` are detected immediately, tolerate spoken forms such as `B C 1425`, and surface
+Jira or Linear links even when the vault has no matching note. Echo-filtered transcript windows are
+debounced and rate-limited before a bounded recent transcript window is sent to OpenRouter to
+extract specific people, projects, companies, systems, features, and other useful subjects. The
+vault index ranks titles and Markdown contents locally with recency boosting; only bounded excerpts
+from the top matches are sent to OpenRouter in one batched request for concise live briefs. Local
+note paths are never included in cloud prompts. Indexing, searching, no-match, and request-error
+states are visible in the meeting overlay.
+
+---
+
+### 5. Simple Mode System
 
 ```mermaid
 erDiagram
@@ -310,7 +382,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "hermes, beeper, history, comparison, dictation, command, vocabulary, microphone, permissions, settings"
+        String value "hermes, beeper, meetings, history, comparison, dictation, command, vocabulary, microphone, permissions, settings"
     }
     
     SimpleVoiceEngine {
@@ -341,6 +413,10 @@ erDiagram
 
     HermesSessionStore ||--o{ HermesChatSession : "persists"
     HermesChatSession ||--o{ HermesChatMessage : "contains"
+
+    MeetingCoordinator ||--o{ MeetingSession : "manages"
+    MeetingSessionStore ||--o{ MeetingSession : "persists"
+    MeetingSession ||--o{ MeetingTranscriptToken : "contains"
     
     PromptConfiguration ||--o| Shortcut : "has shortcut"
     PromptConfiguration ||--o| Selection : "has selection"
@@ -421,9 +497,14 @@ erDiagram
 │   └── conversations/
 │       ├── <promptID>_messages.json    # PromptConversationMessage[]
 │       └── <promptID>_metadata.json    # ConversationHistoryMetadata
-└── HermesChat/
+├── HermesChat/
     ├── sessions.json      # Last retained HermesChatSession[] rows
     └── messages.json      # Legacy flat HermesChatMessage[] rows, migrated on load
+└── Meetings/
+    └── <uuid>/
+        ├── manifest.json          # MeetingSession and MeetingTranscriptToken[]
+        ├── microphone-0001.caf   # One-minute 16 kHz mono segments
+        └── system-0001.caf       # One-minute 16 kHz mono segments
 ```
 
 ### UserDefaults Keys
@@ -467,6 +548,17 @@ erDiagram
 | `simple.command.settings` | Data | Command prompt settings |
 | `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
+| `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet` or `soniox`); defaults to local Parakeet when unset or unknown |
+| `meeting.autoDetection.enabled` | Bool | Detect configured meeting applications and start/stop capture automatically; opt-in and false when unset |
+| `meeting.autoDetection.triggerRules` | Data | JSON-encoded `MeetingTriggerRule[]` containing bundle prefix, display name, strict Meet/Slack or explicit-microphone mode, and app-scoped capture rule; migrates legacy `meeting.autoDetect.apps` values |
+| `meeting.notes.generate` | Bool | Opt in to sending the complete transcript to OpenRouter for Markdown notes after capture; defaults to false |
+| `meeting.notes.model` | String | OpenRouter model used for final notes and suggested meeting titles; defaults to `openai/gpt-5.4-nano` |
+| `meeting.obsidian.folder` | String | Local folder selected for Obsidian Markdown exports |
+| `meeting.obsidian.autoExport` | Bool | Export completed meetings automatically when an Obsidian folder is configured |
+| `meeting.context.enabled` | Bool | Extract useful live subjects, search and rank the local Obsidian vault, and summarize bounded matching excerpts during a meeting |
+| `meeting.context.model` | String | Fast OpenRouter model used only for live topic extraction and context briefs; defaults to `openai/gpt-5.4-nano` |
+| `meeting.overlay.enabled` | Bool | Show the compact translucent transcript/context companion while recording; defaults to true |
+| `meeting.ticketBaseURL` | String | Optional Jira browse base URL for live ticket links; defaults to Hapana Jira |
 | `audio.stream.eq.enabled` | Bool | Stream EQ enabled |
 | `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
 | `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
@@ -604,6 +696,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.12 (July 11, 2026)**: Added Dia helper attribution, fast two-observation starts with dropout-tolerant active-call liveness and same-call suppression, opt-in dual-stream Soniox V5 meeting transcription with transient non-final captions and background finalization, rate-limited subject-aware live Obsidian retrieval with batched briefs and explicit index errors, and configurable Jira or Hapana Linear ticket links.
+- **v1.11 (July 10, 2026)**: Added durable meeting sessions, dual system/microphone audio segments, source-tagged streaming Parakeet Unified tokens, automatic Slack/Google Meet detection, generated notes, Obsidian export, and optional live vault context.
 - **v1.10 (June 1, 2026)**: Made Beeper response monitoring ambient for the configured chat and aligned response-window text replies with immediate focus, Return-to-send, and Shift-Return newline behavior.
 - **v1.9 (May 31, 2026)**: Added Beeper voice integration settings, chat ID storage, shortcut selection, keychain token alias, copied-text context, bounded response polling, and experimental WebSocket-first monitoring.
 - **v1.8.2 (May 19, 2026)**: Added reusable dictation prompt templates with custom template persistence.
@@ -760,7 +854,8 @@ sequenceDiagram
 - `organizeScreenContextOverride` (Bool) field removed; legacy key ignored during decoding
 - `shortcut` field in `SimplePromptSettings` ignored during decoding (simple mode uses `selection` only)
 - Conversation history tracks provider changes to handle model switches
-- Legacy Cerebras, Ollama, AssemblyAI, Soniox keychain aliases preserved but unused in shipping build
+- Legacy Cerebras, Ollama, and AssemblyAI keychain aliases are preserved but unused. The active
+  `SONIOX_API_KEY` alias is used by dictation and the opt-in Soniox meeting beta.
 
 ---
 

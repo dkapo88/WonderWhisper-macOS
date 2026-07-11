@@ -7,11 +7,39 @@ final class SystemAudioController {
   
   private var volumeBeforeMute: Float32?
   private var wasMutedBeforeRecording: Bool = false
+  private var shouldRestoreAfterMute = false
+  private var mutedDeviceID: AudioDeviceID?
+  private let meetingStateLock = NSLock()
+  private var meetingCaptureActive = false
   
   private init() {}
+
+  func setMeetingCaptureActive(_ active: Bool) {
+    meetingStateLock.lock()
+    meetingCaptureActive = active
+    meetingStateLock.unlock()
+  }
+
+  private var isMeetingCaptureActive: Bool {
+    meetingStateLock.lock()
+    defer { meetingStateLock.unlock() }
+    return meetingCaptureActive
+  }
   
   @discardableResult
   func muteSystemAudioAndWait(settleMs: useconds_t = 100_000) -> Bool {
+    if shouldRestoreAfterMute {
+      unmuteSystemAudioAndWait()
+      guard !shouldRestoreAfterMute else { return false }
+    }
+    shouldRestoreAfterMute = false
+    mutedDeviceID = nil
+    guard !isMeetingCaptureActive else {
+      AppLog.hotkeys.log(
+        "Auto-mute suppressed while meeting capture is recording system audio"
+      )
+      return false
+    }
     guard let deviceID = getDefaultOutputDevice() else {
       AppLog.hotkeys.error("Failed to get default output device for muting")
       return false
@@ -27,6 +55,8 @@ final class SystemAudioController {
     
     let ok = setMuted(true, for: deviceID)
     if ok {
+      shouldRestoreAfterMute = true
+      mutedDeviceID = deviceID
       waitForMute(true, deviceID: deviceID)
       if settleMs > 0 {
         usleep(settleMs)
@@ -37,22 +67,31 @@ final class SystemAudioController {
   }
   
   func unmuteSystemAudioAndWait() {
-    guard let deviceID = getDefaultOutputDevice() else {
-      AppLog.hotkeys.error("Failed to get default output device for unmuting")
+    guard shouldRestoreAfterMute, let deviceID = mutedDeviceID else {
+      AppLog.hotkeys.log("System audio restore skipped because auto-mute was not applied")
       return
     }
-    
+
+    var restorationComplete = false
     if !wasMutedBeforeRecording {
       let ok = setMuted(false, for: deviceID)
       if ok {
         waitForMute(false, deviceID: deviceID)
+        restorationComplete = true
       }
       AppLog.hotkeys.log("System audio unmuted ok: \(ok)")
     } else {
       AppLog.hotkeys.log("System audio was already muted before recording, keeping it muted")
+      restorationComplete = true
     }
-    
-    volumeBeforeMute = nil
+
+    if restorationComplete {
+      shouldRestoreAfterMute = false
+      mutedDeviceID = nil
+      volumeBeforeMute = nil
+    } else {
+      AppLog.hotkeys.error("System audio restore failed; retaining the original device for retry")
+    }
   }
   
   private func getDefaultOutputDevice() -> AudioDeviceID? {

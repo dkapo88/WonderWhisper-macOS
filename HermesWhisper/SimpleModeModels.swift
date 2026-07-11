@@ -25,6 +25,7 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case hermes
   case beeper
+  case meetings
   case history
   case comparison
   case dictation
@@ -37,6 +38,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   static let displayOrder: [SimpleSidebarItem] = [
     .hermes,
     .beeper,
+    .meetings,
     .history,
     .comparison,
     .dictation,
@@ -55,6 +57,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .command: return "Command"
     case .hermes: return "Hermes"
     case .beeper: return "Beeper"
+    case .meetings: return "Meetings"
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
     case .comparison: return "Compare"
@@ -70,6 +73,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .command: return "wand.and.stars"
     case .hermes: return "sparkles"
     case .beeper: return "paperplane.fill"
+    case .meetings: return "person.2.wave.2.fill"
     case .vocabulary: return "book.closed"
     case .history: return "clock.arrow.circlepath"
     case .comparison: return "rectangle.split.3x1"

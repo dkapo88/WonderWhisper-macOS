@@ -42,6 +42,9 @@ struct ContentView: View {
             case .beeper:
                 BeeperIntegrationView(vm: vm)
                     .navigationTitle("Beeper")
+            case .meetings:
+                MeetingView(coordinator: vm.meetingCoordinator)
+                    .navigationTitle("Meetings")
             case .vocabulary:
                 VocabularyView(vm: vm)
                     .navigationTitle("Vocabulary")
@@ -62,7 +65,7 @@ struct ContentView: View {
                     .navigationTitle("Settings")
             }
         }
-        .frame(minWidth: 680, minHeight: 420)
+        .frame(minWidth: 780, minHeight: 500)
     }
 }
 
