@@ -154,12 +154,14 @@ struct MeetingView: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
 
-      if coordinator.transcriptionEngine == .soniox {
+      if coordinator.transcriptionEngine.usesSoniox {
         HStack(spacing: 5) {
           Image(systemName: coordinator.hasSonioxAPIKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
           Text(
             coordinator.hasSonioxAPIKey
-              ? "Soniox key saved • approximately $0.24 per meeting hour for two streams"
+              ? coordinator.transcriptionEngine == .soniox
+                ? "Soniox key saved • approximately $0.12 per meeting hour for one stream"
+                : "Soniox key saved • approximately $0.24 per meeting hour for two streams"
               : "Add a Soniox API key in Settings before recording"
           )
         }
@@ -641,7 +643,7 @@ private struct MeetingDetailView: View {
   private func transcriptBlock(_ block: MeetingTranscriptBlock) -> some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
-        Text(block.source.displayName)
+        Text(block.displayName)
           .font(.caption.weight(.semibold))
           .foregroundStyle(block.source == .microphone ? .blue : .purple)
         Text(MeetingTranscriptFormatter.timestamp(block.startTime))

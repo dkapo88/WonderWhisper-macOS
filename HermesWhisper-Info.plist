@@ -34,5 +34,7 @@
   <string>Copyright 2026 Dane Kapoor.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>HermesWhisper needs microphone access to transcribe dictation and meeting audio.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>HermesWhisper needs system audio access to transcribe meetings and calls.</string>
 </dict>
 </plist>

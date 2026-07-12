@@ -136,6 +136,20 @@ actor MeetingTranscriptRecoveryService {
     var selected: [Segment] = []
     var recoverableSources: Set<MeetingAudioSource> = []
 
+    let availableRawSources = Set(segments.map(\.source))
+    if sourcesNeedingRecovery.isSuperset(of: MeetingAudioSource.captureSources),
+       availableRawSources.isSuperset(of: MeetingAudioSource.captureSources),
+       existingTokens.contains(where: { $0.source == .mixed }) {
+      let firstRawSegmentStart = segments
+        .filter { MeetingAudioSource.captureSources.contains($0.source) }
+        .map(\.startTime)
+        .min() ?? 0
+      retained.removeAll {
+        $0.source == .mixed
+          && ($0.startTime >= firstRawSegmentStart || $0.endTime > firstRawSegmentStart)
+      }
+    }
+
     for source in sourcesNeedingRecovery.sorted(by: { $0.rawValue < $1.rawValue }) {
       let sourceSegments = orderedSegments(segments.filter { $0.source == source })
       guard let firstAvailable = sourceSegments.first else { continue }

@@ -49,6 +49,14 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       waitForFinished: true,
       finalizationWaitMs: 15_000
     )
+
+    static let mixedMeeting = RealtimeOptions(
+      enableEndpointDetection: true,
+      maxEndpointDelayMs: 1_500,
+      enableSpeakerDiarization: true,
+      waitForFinished: true,
+      finalizationWaitMs: 15_000
+    )
   }
 
   private static let defaultRealtimeModel = "stt-rt-v5"

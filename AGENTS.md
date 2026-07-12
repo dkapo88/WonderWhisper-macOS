@@ -18,9 +18,14 @@ The app includes a persistent microphone selection feature accessible from the s
 ## Feature Scope & Providers
 - The app ships a single window with eleven sidebar tabs: Hermes, Beeper, Meetings, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
-- Meetings use two source-specific transcription streams, one each for microphone and system audio.
-  Parakeet Unified remains the free on-device default; Soniox V5 is an opt-in cloud beta
-  that uses two WebSockets and costs approximately $0.24 per meeting hour at current rates. Audio
+- Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
+  private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
+  supplies the selected microphone. Parakeet Unified remains the free on-device default with
+  source-specific inference. Soniox V5 is an opt-in cloud beta whose default mode normalizes
+  variable capture callbacks into fixed 100 ms source frames,
+  timestamp-aligns both sources, uses Accelerate-backed adaptive system-audio echo reduction,
+  and sends one mixed WebSocket with speaker metadata for approximately $0.12 per meeting hour. A
+  two-WebSocket source-separated mode remains available as a fallback at approximately $0.24 per hour. Audio
   is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
@@ -29,7 +34,10 @@ The app includes a persistent microphone selection feature accessible from the s
   title and individual audio-signal dropouts before a two-minute confirmed stop. Soniox non-final
   text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
-  retained CAF segments with local Parakeet Unified. The companion includes a durable Manual notes
+  retained CAF segments with local Parakeet Unified; failed mixed transcripts are replaced by recovery
+  from both raw source tracks. Mixed capture runs on a dedicated serial ingestion worker so Soniox
+  token and UI callbacks cannot starve audio delivery. If live ingestion falls behind, transcription pauses and is recovered
+  later while durable audio capture continues uninterrupted. The companion includes a durable Manual notes
   tab backed by an atomically saved local sidecar; those notes remain separate from generated Markdown,
   appear in history and exports, and join the transcript only when cloud-generated notes are opted in.
   Generated notes are cloud opt-in. Optional live
@@ -66,6 +74,12 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-12: Hardened mixed meeting capture across audio-route changes, bounded live-transcription backlog, and preserved partial transcripts when raw recovery is incomplete.
+- 2026-07-12: Replaced ScreenCaptureKit system-audio meeting capture with a private Core Audio process tap so muted speakers and headphone route changes do not remove outgoing audio, and preserved forward microphone clock gaps after route changes.
+- 2026-07-12: Normalized variable ScreenCaptureKit meeting callbacks into fixed 100 ms frames so queue capacity tracks audio time rather than unstable callback counts.
+- 2026-07-12: Isolated mixed Soniox audio ingestion from transcript/UI callbacks to prevent live transcription starvation after sustained token activity.
+- 2026-07-12: Vectorized single-stream meeting echo cancellation and made live-transcription backlog degrade to raw-audio recovery without stopping the recording.
+- 2026-07-12: Added an experimental echo-reduced single-stream Soniox meeting path with speaker labels, half-rate cloud usage, raw-source recovery, and a separate-stream fallback.
 - 2026-07-12: Removed the meeting title from the compact companion toolbar so live timing and recording controls remain legible at the default width.
 - 2026-07-12: Refined the meeting companion toolbar with clearer title hierarchy, compact live timing, and balanced minimize and stop controls.
 - 2026-07-12: Made the minimized meeting bubble independently draggable without restoring, and retained its custom screen position across minimize cycles.

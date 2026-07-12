@@ -1,6 +1,14 @@
 import AVFoundation
 import Foundation
 
+enum MeetingAudioSegmentWriterError: LocalizedError {
+  case bufferAllocationFailed
+
+  var errorDescription: String? {
+    "Could not allocate a buffer for retained meeting audio."
+  }
+}
+
 final class MeetingAudioSegmentWriter {
   private let directory: URL
   private let source: MeetingAudioSource
@@ -74,15 +82,15 @@ final class MeetingAudioSegmentWriter {
   }
 
   private func write(samples: [Float], offset: Int, count: Int) throws {
-    guard count > 0,
-          let file = currentFile,
+    guard count > 0 else { return }
+    guard let file = currentFile,
           let processingFormat,
           let buffer = AVAudioPCMBuffer(
             pcmFormat: processingFormat,
             frameCapacity: AVAudioFrameCount(count)
           ),
           let channel = buffer.floatChannelData?.pointee else {
-      return
+      throw MeetingAudioSegmentWriterError.bufferAllocationFailed
     }
     buffer.frameLength = AVAudioFrameCount(count)
     samples.withUnsafeBufferPointer { sourceBuffer in

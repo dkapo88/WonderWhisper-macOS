@@ -3,11 +3,15 @@ import Foundation
 enum MeetingAudioSource: String, Codable, CaseIterable, Hashable, Sendable {
   case microphone
   case systemAudio
+  case mixed
+
+  static let captureSources: Set<Self> = [.microphone, .systemAudio]
 
   var displayName: String {
     switch self {
     case .microphone: return "Microphone"
     case .systemAudio: return "System audio"
+    case .mixed: return "Meeting"
     }
   }
 
@@ -15,6 +19,7 @@ enum MeetingAudioSource: String, Codable, CaseIterable, Hashable, Sendable {
     switch self {
     case .microphone: return "microphone"
     case .systemAudio: return "system"
+    case .mixed: return "mixed"
     }
   }
 }
@@ -22,20 +27,23 @@ enum MeetingAudioSource: String, Codable, CaseIterable, Hashable, Sendable {
 enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Sendable {
   case parakeet
   case soniox
+  case sonioxSeparate = "soniox-separate"
 
   var id: String { rawValue }
 
   var displayName: String {
     switch self {
     case .parakeet: return "Parakeet Unified (On-device)"
-    case .soniox: return "Soniox V5 (Cloud beta)"
+    case .soniox: return "Soniox V5 (Single stream beta)"
+    case .sonioxSeparate: return "Soniox V5 (Separate streams)"
     }
   }
 
   var recordingLabel: String {
     switch self {
     case .parakeet: return "local Parakeet"
-    case .soniox: return "Soniox V5 beta"
+    case .soniox: return "single-stream Soniox V5 beta"
+    case .sonioxSeparate: return "separate-stream Soniox V5"
     }
   }
 
@@ -44,8 +52,14 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Se
     case .parakeet:
       return "Private and free. Best when cloud audio must stay off."
     case .soniox:
-      return "Test cloud accuracy using two source-separated live streams."
+      return "Locally aligns and echo-reduces both sources before one cloud stream."
+    case .sonioxSeparate:
+      return "Fallback with independent microphone and system-audio cloud streams."
     }
+  }
+
+  var usesSoniox: Bool {
+    self == .soniox || self == .sonioxSeparate
   }
 
   static func selected(defaults: UserDefaults = .standard) -> Self {
@@ -63,17 +77,20 @@ struct MeetingTranscriptToken: Codable, Identifiable, Equatable, Sendable {
   let startTime: TimeInterval
   let endTime: TimeInterval
   let text: String
+  let speaker: String?
 
   init(id: UUID = UUID(),
        source: MeetingAudioSource,
        startTime: TimeInterval,
        endTime: TimeInterval,
-       text: String) {
+       text: String,
+       speaker: String? = nil) {
     self.id = id
     self.source = source
     self.startTime = startTime
     self.endTime = endTime
     self.text = text
+    self.speaker = speaker
   }
 }
 
@@ -155,6 +172,14 @@ struct MeetingTranscriptBlock: Identifiable, Equatable, Sendable {
   let startTime: TimeInterval
   let endTime: TimeInterval
   let text: String
+  let speaker: String?
+
+  var displayName: String {
+    if source == .mixed, let speaker, !speaker.isEmpty {
+      return "Speaker \(speaker)"
+    }
+    return source.displayName
+  }
 }
 
 enum MeetingTranscriptFormatter {
@@ -178,13 +203,15 @@ enum MeetingTranscriptFormatter {
     for token in sorted where !token.text.isEmpty {
       if let last = result.last,
          last.source == token.source,
+         last.speaker == token.speaker,
          token.startTime - last.endTime < 2.5 {
         result[result.count - 1] = MeetingTranscriptBlock(
           id: last.id,
           source: last.source,
           startTime: last.startTime,
           endTime: max(last.endTime, token.endTime),
-          text: last.text + token.text
+          text: last.text + token.text,
+          speaker: last.speaker
         )
       } else {
         result.append(
@@ -193,7 +220,8 @@ enum MeetingTranscriptFormatter {
             source: token.source,
             startTime: token.startTime,
             endTime: token.endTime,
-            text: token.text
+            text: token.text,
+            speaker: token.speaker
           )
         )
       }
@@ -205,20 +233,21 @@ enum MeetingTranscriptFormatter {
         source: $0.source,
         startTime: $0.startTime,
         endTime: $0.endTime,
-        text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
+        speaker: $0.speaker
       )
     }.filter { !$0.text.isEmpty }
   }
 
   static func markdown(tokens: [MeetingTranscriptToken]) -> String {
     blocks(tokens: tokens).map { block in
-      "**\(block.source.displayName) [\(timestamp(block.startTime))]:** \(block.text)"
+      "**\(block.displayName) [\(timestamp(block.startTime))]:** \(block.text)"
     }.joined(separator: "\n\n")
   }
 
   static func plainText(tokens: [MeetingTranscriptToken]) -> String {
     blocks(tokens: tokens).map { block in
-      "\(block.source.displayName): \(block.text)"
+      "\(block.displayName): \(block.text)"
     }.joined(separator: "\n")
   }
 

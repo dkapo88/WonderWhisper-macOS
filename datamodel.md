@@ -221,20 +221,26 @@ erDiagram
 
     MeetingTranscriptToken {
         UUID id PK
-        String source "microphone or systemAudio"
+        String source "microphone, systemAudio, or mixed"
         Double startTime
         Double endTime
         String text
+        String speaker "optional Soniox label"
     }
 ```
 
 **MeetingSession**: One manually or automatically captured meeting. The manifest is saved
 throughout recording so an app restart can recover an unfinished session as `interrupted`.
-System and microphone audio are kept as separate one-minute, 16 kHz mono CAF segments while
-their source-tagged tokens from the selected transcription engine are combined into a chronological
-transcript. Parakeet Unified is the on-device default. Soniox V5 is an opt-in cloud beta
-that opens one real-time stream per audio source. The optional `transcriptionEngine` manifest field
-keeps older meeting manifests decodable. Manual meetings capture all Mac system audio;
+System and microphone audio are kept as separate one-minute, 16 kHz mono CAF segments. A private
+Core Audio process tap captures system audio before output volume and device routing; manual meetings
+use a global tap excluding HermesWhisper, while automatic meetings include only matching meeting-app
+audio processes. ScreenCaptureKit captures the selected microphone. Parakeet Unified is the on-device
+default and keeps source-specific inference. Soniox V5 is an opt-in cloud beta whose default mode
+first normalizes variable callbacks into continuous 100 ms sample-clock frames, then aligns both
+sources and reduces the system-audio reference from the microphone with an Accelerate-backed
+normalized adaptive filter, mixes the cleaned microphone with system audio, and opens one real-time stream.
+The fallback `soniox-separate` mode opens one stream per raw source. The optional
+`transcriptionEngine` manifest field keeps older meeting manifests decodable. Manual meetings capture all Mac system audio;
 automatically detected meetings restrict system capture to the detected application scope.
 Persisted `MeetingTriggerRule` values keep Slack and browser rules on strict Huddle/Google Meet
 evidence; explicitly configured standalone applications may start from that scoped application's
@@ -245,14 +251,18 @@ dismisses the companion first;
 the session remains `processing` while transcription, optional notes, and export finish in a
 session-scoped background task. When a live transcription source fails, local Parakeet Unified
 re-transcribes only the final overlapping CAF segment and later segments for that source, replacing
-the incomplete tail while preserving earlier finalized tokens and the other source.
+the incomplete tail while preserving earlier finalized tokens and the other source. A failed mixed
+stream is instead replaced from both raw tracks. If the bounded live-ingestion queue fills, only live
+transcription pauses; raw CAF capture continues and the affected tracks are recovered after Stop.
+Single-stream mixing and PCM delivery use a dedicated serial ingress actor, independent of Soniox
+token callbacks and MainActor transcript/context updates.
 
-**MeetingTranscriptToken**: A timestamped local transcription token whose source preserves the
-honest `Microphone`/`System audio` capture distinction. Matching phrases heard acoustically by the
-microphone and captured directly from system audio are suppressed from the rendered microphone
-transcript. This is source separation and echo deduplication, not speaker diarization among
-multiple remote participants. Soniox non-final tokens are shown only as a replaceable transient
-live tail. They are never persisted or used for context; only final tokens enter the manifest.
+**MeetingTranscriptToken**: A timestamped local transcription token. Parakeet and separate-stream
+Soniox tokens preserve the honest `Microphone`/`System audio` capture distinction and suppress
+matching acoustic echo at render time. Single-stream Soniox tokens use the `mixed` source and may
+carry Soniox speaker labels; their audio has already passed through local adaptive echo reduction.
+Soniox non-final tokens are shown only as a replaceable transient live tail. They are never persisted
+or used for context; only final tokens enter the manifest.
 
 Manual notes are atomically saved as a small local sidecar file while the user types, then committed
 to the manifest on focus loss or meeting stop; an empty sidecar records an intentional clear. They
@@ -555,7 +565,7 @@ erDiagram
 | `simple.command.settings` | Data | Command prompt settings |
 | `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
-| `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet` or `soniox`); defaults to local Parakeet when unset or unknown |
+| `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet`, single-stream `soniox`, or fallback `soniox-separate`); defaults to local Parakeet when unset or unknown |
 | `meeting.autoDetection.enabled` | Bool | Detect configured meeting applications and start/stop capture automatically; opt-in and false when unset |
 | `meeting.autoDetection.triggerRules` | Data | JSON-encoded `MeetingTriggerRule[]` containing bundle prefix, display name, strict Meet/Slack or explicit-microphone mode, and app-scoped capture rule; migrates legacy `meeting.autoDetect.apps` values |
 | `meeting.notes.generate` | Bool | Opt in to sending the complete transcript to OpenRouter for Markdown notes after capture; defaults to false |
@@ -705,6 +715,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.14 (July 12, 2026)**: Added a pre-output Core Audio process tap for route-independent system capture, timestamp-aligned adaptive echo reduction, and one-stream Soniox meeting transcription with speaker labels, while preserving two raw CAF tracks and a source-separated fallback.
 - **v1.13 (July 11, 2026)**: Added durable user-authored manual meeting notes in the companion, final-note evidence, meeting history, and Obsidian exports.
 - **v1.12 (July 11, 2026)**: Added Dia helper attribution, fast two-observation starts with dropout-tolerant active-call liveness and same-call suppression, opt-in dual-stream Soniox V5 meeting transcription with transient non-final captions and background finalization, rate-limited subject-aware live Obsidian retrieval with batched briefs and explicit index errors, and configurable Jira or Hapana Linear ticket links.
 - **v1.11 (July 10, 2026)**: Added durable meeting sessions, dual system/microphone audio segments, source-tagged streaming Parakeet Unified tokens, automatic Slack/Google Meet detection, generated notes, Obsidian export, and optional live vault context.
@@ -976,6 +987,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.13
-**Last Updated**: July 11, 2026
+**Document Version**: 1.14
+**Last Updated**: July 12, 2026
 **Maintainer**: HermesWhisper Development Team

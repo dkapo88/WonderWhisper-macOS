@@ -515,7 +515,7 @@ private struct MeetingOverlayView: View {
           }
           ForEach(blocks) { block in
             VStack(alignment: .leading, spacing: 3) {
-              Text("\(block.source.displayName) • \(MeetingTranscriptFormatter.timestamp(block.startTime))")
+              Text("\(block.displayName) • \(MeetingTranscriptFormatter.timestamp(block.startTime))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(block.source == .microphone ? .blue : .purple)
               Text(block.text)

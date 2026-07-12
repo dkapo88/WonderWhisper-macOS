@@ -1,11 +1,35 @@
 import Foundation
 import AppKit
 
-private enum MeetingIngestionError: LocalizedError {
-  case backlogExceeded
+enum MeetingIngestionBacklogPolicy {
+  // Each source is framed into ten 100 ms chunks per second. Bound the shared
+  // queue to roughly six seconds so live captions pause before visibly drifting.
+  static let maximumBufferedChunks = 120
 
-  var errorDescription: String? {
-    "Local transcription fell too far behind live audio; capture stopped to avoid data loss."
+  static let warningMessage = "Live transcription paused because audio processing fell behind. "
+    + "Recording is continuing and the final transcript will be recovered from saved audio."
+
+  // The coordinator pauses the shared ingestion pipeline, so neither source
+  // receives live tokens after a backlog regardless of transcription engine.
+  static let recoverySources = Set(MeetingAudioSource.captureSources)
+}
+
+private final class MeetingIngestionBacklogGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var claimed = false
+
+  func claim() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !claimed else { return false }
+    claimed = true
+    return true
+  }
+
+  var wasClaimed: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return claimed
   }
 }
 
@@ -250,7 +274,9 @@ final class MeetingCoordinator: ObservableObject {
   private var ingestionTask: Task<Void, Never>?
   private var finalizationTasks: [UUID: Task<Void, Never>] = [:]
   private var discardCleanupTasks: [UUID: Task<Void, Never>] = [:]
+  private var transcriptionCleanupTasks: [UUID: Task<Void, Never>] = [:]
   private var audioContinuation: AsyncStream<MeetingAudioChunk>.Continuation?
+  private var ingestionBacklogGate: MeetingIngestionBacklogGate?
   private var persistTask: Task<Void, Never>?
   private var dirtySessionIDs: Set<UUID> = []
   private var contextTasks: [UUID: Task<Void, Never>] = [:]
@@ -326,6 +352,7 @@ final class MeetingCoordinator: ObservableObject {
     ingestionTask?.cancel()
     finalizationTasks.values.forEach { $0.cancel() }
     discardCleanupTasks.values.forEach { $0.cancel() }
+    transcriptionCleanupTasks.values.forEach { $0.cancel() }
     audioContinuation?.finish()
     contextTasks.values.forEach { $0.cancel() }
     contextAnalysisTask?.cancel()
@@ -373,13 +400,38 @@ final class MeetingCoordinator: ObservableObject {
 
     let audioFiles = await capture.stop()
     SystemAudioController.shared.setMeetingCaptureActive(false)
+    let liveTranscriptionBacklogged = ingestionBacklogGate?.wasClaimed == true
+    ingestionBacklogGate = nil
+    if liveTranscriptionBacklogged {
+      forcedFullRecoverySources[activeSessionID, default: []].formUnion(
+        MeetingAudioSource.captureSources
+      )
+    }
 
     audioContinuation?.finish()
     audioContinuation = nil
-    let finalizingIngestionTask = ingestionTask
+    var finalizingIngestionTask = ingestionTask
+    var finalizingTranscriber = transcriber
+    var finalizingPreparationTask = preparationTask
+    var finalizingTranscriptionCleanupTask = transcriptionCleanupTasks[activeSessionID]
+    if liveTranscriptionBacklogged {
+      finalizingIngestionTask?.cancel()
+      finalizingPreparationTask?.cancel()
+      if finalizingTranscriptionCleanupTask == nil {
+        let stalledIngestionTask = finalizingIngestionTask
+        let stalledPreparationTask = finalizingPreparationTask
+        let stalledTranscriber = finalizingTranscriber
+        finalizingTranscriptionCleanupTask = Task {
+          await stalledIngestionTask?.value
+          _ = try? await stalledPreparationTask?.value
+          await stalledTranscriber?.cleanup()
+        }
+      }
+      finalizingIngestionTask = nil
+      finalizingTranscriber = nil
+      finalizingPreparationTask = nil
+    }
     self.ingestionTask = nil
-    let finalizingTranscriber = transcriber
-    let finalizingPreparationTask = preparationTask
     self.transcriber = nil
     preparationTask = nil
     preparationMonitorTask?.cancel()
@@ -388,6 +440,10 @@ final class MeetingCoordinator: ObservableObject {
     session = self.session(withID: activeSessionID) ?? session
     if let updatedSession = await flushManualNotes(for: activeSessionID) {
       session = updatedSession
+    }
+    if liveTranscriptionBacklogged, session.errorMessage == nil {
+      session.errorMessage = "Live transcription warning: "
+        + MeetingIngestionBacklogPolicy.warningMessage
     }
     session.audioFiles = audioFiles
     session.endedAt = Date()
@@ -415,6 +471,9 @@ final class MeetingCoordinator: ObservableObject {
     let exportFolder = obsidianExportFolderURL
     finalizationTasks[sessionID] = Task { @MainActor [weak self] in
       guard let self else {
+        await finalizingIngestionTask?.value
+        _ = try? await finalizingPreparationTask?.value
+        await finalizingTranscriptionCleanupTask?.value
         await finalizingTranscriber?.cleanup()
         return
       }
@@ -423,6 +482,7 @@ final class MeetingCoordinator: ObservableObject {
         transcriber: finalizingTranscriber,
         preparationTask: finalizingPreparationTask,
         ingestionTask: finalizingIngestionTask,
+        transcriptionCleanupTask: finalizingTranscriptionCleanupTask,
         generateNotes: shouldGenerateNotes,
         noteModel: selectedNoteModel,
         autoExport: shouldAutoExport,
@@ -449,10 +509,12 @@ final class MeetingCoordinator: ObservableObject {
     SystemAudioController.shared.setMeetingCaptureActive(false)
     audioContinuation?.finish()
     audioContinuation = nil
+    ingestionBacklogGate = nil
 
     let abandonedIngestionTask = ingestionTask
     let abandonedPreparationTask = preparationTask
     let abandonedTranscriber = transcriber
+    let existingTranscriptionCleanupTask = transcriptionCleanupTasks[sessionID]
     ingestionTask = nil
     preparationTask = nil
     transcriber = nil
@@ -474,6 +536,7 @@ final class MeetingCoordinator: ObservableObject {
     abandonedPreparationTask?.cancel()
     // Abort local managers/WebSockets before allowing another meeting to start.
     await abandonedTranscriber?.cleanup()
+    await existingTranscriptionCleanupTask?.value
     discardCleanupTasks[sessionID] = Task { @MainActor [weak self] in
       await abandonedIngestionTask?.value
       _ = try? await abandonedPreparationTask?.value
@@ -510,6 +573,7 @@ final class MeetingCoordinator: ObservableObject {
     transcriber: MeetingTranscriptionService?,
     preparationTask: Task<Void, Error>?,
     ingestionTask: Task<Void, Never>?,
+    transcriptionCleanupTask: Task<Void, Never>?,
     generateNotes: Bool,
     noteModel: String,
     autoExport: Bool,
@@ -518,6 +582,7 @@ final class MeetingCoordinator: ObservableObject {
     var warning: String?
 
     await ingestionTask?.value
+    await transcriptionCleanupTask?.value
 
     if let preparationTask {
       do {
@@ -646,6 +711,8 @@ final class MeetingCoordinator: ObservableObject {
         : "Meeting saved with warnings"
       if let error = session.errorMessage {
         lastError = error
+      } else {
+        lastError = nil
       }
     }
   }
@@ -923,7 +990,7 @@ final class MeetingCoordinator: ObservableObject {
           !isStarting,
           !isStopping else { return }
     let activeTranscriptionEngine = transcriptionEngine
-    if activeTranscriptionEngine == .soniox, !hasSonioxAPIKey {
+    if activeTranscriptionEngine.usesSoniox, !hasSonioxAPIKey {
       if automaticallyStarted {
         suppressedAutomaticFamily = candidate?.bundleFamily
         suppressedFamilyMissingSince = nil
@@ -985,10 +1052,14 @@ final class MeetingCoordinator: ObservableObject {
       }
       preparationTask = task
 
-      // Bound memory if inference ever falls behind. A dropped chunk is treated as fatal;
-      // the complete audio remains in the durable CAF segments for recovery.
+      // Keep live work close to real time. If this buffer ever fills, raw CAF capture
+      // continues and final transcription is recovered locally rather than ending the meeting.
+      let backlogGate = MeetingIngestionBacklogGate()
+      ingestionBacklogGate = backlogGate
       let (audioStream, continuation) = AsyncStream<MeetingAudioChunk>.makeStream(
-        bufferingPolicy: .bufferingOldest(6_000)
+        bufferingPolicy: .bufferingNewest(
+          MeetingIngestionBacklogPolicy.maximumBufferedChunks
+        )
       )
       audioContinuation = continuation
       ingestionTask = Task { [weak self] in
@@ -1014,11 +1085,15 @@ final class MeetingCoordinator: ObservableObject {
               for: sessionID
             )
           }
-          if case .dropped = continuation.yield(chunk) {
+          if case .dropped = continuation.yield(chunk),
+             backlogGate.claim() {
+            continuation.finish()
             Task { @MainActor [weak self] in
               guard let self else { return }
-              self.forcedFullRecoverySources[sessionID, default: []].insert(chunk.source)
-              self.handleCaptureError(MeetingIngestionError.backlogExceeded)
+              self.pauseLiveTranscriptionForBacklog(
+                sessionID: sessionID,
+                recoverySources: MeetingIngestionBacklogPolicy.recoverySources
+              )
             }
           }
         },
@@ -1046,6 +1121,7 @@ final class MeetingCoordinator: ObservableObject {
     } catch {
       audioContinuation?.finish()
       audioContinuation = nil
+      ingestionBacklogGate = nil
       ingestionTask?.cancel()
       if let ingestionTask {
         await ingestionTask.value
@@ -1493,6 +1569,48 @@ final class MeetingCoordinator: ObservableObject {
     guard activeSessionID == sessionID else { return }
     lastError = message
     statusMessage = "Recording audio • transcription warning"
+  }
+
+  private func pauseLiveTranscriptionForBacklog(
+    sessionID: UUID,
+    recoverySources: Set<MeetingAudioSource>
+  ) {
+    guard !isStopping, activeSessionID == sessionID else { return }
+    forcedFullRecoverySources[sessionID, default: []].formUnion(recoverySources)
+    audioContinuation?.finish()
+    audioContinuation = nil
+
+    let stalledIngestionTask = ingestionTask
+    let stalledPreparationTask = preparationTask
+    let stalledTranscriber = transcriber
+    ingestionTask = nil
+    preparationTask = nil
+    transcriber = nil
+    preparationMonitorTask?.cancel()
+    preparationMonitorTask = nil
+    stalledIngestionTask?.cancel()
+    stalledPreparationTask?.cancel()
+
+    let message = "Live transcription warning: "
+      + MeetingIngestionBacklogPolicy.warningMessage
+    if var session = session(withID: sessionID), session.errorMessage == nil {
+      session.errorMessage = message
+      replace(session)
+      schedulePersist(session)
+    }
+    lastError = message
+    statusMessage = "Recording audio • live transcript paused"
+    AppLog.dictation.error(
+      "MeetingTranscription: backlog paused live transcription; raw capture continues"
+    )
+
+    transcriptionCleanupTasks[sessionID]?.cancel()
+    transcriptionCleanupTasks[sessionID] = Task { @MainActor [weak self] in
+      await stalledIngestionTask?.value
+      _ = try? await stalledPreparationTask?.value
+      await stalledTranscriber?.cleanup()
+      self?.transcriptionCleanupTasks.removeValue(forKey: sessionID)
+    }
   }
 
   private func schedulePersist(_ session: MeetingSession) {

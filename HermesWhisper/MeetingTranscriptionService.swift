@@ -2,13 +2,147 @@ import Foundation
 import AVFoundation
 import FluidAudio
 
+private actor MeetingSingleStreamIngress {
+  private static let maximumPendingChunks = 6_000
+
+  private var mixer = MeetingSingleStreamMixer()
+  private var provider: SonioxStreamingProvider?
+  private var pendingChunks: [MeetingAudioChunk] = []
+  private var preparationFailure: String?
+  private var streamFailure: String?
+  private var recoveryRequired = false
+  private var isFinishing = false
+  private var latestInputEndTime: TimeInterval = 0
+  private var latestOutputEndTime: TimeInterval = 0
+  private var lastMetricsLogTime = Date()
+
+  func install(provider: SonioxStreamingProvider) {
+    guard !isFinishing else { return }
+    self.provider = provider
+    let queued = pendingChunks.sorted { lhs, rhs in
+      if lhs.startTime != rhs.startTime { return lhs.startTime < rhs.startTime }
+      return lhs.source.rawValue < rhs.source.rawValue
+    }
+    pendingChunks.removeAll(keepingCapacity: false)
+    for chunk in queued {
+      process(chunk)
+    }
+  }
+
+  func markPreparationFailure(_ message: String) {
+    preparationFailure = message
+    recoveryRequired = true
+    pendingChunks.removeAll()
+  }
+
+  func markStreamFailure(_ message: String) {
+    streamFailure = message
+    recoveryRequired = true
+  }
+
+  func ingest(_ chunk: MeetingAudioChunk) throws {
+    guard !isFinishing, streamFailure == nil else { return }
+    if let preparationFailure {
+      throw ProviderError.networkError(preparationFailure)
+    }
+    guard provider != nil else {
+      if pendingChunks.count >= Self.maximumPendingChunks {
+        recoveryRequired = true
+        pendingChunks.removeFirst(min(500, pendingChunks.count))
+        pendingChunks.append(chunk)
+        throw ProviderError.networkError(
+          "Transcription startup fell behind; earliest queued audio will require recovery from CAF."
+        )
+      }
+      pendingChunks.append(chunk)
+      return
+    }
+    process(chunk)
+  }
+
+  func finish() {
+    isFinishing = true
+    guard streamFailure == nil, let provider else { return }
+    for chunk in mixer.finish() {
+      provider.enqueuePCM16(Self.pcm16Data(samples: chunk.samples))
+      latestOutputEndTime = max(
+        latestOutputEndTime,
+        chunk.startTime + chunk.duration
+      )
+    }
+  }
+
+  func needsRecovery() -> Bool {
+    recoveryRequired
+  }
+
+  func reset() {
+    mixer = MeetingSingleStreamMixer()
+    provider = nil
+    pendingChunks.removeAll()
+    preparationFailure = nil
+    streamFailure = nil
+    recoveryRequired = false
+    isFinishing = false
+    latestInputEndTime = 0
+    latestOutputEndTime = 0
+    lastMetricsLogTime = Date()
+  }
+
+  private func process(_ chunk: MeetingAudioChunk) {
+    guard let provider else { return }
+    latestInputEndTime = max(
+      latestInputEndTime,
+      chunk.startTime + chunk.duration
+    )
+    let hadDiscardedLateAudio = mixer.hasDiscardedLateAudio
+    let mixedChunks = mixer.ingest(chunk)
+    if !hadDiscardedLateAudio, mixer.hasDiscardedLateAudio {
+      recoveryRequired = true
+      AppLog.dictation.error(
+        "MeetingTranscription: mixed source arrived after its timeline was emitted; raw recovery required"
+      )
+    }
+    for mixedChunk in mixedChunks {
+      provider.enqueuePCM16(Self.pcm16Data(samples: mixedChunk.samples))
+      latestOutputEndTime = max(
+        latestOutputEndTime,
+        mixedChunk.startTime + mixedChunk.duration
+      )
+    }
+    logMetricsIfNeeded()
+  }
+
+  private func logMetricsIfNeeded() {
+    let now = Date()
+    guard now.timeIntervalSince(lastMetricsLogTime) >= 10 else { return }
+    lastMetricsLogTime = now
+    let input = String(format: "%.1f", latestInputEndTime)
+    let output = String(format: "%.1f", latestOutputEndTime)
+    let lag = String(format: "%.1f", max(0, latestInputEndTime - latestOutputEndTime))
+    AppLog.dictation.log(
+      "MeetingIngress: input=\(input, privacy: .public)s output=\(output, privacy: .public)s lag=\(lag, privacy: .public)s"
+    )
+  }
+
+  private static func pcm16Data(samples: [Float]) -> Data {
+    let values = samples.map { sample -> Int16 in
+      let clamped = max(-1, min(1, sample))
+      let scale: Float = clamped < 0 ? 32_768 : 32_767
+      return Int16((clamped * scale).rounded()).littleEndian
+    }
+    return values.withUnsafeBufferPointer { Data(buffer: $0) }
+  }
+}
+
 actor MeetingTranscriptionService {
   typealias TokenHandler = @Sendable ([MeetingTranscriptToken]) async -> Void
   typealias PreviewHandler = @Sendable (MeetingAudioSource, String) async -> Void
 
   private static let maximumPendingChunks = 6_000
 
-  private let engine: MeetingTranscriptionEngine
+  nonisolated private let engine: MeetingTranscriptionEngine
+  nonisolated private let singleStreamIngress = MeetingSingleStreamIngress()
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
   private var systemManager: StreamingUnifiedAsrManager?
@@ -41,32 +175,46 @@ actor MeetingTranscriptionService {
       case .parakeet:
         try await prepareParakeet()
       case .soniox:
-        try await prepareSoniox()
+        try await prepareSingleStreamSoniox()
+      case .sonioxSeparate:
+        try await prepareSeparateSoniox()
       }
       isReady = true
     } catch {
       preparationFailure = error.localizedDescription
-      recoverySources.formUnion(MeetingAudioSource.allCases)
-      fullRecoverySources.formUnion(MeetingAudioSource.allCases)
+      if engine == .soniox {
+        await singleStreamIngress.markPreparationFailure(error.localizedDescription)
+      }
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
+      fullRecoverySources.formUnion(MeetingAudioSource.captureSources)
       pendingChunks.removeAll()
       throw error
     }
   }
 
-  func ingest(_ chunk: MeetingAudioChunk) async throws {
+  nonisolated func ingest(_ chunk: MeetingAudioChunk) async throws {
+    if engine == .soniox {
+      try await singleStreamIngress.ingest(chunk)
+      return
+    }
+    try await ingestSourceSpecific(chunk)
+  }
+
+  private func ingestSourceSpecific(_ chunk: MeetingAudioChunk) async throws {
     guard !isFinishing else { return }
     if let preparationFailure {
       throw ProviderError.networkError(preparationFailure)
     }
-    if let sonioxFailure = sonioxFailures[chunk.source] {
+    let failureSource: MeetingAudioSource = engine == .soniox ? .mixed : chunk.source
+    if let sonioxFailure = sonioxFailures[failureSource] {
       throw ProviderError.networkError(
-        "\(chunk.source.displayName): \(sonioxFailure)"
+        "\(failureSource.displayName): \(sonioxFailure)"
       )
     }
     guard isReady else {
       if pendingChunks.count >= Self.maximumPendingChunks {
-        recoverySources.formUnion(MeetingAudioSource.allCases)
-        fullRecoverySources.formUnion(MeetingAudioSource.allCases)
+        recoverySources.formUnion(MeetingAudioSource.captureSources)
+        fullRecoverySources.formUnion(MeetingAudioSource.captureSources)
         pendingChunks.removeFirst(min(500, pendingChunks.count))
         pendingChunks.append(chunk)
         throw ProviderError.networkError(
@@ -95,7 +243,9 @@ actor MeetingTranscriptionService {
     case .parakeet:
       try await finishParakeet()
     case .soniox:
-      try await finishSoniox()
+      try await finishSingleStreamSoniox()
+    case .sonioxSeparate:
+      try await finishSeparateSoniox()
     }
   }
 
@@ -105,6 +255,7 @@ actor MeetingTranscriptionService {
     for provider in sonioxProviders.values {
       await provider.abort()
     }
+    await singleStreamIngress.reset()
     systemManager = nil
     microphoneManager = nil
     sonioxProviders.removeAll()
@@ -131,7 +282,25 @@ actor MeetingTranscriptionService {
     AppLog.dictation.log("MeetingTranscription: two Parakeet Unified streams ready")
   }
 
-  private func prepareSoniox() async throws {
+  private func prepareSingleStreamSoniox() async throws {
+    let provider = await makeSonioxProvider(
+      source: .mixed,
+      realtimeOptions: .mixedMeeting
+    )
+    sonioxProviders = [.mixed: provider]
+    do {
+      try await provider.beginRealtime()
+      await singleStreamIngress.install(provider: provider)
+      AppLog.dictation.log("MeetingTranscription: one mixed Soniox V5 stream accepting audio")
+    } catch {
+      await singleStreamIngress.markPreparationFailure(error.localizedDescription)
+      await provider.abort()
+      sonioxProviders.removeAll()
+      throw error
+    }
+  }
+
+  private func prepareSeparateSoniox() async throws {
     let system = await makeSonioxProvider(source: .systemAudio)
     let microphone = await makeSonioxProvider(source: .microphone)
     sonioxProviders = [
@@ -153,7 +322,8 @@ actor MeetingTranscriptionService {
   }
 
   private func makeSonioxProvider(
-    source: MeetingAudioSource
+    source: MeetingAudioSource,
+    realtimeOptions: SonioxStreamingProvider.RealtimeOptions = .meeting
   ) async -> SonioxStreamingProvider {
     let provider = SonioxStreamingProvider(
       apiKeyProvider: {
@@ -174,7 +344,7 @@ actor MeetingTranscriptionService {
       languageProvider: {
         UserDefaults.standard.string(forKey: "transcription.language") ?? "en"
       },
-      realtimeOptions: .meeting
+      realtimeOptions: realtimeOptions
     )
 
     await provider.setInputSampleRate(16_000)
@@ -193,17 +363,30 @@ actor MeetingTranscriptionService {
   private func recordSonioxFailure(
     _ message: String,
     source: MeetingAudioSource
-  ) {
+  ) async {
     sonioxFailures[source] = message
-    recoverySources.insert(source)
+    if source == .mixed {
+      await singleStreamIngress.markStreamFailure(message)
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
+    } else {
+      recoverySources.insert(source)
+    }
   }
 
-  func sourcesNeedingRecovery() -> Set<MeetingAudioSource> {
-    recoverySources
+  func sourcesNeedingRecovery() async -> Set<MeetingAudioSource> {
+    var sources = recoverySources
+    if await singleStreamIngress.needsRecovery() {
+      sources.formUnion(MeetingAudioSource.captureSources)
+    }
+    return sources
   }
 
-  func sourcesNeedingFullRecovery() -> Set<MeetingAudioSource> {
-    fullRecoverySources
+  func sourcesNeedingFullRecovery() async -> Set<MeetingAudioSource> {
+    var sources = fullRecoverySources
+    if await singleStreamIngress.needsRecovery() {
+      sources.formUnion(MeetingAudioSource.captureSources)
+    }
+    return sources
   }
 
   func markRecoveryRequired(
@@ -247,7 +430,23 @@ actor MeetingTranscriptionService {
     }
   }
 
-  private func finishSoniox() async throws {
+  private func finishSingleStreamSoniox() async throws {
+    guard let provider = sonioxProviders[.mixed] else { return }
+    await singleStreamIngress.finish()
+    do {
+      _ = try await provider.endRealtime()
+    } catch {
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
+      fullRecoverySources.formUnion(MeetingAudioSource.captureSources)
+      throw error
+    }
+    if let failure = sonioxFailures[.mixed] {
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
+      throw ProviderError.networkError("Meeting: \(failure)")
+    }
+  }
+
+  private func finishSeparateSoniox() async throws {
     guard let system = sonioxProviders[.systemAudio],
           let microphone = sonioxProviders[.microphone] else { return }
     do {
@@ -255,10 +454,10 @@ actor MeetingTranscriptionService {
       async let microphoneText = microphone.endRealtime()
       _ = try await (systemText, microphoneText)
     } catch {
-      recoverySources.formUnion(MeetingAudioSource.allCases)
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
       throw error
     }
-    let failures = MeetingAudioSource.allCases.compactMap { source in
+    let failures = MeetingAudioSource.captureSources.compactMap { source in
       sonioxFailures[source].map { "\(source.displayName): \($0)" }
     }
     if !failures.isEmpty {
@@ -267,13 +466,18 @@ actor MeetingTranscriptionService {
   }
 
   private func process(_ chunk: MeetingAudioChunk) async throws {
-    if sourceOffsets[chunk.source] == nil {
-      sourceOffsets[chunk.source] = chunk.startTime
-    }
     switch engine {
     case .parakeet:
+      if sourceOffsets[chunk.source] == nil {
+        sourceOffsets[chunk.source] = chunk.startTime
+      }
       try await processParakeet(chunk)
     case .soniox:
+      return
+    case .sonioxSeparate:
+      if sourceOffsets[chunk.source] == nil {
+        sourceOffsets[chunk.source] = chunk.startTime
+      }
       guard sonioxFailures[chunk.source] == nil else { return }
       guard let provider = sonioxProviders[chunk.source] else { return }
       provider.enqueuePCM16(Self.pcm16Data(samples: chunk.samples))
@@ -299,6 +503,8 @@ actor MeetingTranscriptionService {
         await microphoneManager.consumeTokenTimings(),
         source: .microphone
       )
+    case .mixed:
+      return
     }
   }
 
@@ -356,7 +562,8 @@ actor MeetingTranscriptionService {
         source: source,
         startTime: start,
         endTime: end,
-        text: token.text
+        text: token.text,
+        speaker: token.speaker
       )
     }
     sonioxEndTimes[source] = endTime

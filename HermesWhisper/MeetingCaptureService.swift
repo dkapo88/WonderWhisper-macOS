@@ -12,6 +12,80 @@ struct MeetingAudioChunk: Sendable {
   let duration: TimeInterval
 }
 
+final class MeetingAudioChunkFramer {
+  static let sampleRate = 16_000
+  static let frameSampleCount = 1_600
+
+  private let source: MeetingAudioSource
+  private var pendingSamples: [Float] = []
+  private var nextFrameStartTime: TimeInterval?
+
+  init(source: MeetingAudioSource) {
+    self.source = source
+  }
+
+  func append(
+    samples: [Float],
+    startTime: TimeInterval
+  ) -> [MeetingAudioChunk] {
+    guard !samples.isEmpty else { return [] }
+    if nextFrameStartTime == nil {
+      nextFrameStartTime = max(0, startTime)
+    } else if pendingSamples.isEmpty,
+              startTime.isFinite,
+              startTime > (nextFrameStartTime ?? startTime) + 0.03 {
+      // A microphone/output route change may pause a ScreenCaptureKit source while
+      // its presentation clock continues. Preserve that gap instead of assigning
+      // resumed audio to a timeline the mixer has already emitted.
+      nextFrameStartTime = startTime
+    }
+    pendingSamples.append(contentsOf: samples)
+    return drain(includePartialFrame: false)
+  }
+
+  func finish() -> [MeetingAudioChunk] {
+    let chunks = drain(includePartialFrame: true)
+    reset()
+    return chunks
+  }
+
+  func reset() {
+    pendingSamples.removeAll(keepingCapacity: true)
+    nextFrameStartTime = nil
+  }
+
+  private func drain(includePartialFrame: Bool) -> [MeetingAudioChunk] {
+    var result: [MeetingAudioChunk] = []
+    var consumedSampleCount = 0
+    while pendingSamples.count - consumedSampleCount >= Self.frameSampleCount
+      || (includePartialFrame && pendingSamples.count > consumedSampleCount) {
+      let available = pendingSamples.count - consumedSampleCount
+      let sampleCount = min(Self.frameSampleCount, available)
+      guard sampleCount > 0, let startTime = nextFrameStartTime else { break }
+      let endIndex = consumedSampleCount + sampleCount
+      let frame = Array(pendingSamples[consumedSampleCount..<endIndex])
+      let duration = Double(sampleCount) / Double(Self.sampleRate)
+      result.append(
+        MeetingAudioChunk(
+          source: source,
+          samples: frame,
+          startTime: startTime,
+          duration: duration
+        )
+      )
+      consumedSampleCount = endIndex
+      nextFrameStartTime = startTime + duration
+    }
+
+    if consumedSampleCount == pendingSamples.count {
+      pendingSamples.removeAll(keepingCapacity: true)
+    } else if consumedSampleCount > 0 {
+      pendingSamples = Array(pendingSamples.dropFirst(consumedSampleCount))
+    }
+    return result
+  }
+}
+
 enum MeetingAudioMeter {
   static func level(from samples: [Float]) -> Float {
     guard !samples.isEmpty else { return 0 }
@@ -59,6 +133,9 @@ final class MeetingCaptureService: NSObject {
   )
   private let systemConverter = AudioConverter()
   private let microphoneConverter = AudioConverter()
+  private let systemFramer = MeetingAudioChunkFramer(source: .systemAudio)
+  private let microphoneFramer = MeetingAudioChunkFramer(source: .microphone)
+  private let systemTap = HWSystemAudioTapCapture()
   private let originLock = NSLock()
   private let fatalErrorLock = NSLock()
 
@@ -66,11 +143,15 @@ final class MeetingCaptureService: NSObject {
   private var systemWriter: MeetingAudioSegmentWriter?
   private var microphoneWriter: MeetingAudioSegmentWriter?
   private var originPTS: TimeInterval?
+  private var systemTapPendingSamples: [Float] = []
+  private var systemTapSampleRate: Double?
+  private var systemTapNextStartTime: TimeInterval?
+  private var isSystemTapCapturing = false
   private var hasReportedFatalError = false
   private var onChunk: ((MeetingAudioChunk) -> Void)?
   private var onError: ((Error) -> Void)?
 
-  var isCapturing: Bool { stream != nil }
+  var isCapturing: Bool { stream != nil || isSystemTapCapturing }
 
   func start(
     directory: URL,
@@ -88,6 +169,7 @@ final class MeetingCaptureService: NSObject {
     }
 
     let filter: SCContentFilter
+    let systemAudioProcessIDs: [NSNumber]
     if let includedApplicationScope {
       let includedApplications = content.applications.filter {
         includedApplicationScope.matches(
@@ -103,6 +185,7 @@ final class MeetingCaptureService: NSObject {
         including: includedApplications,
         exceptingWindows: []
       )
+      systemAudioProcessIDs = includedApplications.map { NSNumber(value: $0.processID) }
     } else {
       let ownBundleID = Bundle.main.bundleIdentifier
       let excludedApplications = content.applications.filter {
@@ -113,16 +196,14 @@ final class MeetingCaptureService: NSObject {
         excludingApplications: excludedApplications,
         exceptingWindows: []
       )
+      systemAudioProcessIDs = []
     }
     let configuration = SCStreamConfiguration()
     configuration.width = 2
     configuration.height = 2
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
     configuration.queueDepth = 1
-    configuration.capturesAudio = true
-    configuration.sampleRate = 16_000
-    configuration.channelCount = 1
-    configuration.excludesCurrentProcessAudio = true
+    configuration.capturesAudio = false
     configuration.captureMicrophone = true
     if case .deviceUID(let uid) = AudioInputSelection.load() {
       configuration.microphoneCaptureDeviceID = uid
@@ -131,6 +212,11 @@ final class MeetingCaptureService: NSObject {
     self.onChunk = onChunk
     self.onError = onError
     self.originPTS = nil
+    systemTapPendingSamples.removeAll(keepingCapacity: true)
+    systemTapSampleRate = nil
+    systemTapNextStartTime = nil
+    systemFramer.reset()
+    microphoneFramer.reset()
     resetFatalErrorState()
     self.systemWriter = MeetingAudioSegmentWriter(
       directory: directory,
@@ -141,18 +227,28 @@ final class MeetingCaptureService: NSObject {
       source: .microphone
     )
 
-    let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-    try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: systemQueue)
-    try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: microphoneQueue)
-    self.stream = stream
+    systemTap.samplesHandler = { [weak self] data, sampleRate, hostTime in
+      self?.handleSystemTapData(data, sampleRate: sampleRate, hostTime: hostTime)
+    }
 
     do {
+      try systemTap.start(withProcessIDs: systemAudioProcessIDs)
+      isSystemTapCapturing = true
+      let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+      try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: microphoneQueue)
+      self.stream = stream
       try await stream.startCapture()
-      AppLog.dictation.log("MeetingCapture: system audio and microphone capture started")
+      AppLog.dictation.log(
+        "MeetingCapture: Core Audio system tap and microphone capture started"
+      )
     } catch {
-      try? stream.removeStreamOutput(self, type: .audio)
-      try? stream.removeStreamOutput(self, type: .microphone)
+      if let stream {
+        try? stream.removeStreamOutput(self, type: .microphone)
+      }
       self.stream = nil
+      systemTap.stop()
+      systemTap.samplesHandler = nil
+      isSystemTapCapturing = false
       self.systemWriter = nil
       self.microphoneWriter = nil
       throw error
@@ -176,14 +272,26 @@ final class MeetingCaptureService: NSObject {
   }
 
   func stop() async -> [String] {
-    guard let stream else { return [] }
+    let stream = self.stream
+    guard stream != nil || isSystemTapCapturing else { return [] }
     self.stream = nil
-    try? await stream.stopCapture()
-    try? stream.removeStreamOutput(self, type: .audio)
-    try? stream.removeStreamOutput(self, type: .microphone)
+    if let stream {
+      try? await stream.stopCapture()
+      try? stream.removeStreamOutput(self, type: .microphone)
+    }
+    systemTap.stop()
+    systemTap.samplesHandler = nil
+    isSystemTapCapturing = false
 
-    systemQueue.sync { systemWriter?.finish() }
-    microphoneQueue.sync { microphoneWriter?.finish() }
+    systemQueue.sync {
+      flushSystemTapSamples()
+      systemFramer.finish().forEach { onChunk?($0) }
+      systemWriter?.finish()
+    }
+    microphoneQueue.sync {
+      microphoneFramer.finish().forEach { onChunk?($0) }
+      microphoneWriter?.finish()
+    }
     let files = (systemWriter?.filenames ?? []) + (microphoneWriter?.filenames ?? [])
     systemWriter = nil
     microphoneWriter = nil
@@ -195,12 +303,88 @@ final class MeetingCaptureService: NSObject {
 
   private func relativeTime(for sampleBuffer: CMSampleBuffer) -> TimeInterval {
     let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+    return relativeTime(forAbsoluteTime: pts)
+  }
+
+  private func relativeTime(forAbsoluteTime absoluteTime: TimeInterval) -> TimeInterval {
     originLock.lock()
     defer { originLock.unlock() }
-    if originPTS == nil || !originPTS!.isFinite {
-      originPTS = pts
+    if originPTS == nil || !originPTS!.isFinite || !absoluteTime.isFinite {
+      originPTS = absoluteTime
     }
-    return max(0, pts - (originPTS ?? pts))
+    return max(0, absoluteTime - (originPTS ?? absoluteTime))
+  }
+
+  private func handleSystemTapData(
+    _ data: Data,
+    sampleRate: Double,
+    hostTime: TimeInterval
+  ) {
+    guard sampleRate > 0, !data.isEmpty else { return }
+    let samples = data.withUnsafeBytes { bytes -> [Float] in
+      Array(bytes.bindMemory(to: Float.self))
+    }
+    guard !samples.isEmpty else { return }
+
+    if let currentRate = systemTapSampleRate,
+       abs(currentRate - sampleRate) > 0.5 {
+      flushSystemTapSamples()
+    }
+    if systemTapSampleRate == nil {
+      systemTapSampleRate = sampleRate
+    }
+    if systemTapNextStartTime == nil {
+      systemTapNextStartTime = relativeTime(forAbsoluteTime: hostTime)
+    }
+    systemTapPendingSamples.append(contentsOf: samples)
+    drainSystemTapSamples(includePartialFrame: false)
+  }
+
+  private func flushSystemTapSamples() {
+    drainSystemTapSamples(includePartialFrame: true)
+    systemTapPendingSamples.removeAll(keepingCapacity: true)
+    systemTapSampleRate = nil
+    systemTapNextStartTime = nil
+  }
+
+  private func drainSystemTapSamples(includePartialFrame: Bool) {
+    guard let sampleRate = systemTapSampleRate,
+          let frameStartTime = systemTapNextStartTime else { return }
+    let nativeFrameCount = max(1, Int((sampleRate * 0.1).rounded()))
+    var consumedSampleCount = 0
+    var nextStartTime = frameStartTime
+
+    while systemTapPendingSamples.count - consumedSampleCount >= nativeFrameCount
+      || (includePartialFrame && systemTapPendingSamples.count > consumedSampleCount) {
+      let available = systemTapPendingSamples.count - consumedSampleCount
+      let sampleCount = min(nativeFrameCount, available)
+      let endIndex = consumedSampleCount + sampleCount
+      let nativeSamples = Array(systemTapPendingSamples[consumedSampleCount..<endIndex])
+      do {
+        let samples = try systemConverter.resample(nativeSamples, from: sampleRate)
+        if !samples.isEmpty {
+          try systemWriter?.append(samples: samples)
+          systemFramer.append(samples: samples, startTime: nextStartTime).forEach {
+            onChunk?($0)
+          }
+        }
+      } catch {
+        AppLog.dictation.error(
+          "MeetingCapture: system tap sample failed: \(error.localizedDescription)"
+        )
+        reportFatalError(error)
+        return
+      }
+      consumedSampleCount = endIndex
+      nextStartTime += Double(sampleCount) / sampleRate
+    }
+
+    if consumedSampleCount == systemTapPendingSamples.count {
+      systemTapPendingSamples.removeAll(keepingCapacity: true)
+    } else if consumedSampleCount > 0 {
+      systemTapPendingSamples = Array(systemTapPendingSamples.dropFirst(consumedSampleCount))
+    }
+    systemTapNextStartTime = nextStartTime
   }
 
   private func handle(_ sampleBuffer: CMSampleBuffer, source: MeetingAudioSource) {
@@ -213,14 +397,8 @@ final class MeetingCaptureService: NSObject {
       let writer = source == .microphone ? microphoneWriter : systemWriter
       try writer?.append(samples: samples)
       let startTime = relativeTime(for: sampleBuffer)
-      onChunk?(
-        MeetingAudioChunk(
-          source: source,
-          samples: samples,
-          startTime: startTime,
-          duration: Double(samples.count) / 16_000
-        )
-      )
+      let framer = source == .microphone ? microphoneFramer : systemFramer
+      framer.append(samples: samples, startTime: startTime).forEach { onChunk?($0) }
     } catch {
       AppLog.dictation.error(
         "MeetingCapture: \(source.rawValue) sample failed: \(error.localizedDescription)"
@@ -253,8 +431,6 @@ extension MeetingCaptureService: SCStreamOutput {
     of outputType: SCStreamOutputType
   ) {
     switch outputType {
-    case .audio:
-      handle(sampleBuffer, source: .systemAudio)
     case .microphone:
       handle(sampleBuffer, source: .microphone)
     default:
