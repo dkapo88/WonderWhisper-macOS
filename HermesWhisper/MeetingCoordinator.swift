@@ -17,6 +17,52 @@ enum MeetingPreferences {
   }
 }
 
+enum MeetingObsidianPreferences {
+  static let vaultRootKey = "meeting.obsidian.vaultRoot"
+  static let exportFolderKey = "meeting.obsidian.exportFolder"
+  static let legacyKeys = [
+    "meeting.obsidian.folder",
+    "meeting.vaultRoot",
+    "meetings.obsidian.vaultPath"
+  ]
+
+  static func vaultRootPath(defaults: UserDefaults = .standard) -> String? {
+    migrateIfNeeded(defaults: defaults)
+    return defaults.string(forKey: vaultRootKey)?.nonEmpty
+  }
+
+  static func exportFolderPath(defaults: UserDefaults = .standard) -> String? {
+    migrateIfNeeded(defaults: defaults)
+    return defaults.string(forKey: exportFolderKey)?.nonEmpty
+  }
+
+  static func contains(_ folder: URL, in vaultRoot: URL) -> Bool {
+    let rootPath = vaultRoot.standardizedFileURL.resolvingSymlinksInPath().path
+    let folderPath = folder.standardizedFileURL.resolvingSymlinksInPath().path
+    return folderPath == rootPath || folderPath.hasPrefix(rootPath + "/")
+  }
+
+  private static func migrateIfNeeded(defaults: UserDefaults) {
+    let legacyPath = legacyKeys.compactMap {
+      defaults.string(forKey: $0)?.nonEmpty
+    }.first
+
+    if defaults.string(forKey: vaultRootKey)?.nonEmpty == nil,
+       let legacyPath {
+      let selectedURL = URL(fileURLWithPath: legacyPath, isDirectory: true)
+      let root = MeetingVaultIndex.vaultRoot(containing: selectedURL)
+      defaults.set(root.path, forKey: vaultRootKey)
+    }
+
+    if defaults.string(forKey: exportFolderKey)?.nonEmpty == nil,
+       let legacyPath {
+      defaults.set(legacyPath, forKey: exportFolderKey)
+    }
+
+    legacyKeys.forEach { defaults.removeObject(forKey: $0) }
+  }
+}
+
 enum MeetingDetectionPolicy {
   static let pollInterval: TimeInterval = 1
   static let requiredConsecutiveMatches = 2
@@ -66,9 +112,10 @@ final class MeetingCoordinator: ObservableObject {
   @Published private(set) var contextError: String?
   @Published private(set) var isContextSearching = false
   @Published private(set) var liveTranscriptPreviews: [MeetingAudioSource: String] = [:]
+  @Published private(set) var liveAudioLevels: [MeetingAudioSource: Float] = [:]
   @Published private(set) var triggerRules: [MeetingTriggerRule] = MeetingTriggerRule.load()
   @Published private(set) var liveMicrophoneApplications: [MeetingMicrophoneApplication] = []
-  @Published private(set) var overlayHiddenSessionID: UUID?
+  @Published private(set) var overlayMinimizedSessionID: UUID?
 
   @Published var liveObsidianContextEnabled: Bool = {
     UserDefaults.standard.bool(forKey: "meeting.context.enabled")
@@ -77,7 +124,7 @@ final class MeetingCoordinator: ObservableObject {
       UserDefaults.standard.set(liveObsidianContextEnabled, forKey: "meeting.context.enabled")
       if liveObsidianContextEnabled {
         contextError = nil
-        contextStatus = obsidianFolderPath == nil
+        contextStatus = obsidianVaultPath == nil
           ? "Choose an Obsidian vault in Meetings."
           : "Listening for useful topics…"
         refreshVaultIndexIfNeeded()
@@ -104,7 +151,7 @@ final class MeetingCoordinator: ObservableObject {
     didSet {
       UserDefaults.standard.set(meetingOverlayEnabled, forKey: "meeting.overlay.enabled")
       if meetingOverlayEnabled {
-        overlayHiddenSessionID = nil
+        overlayMinimizedSessionID = nil
       }
     }
   }
@@ -166,21 +213,17 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  @Published private(set) var obsidianFolderPath: String? = {
-    let defaults = UserDefaults.standard
-    if let current = defaults.string(forKey: "meeting.obsidian.folder"),
-       !current.isEmpty {
-      return current
-    }
-    for legacyKey in ["meeting.vaultRoot", "meetings.obsidian.vaultPath"] {
-      if let legacy = defaults.string(forKey: legacyKey), !legacy.isEmpty {
-        defaults.set(legacy, forKey: "meeting.obsidian.folder")
-        defaults.removeObject(forKey: legacyKey)
-        return legacy
-      }
-    }
-    return nil
+  @Published private(set) var obsidianVaultPath: String? = {
+    MeetingObsidianPreferences.vaultRootPath()
   }()
+
+  @Published private(set) var obsidianExportFolderPath: String? = {
+    MeetingObsidianPreferences.exportFolderPath()
+  }()
+
+  var effectiveObsidianExportFolderPath: String? {
+    obsidianExportFolderPath ?? obsidianVaultPath
+  }
 
   @Published var transcriptionEngine: MeetingTranscriptionEngine = {
     MeetingTranscriptionEngine.selected()
@@ -228,6 +271,8 @@ final class MeetingCoordinator: ObservableObject {
   private var seenContextTerms: Set<String> = []
   private var generatedTitleEligibleSessionIDs: Set<UUID> = []
   private var forcedFullRecoverySources: [UUID: Set<MeetingAudioSource>] = [:]
+  private var manualNotesDrafts: [UUID: String] = [:]
+  private var manualNotesRevisions: [UUID: Int] = [:]
 
   var activeSession: MeetingSession? {
     guard let activeSessionID else { return nil }
@@ -295,8 +340,15 @@ final class MeetingCoordinator: ObservableObject {
     )
   }
 
-  func hideMeetingOverlayForCurrentSession() {
-    overlayHiddenSessionID = activeSessionID
+  func minimizeMeetingOverlayForCurrentSession() {
+    guard let activeSessionID else { return }
+    overlayMinimizedSessionID = activeSessionID
+    commitManualNotes(for: activeSessionID)
+  }
+
+  func restoreMeetingOverlayForCurrentSession() {
+    guard overlayMinimizedSessionID == activeSessionID else { return }
+    overlayMinimizedSessionID = nil
   }
 
   func stopMeeting(suppressCurrentAutomaticCall: Bool = true) async {
@@ -334,6 +386,9 @@ final class MeetingCoordinator: ObservableObject {
     preparationMonitorTask = nil
 
     session = self.session(withID: activeSessionID) ?? session
+    if let updatedSession = await flushManualNotes(for: activeSessionID) {
+      session = updatedSession
+    }
     session.audioFiles = audioFiles
     session.endedAt = Date()
     session.status = .processing
@@ -345,6 +400,8 @@ final class MeetingCoordinator: ObservableObject {
     candidateMissingSince = nil
     seenContextTerms.removeAll()
     liveTranscriptPreviews.removeAll()
+    liveAudioLevels.removeAll()
+    overlayMinimizedSessionID = nil
     await persist(session)
     isStopping = false
     statusMessage = "Meeting stopped • finishing transcript…"
@@ -355,7 +412,7 @@ final class MeetingCoordinator: ObservableObject {
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .nonEmpty ?? "openai/gpt-5.4-nano"
     let shouldAutoExport = automaticallyExportToObsidian
-    let exportFolder = obsidianFolderURL
+    let exportFolder = obsidianExportFolderURL
     finalizationTasks[sessionID] = Task { @MainActor [weak self] in
       guard let self else {
         await finalizingTranscriber?.cleanup()
@@ -408,6 +465,8 @@ final class MeetingCoordinator: ObservableObject {
     suppressedFamilyMissingSince = nil
     candidateMissingSince = nil
     liveTranscriptPreviews.removeAll()
+    liveAudioLevels.removeAll()
+    overlayMinimizedSessionID = nil
     seenContextTerms.removeAll()
     dirtySessionIDs.remove(sessionID)
 
@@ -427,6 +486,8 @@ final class MeetingCoordinator: ObservableObject {
       sessions.removeAll { $0.id == sessionID }
       forcedFullRecoverySources.removeValue(forKey: sessionID)
       generatedTitleEligibleSessionIDs.remove(sessionID)
+      manualNotesDrafts.removeValue(forKey: sessionID)
+      manualNotesRevisions.removeValue(forKey: sessionID)
       selectedSessionID = sessions.first?.id
       lastError = nil
       statusMessage = "Automatic meeting discarded"
@@ -526,13 +587,17 @@ final class MeetingCoordinator: ObservableObject {
     let transcript = MeetingTranscriptFormatter.plainText(
       tokens: transcribedSession.transcriptTokens
     )
+    let manualNotes = transcribedSession.manualNotesMarkdown?.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    ) ?? ""
     let titleBeforeGeneration = transcribedSession.title
     var generatedNotes: MeetingGeneratedNotes?
     var notesWarning: String?
-    if !Task.isCancelled, generateNotes, !transcript.isEmpty {
+    if !Task.isCancelled, generateNotes, (!transcript.isEmpty || !manualNotes.isEmpty) {
       do {
         generatedNotes = try await noteGenerator.generate(
           transcript: transcript,
+          manualNotes: manualNotes,
           model: noteModel
         )
       } catch {
@@ -585,40 +650,75 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  func chooseObsidianFolder() {
+  func chooseObsidianVault() {
     let panel = NSOpenPanel()
-    panel.title = "Choose an Obsidian meeting-notes folder"
-    panel.prompt = "Choose Folder"
+    panel.title = "Choose your Obsidian vault"
+    panel.prompt = "Choose Vault"
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = false
-    if let folder = obsidianFolderURL {
-      panel.directoryURL = folder
+    if let vault = obsidianVaultURL {
+      panel.directoryURL = vault
     }
     guard panel.runModal() == .OK, let url = panel.url else { return }
+    let root = MeetingVaultIndex.vaultRoot(containing: url)
     cancelContextTasks()
     contextCards.removeAll()
     seenContextTerms.removeAll()
-    obsidianFolderPath = url.path
-    UserDefaults.standard.set(url.path, forKey: "meeting.obsidian.folder")
+    obsidianVaultPath = root.path
+    UserDefaults.standard.set(root.path, forKey: MeetingObsidianPreferences.vaultRootKey)
+    if let exportFolder = obsidianExportFolderURL,
+       !MeetingObsidianPreferences.contains(exportFolder, in: root) {
+      clearObsidianExportFolder()
+    }
     contextError = nil
-    contextStatus = "Indexing \(MeetingVaultIndex.vaultRoot(containing: url).lastPathComponent)…"
+    contextStatus = "Indexing \(root.lastPathComponent)…"
     refreshVaultIndexIfNeeded()
   }
 
-  func clearObsidianFolder() {
-    obsidianFolderPath = nil
-    for key in [
-      "meeting.obsidian.folder",
-      "meeting.vaultRoot",
-      "meetings.obsidian.vaultPath"
-    ] {
-      UserDefaults.standard.removeObject(forKey: key)
+  func clearObsidianVault() {
+    obsidianVaultPath = nil
+    obsidianExportFolderPath = nil
+    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.vaultRootKey)
+    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
+    MeetingObsidianPreferences.legacyKeys.forEach {
+      UserDefaults.standard.removeObject(forKey: $0)
     }
     cancelContextTasks()
     contextCards.removeAll()
     seenContextTerms.removeAll()
     contextStatus = "Choose an Obsidian vault in Meetings."
+  }
+
+  func chooseObsidianExportFolder() {
+    guard let vault = obsidianVaultURL else {
+      chooseObsidianVault()
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.title = "Choose a meeting-summary folder inside your Obsidian vault"
+    panel.prompt = "Choose Export Folder"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.directoryURL = obsidianExportFolderURL ?? vault
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    guard MeetingObsidianPreferences.contains(url, in: vault) else {
+      lastError = "The meeting export folder must be inside your Obsidian vault."
+      return
+    }
+    let folder = url.standardizedFileURL
+    obsidianExportFolderPath = folder.path
+    UserDefaults.standard.set(
+      folder.path,
+      forKey: MeetingObsidianPreferences.exportFolderKey
+    )
+    lastError = nil
+  }
+
+  func clearObsidianExportFolder() {
+    obsidianExportFolderPath = nil
+    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
   }
 
   func addTriggerApplication(_ application: MeetingMicrophoneApplication) {
@@ -668,9 +768,9 @@ final class MeetingCoordinator: ObservableObject {
       lastError = "Wait for the meeting transcript to finish saving before exporting it."
       return
     }
-    guard let folder = obsidianFolderURL else {
-      chooseObsidianFolder()
-      guard obsidianFolderURL != nil else { return }
+    guard let folder = obsidianExportFolderURL else {
+      chooseObsidianVault()
+      guard obsidianExportFolderURL != nil else { return }
       await exportToObsidian(currentSession)
       return
     }
@@ -728,6 +828,8 @@ final class MeetingCoordinator: ObservableObject {
       sessions.removeAll { $0.id == session.id }
       forcedFullRecoverySources.removeValue(forKey: session.id)
       generatedTitleEligibleSessionIDs.remove(session.id)
+      manualNotesDrafts.removeValue(forKey: session.id)
+      manualNotesRevisions.removeValue(forKey: session.id)
       selectedSessionID = sessions.first?.id
     } catch {
       lastError = "Could not delete meeting: \(error.localizedDescription)"
@@ -743,9 +845,71 @@ final class MeetingCoordinator: ObservableObject {
     schedulePersist(session)
   }
 
-  private var obsidianFolderURL: URL? {
-    guard let obsidianFolderPath, !obsidianFolderPath.isEmpty else { return nil }
-    return URL(fileURLWithPath: obsidianFolderPath, isDirectory: true)
+  func updateManualNotes(_ notes: String, for sessionID: UUID) {
+    guard !isStopping,
+          sessionID == activeSessionID,
+          session(withID: sessionID) != nil else { return }
+    let savedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : notes
+    manualNotesDrafts[sessionID] = savedNotes
+    let revision = (manualNotesRevisions[sessionID] ?? 0) + 1
+    manualNotesRevisions[sessionID] = revision
+    Task { [weak self] in
+      guard let self,
+            self.activeSessionID == sessionID,
+            self.session(withID: sessionID) != nil,
+            self.manualNotesRevisions[sessionID] == revision else { return }
+      do {
+        try await self.store.saveManualNotes(
+          savedNotes.isEmpty ? nil : savedNotes,
+          for: sessionID,
+          revision: revision
+        )
+      } catch {
+        guard self.session(withID: sessionID) != nil else { return }
+        self.lastError = "Manual notes could not be saved: \(error.localizedDescription)"
+      }
+    }
+  }
+
+  func commitManualNotes(for sessionID: UUID) {
+    Task { [weak self] in
+      await self?.flushManualNotes(for: sessionID)
+    }
+  }
+
+  private func flushManualNotes(for sessionID: UUID) async -> MeetingSession? {
+    guard var session = session(withID: sessionID),
+          let draft = manualNotesDrafts.removeValue(forKey: sessionID) else {
+      return session(withID: sessionID)
+    }
+    session.manualNotesMarkdown = draft.isEmpty ? nil : draft
+    replace(session)
+    let revision = (manualNotesRevisions[sessionID] ?? 0) + 1
+    manualNotesRevisions[sessionID] = revision
+    do {
+      try await store.saveManualNotes(
+        session.manualNotesMarkdown,
+        for: sessionID,
+        revision: revision
+      )
+    } catch {
+      lastError = "Manual notes could not be saved: \(error.localizedDescription)"
+    }
+    if let latestSession = self.session(withID: sessionID) {
+      await persist(latestSession)
+      return latestSession
+    }
+    return session
+  }
+
+  private var obsidianVaultURL: URL? {
+    guard let obsidianVaultPath, !obsidianVaultPath.isEmpty else { return nil }
+    return URL(fileURLWithPath: obsidianVaultPath, isDirectory: true)
+  }
+
+  private var obsidianExportFolderURL: URL? {
+    guard let path = effectiveObsidianExportFolderPath, !path.isEmpty else { return nil }
+    return URL(fileURLWithPath: path, isDirectory: true)
   }
 
   private func startMeeting(
@@ -799,6 +963,8 @@ final class MeetingCoordinator: ObservableObject {
     selectedSessionID = session.id
     automaticCandidate = candidate
     liveTranscriptPreviews.removeAll()
+    liveAudioLevels.removeAll()
+    overlayMinimizedSessionID = nil
     await persist(session)
 
     do {
@@ -840,6 +1006,14 @@ final class MeetingCoordinator: ObservableObject {
         directory: directory,
         includedApplicationScope: automaticallyStarted ? candidate?.captureScope : nil,
         onChunk: { [weak self] chunk in
+          let level = MeetingAudioMeter.level(from: chunk.samples)
+          Task { @MainActor [weak self] in
+            self?.receiveAudioLevel(
+              level,
+              source: chunk.source,
+              for: sessionID
+            )
+          }
           if case .dropped = continuation.yield(chunk) {
             Task { @MainActor [weak self] in
               guard let self else { return }
@@ -903,6 +1077,8 @@ final class MeetingCoordinator: ObservableObject {
         suppressedFamilyMissingSince = nil
       }
       liveTranscriptPreviews.removeAll()
+      liveAudioLevels.removeAll()
+      overlayMinimizedSessionID = nil
       SystemAudioController.shared.setMeetingCaptureActive(false)
       isStarting = false
       lastError = "Meeting capture could not start: \(error.localizedDescription)"
@@ -937,9 +1113,18 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
+  private func receiveAudioLevel(
+    _ level: Float,
+    source: MeetingAudioSource,
+    for sessionID: UUID
+  ) {
+    guard activeSessionID == sessionID else { return }
+    liveAudioLevels[source] = min(max(level, 0), 1)
+  }
+
   private func discoverContext(in session: MeetingSession) {
     guard liveObsidianContextEnabled,
-          let folder = obsidianFolderURL,
+          let folder = obsidianVaultURL,
           let sessionID = activeSessionID else { return }
     let recentTokens = Array(session.transcriptTokens.suffix(260))
     let text = MeetingTranscriptFormatter.plainText(tokens: recentTokens)
@@ -992,7 +1177,7 @@ final class MeetingCoordinator: ObservableObject {
       }
     }
     guard liveObsidianContextEnabled,
-          let folder = obsidianFolderURL,
+          let folder = obsidianVaultURL,
           let session = session(withID: sessionID),
           activeSessionID == sessionID else { return }
 
@@ -1243,7 +1428,7 @@ final class MeetingCoordinator: ObservableObject {
       contextStatus = "Live context is off"
       return
     }
-    guard let folder = obsidianFolderURL else {
+    guard let folder = obsidianVaultURL else {
       contextStatus = "Choose an Obsidian vault in Meetings."
       return
     }
@@ -1257,14 +1442,14 @@ final class MeetingCoordinator: ObservableObject {
         let count = try await vaultIndex.refresh(from: folder)
         guard !Task.isCancelled,
               self.liveObsidianContextEnabled,
-              self.obsidianFolderURL == folder else { return }
+              self.obsidianVaultURL == folder else { return }
         self.contextError = nil
         self.isContextSearching = false
         self.contextStatus = "Listening for useful topics across \(count) notes…"
       } catch {
         guard !Task.isCancelled,
               self.liveObsidianContextEnabled,
-              self.obsidianFolderURL == folder else { return }
+              self.obsidianVaultURL == folder else { return }
         self.contextError = error.localizedDescription
         self.isContextSearching = false
         self.contextStatus = "Could not index the Obsidian vault."

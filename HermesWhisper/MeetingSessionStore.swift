@@ -5,6 +5,7 @@ actor MeetingSessionStore {
   private let fileManager: FileManager
   private let encoder: JSONEncoder
   private let decoder: JSONDecoder
+  private var manualNotesRevisions: [UUID: Int] = [:]
 
   init(rootDirectory: URL? = nil, fileManager: FileManager = .default) {
     self.fileManager = fileManager
@@ -42,6 +43,15 @@ actor MeetingSessionStore {
     )
   }
 
+  func saveManualNotes(_ notes: String?, for sessionID: UUID, revision: Int) throws {
+    let directory = rootDirectory.appendingPathComponent(sessionID.uuidString, isDirectory: true)
+    guard fileManager.fileExists(atPath: directory.path),
+          revision >= (manualNotesRevisions[sessionID] ?? 0) else { return }
+    manualNotesRevisions[sessionID] = revision
+    let file = directory.appendingPathComponent("manual-notes.md")
+    try Data((notes ?? "").utf8).write(to: file, options: .atomic)
+  }
+
   func loadAll() -> [MeetingSession] {
     guard let directories = try? fileManager.contentsOfDirectory(
       at: rootDirectory,
@@ -55,6 +65,12 @@ actor MeetingSessionStore {
       guard let data = try? Data(contentsOf: manifest),
             var session = try? decoder.decode(MeetingSession.self, from: data) else {
         continue
+      }
+      let manualNotesFile = directory.appendingPathComponent("manual-notes.md")
+      if let notesData = try? Data(contentsOf: manualNotesFile),
+         let manualNotes = String(data: notesData, encoding: .utf8) {
+        session.manualNotesMarkdown = manualNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+          .isEmpty ? nil : manualNotes
       }
       let recoveredAudioFiles = (try? fileManager.contentsOfDirectory(
         at: directory,
@@ -85,5 +101,6 @@ actor MeetingSessionStore {
     if fileManager.fileExists(atPath: directory.path) {
       try fileManager.removeItem(at: directory)
     }
+    manualNotesRevisions.removeValue(forKey: session.id)
   }
 }

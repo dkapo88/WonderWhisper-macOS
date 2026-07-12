@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MeetingView: View {
   @ObservedObject var coordinator: MeetingCoordinator
+  let favoriteModels: [FavoriteOpenRouterModel]
   @State private var manualTitle = ""
   @State private var sessionPendingDeletion: MeetingSession?
   @State private var showingTriggerApps = false
@@ -53,12 +54,34 @@ struct MeetingView: View {
 
       Divider()
 
-      DisclosureGroup("Meeting settings", isExpanded: $settingsExpanded) {
-        ScrollView {
-          settings
-            .padding(.top, 8)
+      VStack(spacing: 0) {
+        Button {
+          withAnimation(.easeOut(duration: 0.18)) {
+            settingsExpanded.toggle()
+          }
+        } label: {
+          HStack(spacing: 6) {
+            Text("Meeting settings")
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.secondary)
+              .rotationEffect(.degrees(settingsExpanded ? 90 : 0))
+          }
+          .frame(maxWidth: .infinity)
+          .contentShape(Rectangle())
         }
-        .frame(maxHeight: 280)
+        .buttonStyle(.plain)
+        .accessibilityValue(settingsExpanded ? "Expanded" : "Collapsed")
+
+        if settingsExpanded {
+          ScrollView {
+            settings
+              .padding(.top, 8)
+          }
+          .frame(maxHeight: 280)
+          .transition(.opacity)
+        }
       }
       .font(.callout)
       .padding(14)
@@ -175,39 +198,44 @@ struct MeetingView: View {
       .fixedSize(horizontal: false, vertical: true)
 
       if coordinator.generateMeetingNotes {
-        CommittedModelField("Final notes model", value: $coordinator.noteModel)
-      }
-
-      if coordinator.liveObsidianContextEnabled {
-        CommittedModelField(
-          "Fast live-context model",
-          value: $coordinator.contextModel
+        MeetingModelPicker(
+          title: "Final summary model",
+          selection: $coordinator.noteModel,
+          favoriteModels: favoriteModels
         )
       }
 
-      HStack(spacing: 8) {
-        Button("Choose Obsidian folder") {
-          coordinator.chooseObsidianFolder()
-        }
-        .controlSize(.small)
-
-        if coordinator.obsidianFolderPath != nil {
-          Button {
-            coordinator.clearObsidianFolder()
-          } label: {
-            Image(systemName: "xmark.circle.fill")
-          }
-          .buttonStyle(.plain)
-          .foregroundStyle(.secondary)
-          .help("Clear Obsidian folder")
-        }
+      if coordinator.liveObsidianContextEnabled {
+        MeetingModelPicker(
+          title: "Live context model",
+          selection: $coordinator.contextModel,
+          favoriteModels: favoriteModels
+        )
       }
 
-      Text(coordinator.obsidianFolderPath ?? "No Obsidian folder selected")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(2)
-        .truncationMode(.middle)
+      MeetingFolderSetting(
+        title: "Obsidian vault",
+        path: coordinator.obsidianVaultPath,
+        placeholder: "No vault selected",
+        canChoose: true,
+        showsClear: coordinator.obsidianVaultPath != nil,
+        clearHelp: "Clear Obsidian vault and export folder",
+        onChoose: coordinator.chooseObsidianVault,
+        onClear: coordinator.clearObsidianVault
+      )
+
+      MeetingFolderSetting(
+        title: "Summary export folder",
+        path: coordinator.effectiveObsidianExportFolderPath,
+        placeholder: coordinator.obsidianVaultPath == nil
+          ? "Choose a vault first"
+          : "Uses the vault root",
+        canChoose: coordinator.obsidianVaultPath != nil,
+        showsClear: coordinator.obsidianExportFolderPath != nil,
+        clearHelp: "Use the vault root for exports",
+        onChoose: coordinator.chooseObsidianExportFolder,
+        onClear: coordinator.clearObsidianExportFolder
+      )
     }
   }
 
@@ -356,44 +384,84 @@ private struct MeetingRow: View {
   }
 }
 
-private struct CommittedModelField: View {
+private struct MeetingModelPicker: View {
   let title: String
-  @Binding var value: String
-  @State private var draft: String
-  @FocusState private var isFocused: Bool
-
-  init(_ title: String, value: Binding<String>) {
-    self.title = title
-    self._value = value
-    self._draft = State(initialValue: value.wrappedValue)
-  }
+  @Binding var selection: String
+  let favoriteModels: [FavoriteOpenRouterModel]
 
   var body: some View {
-    TextField(title, text: $draft)
-      .textFieldStyle(.roundedBorder)
-      .font(.caption)
-      .focused($isFocused)
-      .onSubmit(commit)
-      .onChange(of: isFocused) { wasFocused, focused in
-        if wasFocused && !focused {
-          commit()
+    VStack(alignment: .leading, spacing: 3) {
+      Text(title)
+        .font(.caption.weight(.medium))
+
+      Picker(title, selection: $selection) {
+        if !selectionIsFavorite {
+          Section("Current") {
+            Text(selection).tag(selection)
+          }
+        }
+
+        Section("Favorite models") {
+          ForEach(favoriteModels) { model in
+            Text(model.name).tag(model.id)
+          }
         }
       }
-      .onChange(of: value) { _, updatedValue in
-        if !isFocused {
-          draft = updatedValue
-        }
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      if favoriteModels.isEmpty {
+        Text("Add favorite models in Settings.")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
       }
+    }
   }
 
-  private func commit() {
-    let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else {
-      draft = value
-      return
+  private var selectionIsFavorite: Bool {
+    favoriteModels.contains {
+      $0.id.caseInsensitiveCompare(selection) == .orderedSame
     }
-    draft = trimmed
-    value = trimmed
+  }
+}
+
+private struct MeetingFolderSetting: View {
+  let title: String
+  let path: String?
+  let placeholder: String
+  let canChoose: Bool
+  let showsClear: Bool
+  let clearHelp: String
+  let onChoose: () -> Void
+  let onClear: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(title)
+        .font(.caption.weight(.medium))
+
+      HStack(spacing: 8) {
+        Button("Choose…", action: onChoose)
+          .controlSize(.small)
+          .disabled(!canChoose)
+
+        if showsClear {
+          Button(action: onClear) {
+            Image(systemName: "xmark.circle.fill")
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(.secondary)
+          .help(clearHelp)
+        }
+      }
+
+      Text(path ?? placeholder)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+        .truncationMode(.middle)
+    }
   }
 }
 
@@ -420,9 +488,20 @@ private struct MeetingDetailView: View {
       ScrollViewReader { proxy in
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 18) {
+            if let manualNotes = session.manualNotesMarkdown,
+               !manualNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+              VStack(alignment: .leading, spacing: 8) {
+                Label("Manual notes", systemImage: "square.and.pencil")
+                  .font(.headline)
+                HermesMarkdownView(text: manualNotes)
+              }
+              .padding(16)
+              .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            }
+
             if let notes = session.notesMarkdown, !notes.isEmpty {
               VStack(alignment: .leading, spacing: 8) {
-                Label("Meeting notes", systemImage: "doc.text.fill")
+                Label("Generated summary", systemImage: "doc.text.fill")
                   .font(.headline)
                 HermesMarkdownView(text: notes)
               }

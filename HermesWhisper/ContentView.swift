@@ -43,7 +43,10 @@ struct ContentView: View {
                 BeeperIntegrationView(vm: vm)
                     .navigationTitle("Beeper")
             case .meetings:
-                MeetingView(coordinator: vm.meetingCoordinator)
+                MeetingView(
+                    coordinator: vm.meetingCoordinator,
+                    favoriteModels: vm.favoriteOpenRouterModels
+                )
                     .navigationTitle("Meetings")
             case .vocabulary:
                 VocabularyView(vm: vm)

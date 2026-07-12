@@ -29,7 +29,10 @@ The app includes a persistent microphone selection feature accessible from the s
   title and individual audio-signal dropouts before a two-minute confirmed stop. Soniox non-final
   text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
-  retained CAF segments with local Parakeet Unified. Generated notes are cloud opt-in. Optional live
+  retained CAF segments with local Parakeet Unified. The companion includes a durable Manual notes
+  tab backed by an atomically saved local sidecar; those notes remain separate from generated Markdown,
+  appear in history and exports, and join the transcript only when cloud-generated notes are opted in.
+  Generated notes are cloud opt-in. Optional live
   context uses its own fast OpenRouter model and sends a bounded recent transcript window to extract useful
   subjects at a rate-limited cadence, ranks Markdown locally inside the chosen Obsidian vault, and
   sends only bounded matching excerpts back to OpenRouter in one batched brief request.
@@ -63,6 +66,16 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-12: Removed the meeting title from the compact companion toolbar so live timing and recording controls remain legible at the default width.
+- 2026-07-12: Refined the meeting companion toolbar with clearer title hierarchy, compact live timing, and balanced minimize and stop controls.
+- 2026-07-12: Made the minimized meeting bubble independently draggable without restoring, and retained its custom screen position across minimize cycles.
+- 2026-07-12: Removed session-level meeting companion Hide and enlarged the sole Minimize control's hit target.
+- 2026-07-12: Split the minimized meeting bubble into its own panel so restoring reveals the untouched full-size companion frame.
+- 2026-07-12: Added a reversible minimized meeting-companion bubble with live dual-source audio visualization while preserving session-level Hide.
+- 2026-07-12: Split the Obsidian vault root used for live context from the nested meeting-summary export folder.
+- 2026-07-12: Made the full Meeting settings header toggle its expanded state.
+- 2026-07-12: Replaced meeting AI model text fields with clearly labelled pickers sourced from OpenRouter favorites.
+- 2026-07-11: Added a compact durable Manual notes companion tab, history/export display, and final-summary evidence alongside the transcript.
 - 2026-07-11: Ported the alternate meeting HUD's compact translucent presentation and trigger-app UX, added menu-bar controls, automatic-start Keep/Discard, meeting-safe dictation muting, separate context/final-note models, local CAF tail recovery, generated titles, and Markdown/audio conveniences.
 - 2026-07-11: Prevented Meet detector flapping from stopping and restarting live calls, added transient Soniox non-final captions, fixed the end-of-audio keepalive race, and moved transcript finalization behind an immediate meeting stop.
 - 2026-07-11: Reduced automatic meeting confirmation to two one-second observations, replaced the blanket post-meeting cooldown with same-call suppression, and added an opt-in dual-stream Soniox V5 meeting transcription engine while retaining Parakeet as the default.

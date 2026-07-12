@@ -104,6 +104,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var transcriptionEngine: MeetingTranscriptionEngine?
   var status: MeetingStatus
   var transcriptTokens: [MeetingTranscriptToken]
+  var manualNotesMarkdown: String?
   var notesMarkdown: String?
   var audioFiles: [String]
   var exportedMarkdownPath: String?
@@ -118,6 +119,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        transcriptionEngine: MeetingTranscriptionEngine? = nil,
        status: MeetingStatus = .recording,
        transcriptTokens: [MeetingTranscriptToken] = [],
+       manualNotesMarkdown: String? = nil,
        notesMarkdown: String? = nil,
        audioFiles: [String] = [],
        exportedMarkdownPath: String? = nil,
@@ -131,6 +133,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.transcriptionEngine = transcriptionEngine
     self.status = status
     self.transcriptTokens = transcriptTokens
+    self.manualNotesMarkdown = manualNotesMarkdown
     self.notesMarkdown = notesMarkdown
     self.audioFiles = audioFiles
     self.exportedMarkdownPath = exportedMarkdownPath

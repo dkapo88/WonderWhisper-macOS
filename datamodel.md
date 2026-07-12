@@ -212,6 +212,7 @@ erDiagram
         Bool automaticallyStarted
         String transcriptionEngine "optional, parakeet or soniox"
         String status "recording, processing, completed, interrupted, failed"
+        String manualNotesMarkdown "optional, user-authored"
         String notesMarkdown "optional"
         String[] audioFiles
         String exportedMarkdownPath "optional"
@@ -253,9 +254,14 @@ transcript. This is source separation and echo deduplication, not speaker diariz
 multiple remote participants. Soniox non-final tokens are shown only as a replaceable transient
 live tail. They are never persisted or used for context; only final tokens enter the manifest.
 
+Manual notes are atomically saved as a small local sidecar file while the user types, then committed
+to the manifest on focus loss or meeting stop; an empty sidecar records an intentional clear. They
+stay available after the meeting, appear as a distinct `## Manual notes` section in local exports,
+and are never overwritten by generated Markdown.
 Generated Markdown notes use OpenRouter only when the opt-in `meeting.notes.generate` setting is
-enabled. A generated title replaces the initial automatic/default title only if the user did not
-edit it while notes were being produced. Obsidian
+enabled; when enabled, the saved manual notes and transcript are supplied together as meeting
+evidence. A generated title replaces the initial
+automatic/default title only if the user did not edit it while notes were being produced. Obsidian
 exports are ordinary local `.md` files; the chosen export folder may be inside a vault. Live
 context scans Markdown files from the nearest parent containing `.obsidian`. Ticket identifiers
 such as `BC-1425` are detected immediately, tolerate spoken forms such as `B C 1425`, and surface
@@ -503,6 +509,7 @@ erDiagram
 └── Meetings/
     └── <uuid>/
         ├── manifest.json          # MeetingSession and MeetingTranscriptToken[]
+        ├── manual-notes.md        # Atomically saved user-authored notes
         ├── microphone-0001.caf   # One-minute 16 kHz mono segments
         └── system-0001.caf       # One-minute 16 kHz mono segments
 ```
@@ -553,8 +560,10 @@ erDiagram
 | `meeting.autoDetection.triggerRules` | Data | JSON-encoded `MeetingTriggerRule[]` containing bundle prefix, display name, strict Meet/Slack or explicit-microphone mode, and app-scoped capture rule; migrates legacy `meeting.autoDetect.apps` values |
 | `meeting.notes.generate` | Bool | Opt in to sending the complete transcript to OpenRouter for Markdown notes after capture; defaults to false |
 | `meeting.notes.model` | String | OpenRouter model used for final notes and suggested meeting titles; defaults to `openai/gpt-5.4-nano` |
-| `meeting.obsidian.folder` | String | Local folder selected for Obsidian Markdown exports |
-| `meeting.obsidian.autoExport` | Bool | Export completed meetings automatically when an Obsidian folder is configured |
+| `meeting.obsidian.vaultRoot` | String | Obsidian vault root used for local Markdown indexing and live-context links; migrates the root containing the legacy `meeting.obsidian.folder` selection |
+| `meeting.obsidian.exportFolder` | String | Optional meeting-summary export folder inside the configured vault; falls back to the vault root and migrates the legacy `meeting.obsidian.folder` selection |
+| `meeting.obsidian.folder` | String | Legacy combined vault/export folder key, migrated to the separate vault-root and export-folder settings |
+| `meeting.obsidian.autoExport` | Bool | Export completed meetings automatically to the configured export folder, or the vault root when no override is set |
 | `meeting.context.enabled` | Bool | Extract useful live subjects, search and rank the local Obsidian vault, and summarize bounded matching excerpts during a meeting |
 | `meeting.context.model` | String | Fast OpenRouter model used only for live topic extraction and context briefs; defaults to `openai/gpt-5.4-nano` |
 | `meeting.overlay.enabled` | Bool | Show the compact translucent transcript/context companion while recording; defaults to true |
@@ -696,6 +705,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.13 (July 11, 2026)**: Added durable user-authored manual meeting notes in the companion, final-note evidence, meeting history, and Obsidian exports.
 - **v1.12 (July 11, 2026)**: Added Dia helper attribution, fast two-observation starts with dropout-tolerant active-call liveness and same-call suppression, opt-in dual-stream Soniox V5 meeting transcription with transient non-final captions and background finalization, rate-limited subject-aware live Obsidian retrieval with batched briefs and explicit index errors, and configurable Jira or Hapana Linear ticket links.
 - **v1.11 (July 10, 2026)**: Added durable meeting sessions, dual system/microphone audio segments, source-tagged streaming Parakeet Unified tokens, automatic Slack/Google Meet detection, generated notes, Obsidian export, and optional live vault context.
 - **v1.10 (June 1, 2026)**: Made Beeper response monitoring ambient for the configured chat and aligned response-window text replies with immediate focus, Return-to-send, and Shift-Return newline behavior.
@@ -966,6 +976,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.11
-**Last Updated**: June 17, 2026
+**Document Version**: 1.13
+**Last Updated**: July 11, 2026
 **Maintainer**: HermesWhisper Development Team

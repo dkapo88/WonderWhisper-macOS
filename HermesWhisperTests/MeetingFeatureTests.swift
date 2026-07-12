@@ -4,6 +4,74 @@ import Testing
 @testable import HermesWhisper
 
 struct MeetingFeatureTests {
+  @Test func meetingBubbleDistinguishesClicksFromDrags() {
+    #expect(!MeetingBubbleInteractionPolicy.isDrag(deltaX: 2, deltaY: 2))
+    #expect(MeetingBubbleInteractionPolicy.isDrag(deltaX: 5, deltaY: 0))
+  }
+
+  @Test func meetingAudioMeterTracksSilenceAndSignalStrength() {
+    let silence = MeetingAudioMeter.level(from: Array(repeating: 0, count: 1_024))
+    let quiet = MeetingAudioMeter.level(from: Array(repeating: 0.02, count: 1_024))
+    let loud = MeetingAudioMeter.level(from: Array(repeating: 0.4, count: 1_024))
+
+    #expect(silence == 0)
+    #expect(quiet > silence)
+    #expect(loud > quiet)
+    #expect(loud <= 1)
+  }
+
+  @Test func meetingBubbleStaysInsideTheRightScreenEdge() {
+    let visibleFrame = NSRect(x: 0, y: 0, width: 1_000, height: 800)
+    let companionFrame = NSRect(x: 620, y: 300, width: 360, height: 200)
+
+    let origin = MeetingOverlayLayout.bubbleOrigin(
+      in: visibleFrame,
+      near: companionFrame
+    )
+
+    #expect(origin.x == 920)
+    #expect(origin.y == 368)
+  }
+
+  @Test func obsidianPreferencesMigrateCombinedFolderIntoVaultAndExportPaths() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let vault = directory.appendingPathComponent("Dane's Vault", isDirectory: true)
+    let exportFolder = vault.appendingPathComponent("Meetings/Work", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: vault.appendingPathComponent(".obsidian", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: exportFolder,
+      withIntermediateDirectories: true
+    )
+    let suiteName = "MeetingObsidianPreferences-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    defaults.set(exportFolder.path, forKey: "meeting.obsidian.folder")
+
+    #expect(MeetingObsidianPreferences.vaultRootPath(defaults: defaults) == vault.path)
+    #expect(
+      MeetingObsidianPreferences.exportFolderPath(defaults: defaults) == exportFolder.path
+    )
+    #expect(defaults.object(forKey: "meeting.obsidian.folder") == nil)
+  }
+
+  @Test func obsidianExportFolderMustBeInsideVaultRoot() {
+    let vault = URL(fileURLWithPath: "/tmp/Dane's Vault", isDirectory: true)
+
+    #expect(MeetingObsidianPreferences.contains(vault, in: vault))
+    #expect(MeetingObsidianPreferences.contains(
+      vault.appendingPathComponent("Meetings/Work", isDirectory: true),
+      in: vault
+    ))
+    #expect(!MeetingObsidianPreferences.contains(
+      URL(fileURLWithPath: "/tmp/Dane's Vault Backup/Meetings", isDirectory: true),
+      in: vault
+    ))
+  }
+
   @Test func transcriptFormatterMergesAdjacentTokensBySource() {
     let tokens = [
       MeetingTranscriptToken(
@@ -215,7 +283,8 @@ struct MeetingFeatureTests {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = MeetingSessionStore(rootDirectory: directory)
-    let session = MeetingSession(title: "Interrupted", status: .recording)
+    var session = MeetingSession(title: "Interrupted", status: .recording)
+    session.manualNotesMarkdown = "- Follow up with the release owner."
 
     try await store.save(session)
     let sessionDirectory = directory.appendingPathComponent(session.id.uuidString)
@@ -227,11 +296,66 @@ struct MeetingFeatureTests {
     #expect(loaded[0].status == .interrupted)
     #expect(loaded[0].endedAt != nil)
     #expect(loaded[0].audioFiles == ["microphone-0001.caf", "system-0001.caf"])
+    #expect(loaded[0].manualNotesMarkdown == "- Follow up with the release owner.")
+  }
+
+  @Test func legacyMeetingManifestWithoutManualNotesStillDecodes() throws {
+    let id = UUID()
+    let data = Data("""
+    {
+      "id": "\(id.uuidString)",
+      "title": "Legacy meeting",
+      "startedAt": "1970-01-01T00:00:00Z",
+      "automaticallyStarted": false,
+      "status": "completed",
+      "transcriptTokens": [],
+      "audioFiles": []
+    }
+    """.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+
+    let session = try decoder.decode(MeetingSession.self, from: data)
+
+    #expect(session.manualNotesMarkdown == nil)
+  }
+
+  @Test func manualNotesSidecarRestoresLatestTypedNotes() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = MeetingSessionStore(rootDirectory: directory)
+    var session = MeetingSession(title: "Planning", status: .completed)
+    session.manualNotesMarkdown = "- Older manifest note"
+
+    try await store.save(session)
+    try await store.saveManualNotes("- Older typed note", for: session.id, revision: 1)
+    try await store.saveManualNotes("- Latest typed note", for: session.id, revision: 2)
+    try await store.saveManualNotes("- Stale typed note", for: session.id, revision: 1)
+    let loaded = await store.loadAll()
+
+    #expect(loaded.count == 1)
+    #expect(loaded[0].manualNotesMarkdown == "- Latest typed note")
+  }
+
+  @Test func emptyManualNotesSidecarClearsOlderManifestNotes() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = MeetingSessionStore(rootDirectory: directory)
+    var session = MeetingSession(title: "Planning", status: .completed)
+    session.manualNotesMarkdown = "- Old note"
+
+    try await store.save(session)
+    try await store.saveManualNotes(nil, for: session.id, revision: 1)
+    let loaded = await store.loadAll()
+
+    #expect(loaded.count == 1)
+    #expect(loaded[0].manualNotesMarkdown == nil)
   }
 
   @Test func obsidianDocumentContainsNotesAndTranscript() {
     var session = MeetingSession(title: "Planning", startedAt: Date(timeIntervalSince1970: 0))
     session.endedAt = Date(timeIntervalSince1970: 300)
+    session.manualNotesMarkdown = "- Dane owns the release announcement."
     session.notesMarkdown = "## Summary\n\nWe planned the release."
     session.transcriptTokens = [
       MeetingTranscriptToken(
@@ -247,7 +371,21 @@ struct MeetingFeatureTests {
     #expect(document.contains("# Planning"))
     #expect(document.contains("duration_minutes: 5"))
     #expect(document.contains("We planned the release."))
+    #expect(document.contains("## Manual notes"))
+    #expect(document.contains("Dane owns the release announcement."))
     #expect(document.contains("**Microphone [00:03]:** Ship it."))
+  }
+
+  @Test func noteGeneratorSourceMaterialCombinesManualNotesAndTranscript() {
+    let source = MeetingNoteGenerator.sourceMaterial(
+      transcript: "We agreed to ship on Friday.",
+      manualNotes: "- Casey owns the release checklist."
+    )
+
+    #expect(source.contains("MANUAL NOTES"))
+    #expect(source.contains("Casey owns the release checklist."))
+    #expect(source.contains("TRANSCRIPT"))
+    #expect(source.contains("We agreed to ship on Friday."))
   }
 
   @Test func generatedNotesParserSeparatesSuggestedTitleFromMarkdown() {

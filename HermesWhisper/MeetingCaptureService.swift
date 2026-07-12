@@ -12,6 +12,27 @@ struct MeetingAudioChunk: Sendable {
   let duration: TimeInterval
 }
 
+enum MeetingAudioMeter {
+  static func level(from samples: [Float]) -> Float {
+    guard !samples.isEmpty else { return 0 }
+    let sampleStride = max(1, samples.count / 1_024)
+    var sumSquares: Float = 0
+    var peak: Float = 0
+    var sampleCount = 0
+    for index in stride(from: 0, to: samples.count, by: sampleStride) {
+      let sample = abs(samples[index])
+      sumSquares += sample * sample
+      peak = max(peak, sample)
+      sampleCount += 1
+    }
+    guard sampleCount > 0 else { return 0 }
+    let rms = sqrt(sumSquares / Float(sampleCount))
+    let energy = rms * 0.7 + peak * 0.3
+    guard energy >= 0.002 else { return 0 }
+    return min(1, pow(energy * 4, 0.6))
+  }
+}
+
 enum MeetingCaptureError: LocalizedError {
   case noDisplay
   case alreadyCapturing
