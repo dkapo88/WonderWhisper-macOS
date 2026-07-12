@@ -1,14 +1,14 @@
 #!/bin/bash
-# Build, sign, notarize, and publish a HermesWhisper release.
+# Build, sign, notarize, and publish a WonderWhisper release.
 #
 # Usage:  Scripts/release.sh [TAG]
 #   TAG defaults to today's date (e.g. 2026-06-26).
 #
 # Prereqs (one-time):
 #   - "Developer ID Application: Dane Kapoor (44WC3UNX99)" in the keychain
-#   - notarytool profile "HermesWhisper" (xcrun notarytool store-credentials HermesWhisper ...)
-#   - gh authed for dkapo88/hermeswhisper
-#   - Release notes written to  dist/HermesWhisper-$TAG.release-notes.md
+#   - notarytool profile "HermesWhisper" (retained for signing-credential compatibility)
+#   - gh authed for dkapo88/WonderWhisper-macOS
+#   - Release notes written to  dist/WonderWhisper-$TAG.release-notes.md
 #
 # Why archive/export and not `xcodebuild build`: a plain build injects the
 # com.apple.security.get-task-allow debug entitlement, which Apple's notary
@@ -20,19 +20,23 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TAG="${1:-$(date +%Y-%m-%d)}"
-TITLE="HermesWhisper $TAG"
-DMG="dist/HermesWhisper-$TAG.dmg"
-NOTES="dist/HermesWhisper-$TAG.release-notes.md"
+TITLE="WonderWhisper $TAG"
+DMG="dist/WonderWhisper-$TAG.dmg"
+NOTES="dist/WonderWhisper-$TAG.release-notes.md"
 IDENTITY="Developer ID Application: Dane Kapoor (44WC3UNX99)"
 PROFILE="HermesWhisper"
-REPO="dkapo88/hermeswhisper"
+REPO="dkapo88/WonderWhisper-macOS"
 
 [ -f "$NOTES" ] || { echo "Missing release notes: $NOTES (write it first)"; exit 1; }
+[ -z "$(git status --porcelain)" ] || {
+  echo "ERROR: release from a clean worktree so the signed artifact matches its Git tag."
+  exit 1
+}
 
 echo "==> Archiving Release"
-rm -rf build/HermesWhisper.xcarchive
-xcodebuild archive -project HermesWhisper.xcodeproj -scheme HermesWhisper \
-  -configuration Release -archivePath build/HermesWhisper.xcarchive -derivedDataPath build/
+rm -rf build/WonderWhisper.xcarchive
+xcodebuild archive -project WonderWhisper.xcodeproj -scheme WonderWhisper \
+  -configuration Release -archivePath build/WonderWhisper.xcarchive -derivedDataPath build/
 
 echo "==> Exporting (developer-id)"
 PLIST="$(mktemp -d)/ExportOptions.plist"
@@ -47,11 +51,11 @@ cat > "$PLIST" <<EOF
 </dict></plist>
 EOF
 rm -rf build/export
-xcodebuild -exportArchive -archivePath build/HermesWhisper.xcarchive \
+xcodebuild -exportArchive -archivePath build/WonderWhisper.xcarchive \
   -exportPath build/export -exportOptionsPlist "$PLIST"
 
 # Fail loudly if the debug entitlement slipped through (notary would reject it).
-if codesign -d --entitlements - --xml build/export/HermesWhisper.app 2>/dev/null \
+if codesign -d --entitlements - --xml build/export/WonderWhisper.app 2>/dev/null \
    | plutil -p - 2>/dev/null | grep -qi "get-task-allow"; then
   echo "ERROR: get-task-allow present in exported app; notarization would fail."; exit 1
 fi
@@ -59,10 +63,10 @@ fi
 echo "==> Packaging + signing DMG"
 mkdir -p dist
 STAGE="$(mktemp -d)"
-cp -R build/export/HermesWhisper.app "$STAGE/"
+cp -R build/export/WonderWhisper.app "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "HermesWhisper" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -volname "WonderWhisper" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 codesign --sign "$IDENTITY" --timestamp "$DMG"
 
 echo "==> Notarizing (waits for Apple)"
@@ -72,7 +76,17 @@ spctl -a -vv -t open --context context:primary-signature "$DMG"
 
 echo "==> Publishing GitHub release"
 git fetch --tags origin
-git tag -a "$TAG" -m "$TITLE" 2>/dev/null || true
+if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+  TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+  HEAD_COMMIT="$(git rev-parse HEAD)"
+  if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+    echo "ERROR: tag $TAG already points to $TAG_COMMIT, not current HEAD $HEAD_COMMIT."
+    echo "Choose a new release tag instead of attaching this build to an older commit."
+    exit 1
+  fi
+else
+  git tag -a "$TAG" -m "$TITLE"
+fi
 git push origin "$TAG"
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   gh release upload "$TAG" "$DMG" --repo "$REPO" --clobber

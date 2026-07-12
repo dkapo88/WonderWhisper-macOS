@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Build and run script for HermesWhisper
+# Build and run script for WonderWhisper
 # Builds the project and then launches the application
 
 set -e  # Exit on any error
 
-echo "Building and running HermesWhisper..."
+echo "Building and running WonderWhisper..."
 
 # Build the project
 echo "Step 1: Building project..."

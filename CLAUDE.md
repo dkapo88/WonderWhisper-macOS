@@ -1,28 +1,28 @@
 # Claude Code Instructions
 
 ## Project Overview
-HermesWhisper is a macOS dictation app built with SwiftUI. It provides voice-to-text transcription via Groq Whisper or local Parakeet, with optional LLM processing through OpenRouter.
+WonderWhisper is a macOS dictation app built with SwiftUI. It provides voice-to-text transcription via Groq Whisper or local Parakeet, with optional LLM processing through OpenRouter.
 
 ## Quick Reference
 
 ### Build & Run
 ```bash
 # Build
-xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -configuration Debug build
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug build
 
 # Run tests
-xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test
 
 # Run single test
-xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test -only-testing:HermesWhisperTests/TestClass/testName
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test -only-testing:WonderWhisperTests/TestClass/testName
 
 # Launch script-built app
-open build/Build/Products/Debug/HermesWhisper.app
+open build/Build/Products/Debug/WonderWhisper.app
 ```
 
 ### Key Directories
-- `HermesWhisper/` - Main app source (SwiftUI views, view models, services)
-- `HermesWhisperTests/` - Unit tests (Swift Testing framework)
+- `WonderWhisper/` - Main app source (SwiftUI views, view models, services)
+- `WonderWhisperTests/` - Unit tests (Swift Testing framework)
 - `Scripts/` - Build helper scripts
 
 ### Core Architecture
@@ -65,5 +65,6 @@ open build/Build/Products/Debug/HermesWhisper.app
 ## Security
 - API keys stored in macOS Keychain via `KeychainService`
 - Never commit secrets
-- User data in `~/Library/Application Support/HermesWhisper/`
-- First launch after the app rename copies existing local data from the legacy `WonderWhisper` Application Support directory when needed.
+- User data remains in `~/Library/Application Support/HermesWhisper/` for upgrade compatibility.
+- The WonderWhisper product name intentionally retains the Hermes-era bundle identifier,
+  UserDefaults domain, Keychain service, and storage root so existing settings and permissions survive.

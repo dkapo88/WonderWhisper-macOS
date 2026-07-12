@@ -1,14 +1,14 @@
 ---
 alwaysApply: true
 ---
-# HermesWhisper – Project Structure
+# WonderWhisper – Project Structure
 
-- **App sources**: ["HermesWhisper/"](mdc:HermesWhisper/)
+- **App sources**: ["WonderWhisper/"](mdc:WonderWhisper/)
   - Swift/SwiftUI sources, `Resources/Assets.xcassets`, `Info.plist`, `*.entitlements`.
 - **Tests**:
-  - Unit: ["HermesWhisperTests/"](mdc:HermesWhisperTests/)
-  - UI/flows: ["HermesWhisperUITests/"](mdc:HermesWhisperUITests/)
-- **Project**: ["HermesWhisper.xcodeproj"](mdc:HermesWhisper.xcodeproj)
+  - Unit: ["WonderWhisperTests/"](mdc:WonderWhisperTests/)
+  - UI/flows: ["WonderWhisperUITests/"](mdc:WonderWhisperUITests/)
+- **Project**: ["WonderWhisper.xcodeproj"](mdc:WonderWhisper.xcodeproj)
 - **Scripts**: Scripts/ for maintenance tasks (format, lint, release)
 
 Use this structure when navigating, creating files, and referencing paths.

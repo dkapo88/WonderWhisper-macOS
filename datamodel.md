@@ -1,12 +1,15 @@
-# HermesWhisper - Data Model Documentation
+# WonderWhisper - Data Model Documentation
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
 ## Overview
 
-HermesWhisper is a voice dictation and AI assistant application. This document provides comprehensive entity relationship diagrams and data model documentation for database schemas, service models, and UI data structures.
+WonderWhisper is a voice dictation and AI assistant application. This document provides comprehensive entity relationship diagrams and data model documentation for database schemas, service models, and UI data structures.
 
-Local storage now lives under `~/Library/Application Support/HermesWhisper/`. First launch after the rename copies existing local data from the legacy `WonderWhisper` Application Support directory when the new directory does not already exist.
+Local storage remains under `~/Library/Application Support/HermesWhisper/`. The WonderWhisper
+rebrand intentionally retains the Hermes-era bundle identifier, UserDefaults domain, Keychain
+service, and storage root so existing history, meetings, settings, credentials, and macOS privacy
+grants continue to work without a large or destructive migration.
 
 ---
 
@@ -159,7 +162,7 @@ erDiagram
 New sessions start with the generic title `New Hermes Task`; after the first user
 turn is captured, the app asks the configured OpenRouter LLM model for a concise
 local title and updates only the matching session id. Title generation is local to
-HermesWhisper state and is not sent through Hermes.
+WonderWhisper state and is not sent through Hermes.
 
 **HermesChatMessage**: Messages shown in the selected Hermes sidebar Chat session. Messages are appended from the dedicated Hermes voice loop:
 - User messages show the spoken transcript after optional Hermes LLM post-processing, not the enriched payload sent to the API.
@@ -191,7 +194,7 @@ Hermes sessions have an Active/Archive lifecycle in the app UI. Archiving remove
 session from the active list but keeps the local session record and message history
 available in the Archive tab; legacy `closed` sessions are treated as archived.
 Restoring an archived session returns it to a replyable active state inferred from its
-latest message. Deleting a session permanently removes only the local HermesWhisper
+latest message. Deleting a session permanently removes only the local WonderWhisper
 record; it does not delete remote Hermes VPS context unless the API later adds a
 separate remote delete operation.
 
@@ -233,7 +236,7 @@ erDiagram
 throughout recording so an app restart can recover an unfinished session as `interrupted`.
 System and microphone audio are kept as separate one-minute, 16 kHz mono CAF segments. A private
 Core Audio process tap captures system audio before output volume and device routing; manual meetings
-use a global tap excluding HermesWhisper, while automatic meetings include only matching meeting-app
+use a global tap excluding WonderWhisper, while automatic meetings include only matching meeting-app
 audio processes. ScreenCaptureKit captures the selected microphone. Parakeet Unified is the on-device
 default and keeps source-specific inference. Soniox V5 is an opt-in cloud beta whose default mode
 first normalizes variable callbacks into continuous 100 ms sample-clock frames, then aligns both
@@ -610,10 +613,11 @@ erDiagram
 
 ### Keychain Storage
 
-Secure storage via `KeychainService` for API keys. Reads are scoped to the current
-HermesWhisper keychain service plus the legacy WonderWhisper service for one-time
-migration, and fail without showing macOS authentication UI. If macOS blocks
-legacy access, keys may need to be saved once under the new app identity.
+Secure storage via `KeychainService` for API keys. WonderWhisper deliberately continues using
+the Hermes-era `com.danekapoor.hermeswhisper` service and can also read the original
+`com.slumdev88.wonderwhisper.WonderWhisper-Mac` service for one-time migration. Reads fail
+without showing macOS authentication UI. If macOS blocks legacy access, keys may need to be
+saved once under the compatibility service.
 
 | Key Alias | Purpose |
 |-----------|---------|
@@ -696,7 +700,7 @@ struct AppConfig {
     static let hermesAPIKeyAlias: String = "HERMES_API_SERVER_KEY"
     static let defaultHermesBaseURLString: String = ""
     static let defaultHermesModel: String = "hermes-agent"
-    static let defaultHermesConversationName: String = "hermeswhisper-mac"
+    static let defaultHermesConversationName: String = "wonderwhisper-mac"
     static let beeperAccessTokenAlias: String = "BEEPER_ACCESS_TOKEN"
     static let defaultBeeperBaseURLString: String = "http://localhost:23373"
     
@@ -987,6 +991,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.14
+**Document Version**: 1.15
 **Last Updated**: July 12, 2026
-**Maintainer**: HermesWhisper Development Team
+**Maintainer**: WonderWhisper Development Team

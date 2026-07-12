@@ -1,433 +1,205 @@
 <p align="center">
-  <img src="docs/assets/hermes-whisper-readme-header.jpg" alt="Hermes Whisper - Voice-native sessions for Hermes Agent">
+  <img src="docs/assets/wonderwhisper-icon.png" width="112" alt="WonderWhisper app icon">
 </p>
 
-# HermesWhisper
+<h1 align="center">WonderWhisper</h1>
 
-HermesWhisper is a macOS voice interface for dictation, command-style text
-editing, and hands-free interaction with a Hermes Agent API server. It is built
-around a simple workflow: press a hotkey, speak, and let the app either insert
-clean text into your current app or send the request to Hermes as an agent task.
+<p align="center">
+  <strong>Dictate anywhere. Capture every meeting. Keep the context you need within reach.</strong>
+</p>
 
-The app is useful for:
+<p align="center">
+  An open-source, voice-first productivity app for macOS.
+</p>
 
-- Fast push-to-talk dictation into any focused text field.
-- LLM cleanup of raw speech into readable text, emails, notes, lists, or chat
-  messages.
-- Voice-driven editing and writing commands using selected text, clipboard text,
-  the active text field, and OCR screen context.
-- Parallel Hermes Agent sessions with response windows that stay available while
-  you continue working.
-- Persistent local history for normal dictation, command turns, and Hermes chats.
+<p align="center">
+  <a href="https://github.com/dkapo88/WonderWhisper-macOS/releases/latest"><img src="https://img.shields.io/github/v/release/dkapo88/WonderWhisper-macOS?display_name=release&style=flat-square" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-15.5%2B-202124?style=flat-square&logo=apple&logoColor=white" alt="macOS 15.5 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5F75EE?style=flat-square" alt="MIT license"></a>
+</p>
 
-## App Overview
+![WonderWhisper — voice-first productivity for macOS](docs/assets/wonderwhisper-readme-hero.svg)
 
-HermesWhisper has three main modes:
+WonderWhisper brings dictation, meeting intelligence, and voice-driven workflows into one native Mac app. Its local-first path works without sending audio to a cloud service, while optional providers add faster streaming, post-processing, live context, and integrations when you want them.
 
-| Mode | Purpose | Typical use |
+## One app, three useful layers
+
+| Dictate | Meet | Connect |
 | --- | --- | --- |
-| Dictation | Turn speech into cleaned-up text and insert it into the active app. | Compose Slack messages, emails, notes, issue comments, or documents. |
-| Command Mode | Treat your speech as an instruction for transforming or creating text. | "Make this shorter", "turn this into bullets", "reply politely", or "write a launch checklist". |
-| Hermes | Send spoken or typed tasks to a Hermes Agent server. | Delegate research, coding, planning, file work, or longer-running agent tasks. |
+| Speak into any focused text field with a global hotkey. Clean up the result, preserve your voice, or transform selected text with Command Mode. | Record microphone and Mac system audio, follow a live transcript, take manual notes, surface Obsidian context, and export a Markdown summary. | Send voice messages through Beeper or run optional long-lived tasks against a Hermes Agent server. |
 
-The app is intentionally voice-first, but it also supports text replies in the
-Hermes chat UI and response windows when talking is not convenient.
+Hermes is now an optional integration—not the identity of the app. WonderWhisper is designed as a broader voice workspace that remains useful even when Hermes and Beeper are never configured.
 
-## Models and AI Providers
+## Meeting notes
 
-HermesWhisper separates transcription from language-model post-processing.
+WonderWhisper can start a meeting manually or automatically when it confirms a Google Meet, Slack Huddle, or another configured calling app. During the meeting it keeps separate microphone and system-audio tracks, so headphones and output volume do not determine whether remote speakers are captured.
 
-### Transcription Engines
+![WonderWhisper meeting library with manual notes and generated summary](docs/assets/screenshots/meeting-library.png)
 
-You can choose the transcription engine in **Settings -> Transcription engine**:
+The meeting workflow includes:
 
-- **Parakeet V3 (On-device)**: local speech-to-text on your Mac. No cloud API key
-  required.
-- **Groq Whisper Turbo (Cloud)**: Groq-hosted Whisper Large V3 Turbo.
-- **Soniox V5 (Real-time Cloud)**: streaming speech-to-text with live preview.
-- **OpenRouter Voice (Cloud)**: OpenRouter speech-to-text models such as
-  `openai/gpt-4o-mini-transcribe`.
-- **Grok STT / xAI (Cloud)**: xAI speech-to-text endpoint.
+- Durable microphone and system-audio capture in bounded local segments.
+- Automatic detection with editable trigger apps and conservative start/stop confirmation.
+- Free on-device transcription with Parakeet Unified by default.
+- Optional Soniox V5 live transcription, including an echo-reduced mixed-stream beta and a source-separated fallback.
+- A floating companion with **Transcript**, **Context**, and **Notes** tabs.
+- A draggable minimized recording bubble with a live audio visualizer.
+- Manual notes that save continuously and are included in the final meeting summary.
+- Optional generated summaries, decisions, and action items through OpenRouter.
+- Local Obsidian search with links and bounded excerpts for live context.
+- Markdown export to a chosen folder inside your Obsidian vault.
 
-### LLM Post-Processing
+Stopping a meeting ends capture immediately. Final transcript tokens, recovery, generated notes, and export continue safely in the background.
 
-Normal dictation and Command Mode use OpenRouter for LLM cleanup and command
-execution. The app stores OpenRouter favourites locally and defaults to a small
-set of practical models. OpenRouter reasoning is disabled by default for
-post-processing requests so cleanup stays fast and literal.
+### Obsidian context and export
 
-LLM post-processing can:
+Meeting settings use two paths for different jobs:
 
-- Remove filler words.
-- Add punctuation and paragraph breaks.
-- Preserve your speaking style.
-- Convert spoken symbols and numbers.
-- Apply vocabulary and screen-context spelling hints.
-- Transform selected or copied text in Command Mode.
+- **Vault root** is searched locally for notes related to the live conversation.
+- **Export folder** is where WonderWhisper writes finished meeting Markdown files; it can be any nested folder inside the vault.
 
-### API Keys
+Vault ranking happens on your Mac. If live AI context is enabled, only a bounded recent transcript window and bounded excerpts from the best local matches are sent to the selected OpenRouter model.
 
-API keys are stored in macOS Keychain from inside the app. Only configure keys
-for providers you actually use.
+## Dictation and Command Mode
 
-| Provider | Used for | Where to get a key |
+Dictation is the fastest path from speech to text:
+
+1. Focus a text field in any Mac app.
+2. Hold the Dictation hotkey and speak.
+3. Release to transcribe, optionally clean up, and insert the result.
+
+Command Mode treats speech as an instruction instead. It can work with selected text, a recently copied value, the focused text field, local screen OCR, and your custom vocabulary.
+
+Typical commands include:
+
+- “Make this shorter and warmer.”
+- “Turn this into a launch checklist.”
+- “Reply politely and ask for a timeline.”
+- “Explain the selected paragraph in plain English.”
+
+Fresh installs default Dictation to **Fn/Globe** and Command Mode to **Right Option**. Both shortcuts are configurable.
+
+## Transcription and AI models
+
+Transcription and language-model processing are separate choices.
+
+| Engine | Where it runs | Best for |
 | --- | --- | --- |
-| OpenRouter | LLM post-processing and optional OpenRouter Voice STT. | [OpenRouter API keys](https://openrouter.ai/docs/api-keys) |
-| Groq | Groq Whisper cloud transcription. | [GroqCloud API keys](https://console.groq.com/keys) |
-| Soniox | Soniox real-time transcription. | [Soniox Console](https://console.soniox.com) |
-| xAI | Grok speech-to-text. | [xAI Console API keys](https://docs.x.ai/developers/quickstart) |
-| Hermes Agent | Remote/local Hermes `/v1` API bearer token. | Your Hermes Agent server configuration. See [Hermes Agent docs](https://hermes-agent.nousresearch.com/docs/reference/faq) and [GitHub repo](https://github.com/NousResearch/hermes-agent). |
+| **Parakeet Unified / V3** | On device | Private, free transcription; Unified is the default and V3 adds multilingual coverage. |
+| **Groq Whisper Large V3 Turbo** | Cloud | Fast batch transcription through Groq. |
+| **Soniox V5** | Cloud | Low-latency streaming dictation and optional live meeting transcription. |
+| **OpenRouter Voice** | Cloud | Choosing supported speech-to-text models through OpenRouter. |
+| **xAI Grok Speech-to-Text** | Cloud | xAI batch or streaming transcription. |
 
-## Normal Dictation
+OpenRouter powers optional dictation cleanup, Command Mode, meeting summaries, and live context. Models are selected from your favourites in Settings. Reasoning can be omitted, disabled, or enabled at a small level; **Omit** offers the broadest compatibility, while **Off** should only be used with models that accept reasoning-free requests.
 
-Normal dictation is for inserting cleaned-up text into the app you are already
-using.
+API credentials are stored in macOS Keychain. You only need keys for the providers and integrations you enable.
 
-1. Click into any text field.
-2. Press and hold the Dictation hotkey.
-3. Speak naturally.
-4. Release the hotkey.
-5. HermesWhisper transcribes, optionally post-processes, and inserts the result.
+## Privacy model
 
-Fresh installs default the Dictation hotkey to **Fn/Globe**.
+WonderWhisper makes the local/cloud boundary explicit:
 
-Dictation is best when you want the final output to be your spoken text, cleaned
-up but not answered. For example, if you dictate "what do you think about moving
-the meeting", normal dictation should insert a cleaned-up version of that
-sentence, not answer the question.
+| Data or operation | Default behaviour | Sent elsewhere only when… |
+| --- | --- | --- |
+| Microphone and system audio | Captured and segmented locally | A cloud transcription engine is selected. |
+| Parakeet transcription | Audio processing runs locally; audio never leaves your Mac | Resulting transcript text is included only when you enable OpenRouter cleanup, generated notes, or live context. |
+| Manual notes and meeting history | Saved locally | Generated meeting notes are explicitly enabled. |
+| Obsidian search and ranking | Runs locally in the chosen vault | Live AI context is enabled; only bounded matching excerpts are included. |
+| Dictation text | Can remain local with Parakeet and no cleanup | OpenRouter cleanup or a cloud STT engine is enabled. |
+| Beeper or Hermes content | Unused by default | You configure and invoke the relevant integration. |
 
-## Command Mode
-
-Command Mode treats your speech as an instruction. It can transform existing
-text or generate new content.
-
-Fresh installs default Command Mode to **Right Option**.
-
-### With Selected Text
-
-Highlight text in another app, press the Command Mode hotkey, and speak an
-instruction:
-
-- "Make this more concise."
-- "Turn this into bullet points."
-- "Rewrite this in a warmer tone."
-- "Extract the action items."
-- "Convert this into a Slack message."
-- "Explain this in plain English."
-
-When selected text is available and selected-text context is enabled, the app
-sends it to the model as `<SELECTED_TEXT>`.
-
-### With Clipboard Text
-
-If clipboard context is enabled, recently copied text can be used as source
-material. This is useful when the app cannot read selected text directly, or when
-you copy a link and want the command to reference it.
-
-Clipboard context is intentionally recent. For normal Dictation and Command Mode,
-the app only uses text copied shortly before recording starts. Hermes Mode has a
-separate configurable copied-text timeout, described below.
-
-### Without Selected Text
-
-Command Mode also works without selected text. In that case, your speech becomes
-the task:
-
-- "Write a short follow-up email asking for the timeline."
-- "Give me three options for a product update title."
-- "What is the difference between HTTP/1.1 and HTTP/2?"
-- "Draft a checklist for releasing a macOS app."
-
-If there is no selected text or clipboard target, Command Mode uses the spoken
-instruction directly.
-
-## Screen Context
-
-Screen context lets the app use what you are looking at as reference material.
-It is designed to improve spelling, formatting, and editing accuracy without you
-having to describe every detail aloud.
-
-Depending on the mode and settings, HermesWhisper can include:
-
-- **Active application**: the app you are dictating into.
-- **Screen OCR terms**: local OCR from the active window or display.
-- **Selected text**: highlighted text from the active app when available.
-- **Active text field**: the full focused text field when nothing is selected.
-- **Clipboard text**: recent copied text, if enabled.
-- **Screenshot image**: optional for Hermes requests.
-- **Vocabulary**: custom names, product terms, acronyms, and spellings.
-
-Example workflows:
-
-- Highlight a paragraph and say, "Make this shorter and more direct."
-- Highlight a support reply and say, "Make this warmer but keep it concise."
-- Copy a Linear or Jira link and say, "Write a message to the team about this."
-- Open a page with product names visible and dictate a message that includes
-  those names. Screen context helps the formatter spell them correctly.
-- Use Command Mode without selecting anything and ask for a short explanation or
-  draft.
-
-Screen context is reference material. It should guide spelling and formatting,
-not secretly change what you asked for.
-
-## Hermes Mode
-
-Hermes Mode connects HermesWhisper to a local or remote Hermes Agent API server.
-It is for agent work that may take longer than a dictation cleanup turn.
-
-Examples:
-
-- "Research the latest options and summarize the trade-offs."
-- "Create a roadmap for this feature."
-- "Inspect the project and tell me what changed."
-- "Run this task on my VPS and report back."
-
-Fresh installs default the Hermes hotkey to **Backslash (`\\`)**.
-
-### Hermes Setup
-
-1. Install and configure Hermes Agent.
-2. Start a Hermes API server that exposes an OpenAI-compatible `/v1` endpoint.
-3. Open HermesWhisper.
-4. Go to **Hermes -> Settings**.
-5. Enter:
-   - **URL**: your Hermes API base URL, often ending in `/v1`.
-   - **API key**: bearer token for the Hermes API server, if required.
-   - **Conversation prefix**: a short name used for HermesWhisper-created
-     sessions.
-   - **Agent profile**: optional profile/model name advertised by `/v1/models`.
-6. Click **Test**.
-
-The Hermes settings page includes a copyable setup prompt. Give that prompt to
-Hermes if you want the agent to tell you the exact URL, API key source,
-conversation prefix, and profile value to enter.
-
-If **Agent profile** is blank, HermesWhisper uses the server default. If it is
-filled in, HermesWhisper sends that value as the API `model` and verifies it
-against `/v1/models` during connection testing.
-
-### Parallel Sessions
-
-HermesWhisper supports multiple Hermes tasks at the same time.
-
-- If no Hermes response window is open and you press the Hermes hotkey, the app
-  starts a new Hermes session.
-- If a Hermes response window is open and focused, pressing the Hermes hotkey
-  records a reply to that session.
-- If multiple response windows are open, the top/focused response window is the
-  reply target.
-- Each session keeps its own conversation state.
-- Each response window can be replied to, minimized, copied from, archived, or
-  closed independently.
-
-This lets you delegate several tasks in parallel without forcing them into one
-long conversation.
-
-### Response Modalities
-
-You can interact with Hermes in three ways:
-
-- **Voice reply**: click Reply or press the Hermes hotkey while a response window
-  is focused.
-- **Text reply**: type directly in the response window or the Hermes chat tab.
-- **Chat UI**: open the Hermes sidebar tab to review sessions, switch between
-  active/archive views, continue a session, or inspect history.
-
-Response windows are immediate and disposable; the Hermes tab is the persistent
-place to review and manage session history.
-
-### Timeouts
-
-Hermes request timeout controls how long HermesWhisper waits for the API server
-to return a response. Fresh installs default to **20 minutes**, and the app
-supports values up to **30 minutes**.
-
-Use a longer timeout when Hermes is doing slow coding, research, or remote
-terminal work. Use a shorter timeout if you want failed network calls to return
-quickly.
-
-Hermes copied-text timeout controls how long copied text remains eligible as
-Hermes context. If the timeout is 20 seconds, copied text is only eligible when
-you start the Hermes recording within 20 seconds of copying it. The timer is
-checked when recording starts, not when the recording finishes. A shorter timeout
-reduces the chance of accidentally sending stale clipboard data.
-
-## Beeper Mode
-
-Beeper Mode sends a transcribed voice message into one configured Beeper chat.
-It uses Beeper Desktop's local API, so Beeper Desktop must be running and the
-Desktop API must be enabled.
-
-1. Open **Beeper** in HermesWhisper.
-2. Enter the Beeper API URL, usually `http://localhost:23373`.
-3. Enter the target Beeper chat ID.
-4. Save a Beeper access token from Beeper Desktop **Settings -> Integrations**.
-5. Pick a dedicated Beeper shortcut.
-6. Optionally enable **Show response window**. The response watcher attaches to
-   the configured chat, tries Beeper's experimental WebSocket stream first, then
-   falls back to polling at the configured interval.
-
-The core flow is send-first: press the Beeper shortcut, speak, press it again or
-use the overlay send control, and HermesWhisper sends the final text directly to
-the configured chat. Optional LLM post-processing uses the Dictation cleanup
-prompt before sending. If copied-text context is enabled, text copied within the
-configured freshness window before recording starts is appended to the Beeper
-message as clipboard context. When a prior Beeper response window is open, a
-successful new Beeper send dismisses that window before the next incoming reply.
-
-When response monitoring is enabled, HermesWhisper records the current Beeper
-message cursor when the monitor starts, subscribes to the configured chat over
-Beeper's experimental WebSocket stream, and shows new incoming text messages in
-the response window even if you replied directly in Beeper. If the WebSocket does
-not deliver a usable message quickly, HermesWhisper falls back to polling. Beeper
-response windows include the same text reply composer used by Hermes response
-windows; sending from that composer posts the text back to the configured Beeper
-chat, dismisses the current response window, and keeps watching for the next
-Beeper response. Pressing Return in the text composer sends the reply; Shift +
-Return inserts a newline.
-
-## Prompt Customization
-
-The Dictation and Command sidebar pages let you customize:
-
-- Activation hotkey.
-- Whether screen context, clipboard, selected text, and active field text are
-  included.
-- Prompt header.
-- Prompt rules.
-- Prompt footer.
-
-The app builds structured prompts for the LLM. You normally do not need to type
-these XML tags yourself, but understanding them helps when customizing prompts.
-
-| Tag | Meaning |
-| --- | --- |
-| `<INPUT>` | The primary input for the model. |
-| `<TRANSCRIPT>` | What you said during the recording. |
-| `<CONTEXT type="reference-only">` | Extra reference material, not the main instruction. |
-| `<ACTIVE_APPLICATION>` | The app you were using. |
-| `<ACTIVE_TEXT_FIELD>` | The current text field contents, when available. |
-| `<SELECTED_TEXT>` | Highlighted text from the active app. |
-| `<SCREEN_CONTEXT_TERMS>` | Locally extracted OCR terms from the screen. |
-| `<SCREEN_CONTENTS>` | Rawer OCR screen text when term extraction is not available. |
-| `<CLIPBOARD>` | Recently copied text, if enabled and within timeout. |
-| `<VOCABULARY>` | Your custom spelling and terminology list. |
-| `<OUTPUT>` | The only content the model should return for insertion. |
-
-Dictation prompts should preserve your spoken meaning and avoid answering
-questions. Command prompts can answer, transform, or create content based on the
-spoken instruction and available context.
-
-## Menu Bar
-
-The menu bar item provides quick access to:
-
-- Toggle dictation.
-- Add clipboard text to the vocabulary.
-- Select the microphone input device.
-- Select the voice/transcription engine.
-- Select or type an OpenRouter voice model.
-
-When Hermes requests are pending, the menu bar icon shows the number of pending
-responses. The count drops as responses arrive and returns to the normal icon
-when no Hermes requests are waiting.
-
-## Local Data and Privacy
-
-HermesWhisper stores local history, screenshots, audio references, Hermes chat
-state, and Beeper integration preferences in:
-
-```text
-~/Library/Application Support/HermesWhisper/
-```
-
-API keys are stored in macOS Keychain.
-
-After the rename from WonderWhisper, first launch copies existing local data
-from:
-
-```text
-~/Library/Application Support/WonderWhisper/
-```
-
-Context features can send screenshots, OCR text, selected text, active field
-text, and clipboard text to the cloud providers or Hermes server you configure.
-Beeper Mode sends only the final message text to the configured Beeper Desktop
-chat plus optional copied-text context when enabled. When response monitoring is
-enabled, it reads newer incoming text messages from that configured chat for
-display in response windows. Review the context toggles for each mode before
-using the app with sensitive material.
+Local application data is stored under `~/Library/Application Support/HermesWhisper/`. The legacy internal directory name is intentionally retained so existing users keep their meetings, history, settings, and credentials after upgrading to WonderWhisper.
 
 ## Install
 
-Download the latest signed and notarized DMG from
-[GitHub Releases](https://github.com/dkapo88/hermeswhisper/releases), open it,
-and drag **HermesWhisper** into **Applications**.
+WonderWhisper requires **macOS 15.5 or newer**.
 
-## Build
+1. Download the latest signed and notarized DMG from [GitHub Releases](https://github.com/dkapo88/WonderWhisper-macOS/releases/latest).
+2. Drag **WonderWhisper.app** into Applications.
+3. Open **Permissions** in the sidebar and grant the capabilities you use:
+   - Microphone
+   - Screen & System Audio Recording
+   - Accessibility
+   - Input Monitoring
+4. Choose a transcription engine in Settings. Parakeet is the no-key, on-device default.
+5. Add API keys only for optional cloud providers or integrations.
 
-Open the project in Xcode:
+### Upgrading from HermesWhisper
+
+Quit HermesWhisper before installing WonderWhisper. The new app deliberately retains the existing bundle identity and storage locations, so macOS permissions, UserDefaults, Keychain credentials, history, and meeting data continue to work.
+
+Because the application filename changed, remove the old `/Applications/HermesWhisper.app` after installing WonderWhisper to avoid keeping two launchable copies.
+
+## Optional integrations
+
+### Beeper
+
+WonderWhisper can send transcribed voice messages into configured Beeper chats and monitor replies through Beeper Desktop's local API. Beeper Desktop must be running with its Desktop API enabled. Chat IDs, labels, shortcuts, and response polling are configured in the Beeper sidebar tab.
+
+### Hermes Agent
+
+The Hermes tab connects to an OpenAI-compatible Hermes Agent `/v1` server. It supports parallel sessions, voice or typed replies, persistent local conversation history, and independent response windows. Configure the server URL, bearer token, conversation prefix, and optional agent profile under **Hermes → Settings**.
+
+## Build from source
+
+Requirements:
+
+- Xcode with the macOS 15.5 SDK or newer
+- A Mac capable of running macOS 15.5+
 
 ```bash
-open "HermesWhisper.xcodeproj"
+git clone https://github.com/dkapo88/WonderWhisper-macOS.git
+cd WonderWhisper-macOS
+open WonderWhisper.xcodeproj
 ```
 
 Build from the command line:
 
 ```bash
-xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -configuration Debug build
+xcodebuild \
+  -project WonderWhisper.xcodeproj \
+  -scheme WonderWhisper \
+  -configuration Debug \
+  build
 ```
 
-Or use the helper scripts:
+Run the test suite:
 
 ```bash
-./Scripts/build.sh
-./Scripts/run.sh
+xcodebuild \
+  -project WonderWhisper.xcodeproj \
+  -scheme WonderWhisper \
+  -destination 'platform=macOS' \
+  test
 ```
 
-## Tests
+The project uses Swift Testing with `@Test` and `#expect`.
 
-Run the Swift Testing suite from Xcode, or from the command line:
+## Project layout
 
-```bash
-xcodebuild -project "HermesWhisper.xcodeproj" -scheme "HermesWhisper" -destination 'platform=macOS' test
+```text
+WonderWhisper/          App sources, views, services, providers, and assets
+WonderWhisperTests/     Unit and integration tests
+WonderWhisperUITests/   macOS UI automation
+Scripts/                Local build, run, and release helpers
+docs/assets/            README artwork and product screenshots
 ```
+
+Core orchestration lives in `DictationViewModel` and `MeetingCoordinator`. Provider protocols keep transcription and LLM services replaceable, while history, meetings, notes, and conversations use local file-backed stores.
 
 ## Troubleshooting
 
-### Hermes Connection Fails
+- **A hotkey does nothing:** verify Accessibility and Input Monitoring permissions, then check the shortcut is not claimed by another app.
+- **A meeting has microphone text but no system audio:** grant Screen & System Audio Recording permission and restart WonderWhisper.
+- **Automatic detection is delayed:** supported browser calls require both calling-page evidence and microphone activity; automatic starts are intentionally conservative.
+- **A local model is not ready:** the first Parakeet run may need time to prepare model assets.
+- **A cloud request fails with a reasoning error:** set reasoning to **Omit** or a level the selected model supports.
+- **Two menu-bar icons appear after upgrading:** quit and delete the old `HermesWhisper.app` copy.
 
-- Confirm the URL is reachable from your Mac.
-- If using plain `http://`, make sure you are using a build that includes the
-  local HTTP transport support.
-- Confirm whether the server expects the root URL or `/v1`.
-- Save the Hermes bearer key in settings if the server requires auth.
-- Click **Test** and check whether the requested Agent profile is advertised by
-  `/v1/models`.
+## Contributing
 
-### Dictation Does Not Insert Text
-
-- Click into the target text field before recording.
-- Check microphone permissions in macOS Privacy & Security settings.
-- Confirm the chosen transcription provider has a saved API key, unless using
-  Parakeet local.
-- Try the History tab to verify whether transcription succeeded but insertion
-  failed.
-
-### Command Mode Uses the Wrong Context
-
-- Check whether clipboard context is enabled and still within its timeout.
-- If selected text should be used, enable selected-text context for Command Mode.
-- If the app cannot read selected text from the target app, copy the text first
-  and use clipboard context instead.
-- Disable active field context if you only want explicit selected or copied text.
-
-## Security
-
-Do not commit API keys, local `.xcconfig` secrets, build outputs, result bundles,
-or local assistant/editor state. Provider credentials belong in macOS Keychain
-through the app settings.
+Issues and focused pull requests are welcome. Please keep changes scoped, include tests for provider or audio logic where practical, and confirm the macOS build and test suite pass before opening a PR. Never commit API keys or local credentials.
 
 ## License
 
-HermesWhisper is available under the MIT License. See [LICENSE](LICENSE).
+WonderWhisper is available under the [MIT License](LICENSE).

@@ -1,0 +1,73 @@
+<svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="background" x1="70" y1="0" x2="1320" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17191F"/>
+      <stop offset="0.52" stop-color="#242733"/>
+      <stop offset="1" stop-color="#111216"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="82" y1="96" x2="445" y2="430" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#58B9FF"/>
+      <stop offset="0.52" stop-color="#8A72FF"/>
+      <stop offset="1" stop-color="#FF6CA8"/>
+    </linearGradient>
+    <linearGradient id="card" x1="852" y1="95" x2="1285" y2="482" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="white" stop-opacity="0.055"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+
+  <rect width="1400" height="560" rx="38" fill="url(#background)"/>
+  <circle cx="197" cy="116" r="120" fill="#6C63FF" fill-opacity="0.17" filter="url(#glow)"/>
+  <circle cx="1210" cy="452" r="150" fill="#2F99FF" fill-opacity="0.13" filter="url(#glow)"/>
+
+  <g transform="translate(78 78)">
+    <rect width="74" height="74" rx="22" fill="url(#accent)"/>
+    <path d="M18 39C22 39 22 24 27 24C32 24 31 51 37 51C43 51 42 17 48 17C54 17 53 44 58 44" stroke="white" stroke-width="5.5" stroke-linecap="round"/>
+  </g>
+
+  <text x="78" y="210" fill="white" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="64" font-weight="700" letter-spacing="-2.2">WonderWhisper</text>
+  <text x="80" y="267" fill="#CFD2DC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="27" font-weight="500">Voice-first productivity for your Mac.</text>
+  <text x="80" y="318" fill="#9CA1AE" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21">Dictate anywhere. Capture every meeting.</text>
+  <text x="80" y="350" fill="#9CA1AE" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21">Keep the context you need within reach.</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600">
+    <rect x="80" y="402" width="143" height="44" rx="22" fill="white" fill-opacity="0.08" stroke="white" stroke-opacity="0.13"/>
+    <circle cx="104" cy="424" r="6" fill="#55B9FF"/>
+    <text x="120" y="430" fill="#E8EAF0">Dictation</text>
+    <rect x="237" y="402" width="181" height="44" rx="22" fill="white" fill-opacity="0.08" stroke="white" stroke-opacity="0.13"/>
+    <circle cx="261" cy="424" r="6" fill="#A98BFF"/>
+    <text x="277" y="430" fill="#E8EAF0">Meeting notes</text>
+    <rect x="432" y="402" width="178" height="44" rx="22" fill="white" fill-opacity="0.08" stroke="white" stroke-opacity="0.13"/>
+    <circle cx="456" cy="424" r="6" fill="#FF75AE"/>
+    <text x="472" y="430" fill="#E8EAF0">Local-first AI</text>
+  </g>
+
+  <g transform="translate(790 64)">
+    <rect width="526" height="432" rx="28" fill="url(#card)" stroke="white" stroke-opacity="0.15"/>
+    <circle cx="36" cy="34" r="6" fill="#FF5F57"/>
+    <circle cx="57" cy="34" r="6" fill="#FEBC2E"/>
+    <circle cx="78" cy="34" r="6" fill="#28C840"/>
+    <text x="28" y="94" fill="white" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21" font-weight="700">Product Launch Planning</text>
+    <rect x="28" y="118" width="470" height="1" fill="white" fill-opacity="0.1"/>
+
+    <rect x="28" y="145" width="470" height="88" rx="16" fill="black" fill-opacity="0.18"/>
+    <circle cx="51" cy="173" r="5" fill="#5FB8FF"/>
+    <text x="66" y="179" fill="#75C4FF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">LIVE TRANSCRIPT</text>
+    <text x="48" y="210" fill="#E8EAF0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17">Let's keep Friday as the target date.</text>
+
+    <rect x="28" y="249" width="224" height="143" rx="16" fill="black" fill-opacity="0.18"/>
+    <text x="48" y="281" fill="#B89CFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">CONTEXT</text>
+    <text x="48" y="316" fill="#E8EAF0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="600">BC-1425</text>
+    <text x="48" y="344" fill="#AEB2BD" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14">Launch checklist</text>
+    <text x="48" y="369" fill="#6EBEFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14">Open in Obsidian  ↗</text>
+
+    <rect x="268" y="249" width="230" height="143" rx="16" fill="black" fill-opacity="0.18"/>
+    <text x="288" y="281" fill="#FF8ABC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">NOTES</text>
+    <text x="288" y="316" fill="#E8EAF0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15">• Friday remains target</text>
+    <text x="288" y="344" fill="#E8EAF0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15">• Review BC-1425</text>
+    <path d="M290 374H460" stroke="url(#accent)" stroke-width="4" stroke-linecap="round" stroke-dasharray="3 9"/>
+  </g>
+</svg>
