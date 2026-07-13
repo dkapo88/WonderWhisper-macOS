@@ -245,10 +245,6 @@ private extension ScreenCaptureService {
       return nil
     }
 
-    if UserDefaults.standard.bool(forKey: "screenCapture.saveImages") {
-      saveDebugImage(cgImage, prefix: "capture")
-    }
-
     return compress(
       image: cgImage,
       method: method,
@@ -337,24 +333,6 @@ private extension ScreenCaptureService {
     context.interpolationQuality = .high
     context.draw(image, in: CGRect(origin: .zero, size: size))
     return context.makeImage()
-  }
-
-  func saveDebugImage(_ image: CGImage, prefix: String) {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd_HHmmss"
-    let timestamp = formatter.string(from: Date())
-    let filename = "\(prefix)_\(timestamp).png"
-
-    guard
-      let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first,
-      let destination = CGImageDestinationCreateWithURL(desktop.appendingPathComponent(filename) as CFURL, UTType.png.identifier as CFString, 1, nil)
-    else {
-      return
-    }
-
-    CGImageDestinationAddImage(destination, image, nil)
-    CGImageDestinationFinalize(destination)
-    AppLog.screen.info("Saved debug capture: \(filename)")
   }
 
   func screenScale(for frame: CGRect) -> CGFloat {

@@ -180,12 +180,11 @@ The project uses Swift Testing with `@Test` and `#expect`.
 ```text
 WonderWhisper/          App sources, views, services, providers, and assets
 WonderWhisperTests/     Unit and integration tests
-WonderWhisperUITests/   macOS UI automation
 Scripts/                Local build, run, and release helpers
 docs/assets/            README artwork and product screenshots
 ```
 
-Core orchestration lives in `DictationViewModel` and `MeetingCoordinator`. Provider protocols keep transcription and LLM services replaceable, while history, meetings, notes, and conversations use local file-backed stores.
+Core orchestration lives in `DictationViewModel` and `MeetingCoordinator`. Transcription engines share a provider protocol, while OpenRouter is the concrete LLM path. History, meetings, notes, and conversations use local file-backed stores.
 
 ## Troubleshooting
 

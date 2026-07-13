@@ -449,7 +449,6 @@ enum SimplePromptComposer {
   static func configuration(for kind: SimplePromptKind,
                             settings: SimplePromptSettings,
                             llmModel: String,
-                            provider: String,
                             voiceModel: String) -> PromptConfiguration {
     let system = systemPrompt(settings: settings)
     var prompt = PromptConfiguration(
@@ -461,7 +460,6 @@ enum SimplePromptComposer {
       selection: settings.selection
     )
     prompt.llmModelOverride = llmModel
-    prompt.llmProviderOverride = provider
     prompt.screenContextOverride = settings.enableScreenContext
     prompt.clipboardContextOverride = settings.enableClipboardContext
     prompt.selectedTextOverride = settings.enableSelectedText

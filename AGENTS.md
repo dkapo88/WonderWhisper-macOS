@@ -2,22 +2,22 @@
 
 Scope: Entire repository  
 Owner: WonderWhisper Development Team
-Last updated: July 12, 2026
+Last updated: July 13, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
 ## Project Structure & Module Organization
-WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view models, and helpers grouped by feature. Shared assets live in `WonderWhisper/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit targets reside in `WonderWhisperTests/`, and UI automation lives in `WonderWhisperUITests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
+WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view models, and helpers grouped by feature. Shared assets live in `WonderWhisper/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit tests reside in `WonderWhisperTests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
 ### Architecture Overview
-Core components: `DictationViewModel` (orchestrates recording → transcription → LLM → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), provider protocols (`TranscriptionProvider`, `LLMProvider`), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `HotkeyManager`). Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
+Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol, and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
 The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
 - The app ships a single window with eleven sidebar tabs: Hermes, Beeper, Meetings, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo (`groq-streaming`), local Parakeet V3 (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
+- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
   supplies the selected microphone. Parakeet Unified remains the free on-device default with
@@ -53,7 +53,7 @@ Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcod
 Adopt 2-space indentation and keep lines near 100 characters. Name types with PascalCase, functions and variables with camelCase, and prefer `static let` for constants. Match filenames to the primary type (`AudioTranscriber.swift`). Imports should be organized: Foundation first, then Apple frameworks (SwiftUI, AVFoundation, etc.), then `@testable import` in tests. Favor small SwiftUI views, avoid force unwraps (use `guard` or optional chaining), use explicit error handling with `do-catch` or `throws`, and add SwiftUI previews when practical. One primary type per file. Run `swiftformat .` and `swiftlint` before posting changes when tooling is available.
 
 ## Testing Guidelines
-Tests use Swift Testing framework (not XCTest). Use `@Test` annotation and name functions descriptively: `func audioPreprocessorProducesNormalized16BitOutput()` or `func http2SessionsExposePreferredConfiguration()`. Use `#expect` for assertions, `.disabled("reason")` to skip tests. Target audio, transcription, and provider logic first, then UI flows. Aim for ≥80% coverage on critical modules. Run `xcodebuild ... test` or Xcode's Test action prior to opening a pull request.
+Tests use Swift Testing framework (not XCTest). Use `@Test` annotation and name functions descriptively, such as `func freshInstallSimpleModeDefaultsMatchVoiceFirstWorkflow()`. Use `#expect` for assertions and `.disabled("reason")` to skip tests. Target audio, transcription, and provider logic first, then UI flows. Aim for ≥80% coverage on critical modules. Run `xcodebuild ... test` or Xcode's Test action prior to opening a pull request.
 
 ## Commit & Pull Request Guidelines
 Write imperative, focused commits such as `fix: handle microphone permission denial`. In PRs, describe the approach, link related issues, and flag risks. Include screenshots or GIFs for UI updates and confirm build, tests, and lint all succeed locally. Note any gaps explicitly.
@@ -75,6 +75,8 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
 
 ## Changelog
 - 2026-07-13: Moved live meeting ingestion off the main actor so unrelated UI and network work cannot pause transcription.
+- 2026-07-13: Removed unreachable Groq chunk streaming, audio preprocessing, LLM SSE/provider abstractions, custom HTTP/2 plumbing, legacy dictation hotkey machinery, debug capture, and the empty UI-test target.
+- 2026-07-13: Replaced the Hermes-style menu bar microphone with a template WonderWhisper monogram based on the app logo.
 - 2026-07-12: Stopped forcing reasoning off for generated meeting notes so models with mandatory provider-managed reasoning remain compatible.
 - 2026-07-12: Rebranded the macOS app, project, targets, build products, documentation, and release tooling from HermesWhisper back to WonderWhisper while retaining the Hermes-era bundle identifier and local storage path for upgrade compatibility.
 - 2026-07-12: Hardened mixed meeting capture across audio-route changes, bounded live-transcription backlog, and preserved partial transcripts when raw recovery is incomplete.

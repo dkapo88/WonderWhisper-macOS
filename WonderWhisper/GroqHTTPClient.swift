@@ -6,56 +6,12 @@ struct GroqHTTPClient {
     let apiKeyProvider: () -> String?
     static let spLog = OSLog(subsystem: AppConfig.bundleIdentifier, category: "Network-SP")
 
-    // Connection pre-warming for faster subsequent requests
-    static func preWarmConnection(to url: URL) {
-        Task {
-            do {
-                var request = URLRequest(url: url)
-                request.httpMethod = "HEAD"
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                request.timeoutInterval = 5.0
-                // Warm both the default session (used for JSON chat) and the priority session (used in some uploads)
-                let req1 = request
-                let req2 = request
-                async let warm1: (Data, URLResponse) = session.data(for: req1)
-                async let warm2: (Data, URLResponse) = prioritySession.data(for: req2)
-                _ = try await warm1
-                _ = try await warm2
-            } catch {
-                // Ignore pre-warming errors
-            }
-        }
-    }
-
     static let session: URLSession = {
         let cfg = NetworkConfiguration.createConfiguration(timeout: 10, maxConnections: 8)
         cfg.timeoutIntervalForResource = 30
         cfg.connectionProxyDictionary = nil // Direct connections
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
-
-    // Pre-warmed session for critical requests
-    static let prioritySession: URLSession = {
-        let cfg = NetworkConfiguration.createConfiguration(timeout: 8, maxConnections: 4)
-        cfg.timeoutIntervalForResource = 25
-        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
-    }()
-
-    static let http2Session: URLSession = {
-        let cfg = NetworkConfiguration.createConfiguration(timeout: 10, maxConnections: 8)
-        cfg.timeoutIntervalForResource = 30
-        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
-    }()
-
-    static let http2PrioritySession: URLSession = {
-        let cfg = NetworkConfiguration.createConfiguration(timeout: 8, maxConnections: 4)
-        cfg.timeoutIntervalForResource = 25
-        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
-    }()
-
-    static var http2DebugLoggingEnabled: Bool {
-        UserDefaults.standard.bool(forKey: "network.http2.debug")
-    }
 
     private func authHeader() throws -> String {
         guard let rawKey = apiKeyProvider() else { throw ProviderError.missingAPIKey }
@@ -146,12 +102,6 @@ final class GroqURLSessionDelegate: NSObject, URLSessionTaskDelegate {
         let ctx = req.value(forHTTPHeaderField: "X-WW-Context") ?? "-"
         let ttfb = tx.responseStartDate?.timeIntervalSince(tx.requestStartDate ?? tx.fetchStartDate ?? Date())
         let transfer = tx.responseEndDate?.timeIntervalSince(tx.responseStartDate ?? tx.responseEndDate ?? Date())
-        let expectH2 = req.value(forHTTPHeaderField: "X-WW-Expect-H2") == "1"
-        if expectH2 && proto.lowercased() != "h2" {
-            AppLog.network.error("HTTP/2 expected but negotiated \(proto) req=\(reqId) ctx=\(ctx)")
-        } else if expectH2 && GroqHTTPClient.http2DebugLoggingEnabled {
-            AppLog.network.log("HTTP/2 upload confirmed proto=\(proto) req=\(reqId)")
-        }
         AppLog.network.log("Metrics req=\(reqId) ctx=\(ctx) proto=\(proto) dns=\(dns ?? -1)s connect=\(connect ?? -1)s tls=\(tls ?? -1)s ttfb=\(ttfb ?? -1)s transfer=\(transfer ?? -1)s")
     }
 }

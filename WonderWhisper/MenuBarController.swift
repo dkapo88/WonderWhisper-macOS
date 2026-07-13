@@ -17,7 +17,7 @@ final class MenuBarController: NSObject {
 
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
-            button.image = Self.templateMicrophoneImage
+            button.image = Self.templateWonderWhisperImage
             button.contentTintColor = nil
             button.toolTip = "WonderWhisper"
         }
@@ -111,7 +111,7 @@ final class MenuBarController: NSObject {
             button.title = ""
             button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             button.imagePosition = .imageOnly
-            button.image = Self.templateMicrophoneImage
+            button.image = Self.templateWonderWhisperImage
             button.contentTintColor = isRecording || isMeetingActive ? .systemRed : nil
             if isMeetingActive {
                 button.toolTip = "WonderWhisper — Meeting recording"
@@ -140,7 +140,7 @@ final class MenuBarController: NSObject {
     }
 
     private var openRouterVoiceModelOptions: [String] {
-        var models = [
+        let models = [
             AppConfig.defaultOpenRouterTranscriptionModel,
             "openai/gpt-4o-transcribe",
             "openai/whisper-1",
@@ -401,59 +401,25 @@ final class MenuBarController: NSObject {
         refreshMenu()
     }
 
-    // Single cached template image; AppKit tints it to match the active menu bar style.
-    private static let templateMicrophoneImage: NSImage = {
+    // A menu-bar-safe version of the app icon's WonderWhisper monogram. Keeping it as a
+    // template lets AppKit tint the mark for light, dark, and highlighted menu bars.
+    private static let templateWonderWhisperImage: NSImage = {
         let size = NSSize(width: 20, height: 18)
         let img = NSImage(size: size)
         img.lockFocus()
         defer { img.unlockFocus() }
         NSColor.black.setStroke()
-        NSColor.black.setFill()
 
-        let staff = NSBezierPath()
-        staff.lineWidth = 1.5
-        staff.lineCapStyle = .round
-        staff.move(to: NSPoint(x: 10, y: 3))
-        staff.line(to: NSPoint(x: 10, y: 14.5))
-        staff.stroke()
-
-        let mic = NSBezierPath(roundedRect: NSRect(x: 7.2, y: 9.3, width: 5.6, height: 6.4),
-                               xRadius: 2.8,
-                               yRadius: 2.8)
-        mic.lineWidth = 1.2
-        mic.stroke()
-
-        let base = NSBezierPath()
-        base.lineWidth = 1.4
-        base.lineCapStyle = .round
-        base.move(to: NSPoint(x: 6.8, y: 3.2))
-        base.line(to: NSPoint(x: 13.2, y: 3.2))
-        base.stroke()
-
-        for offset in 0..<3 {
-            let inset = CGFloat(offset) * 1.45
-            let left = NSBezierPath()
-            left.lineWidth = 1.35
-            left.lineCapStyle = .round
-            left.move(to: NSPoint(x: 9.2 - inset * 0.25, y: 10.3 - inset))
-            left.curve(
-                to: NSPoint(x: 2.8 + inset, y: 13.2 - inset * 1.25),
-                controlPoint1: NSPoint(x: 7.0 - inset * 0.2, y: 12.5 - inset),
-                controlPoint2: NSPoint(x: 5.0 + inset * 0.6, y: 13.5 - inset)
-            )
-            left.stroke()
-
-            let right = NSBezierPath()
-            right.lineWidth = 1.35
-            right.lineCapStyle = .round
-            right.move(to: NSPoint(x: 10.8 + inset * 0.25, y: 10.3 - inset))
-            right.curve(
-                to: NSPoint(x: 17.2 - inset, y: 13.2 - inset * 1.25),
-                controlPoint1: NSPoint(x: 13.0 + inset * 0.2, y: 12.5 - inset),
-                controlPoint2: NSPoint(x: 15.0 - inset * 0.6, y: 13.5 - inset)
-            )
-            right.stroke()
-        }
+        let monogram = NSBezierPath()
+        monogram.lineWidth = 2.8
+        monogram.lineCapStyle = .square
+        monogram.lineJoinStyle = .miter
+        monogram.move(to: NSPoint(x: 2.5, y: 13.5))
+        monogram.line(to: NSPoint(x: 6.5, y: 4.4))
+        monogram.line(to: NSPoint(x: 10, y: 11.4))
+        monogram.line(to: NSPoint(x: 13.5, y: 4.4))
+        monogram.line(to: NSPoint(x: 17.5, y: 13.5))
+        monogram.stroke()
 
         img.isTemplate = true
         return img

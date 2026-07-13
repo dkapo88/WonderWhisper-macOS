@@ -149,7 +149,6 @@ struct MeetingNoteGenerator {
       names, dates, owners, and deadlines exactly. If a section has no evidence, write "None captured."
       """,
       timeout: 120,
-      streaming: false,
       temperature: 0.1,
       openRouterReasoning: Self.reasoningMode
     )

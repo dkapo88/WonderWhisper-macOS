@@ -214,34 +214,13 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             return try await transcribeRawMode(mgr: mgr, fileURL: fileURL)
         }
 
-        // Optional smart preprocessing (shared with Groq path)
-        var cleanupURLs: [URL] = []
-        var inputURL = fileURL
-        // For Parakeet, external file-based preprocessing can compete with CoreAudio file finalization.
-        // Keep it disabled by default; allow opt-in via UserDefaults key "parakeet.externalPreprocess".
-        let allowExternalPreprocess = (UserDefaults.standard.object(forKey: "parakeet.externalPreprocess") as? Bool) ?? false
-        if allowExternalPreprocess && AudioPreprocessor.isEnabled {
-            AppLog.dictation.log("[Parakeet] External preprocess begin")
-            let processed = AudioPreprocessor.processIfEnabled(fileURL)
-            if processed != fileURL {
-                inputURL = processed
-                cleanupURLs.append(processed)
-            }
-            AppLog.dictation.log("[Parakeet] External preprocess end -> \(inputURL.lastPathComponent)")
-        }
-
-        defer {
-            for url in cleanupURLs {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-        AppLog.dictation.log("[Parakeet] ASR begin file=\(inputURL.lastPathComponent)")
+        AppLog.dictation.log("[Parakeet] ASR begin file=\(fileURL.lastPathComponent)")
         let result: ASRResult
         do {
             let decoderLayers = await mgr.decoderLayerCount
             var decoderState = TdtDecoderState.make(decoderLayers: decoderLayers)
             result = try await mgr.transcribe(
-                inputURL,
+                fileURL,
                 decoderState: &decoderState,
                 language: Self.fluidLanguage(for: settings.language)
             )

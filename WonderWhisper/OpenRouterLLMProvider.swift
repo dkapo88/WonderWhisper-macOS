@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-final class OpenRouterLLMProvider: LLMProvider {
+final class OpenRouterLLMProvider {
     private let client: OpenRouterHTTPClient
     private let routingPrefProvider: () -> String // returns "latency" or "throughput"
     private static let log = OSLog(subsystem: AppConfig.bundleIdentifier, category: "OpenRouterLLM")
@@ -51,7 +51,6 @@ final class OpenRouterLLMProvider: LLMProvider {
             model: settings.model,
             messages: typed,
             temperature: settings.temperature,
-            stream: settings.streaming ? true : nil,
             provider: provider,
             reasoning: Self.reasoningOptions(for: settings.openRouterReasoning)
         )
@@ -80,29 +79,39 @@ final class OpenRouterLLMProvider: LLMProvider {
         }
 
         do {
-            if settings.streaming {
-                let aggregated = try await client.postChatStream(to: settings.endpoint, body: req, timeout: effectiveTimeout)
-                let elapsed = Date().timeIntervalSince(startTime)
-                os_log("LLM streaming completed in %.2fs", log: OpenRouterLLMProvider.log, type: .debug, elapsed)
-                return Self.extractFormattedText(from: aggregated)
-            } else {
-                let aggregated = try await client.postChat(to: settings.endpoint, body: req, timeout: effectiveTimeout)
-                let elapsed = Date().timeIntervalSince(startTime)
-                os_log("LLM request completed in %.2fs", log: OpenRouterLLMProvider.log, type: .debug, elapsed)
-                if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: aggregated), let content = decoded.choices.first?.message.content {
-                    return Self.extractFormattedText(from: content)
-                }
-                // Fallback dynamic parse
-                if let json = try? JSONSerialization.jsonObject(with: aggregated) as? [String: Any], let choices = json["choices"] as? [[String: Any]], let first = choices.first, let message = first["message"] as? [String: Any], let content = message["content"] as? String {
-                    return Self.extractFormattedText(from: content)
-                }
-                throw ProviderError.decodingFailed
+            let aggregated = try await client.postChat(
+                to: settings.endpoint,
+                body: req,
+                timeout: effectiveTimeout
+            )
+            let elapsed = Date().timeIntervalSince(startTime)
+            os_log("LLM request completed in %.2fs", log: OpenRouterLLMProvider.log, type: .debug, elapsed)
+            if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: aggregated),
+               let content = decoded.choices.first?.message.content {
+                return Self.extractFormattedText(from: content)
             }
+            if let json = try? JSONSerialization.jsonObject(with: aggregated) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let first = choices.first,
+               let message = first["message"] as? [String: Any],
+               let content = message["content"] as? String {
+                return Self.extractFormattedText(from: content)
+            }
+            throw ProviderError.decodingFailed
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             os_log("LLM request failed after %.2fs: %{public}@", log: OpenRouterLLMProvider.log, type: .error, elapsed, error.localizedDescription)
             throw error
         }
+    }
+
+    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String {
+        try await process(
+            text: text,
+            userPrompt: userPrompt,
+            settings: settings,
+            imageAttachment: nil
+        )
     }
 
     private static func reasoningOptions(for mode: OpenRouterReasoningMode) -> OpenRouterHTTPClient.ChatRequest.ReasoningOptions? {

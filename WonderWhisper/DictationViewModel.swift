@@ -201,20 +201,12 @@ final class DictationViewModel: ObservableObject {
     @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
 
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
-    // LLM provider selection: "groq" (default) or "openrouter"
-    let llmProvider: String = "openrouter"
     // OpenRouter routing preference: "latency" or "throughput"
     @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "auto" { didSet { persistAndUpdate() } }
     @Published var openrouterReasoning: OpenRouterReasoningMode = {
         let raw = UserDefaults.standard.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
         return OpenRouterReasoningMode(rawValue: raw) ?? .omit
     }() { didSet { persistAndUpdate() } }
-    @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
-        didSet {
-            UserDefaults.standard.set(llmStreaming, forKey: "llm.streaming")
-            updateProviders()
-        }
-    }
     @Published var llmTemperature: Double = UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2 {
         didSet {
             UserDefaults.standard.set(llmTemperature, forKey: "llm.temperature")
@@ -493,16 +485,7 @@ final class DictationViewModel: ObservableObject {
         let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
         return max(5, min(120, v))
     }() { didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
-    @Published var httpProtocolPreference: HTTPProtocolPreference = AppConfig.httpProtocolPreference {
-        didSet {
-            UserDefaults.standard.set(httpProtocolPreference.rawValue, forKey: "network.http_protocol_preference")
-        }
-    }
-
     // Audio
-    @Published var audioEnhancementEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled") {
-        didSet { UserDefaults.standard.set(audioEnhancementEnabled, forKey: "audio.preprocess.enabled") }
-    }
     @Published var voiceProcessingEnabled: Bool = {
         if UserDefaults.standard.object(forKey: "audio.voiceProcessing.enabled") == nil { return true }
         return UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
@@ -593,7 +576,6 @@ final class DictationViewModel: ObservableObject {
 
     // Provider cache to avoid unnecessary recreation
     private var transcriptionProviderCache: [String: TranscriptionProvider] = [:]
-    private var llmProviderCache: [String: LLMProvider] = [:]
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -602,13 +584,6 @@ final class DictationViewModel: ObservableObject {
 
     // Hotkey
     private let hotkeys = HotkeyManager()
-    @Published var hotkeySelection: HotkeyManager.Selection = {
-        if let raw = UserDefaults.standard.string(forKey: "hotkey.selection"), let sel = HotkeyManager.Selection(rawValue: raw) {
-            return sel
-        }
-        return .fnGlobe
-    }() { didSet { updateHotkeys() } }
-
     // Paste-last shortcut (default: Control + Command + V)
     @Published var pasteShortcut: HotkeyManager.Shortcut = {
         let defaults = UserDefaults.standard
@@ -633,7 +608,7 @@ final class DictationViewModel: ObservableObject {
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
         // Legacy long-form prompt that previously seeded the system message
-        let legacyBasePrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? AppConfig.defaultDictationPrompt
+        let legacyBasePrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? ""
 
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
@@ -726,12 +701,9 @@ final class DictationViewModel: ObservableObject {
             model: canonicalPersistedModel,
             systemPrompt: renderedInitial,
             timeout: 60,
-            streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false,
             temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2,
             openRouterReasoning: Self.loadOpenRouterReasoning()
         )
-        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-
         let recorder = AudioRecorder()
         let inserter = InsertionService()
         inserter.useAXInsertion = persistedUseAXInsertion
@@ -791,11 +763,8 @@ final class DictationViewModel: ObservableObject {
         updateHermesChatProjection()
 
         // Hotkey callbacks
-        hotkeys.onActivate = { [weak self] in self?.toggle() }
         hotkeys.onPaste = { [weak self] in self?.pasteLastTranscription() }
 
-        // Load saved hotkey selection
-        updateHotkeys()
         updateProviders()
         updatePasteShortcut()
 
@@ -930,7 +899,7 @@ final class DictationViewModel: ObservableObject {
 
             switch currentState {
             case .idle, .error:
-                let targetPromptID = await MainActor.run { self.determinePromptIDForCurrentHotkey() }
+                let targetPromptID = SimplePromptKind.dictation.promptID
 
                 // Update UI IMMEDIATELY for instant feedback
                 await MainActor.run { 
@@ -1182,7 +1151,6 @@ final class DictationViewModel: ObservableObject {
         do {
             try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias)
             settingsNotice = "OpenRouter API key saved."
-            llmProviderCache.removeAll()
         } catch {
             settingsNotice = "Could not save OpenRouter API key: \(error.localizedDescription)"
         }
@@ -1211,14 +1179,6 @@ final class DictationViewModel: ObservableObject {
         } catch {
             settingsNotice = "Could not save xAI API key: \(error.localizedDescription)"
         }
-    }
-
-    private func updateHotkeys() {
-        // Simple mode registers dictation/command activation through PromptHotkeyManager.
-        // Keep this legacy manager available for paste-last only, so stale hotkey.selection
-        // values cannot trigger recording behind the visible prompt shortcut settings.
-        UserDefaults.standard.removeObject(forKey: "hotkey.selection")
-        hotkeys.selection = nil
     }
 
     private func updatePasteShortcut() {
@@ -1329,32 +1289,6 @@ final class DictationViewModel: ObservableObject {
         }
 
         prompts = newPrompts
-    }
-
-    func updateLLMOverride(for id: UUID, model overrideModel: String?, provider overrideProvider: String?) {
-        guard let idx = prompts.firstIndex(where: { $0.id == id }) else { return }
-        let normalizedModel = overrideModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedProvider = overrideProvider?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelValue = (normalizedModel?.isEmpty ?? true) ? nil : normalizedModel
-        let providerValue: String?
-        if let provider = normalizedProvider, !provider.isEmpty,
-           provider.caseInsensitiveCompare(llmProvider) != .orderedSame {
-            providerValue = provider.lowercased()
-        } else {
-            providerValue = nil
-        }
-        var updated = prompts[idx]
-        let currentProviderValue = updated.llmProviderOverride?.lowercased() ?? ""
-        let newProviderValue = providerValue?.lowercased() ?? ""
-        if updated.llmModelOverride == modelValue && currentProviderValue == newProviderValue {
-            return
-        }
-        updated.llmModelOverride = modelValue
-        updated.llmProviderOverride = providerValue
-        prompts[idx] = updated
-        if updated.id == selectedPromptID {
-            updateProviders()
-        }
     }
 
     func resolvedOpenRouterRouting(for prompt: PromptConfiguration?) -> String {
@@ -1999,22 +1933,6 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Determines which prompt should be activated based on the hotkey that was pressed.
-    /// Always defaults to dictation unless the command hotkey was explicitly pressed.
-    private func determinePromptIDForCurrentHotkey() -> UUID {
-        // Get the current hotkey selection
-        let currentHotkeySelection = hotkeys.selection
-        
-        // Check if the command mode's hotkey matches the current hotkey
-        if let commandHotkey = simpleCommandSettings.selection,
-           commandHotkey == currentHotkeySelection {
-            return SimplePromptKind.command.promptID
-        }
-        
-        // Default to dictation for all other cases
-        return SimplePromptKind.dictation.promptID
-    }
-
     private func buildSimplePromptConfigurations() -> [PromptConfiguration] {
         let dictation = sanitizedSimpleSettings(simpleDictationSettings, for: .dictation)
         let command = sanitizedSimpleSettings(simpleCommandSettings, for: .command)
@@ -2023,8 +1941,18 @@ final class DictationViewModel: ObservableObject {
             openRouterModel: openRouterTranscriptionModel
         )
         return [
-            SimplePromptComposer.configuration(for: .dictation, settings: dictation, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel),
-            SimplePromptComposer.configuration(for: .command, settings: command, llmModel: simpleSelectedModel, provider: "openrouter", voiceModel: voiceModel)
+            SimplePromptComposer.configuration(
+                for: .dictation,
+                settings: dictation,
+                llmModel: simpleSelectedModel,
+                voiceModel: voiceModel
+            ),
+            SimplePromptComposer.configuration(
+                for: .command,
+                settings: command,
+                llmModel: simpleSelectedModel,
+                voiceModel: voiceModel
+            )
         ]
     }
 
@@ -3423,7 +3351,6 @@ final class DictationViewModel: ObservableObject {
                 model: model,
                 systemPrompt: system,
                 timeout: max(30, min(120, transcriptionTimeoutSeconds)),
-                streaming: false,
                 temperature: llmTemperature,
                 openRouterReasoning: openrouterReasoning
             )
@@ -3477,7 +3404,6 @@ final class DictationViewModel: ObservableObject {
                 model: simpleSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines),
                 systemPrompt: "You create concise titles for task conversations.",
                 timeout: 30,
-                streaming: false,
                 temperature: 0.1,
                 openRouterReasoning: openrouterReasoning
             )
@@ -4038,7 +3964,6 @@ final class DictationViewModel: ObservableObject {
             vocabularyTerms: voiceVocabularyTerms
         )
         let modelForActivePrompt = resolvedLLMModel(for: prompt)
-        let providerForActivePrompt = resolvedLLMProvider(for: prompt)
         let canonicalModelForActivePrompt = modelForActivePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Get cached transcription provider
@@ -4097,13 +4022,22 @@ final class DictationViewModel: ObservableObject {
         let renderedSystem = systemPrompt
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
-        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature)
-
         let routingForActivePrompt = resolvedOpenRouterRouting(for: prompt)
         let reasoningForActivePrompt = resolvedOpenRouterReasoning(for: prompt)
-        let llmProviderToApply = getCachedLLMProvider(for: providerForActivePrompt, model: modelForActivePrompt, routing: routingForActivePrompt)
-        lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: canonicalModelForActivePrompt, systemPrompt: renderedSystem, timeout: llmTimeout, streaming: llmStreaming, temperature: llmTemperature, openRouterReasoning: reasoningForActivePrompt)
-        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
+        let llmProviderToApply = OpenRouterLLMProvider(
+            client: OpenRouterHTTPClient(apiKeyProvider: {
+                KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+            }),
+            routingPrefProvider: { routingForActivePrompt }
+        )
+        let lSettings = LLMSettings(
+            endpoint: AppConfig.openrouterChatCompletions,
+            model: canonicalModelForActivePrompt,
+            systemPrompt: renderedSystem,
+            timeout: llmTimeout,
+            temperature: llmTemperature,
+            openRouterReasoning: reasoningForActivePrompt
+        )
 
         let transcriberSettings = tSettings
         let llmSettingsToApply = lSettings
@@ -4120,9 +4054,7 @@ final class DictationViewModel: ObservableObject {
                 await controller.updateTranscriberProvider(providerToApply)
             }
             await controller.updateTranscriberSettings(transcriberSettings)
-            if let llmProvider = llmProviderToApply {
-                await controller.updateLLMProvider(llmProvider)
-            }
+            await controller.updateLLMProvider(llmProviderToApply)
             await controller.updateLLMSettings(llmSettingsToApply)
             await controller.updateLLMEnabled(isLLMEnabled)
             await controller.updateScreenContextEnabled(useScreenContext)
@@ -4221,24 +4153,6 @@ final class DictationViewModel: ObservableObject {
         return provider
     }
 
-    private func getCachedLLMProvider(for provider: String, model: String, routing: String? = nil) -> LLMProvider? {
-        let cacheKey = "\(model)::\(routing ?? "default")"
-
-        if let cached = llmProviderCache[cacheKey] {
-            return cached
-        }
-
-        GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
-        let routingPref = routing ?? openrouterRouting
-        let providerInstance = OpenRouterLLMProvider(
-            client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }),
-            routingPrefProvider: { routingPref }
-        )
-
-        llmProviderCache[cacheKey] = providerInstance
-        return providerInstance
-    }
-
 }
 
 private struct PromptBootstrap {
@@ -4310,7 +4224,6 @@ private extension DictationViewModel {
                 model: request.model.id.trimmingCharacters(in: .whitespacesAndNewlines),
                 systemPrompt: systemPrompt,
                 timeout: timeout,
-                streaming: false,
                 temperature: temperature,
                 openRouterReasoning: request.reasoning
             )
@@ -4528,10 +4441,6 @@ private extension DictationViewModel {
         }
         let fallback = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? AppConfig.defaultLLMModel : fallback
-    }
-
-    func resolvedLLMProvider(for prompt: PromptConfiguration?) -> String {
-        return "openrouter"
     }
 
     func resolvedClipboardContext(for prompt: PromptConfiguration?) -> Bool {

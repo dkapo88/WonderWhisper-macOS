@@ -28,12 +28,12 @@ struct SimpleModeModelTests {
       model: "google/gemini-3.5-flash",
       messages: [.init(role: "user", text: "Test", attachment: nil)],
       temperature: 0.2,
-      stream: nil,
       provider: nil
     )
 
     let object = try encodedJSONObject(request)
     #expect(object["reasoning"] == nil)
+    #expect(object["stream"] == nil)
   }
 
   @Test func openRouterChatRequestCanSendMinimalReasoning() throws {
@@ -41,7 +41,6 @@ struct SimpleModeModelTests {
       model: "google/gemini-3.5-flash",
       messages: [.init(role: "user", text: "Test", attachment: nil)],
       temperature: 0.2,
-      stream: nil,
       provider: nil,
       reasoning: .init(effort: OpenRouterReasoningMode.minimal.rawValue, exclude: true)
     )

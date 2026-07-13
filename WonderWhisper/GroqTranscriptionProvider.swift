@@ -15,48 +15,24 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        // For Groq file uploads, avoid preprocessing if the source is already a compressed format
-        // (preprocessing expands to large WAV and hurts upload latency). Allow opt-in override.
         let ext = fileURL.pathExtension.lowercased()
-        let isCompressed = ["mp3","m4a","aac","ogg","opus","flac","wav"].contains(ext)
-        let allowPreprocCompressed = UserDefaults.standard.bool(forKey: "groq.file.preprocessCompressed")
-        let applyPreprocessing = AudioPreprocessor.isEnabled && (!isCompressed || allowPreprocCompressed)
-
-        // Try in-memory preprocessing first (no disk I/O, eliminates race condition)
-        var fileData: Data
-        var filename: String
-        var mimeType: String
-        var cacheKey: TranscriptionCacheKey?
-
-        if applyPreprocessing,
-           let preprocessedData = try AudioPreprocessor.processToData(fileURL) {
-            // Use preprocessed audio from memory
-            fileData = preprocessedData
-            filename = "audio_proc.wav"
-            mimeType = "audio/wav"
-            // Don't use cache for in-memory preprocessing (prevents stale results)
-            cacheKey = nil
-        } else {
-            // Fall back to original file
-            let fileURL = fileURL
-            cacheKey = TranscriptionCache.shared.key(for: fileURL, provider: "groq", model: settings.model, language: nil, preprocessing: false)
-
-            // Check cache before reading file
-            if let key = cacheKey, let cached = TranscriptionCache.shared.lookup(key) {
-                return cached
-            }
-
-            // Read audio into heap-backed Data to avoid potential mmapped lifetime issues
-            fileData = try Data(contentsOf: fileURL)
-            filename = fileURL.lastPathComponent
-            mimeType = self.mimeType(for: ext)
+        let cacheKey = TranscriptionCache.shared.key(
+            for: fileURL,
+            provider: "groq",
+            model: settings.model,
+            language: nil,
+            preprocessing: false
+        )
+        if let cacheKey, let cached = TranscriptionCache.shared.lookup(cacheKey) {
+            return cached
         }
+        let fileData = try Data(contentsOf: fileURL)
 
         let apiModel = Self.apiModel(for: settings.model)
         return try await transcribeData(
             data: fileData,
-            filename: filename,
-            mimeType: mimeType,
+            filename: fileURL.lastPathComponent,
+            mimeType: mimeType(for: ext),
             settings: TranscriptionSettings(
                 endpoint: settings.endpoint,
                 model: apiModel,
@@ -71,9 +47,6 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
     
     // New primary transcription method that works with Data objects
     func transcribeData(data: Data, filename: String, mimeType: String, settings: TranscriptionSettings, cacheKey: TranscriptionCacheKey? = nil) async throws -> String {
-        // Pre-warm connection during upload preparation for faster subsequent requests
-        GroqHTTPClient.preWarmConnection(to: settings.endpoint)
-        
         let file = GroqHTTPClient.MultipartFile(
             fieldName: "file",
             filename: filename,

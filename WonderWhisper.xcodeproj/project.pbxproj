@@ -18,19 +18,11 @@
 			remoteGlobalIDString = 0AE73FA82E6954E0007001CC;
 			remoteInfo = WonderWhisper;
 		};
-		0AE73FC22E6954E1007001CC /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 0AE73FA12E6954E0007001CC /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 0AE73FA82E6954E0007001CC;
-			remoteInfo = WonderWhisper;
-		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0AE73FA92E6954E0007001CC /* WonderWhisper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WonderWhisper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AE73FB72E6954E1007001CC /* WonderWhisperTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WonderWhisperTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		0AE73FC12E6954E1007001CC /* WonderWhisperUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WonderWhisperUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -42,11 +34,6 @@
 		0AE73FBA2E6954E1007001CC /* WonderWhisperTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = WonderWhisperTests;
-			sourceTree = "<group>";
-		};
-		0AE73FC42E6954E1007001CC /* WonderWhisperUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = WonderWhisperUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -67,13 +54,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		0AE73FBE2E6954E1007001CC /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -82,7 +62,6 @@
 			children = (
 				0AE73FAB2E6954E0007001CC /* WonderWhisper */,
 				0AE73FBA2E6954E1007001CC /* WonderWhisperTests */,
-				0AE73FC42E6954E1007001CC /* WonderWhisperUITests */,
 				0AE740452E69E3E2007001CC /* Frameworks */,
 				0AE73FAA2E6954E0007001CC /* Products */,
 			);
@@ -93,7 +72,6 @@
 			children = (
 				0AE73FA92E6954E0007001CC /* WonderWhisper.app */,
 				0AE73FB72E6954E1007001CC /* WonderWhisperTests.xctest */,
-				0AE73FC12E6954E1007001CC /* WonderWhisperUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -154,29 +132,6 @@
 			productReference = 0AE73FB72E6954E1007001CC /* WonderWhisperTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		0AE73FC02E6954E1007001CC /* WonderWhisperUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 0AE73FD12E6954E1007001CC /* Build configuration list for PBXNativeTarget "WonderWhisperUITests" */;
-			buildPhases = (
-				0AE73FBD2E6954E1007001CC /* Sources */,
-				0AE73FBE2E6954E1007001CC /* Frameworks */,
-				0AE73FBF2E6954E1007001CC /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				0AE73FC32E6954E1007001CC /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				0AE73FC42E6954E1007001CC /* WonderWhisperUITests */,
-			);
-			name = WonderWhisperUITests;
-			packageProductDependencies = (
-			);
-			productName = WonderWhisperUITests;
-			productReference = 0AE73FC12E6954E1007001CC /* WonderWhisperUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -191,10 +146,6 @@
 						CreatedOnToolsVersion = 16.4;
 					};
 					0AE73FB62E6954E1007001CC = {
-						CreatedOnToolsVersion = 16.4;
-						TestTargetID = 0AE73FA82E6954E0007001CC;
-					};
-					0AE73FC02E6954E1007001CC = {
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = 0AE73FA82E6954E0007001CC;
 					};
@@ -219,7 +170,6 @@
 			targets = (
 				0AE73FA82E6954E0007001CC /* WonderWhisper */,
 				0AE73FB62E6954E1007001CC /* WonderWhisperTests */,
-				0AE73FC02E6954E1007001CC /* WonderWhisperUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -233,13 +183,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0AE73FB52E6954E1007001CC /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0AE73FBF2E6954E1007001CC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -263,13 +206,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		0AE73FBD2E6954E1007001CC /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -277,11 +213,6 @@
 			isa = PBXTargetDependency;
 			target = 0AE73FA82E6954E0007001CC /* WonderWhisper */;
 			targetProxy = 0AE73FB82E6954E1007001CC /* PBXContainerItemProxy */;
-		};
-		0AE73FC32E6954E1007001CC /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0AE73FA82E6954E0007001CC /* WonderWhisper */;
-			targetProxy = 0AE73FC22E6954E1007001CC /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -502,38 +433,6 @@
 			};
 			name = Release;
 		};
-		0AE73FD22E6954E1007001CC /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 44WC3UNX99;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.danekapoor.hermeswhisper.uitests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = WonderWhisper;
-			};
-			name = Debug;
-		};
-		0AE73FD32E6954E1007001CC /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 44WC3UNX99;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.danekapoor.hermeswhisper.uitests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = WonderWhisper;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -560,15 +459,6 @@
 			buildConfigurations = (
 				0AE73FCF2E6954E1007001CC /* Debug */,
 				0AE73FD02E6954E1007001CC /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		0AE73FD12E6954E1007001CC /* Build configuration list for PBXNativeTarget "WonderWhisperUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				0AE73FD22E6954E1007001CC /* Debug */,
-				0AE73FD32E6954E1007001CC /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

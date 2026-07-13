@@ -40,8 +40,8 @@ erDiagram
         Shortcut shortcut "optional"
         Selection selection "optional"
         String llmModelOverride "optional"
-        String llmProviderOverride "optional"
         String openrouterRoutingOverride "optional"
+        OpenRouterReasoningMode openrouterReasoningOverride "optional"
         String voiceModelOverride "optional"
         String voiceLanguageOverride "optional"
         Bool screenContextOverride "optional"
@@ -538,25 +538,20 @@ erDiagram
 | `transcription.timeout` | Double | Network timeout (seconds) |
 | `llm.enabled` | Bool | LLM processing enabled |
 | `llm.model` | String | Active LLM model |
-| `llm.streaming` | Bool | Streaming mode enabled |
 | `llm.temperature` | Double | LLM temperature (0.0-1.0) |
 | `llm.systemPrompt` | String | Last-selected system prompt text |
 | `llm.userMessage` | String | Last-selected user prompt text |
 | `llm.openrouter.routing` | String | OpenRouter routing priority (auto/latency/throughput) |
 | `screenContext.enabled` | Bool | Screen context capture enabled |
 | `screenContext.captureMode` | String | Capture mode (image/text) |
-| `screenContext.preprocessMode` | String | Preprocessing mode |
-| `screenContext.organizePrompt` | String | Organization prompt |
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
 | `audio.input.uid` | String | Selected microphone UID |
-| `hotkey.selection` | String | Hotkey selection mode |
 | `pasteShortcut.keyCode` | Int | Paste shortcut key code |
 | `pasteShortcut.modifiers` | Int | Paste shortcut modifiers |
 | `insertion.useAX` | Bool | Use accessibility API for insertion |
 | `insertion.pasteFormatted` | Bool | Paste as formatted text |
-| `audio.preprocess.enabled` | Bool | Audio preprocessing enabled |
 | `audio.voiceProcessing.enabled` | Bool | Voice processing enabled |
 | `history.maxEntries` | Int | Maximum history entries to keep |
 | `simple.llm.enabled` | Bool | LLM enabled in simple mode |
@@ -581,10 +576,6 @@ erDiagram
 | `meeting.context.model` | String | Fast OpenRouter model used only for live topic extraction and context briefs; defaults to `openai/gpt-5.4-nano` |
 | `meeting.overlay.enabled` | Bool | Show the compact translucent transcript/context companion while recording; defaults to true |
 | `meeting.ticketBaseURL` | String | Optional Jira browse base URL for live ticket links; defaults to Hapana Jira |
-| `audio.stream.eq.enabled` | Bool | Stream EQ enabled |
-| `audio.stream.dynamics.enabled` | Bool | Stream dynamics enabled |
-| `audio.stream.chunkMs` | Int | Stream chunk size (ms) |
-| `network.http_protocol_preference` | String | HTTP protocol preference |
 | `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
 | `hermes.api.baseURL` | String | Hermes API server URL; blank by default, root and `/v1` URLs are both accepted |
 | `hermes.conversation.name` | String | Hermes conversation prefix used when creating new sessions |
@@ -681,7 +672,6 @@ erDiagram
 struct AppConfig {
     // API Endpoints
     static let groqAudioTranscriptions: URL
-    static let groqChatCompletions: URL
     static let openrouterChatCompletions: URL
     static let openrouterModels: URL
     
@@ -691,8 +681,6 @@ struct AppConfig {
     
     // Default Prompts
     static let defaultSystemPromptTemplate: String
-    static let defaultDictationPrompt: String
-    static let defaultScreenOrganizePrompt: String
     
     // Keychain Aliases (active)
     static let groqAPIKeyAlias: String = "GROQ_API_KEY"
@@ -703,9 +691,6 @@ struct AppConfig {
     static let defaultHermesConversationName: String = "wonderwhisper-mac"
     static let beeperAccessTokenAlias: String = "BEEPER_ACCESS_TOKEN"
     static let defaultBeeperBaseURLString: String = "http://localhost:23373"
-    
-    // Network
-    static let httpProtocolPreference: HTTPProtocolPreference
 }
 ```
 
@@ -719,6 +704,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.16 (July 13, 2026)**: Removed persisted provider override, LLM streaming, audio preprocessing, HTTP protocol preference, and legacy dictation-hotkey configuration; OpenRouter is now the concrete LLM path and the Groq legacy engine ID maps to batch upload.
 - **v1.14 (July 12, 2026)**: Added a pre-output Core Audio process tap for route-independent system capture, timestamp-aligned adaptive echo reduction, and one-stream Soniox meeting transcription with speaker labels, while preserving two raw CAF tracks and a source-separated fallback.
 - **v1.13 (July 11, 2026)**: Added durable user-authored manual meeting notes in the companion, final-note evidence, meeting history, and Obsidian exports.
 - **v1.12 (July 11, 2026)**: Added Dia helper attribution, fast two-observation starts with dropout-tolerant active-call liveness and same-call suppression, opt-in dual-stream Soniox V5 meeting transcription with transient non-final captions and background finalization, rate-limited subject-aware live Obsidian retrieval with batched briefs and explicit index errors, and configurable Jira or Hapana Linear ticket links.
@@ -764,7 +750,7 @@ sequenceDiagram
     participant DictationViewModel
     participant AudioRecorder
     participant TranscriptionProvider
-    participant LLMProvider
+    participant OpenRouterLLMProvider
     participant HistoryStore
     participant InsertionService
     
@@ -779,8 +765,8 @@ sequenceDiagram
     TranscriptionProvider-->>DictationViewModel: Raw transcript
     
     alt LLM Enabled
-        DictationViewModel->>LLMProvider: process(transcript)
-        LLMProvider-->>DictationViewModel: Formatted output
+        DictationViewModel->>OpenRouterLLMProvider: process(transcript)
+        OpenRouterLLMProvider-->>DictationViewModel: Formatted output
     else LLM Disabled
         DictationViewModel->>DictationViewModel: Use raw transcript
     end
@@ -797,15 +783,15 @@ sequenceDiagram
     participant User
     participant DictationViewModel
     participant ConversationHistoryStore
-    participant LLMProvider
+    participant OpenRouterLLMProvider
     
     User->>DictationViewModel: Trigger with conversation prompt
     DictationViewModel->>ConversationHistoryStore: getContextMessages(promptID)
     ConversationHistoryStore-->>DictationViewModel: Previous messages
     
     DictationViewModel->>DictationViewModel: Record & transcribe
-    DictationViewModel->>LLMProvider: process(with context)
-    LLMProvider-->>DictationViewModel: Response
+    DictationViewModel->>OpenRouterLLMProvider: process(with context)
+    OpenRouterLLMProvider-->>DictationViewModel: Response
     
     DictationViewModel->>ConversationHistoryStore: addMessage(user)
     DictationViewModel->>ConversationHistoryStore: addMessage(assistant)
@@ -956,24 +942,20 @@ sequenceDiagram
 protocol TranscriptionProvider {
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String
 }
-
-protocol LLMProvider {
-    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String
-}
 ```
 
 ### Provider Implementations
 
 - **TranscriptionProvider**:
   - `GroqTranscriptionProvider` (Groq Whisper API - batch)
-  - `GroqStreamingProvider` (Groq chunked streaming)
   - `OpenRouterTranscriptionProvider` (OpenRouter speech-to-text JSON API)
   - `XAITranscriptionProvider` (xAI Grok Speech-to-Text REST API)
-  - `ParakeetTranscriptionProvider` (local V3 on-device)
+  - `XAIStreamingTranscriptionProvider` (xAI real-time Speech-to-Text)
+  - `ParakeetTranscriptionProvider` (local Unified or V3 on-device)
   - `SonioxStreamingProvider` (Soniox V5 real-time streaming)
 
-- **LLMProvider**:
-  - `OpenRouterLLMProvider` (OpenRouter multiplexed models)
+- **LLM processing**:
+  - `OpenRouterLLMProvider` is the concrete OpenRouter implementation used throughout the app.
 
 ---
 
@@ -991,6 +973,6 @@ protocol LLMProvider {
 
 ---
 
-**Document Version**: 1.15
-**Last Updated**: July 12, 2026
+**Document Version**: 1.16
+**Last Updated**: July 13, 2026
 **Maintainer**: WonderWhisper Development Team

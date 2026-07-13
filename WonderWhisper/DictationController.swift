@@ -25,7 +25,7 @@ actor DictationController {
     private let recorder: AudioRecorder
     private var transcriber: TranscriptionProvider
     private var transcriberSettings: TranscriptionSettings
-    private var llm: LLMProvider
+    private var llm: OpenRouterLLMProvider
     private var llmSettings: LLMSettings
     private let inserter: InsertionService
     private let screenContext: ScreenContextService
@@ -64,7 +64,7 @@ actor DictationController {
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
          transcriberSettings: TranscriptionSettings,
-         llm: LLMProvider,
+         llm: OpenRouterLLMProvider,
          llmSettings: LLMSettings,
          inserter: InsertionService,
          screenContext: ScreenContextService = ScreenContextService(),
@@ -111,19 +111,6 @@ actor DictationController {
                     Task { await pk.warmUp() }
                 }
 
-                if let groq = transcriber as? GroqStreamingProvider {
-                    groq.updateSettings(transcriberSettings)
-                    try await groq.beginRealtime()
-                    do {
-                        try recorder.startStreamingPCM16 { data in
-                            Task { try? await groq.feedPCM16(data) }
-                        }
-                    } catch {
-                        AppLog.dictation.error("Groq streaming audio start failed; continuing with file fallback: \(error.localizedDescription)")
-                        await groq.abort()
-                    }
-                }
-
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.updateSettings(transcriberSettings)
                     await soniox.setInputSampleRate(16_000)
@@ -152,8 +139,7 @@ actor DictationController {
 
                 // Capture the streaming instance we just started so finalization targets *this*
                 // object even if the active provider is swapped mid-session (settings change, etc.).
-                if transcriber is GroqStreamingProvider
-                    || transcriber is SonioxStreamingProvider
+                if transcriber is SonioxStreamingProvider
                     || transcriber is XAIStreamingTranscriptionProvider {
                     activeStreamingProvider = transcriber
                 } else {
@@ -179,9 +165,6 @@ actor DictationController {
             } catch {
                 AppLog.dictation.error("Recording start failed: \(error.localizedDescription)")
                 recorder.stopStreamingPCM16()
-                if let groq = transcriber as? GroqStreamingProvider {
-                    await groq.abort()
-                }
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.abort()
                 }
@@ -218,8 +201,7 @@ actor DictationController {
 
         // Non-streaming providers transcribe the recorded file directly. Errors here propagate
         // to the caller's error handler exactly as before (there is nothing to recover from).
-        let isStreamingProvider = streamer is GroqStreamingProvider
-            || streamer is SonioxStreamingProvider
+        let isStreamingProvider = streamer is SonioxStreamingProvider
             || streamer is XAIStreamingTranscriptionProvider
         guard isStreamingProvider else {
             guard let fileURL = recordingFileURL else {
@@ -235,12 +217,7 @@ actor DictationController {
         // fall through to the file fallback instead.
         var transcript = ""
         do {
-            if let groq = streamer as? GroqStreamingProvider {
-                // Groq feeds frames as detached tasks; give the last ones a beat to land in the
-                // chunker before assembling the final transcript (avoids dropped tail words).
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                transcript = try await groq.endRealtime()
-            } else if let soniox = streamer as? SonioxStreamingProvider {
+            if let soniox = streamer as? SonioxStreamingProvider {
                 transcript = try await soniox.endRealtime()
             } else if let xaiStreaming = streamer as? XAIStreamingTranscriptionProvider {
                 transcript = try await xaiStreaming.endRealtime()
@@ -276,8 +253,8 @@ actor DictationController {
     }
 
     /// A file-capable transcriber used to recover an empty streaming result. Soniox cannot
-    /// transcribe files, so it uses the injected fallback (Groq); Groq/xAI streaming providers
-    /// can transcribe their own backup recording directly.
+    /// transcribe files, so it uses the injected fallback (Groq). xAI streaming can transcribe
+    /// its own backup recording directly.
     private func fileCapableFallback(for streamer: TranscriptionProvider) -> TranscriptionProvider? {
         if streamer is SonioxStreamingProvider { return fileFallbackTranscriber }
         return streamer
@@ -285,8 +262,7 @@ actor DictationController {
 
     /// Best-effort abort of whichever streaming provider is active (used when finalize throws).
     private func abortStreamer(_ streamer: TranscriptionProvider) async {
-        if let groq = streamer as? GroqStreamingProvider { await groq.abort() }
-        else if let soniox = streamer as? SonioxStreamingProvider { await soniox.abort() }
+        if let soniox = streamer as? SonioxStreamingProvider { await soniox.abort() }
         else if let xaiStreaming = streamer as? XAIStreamingTranscriptionProvider { await xaiStreaming.abort() }
     }
 
@@ -567,7 +543,7 @@ actor DictationController {
     }
 
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
-    func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
+    func updateLLMProvider(_ p: OpenRouterLLMProvider) { self.llm = p }
     func setUseAXInsertion(_ enabled: Bool) { inserter.useAXInsertion = enabled }
 
     private func applyVocabularyCorrections(to transcript: String) -> String {
@@ -719,7 +695,6 @@ actor DictationController {
     func runLLM(text: String,
                 userPrompt: String,
                 systemPromptOverride: String? = nil,
-                streamingOverride: Bool? = nil,
                 modelOverride: String? = nil) async throws -> String {
         guard llmEnabled else {
             throw NSError(domain: "DictationController", code: -2000, userInfo: [NSLocalizedDescriptionKey: "LLM processing is currently disabled."])
@@ -729,7 +704,6 @@ actor DictationController {
             model: modelOverride ?? llmSettings.model,
             systemPrompt: systemPromptOverride ?? llmSettings.systemPrompt,
             timeout: llmSettings.timeout,
-            streaming: streamingOverride ?? llmSettings.streaming,
             temperature: llmSettings.temperature,
             openRouterReasoning: llmSettings.openRouterReasoning
         )

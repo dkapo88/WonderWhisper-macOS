@@ -476,7 +476,6 @@ struct MeetingContextSummarizer {
       model: model,
       systemPrompt: systemPrompt,
       timeout: 35,
-      streaming: false,
       temperature: 0.1,
       openRouterReasoning: Self.reasoningMode
     )

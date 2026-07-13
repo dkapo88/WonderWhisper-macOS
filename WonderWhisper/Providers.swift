@@ -110,15 +110,13 @@ public struct LLMSettings {
     public let model: String
     public let systemPrompt: String?
     public let timeout: TimeInterval
-    public let streaming: Bool
     public let temperature: Double
     public let openRouterReasoning: OpenRouterReasoningMode
-    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, streaming: Bool = false, temperature: Double = 0.2, openRouterReasoning: OpenRouterReasoningMode = .omit) {
+    public init(endpoint: URL, model: String, systemPrompt: String? = nil, timeout: TimeInterval = 60, temperature: Double = 0.2, openRouterReasoning: OpenRouterReasoningMode = .omit) {
         self.endpoint = endpoint
         self.model = model
         self.systemPrompt = systemPrompt
         self.timeout = timeout
-        self.streaming = streaming
         self.temperature = temperature
         self.openRouterReasoning = openRouterReasoning
     }
@@ -175,15 +173,5 @@ public struct LLMImageAttachment {
         self.mimeType = mimeType
         self.detail = detail
         self.filename = filename
-    }
-}
-
-public protocol LLMProvider {
-    func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String
-}
-
-public extension LLMProvider {
-    func process(text: String, userPrompt: String, settings: LLMSettings) async throws -> String {
-        try await process(text: text, userPrompt: userPrompt, settings: settings, imageAttachment: nil)
     }
 }
