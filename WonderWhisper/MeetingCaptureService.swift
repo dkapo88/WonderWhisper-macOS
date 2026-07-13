@@ -185,7 +185,12 @@ final class MeetingCaptureService: NSObject {
         including: includedApplications,
         exceptingWindows: []
       )
-      systemAudioProcessIDs = includedApplications.map { NSNumber(value: $0.processID) }
+      systemAudioProcessIDs = MeetingDetector.audioProcessIDs(
+        matching: includedApplicationScope
+      )
+      guard !systemAudioProcessIDs.isEmpty else {
+        throw MeetingCaptureError.meetingApplicationUnavailable
+      }
     } else {
       let ownBundleID = Bundle.main.bundleIdentifier
       let excludedApplications = content.applications.filter {

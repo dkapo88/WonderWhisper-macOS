@@ -1077,6 +1077,10 @@ struct MeetingFeatureTests {
       processFamily: "thebrowser",
       includedFamily: "arc"
     ))
+    #expect(MeetingApplicationScope.knownFamily("dia").matches(
+      bundleID: "company.thebrowser.browser.helper",
+      executablePath: "/Applications/Dia.app/Contents/Frameworks/Browser Helper.app"
+    ))
     #expect(!MeetingDetector.familyMatches(
       processFamily: "thebrowser",
       includedFamily: "chrome"

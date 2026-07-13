@@ -74,6 +74,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-13: Scoped automatic meeting capture to matching Core Audio helper processes so browser system audio is not recorded as silence.
 - 2026-07-13: Moved live meeting ingestion off the main actor so unrelated UI and network work cannot pause transcription.
 - 2026-07-13: Removed unreachable Groq chunk streaming, audio preprocessing, LLM SSE/provider abstractions, custom HTTP/2 plumbing, legacy dictation hotkey machinery, debug capture, and the empty UI-test target.
 - 2026-07-13: Replaced the Hermes-style menu bar microphone with a template WonderWhisper monogram based on the app logo.

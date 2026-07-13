@@ -469,6 +469,26 @@ final class MeetingDetector {
     return result
   }
 
+  nonisolated static func audioProcessIDs(
+    matching scope: MeetingApplicationScope
+  ) -> [NSNumber] {
+    audioProcessObjectIDs().compactMap { objectID in
+      guard let bundleID = stringProperty(
+        objectID: objectID,
+        selector: kAudioProcessPropertyBundleID
+      ) else { return nil }
+      let executablePath = executablePath(for: objectID)
+      guard scope.matches(bundleID: bundleID, executablePath: executablePath) else {
+        return nil
+      }
+      let processID = pid_t(uintProperty(
+        objectID: objectID,
+        selector: kAudioProcessPropertyPID
+      ))
+      return processID > 0 ? NSNumber(value: processID) : nil
+    }
+  }
+
   private func activeAudioFamilies(
     processes: [AudioProcessState]
   ) -> [String: AudioFamilyState] {
@@ -638,7 +658,7 @@ final class MeetingDetector {
     return result
   }
 
-  private static func audioProcessObjectIDs() -> [AudioObjectID] {
+  nonisolated private static func audioProcessObjectIDs() -> [AudioObjectID] {
     let system = AudioObjectID(kAudioObjectSystemObject)
     var address = AudioObjectPropertyAddress(
       mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -675,7 +695,7 @@ final class MeetingDetector {
     return value != 0
   }
 
-  private static func stringProperty(
+  nonisolated private static func stringProperty(
     objectID: AudioObjectID,
     selector: AudioObjectPropertySelector
   ) -> String? {
@@ -693,7 +713,7 @@ final class MeetingDetector {
     return value as String
   }
 
-  private static func executablePath(for objectID: AudioObjectID) -> String? {
+  nonisolated private static func executablePath(for objectID: AudioObjectID) -> String? {
     let processID = pid_t(uintProperty(
       objectID: objectID,
       selector: kAudioProcessPropertyPID
@@ -720,7 +740,7 @@ final class MeetingDetector {
     return String(cString: buffer)
   }
 
-  private static func uintProperty(
+  nonisolated private static func uintProperty(
     objectID: AudioObjectID,
     selector: AudioObjectPropertySelector
   ) -> UInt32 {
