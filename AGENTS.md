@@ -74,6 +74,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-13: Moved live meeting ingestion off the main actor so unrelated UI and network work cannot pause transcription.
 - 2026-07-12: Stopped forcing reasoning off for generated meeting notes so models with mandatory provider-managed reasoning remain compatible.
 - 2026-07-12: Rebranded the macOS app, project, targets, build products, documentation, and release tooling from HermesWhisper back to WonderWhisper while retaining the Hermes-era bundle identifier and local storage path for upgrade compatibility.
 - 2026-07-12: Hardened mixed meeting capture across audio-route changes, bounded live-transcription backlog, and preserved partial transcripts when raw recovery is incomplete.

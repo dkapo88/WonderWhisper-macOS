@@ -1062,13 +1062,13 @@ final class MeetingCoordinator: ObservableObject {
         )
       )
       audioContinuation = continuation
-      ingestionTask = Task { [weak self] in
+      ingestionTask = Task.detached(priority: .userInitiated) { [weak self] in
         for await chunk in audioStream {
           guard !Task.isCancelled else { break }
           do {
             try await transcriber.ingest(chunk)
           } catch {
-            self?.recordIngestionWarning(error, for: sessionID)
+            await self?.recordIngestionWarning(error, for: sessionID)
           }
         }
       }
