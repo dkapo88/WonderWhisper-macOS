@@ -396,18 +396,12 @@ final class MeetingDetector {
     guard let family else { return false }
     let states = activeAudioFamilies(processes: processes)
     let audio = Self.audioState(for: family, states: states)
-    let hasMeetingWindow = family == "slack"
-      ? false
-      : googleMeetBrowserFamilies().contains(family)
-    let active = family == "slack"
-      ? audio.hasInput || audio.hasOutput
-      : Self.meetingLikelyActive(
-        hasMeetingWindow: hasMeetingWindow,
-        hasInput: audio.hasInput,
-        hasOutput: audio.hasOutput
-      )
-    logLiveness("family=\(family) window=\(hasMeetingWindow) "
-      + "input=\(audio.hasInput) output=\(audio.hasOutput) active=\(active)"
+    let active = Self.meetAudioIsActive(
+      hasInput: audio.hasInput,
+      hasOutput: audio.hasOutput
+    )
+    logLiveness(
+      "family=\(family) input=\(audio.hasInput) output=\(audio.hasOutput) active=\(active)"
     )
     return active
   }
@@ -595,14 +589,6 @@ final class MeetingDetector {
 
   nonisolated static func meetAudioIsActive(hasInput: Bool, hasOutput: Bool) -> Bool {
     hasInput && hasOutput
-  }
-
-  nonisolated static func meetingLikelyActive(
-    hasMeetingWindow: Bool,
-    hasInput: Bool,
-    hasOutput: Bool
-  ) -> Bool {
-    hasInput || (hasMeetingWindow && hasOutput)
   }
 
   nonisolated static func firstActiveMeetFamily(

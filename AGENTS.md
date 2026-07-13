@@ -31,11 +31,13 @@ The app includes a persistent microphone selection feature accessible from the s
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
   Huddle/Google Meet evidence, while explicitly configured standalone apps may start on microphone
   use. Automatic starts remain strict, while an active meeting tolerates browser
-  title and individual audio-signal dropouts before a two-minute confirmed stop. Soniox non-final
+  title and individual audio-signal dropouts before a 30-second confirmed stop. Soniox non-final
   text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
-  retained CAF segments with local Parakeet Unified; failed mixed transcripts are replaced by recovery
-  from both raw source tracks. Mixed capture runs on a dedicated serial ingestion worker so Soniox
+  retained CAF segments with local Parakeet Unified. Full Soniox failures first recover both retained
+  raw tracks with Soniox Async V5 so system-audio speaker labels survive; if that fails, local Parakeet
+  remains the fallback. One cumulative late 100 ms mixed frame is tolerated before full recovery.
+  Mixed capture runs on a dedicated serial ingestion worker so Soniox
   token and UI callbacks cannot starve audio delivery. If live ingestion falls behind, transcription pauses and is recovered
   later while durable audio capture continues uninterrupted. The companion includes a durable Manual notes
   tab backed by an atomically saved local sidecar; those notes remain separate from generated Markdown,
@@ -74,6 +76,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-13: Preserved speaker labels during genuine Soniox full-stream recovery with async diarization, retained local Parakeet as the fallback, and stopped one harmless late audio frame from discarding a healthy live transcript.
+- 2026-07-13: Required paired microphone and output activity for strict meeting liveness and reduced end confirmation to 30 seconds, so lingering browser audio cannot prevent auto-stop.
+- 2026-07-13: Stopped full meeting windows from redrawing for bubble-only audio levels so long transcripts and live context remain responsive.
 - 2026-07-13: Scoped automatic meeting capture to matching Core Audio helper processes so browser system audio is not recorded as silence.
 - 2026-07-13: Moved live meeting ingestion off the main actor so unrelated UI and network work cannot pause transcription.
 - 2026-07-13: Removed unreachable Groq chunk streaming, audio preprocessing, LLM SSE/provider abstractions, custom HTTP/2 plumbing, legacy dictation hotkey machinery, debug capture, and the empty UI-test target.

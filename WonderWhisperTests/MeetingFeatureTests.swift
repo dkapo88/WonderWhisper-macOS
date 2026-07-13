@@ -95,7 +95,7 @@ struct MeetingFeatureTests {
     #expect(mixed.allSatisfy { $0.samples.count == 1_600 })
   }
 
-  @Test func singleStreamMixerReportsAudioThatArrivesAfterItsTimelineWasEmitted() {
+  @Test func singleStreamMixerToleratesOneLateFrameBeforeRequiringRecovery() {
     let mixer = MeetingSingleStreamMixer()
     let microphoneStart = MeetingAudioChunk(
       source: .microphone,
@@ -109,17 +109,25 @@ struct MeetingFeatureTests {
       startTime: 0,
       duration: 0.5
     )
-    let lateMicrophone = MeetingAudioChunk(
+    let firstLateMicrophone = MeetingAudioChunk(
       source: .microphone,
-      samples: Array(repeating: 0.05, count: 3_200),
+      samples: Array(repeating: 0.05, count: 1_600),
       startTime: 0.1,
-      duration: 0.2
+      duration: 0.1
+    )
+    let secondLateMicrophone = MeetingAudioChunk(
+      source: .microphone,
+      samples: Array(repeating: 0.05, count: 1_600),
+      startTime: 0.2,
+      duration: 0.1
     )
 
     #expect(mixer.ingest(microphoneStart).isEmpty)
     #expect(mixer.ingest(systemAhead).count == 3)
     #expect(!mixer.hasDiscardedLateAudio)
-    _ = mixer.ingest(lateMicrophone)
+    _ = mixer.ingest(firstLateMicrophone)
+    #expect(!mixer.hasDiscardedLateAudio)
+    _ = mixer.ingest(secondLateMicrophone)
     #expect(mixer.hasDiscardedLateAudio)
   }
 
@@ -341,6 +349,18 @@ struct MeetingFeatureTests {
     let blocks = MeetingTranscriptFormatter.blocks(tokens: tokens)
 
     #expect(blocks.map(\.displayName) == ["Speaker 1", "Speaker 2"])
+  }
+
+  @Test func transcriptFormatterShowsAsyncSystemAudioSpeakers() {
+    let token = MeetingTranscriptToken(
+      source: .systemAudio,
+      startTime: 0,
+      endTime: 0.5,
+      text: " Hello.",
+      speaker: "2"
+    )
+
+    #expect(MeetingTranscriptFormatter.blocks(tokens: [token]).first?.displayName == "Speaker 2")
   }
 
   @Test func transcriptFormatterSuppressesSystemAudioEchoFromMicrophone() {
@@ -1104,7 +1124,7 @@ struct MeetingFeatureTests {
   @Test func meetingDetectionConfirmsQuicklyWithoutRetriggeringTheSameCall() {
     #expect(!MeetingDetectionPolicy.schedulingAllowed)
     #expect(MeetingDetectionPolicy.maximumConfirmationDelay <= 5)
-    #expect(MeetingDetectionPolicy.endConfirmationDelay >= 120)
+    #expect(MeetingDetectionPolicy.endConfirmationDelay == 30)
     #expect(
       MeetingDetectionPolicy.suppressionReleaseDelay
         >= MeetingDetectionPolicy.endConfirmationDelay
@@ -1128,31 +1148,6 @@ struct MeetingFeatureTests {
       detectedFamily: "slack",
       suppressedFamily: "dia",
       absentDuration: 0
-    ))
-    #expect(!MeetingDetector.meetingLikelyActive(
-      hasMeetingWindow: true,
-      hasInput: false,
-      hasOutput: false
-    ))
-    #expect(MeetingDetector.meetingLikelyActive(
-      hasMeetingWindow: false,
-      hasInput: true,
-      hasOutput: false
-    ))
-    #expect(MeetingDetector.meetingLikelyActive(
-      hasMeetingWindow: true,
-      hasInput: false,
-      hasOutput: true
-    ))
-    #expect(!MeetingDetector.meetingLikelyActive(
-      hasMeetingWindow: false,
-      hasInput: false,
-      hasOutput: true
-    ))
-    #expect(!MeetingDetector.meetingLikelyActive(
-      hasMeetingWindow: false,
-      hasInput: false,
-      hasOutput: false
     ))
     #expect(!MeetingDetectionPolicy.confirmsMeetingEnded(
       likelyStillActive: false,

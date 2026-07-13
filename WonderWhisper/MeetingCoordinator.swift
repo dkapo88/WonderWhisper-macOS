@@ -90,7 +90,7 @@ enum MeetingObsidianPreferences {
 enum MeetingDetectionPolicy {
   static let pollInterval: TimeInterval = 1
   static let requiredConsecutiveMatches = 2
-  static let endConfirmationDelay: TimeInterval = 120
+  static let endConfirmationDelay: TimeInterval = 30
   static let suppressionReleaseDelay: TimeInterval = 120
 
   static var maximumConfirmationDelay: TimeInterval {
@@ -267,6 +267,7 @@ final class MeetingCoordinator: ObservableObject {
   private let vaultIndex = MeetingVaultIndex()
   private let contextSummarizer = MeetingContextSummarizer()
   private let transcriptRecovery = MeetingTranscriptRecoveryService()
+  private let sonioxAsyncRecovery = MeetingSonioxAsyncRecoveryService()
 
   private var transcriber: MeetingTranscriptionService?
   private var preparationTask: Task<Void, Error>?
@@ -615,33 +616,68 @@ final class MeetingCoordinator: ObservableObject {
        !interruptedSession.audioFiles.isEmpty {
       do {
         let directory = try await store.directory(for: sessionID)
-        let result = try await transcriptRecovery.recover(
-          sessionDirectory: directory,
-          audioFilenames: interruptedSession.audioFiles,
-          existingTokens: interruptedSession.transcriptTokens,
-          sourcesNeedingRecovery: recoverySources,
-          fullRecoverySources: fullRecoverySources
-        )
-        interruptedSession.transcriptTokens = result.tokens
-        if interruptedSession.errorMessage?.hasPrefix("Live transcription warning:") == true {
-          interruptedSession.errorMessage = nil
+        var output: (
+          tokens: [MeetingTranscriptToken],
+          sources: Set<MeetingAudioSource>,
+          method: String
+        )?
+        var asyncFallbackWarning: String?
+
+        if interruptedSession.transcriptionEngine?.usesSoniox == true,
+           fullRecoverySources.isSuperset(of: MeetingAudioSource.captureSources) {
+          do {
+            output = (
+              try await sonioxAsyncRecovery.recover(
+                sessionDirectory: directory,
+                audioFilenames: interruptedSession.audioFiles
+              ),
+              MeetingAudioSource.captureSources,
+              "with Soniox async diarization"
+            )
+          } catch {
+            let description = error.localizedDescription
+            asyncFallbackWarning = "Soniox async diarization failed; local recovery was used: "
+              + description
+            AppLog.dictation.error(
+              "MeetingTranscriptRecovery: Soniox async failed: \(description, privacy: .public)"
+            )
+          }
         }
-        replace(interruptedSession)
-        await persist(interruptedSession)
-        if result.recoveredSources == recoverySources {
-          warning = nil
-          AppLog.dictation.log(
-            "MeetingTranscriptRecovery: restored \(result.recoveredSources.count) source(s) locally"
+
+        if output == nil {
+          let result = try await transcriptRecovery.recover(
+            sessionDirectory: directory,
+            audioFilenames: interruptedSession.audioFiles,
+            existingTokens: interruptedSession.transcriptTokens,
+            sourcesNeedingRecovery: recoverySources,
+            fullRecoverySources: fullRecoverySources
           )
-        } else {
-          let missing = recoverySources.subtracting(result.recoveredSources)
-            .map(\.displayName)
-            .sorted()
-            .joined(separator: ", ")
-          warning = "Local transcript recovery had no retained audio for: \(missing)."
+          output = (result.tokens, result.recoveredSources, "locally")
+        }
+
+        if let output {
+          interruptedSession.transcriptTokens = output.tokens
+          if interruptedSession.errorMessage?.hasPrefix("Live transcription warning:") == true {
+            interruptedSession.errorMessage = nil
+          }
+          replace(interruptedSession)
+          await persist(interruptedSession)
+          if output.sources.isSuperset(of: recoverySources) {
+            warning = asyncFallbackWarning
+            let recoveryResult = "restored \(output.sources.count) source(s) \(output.method)"
+            AppLog.dictation.log(
+              "MeetingTranscriptRecovery: \(recoveryResult, privacy: .public)"
+            )
+          } else {
+            let missing = recoverySources.subtracting(output.sources)
+              .map(\.displayName)
+              .sorted()
+              .joined(separator: ", ")
+            warning = "Transcript recovery had no retained audio for: \(missing)."
+          }
         }
       } catch {
-        warning = "Local transcript recovery failed: \(error.localizedDescription)"
+        warning = "Transcript recovery failed: \(error.localizedDescription)"
       }
     }
 
@@ -1194,7 +1230,8 @@ final class MeetingCoordinator: ObservableObject {
     source: MeetingAudioSource,
     for sessionID: UUID
   ) {
-    guard activeSessionID == sessionID else { return }
+    guard activeSessionID == sessionID,
+          overlayMinimizedSessionID == sessionID else { return }
     liveAudioLevels[source] = min(max(level, 0), 1)
   }
 

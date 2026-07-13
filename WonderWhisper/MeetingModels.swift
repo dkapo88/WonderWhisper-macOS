@@ -175,7 +175,7 @@ struct MeetingTranscriptBlock: Identifiable, Equatable, Sendable {
   let speaker: String?
 
   var displayName: String {
-    if source == .mixed, let speaker, !speaker.isEmpty {
+    if source != .microphone, let speaker, !speaker.isEmpty {
       return "Speaker \(speaker)"
     }
     return source.displayName

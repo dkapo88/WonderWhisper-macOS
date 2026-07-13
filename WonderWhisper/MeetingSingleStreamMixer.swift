@@ -5,7 +5,7 @@ final class MeetingSingleStreamMixer {
   static let sampleRate = 16_000
   static let frameSampleCount = 1_600
   static let maximumAlignmentWaitSamples = 3_200
-  static let lateAudioToleranceSamples = 160
+  static let lateAudioToleranceSamples = frameSampleCount
 
   private struct Span {
     let startSample: Int
@@ -18,6 +18,7 @@ final class MeetingSingleStreamMixer {
   private var latestEndSamples: [MeetingAudioSource: Int] = [:]
   private var nextOutputSample = 0
   private var echoCanceller = MeetingAdaptiveEchoCanceller()
+  private var discardedLateAudioSampleCount = 0
   private(set) var hasDiscardedLateAudio = false
 
   func ingest(_ chunk: MeetingAudioChunk) -> [MeetingAudioChunk] {
@@ -26,7 +27,8 @@ final class MeetingSingleStreamMixer {
     let startSample = max(0, Int((chunk.startTime * Double(Self.sampleRate)).rounded()))
     let span = Span(startSample: startSample, samples: chunk.samples)
     let discardedSampleCount = max(0, min(span.endSample, nextOutputSample) - span.startSample)
-    if discardedSampleCount > Self.lateAudioToleranceSamples {
+    discardedLateAudioSampleCount += discardedSampleCount
+    if discardedLateAudioSampleCount > Self.lateAudioToleranceSamples {
       hasDiscardedLateAudio = true
     }
     if let last = spans[chunk.source]?.last,
