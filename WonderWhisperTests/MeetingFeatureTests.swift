@@ -38,6 +38,22 @@ struct MeetingFeatureTests {
     #expect(chunks.allSatisfy { abs($0.duration - 0.1) < 0.000_001 })
   }
 
+  @Test func meetingAudioFramerBatchesNativeMicrophoneCallbacksBeforeResampling() {
+    let framer = MeetingAudioChunkFramer(source: .microphone, sampleRate: 48_000)
+    var chunks: [MeetingAudioChunk] = []
+
+    for index in 0..<75 {
+      chunks.append(contentsOf: framer.append(
+        samples: Array(repeating: 0.1, count: 512),
+        startTime: Double(index * 512) / 48_000
+      ))
+    }
+
+    #expect(chunks.count == 8)
+    #expect(chunks.allSatisfy { $0.samples.count == 4_800 })
+    #expect(chunks.allSatisfy { abs($0.duration - 0.1) < 0.000_001 })
+  }
+
   @Test func meetingAudioFramerFlushesTheFinalPartialFrame() {
     let framer = MeetingAudioChunkFramer(source: .systemAudio)
     #expect(framer.append(
@@ -95,7 +111,7 @@ struct MeetingFeatureTests {
     #expect(mixed.allSatisfy { $0.samples.count == 1_600 })
   }
 
-  @Test func singleStreamMixerToleratesOneLateFrameBeforeRequiringRecovery() {
+  @Test func singleStreamMixerWaitsForBothSourcesInsteadOfDiscardingOne() {
     let mixer = MeetingSingleStreamMixer()
     let microphoneStart = MeetingAudioChunk(
       source: .microphone,
@@ -109,25 +125,37 @@ struct MeetingFeatureTests {
       startTime: 0,
       duration: 0.5
     )
-    let firstLateMicrophone = MeetingAudioChunk(
+    let delayedMicrophone = MeetingAudioChunk(
       source: .microphone,
-      samples: Array(repeating: 0.05, count: 1_600),
+      samples: Array(repeating: 0.05, count: 4_800),
       startTime: 0.1,
-      duration: 0.1
-    )
-    let secondLateMicrophone = MeetingAudioChunk(
-      source: .microphone,
-      samples: Array(repeating: 0.05, count: 1_600),
-      startTime: 0.2,
-      duration: 0.1
+      duration: 0.3
     )
 
     #expect(mixer.ingest(microphoneStart).isEmpty)
-    #expect(mixer.ingest(systemAhead).count == 3)
+    #expect(mixer.ingest(systemAhead).count == 1)
     #expect(!mixer.hasDiscardedLateAudio)
-    _ = mixer.ingest(firstLateMicrophone)
+    #expect(mixer.ingest(delayedMicrophone).count == 3)
     #expect(!mixer.hasDiscardedLateAudio)
-    _ = mixer.ingest(secondLateMicrophone)
+  }
+
+  @Test func singleStreamMixerBoundsAStalledSourceAndRequiresRecovery() {
+    let mixer = MeetingSingleStreamMixer()
+    let microphone = MeetingAudioChunk(
+      source: .microphone,
+      samples: Array(repeating: 0.05, count: 1_600),
+      startTime: 0,
+      duration: 0.1
+    )
+    let system = MeetingAudioChunk(
+      source: .systemAudio,
+      samples: Array(repeating: 0.1, count: 496_000),
+      startTime: 0,
+      duration: 31
+    )
+
+    #expect(mixer.ingest(microphone).isEmpty)
+    #expect(mixer.ingest(system).count == 10)
     #expect(mixer.hasDiscardedLateAudio)
   }
 
@@ -361,6 +389,72 @@ struct MeetingFeatureTests {
     )
 
     #expect(MeetingTranscriptFormatter.blocks(tokens: [token]).first?.displayName == "Speaker 2")
+  }
+
+  @Test func transcriptFormatterKeepsOverlappingSpeakersInReadableBlocks() {
+    let tokens = [
+      MeetingTranscriptToken(
+        source: .systemAudio,
+        startTime: 10,
+        endTime: 10.4,
+        text: " Remote starts",
+        speaker: "1"
+      ),
+      MeetingTranscriptToken(
+        source: .microphone,
+        startTime: 10.2,
+        endTime: 10.5,
+        text: " I overlap"
+      ),
+      MeetingTranscriptToken(
+        source: .systemAudio,
+        startTime: 10.4,
+        endTime: 10.9,
+        text: " and finishes",
+        speaker: "1"
+      ),
+      MeetingTranscriptToken(
+        source: .microphone,
+        startTime: 10.6,
+        endTime: 11,
+        text: " and finish"
+      )
+    ]
+
+    let blocks = MeetingTranscriptFormatter.blocks(tokens: tokens)
+
+    #expect(blocks.count == 2)
+    #expect(blocks[0].text == "Remote starts and finishes")
+    #expect(blocks[1].text == "I overlap and finish")
+  }
+
+  @Test func transcriptFormatterPreservesSequentialTurnOrder() {
+    let tokens = [
+      MeetingTranscriptToken(
+        source: .systemAudio,
+        startTime: 10,
+        endTime: 10.4,
+        text: " First remote turn",
+        speaker: "1"
+      ),
+      MeetingTranscriptToken(
+        source: .microphone,
+        startTime: 11,
+        endTime: 11.4,
+        text: " My reply"
+      ),
+      MeetingTranscriptToken(
+        source: .systemAudio,
+        startTime: 12,
+        endTime: 12.4,
+        text: " Second remote turn",
+        speaker: "1"
+      )
+    ]
+
+    let blocks = MeetingTranscriptFormatter.blocks(tokens: tokens)
+
+    #expect(blocks.map(\.text) == ["First remote turn", "My reply", "Second remote turn"])
   }
 
   @Test func transcriptFormatterSuppressesSystemAudioEchoFromMicrophone() {

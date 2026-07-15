@@ -76,6 +76,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-15: Added ScreenCaptureKit system-audio startup fallback when the Core Audio tap is unavailable and expanded generated meeting summaries with a substantive prose TL;DR.
+- 2026-07-14: Grouped genuinely overlapping recovered speakers into readable utterances while preserving sequential turn order in display and export.
+- 2026-07-14: Batched native microphone callbacks before resampling, aligned mixed Soniox output across normal drift, and bounded genuine source stalls at 30 seconds with recovery.
 - 2026-07-13: Preserved speaker labels during genuine Soniox full-stream recovery with async diarization, retained local Parakeet as the fallback, and stopped one harmless late audio frame from discarding a healthy live transcript.
 - 2026-07-13: Required paired microphone and output activity for strict meeting liveness and reduced end confirmation to 30 seconds, so lingering browser audio cannot prevent auto-stop.
 - 2026-07-13: Stopped full meeting windows from redrawing for bubble-only audio levels so long transcripts and live context remain responsive.

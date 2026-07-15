@@ -4,7 +4,7 @@ import Foundation
 final class MeetingSingleStreamMixer {
   static let sampleRate = 16_000
   static let frameSampleCount = 1_600
-  static let maximumAlignmentWaitSamples = 3_200
+  static let maximumAlignmentWaitSamples = sampleRate * 30
   static let lateAudioToleranceSamples = frameSampleCount
 
   private struct Span {
@@ -60,9 +60,10 @@ final class MeetingSingleStreamMixer {
     } else {
       nextOutputSample
     }
-    // Bound latency if one ScreenCaptureKit output pauses. Missing samples are
-    // rendered as silence instead of holding the entire transcription pipeline.
     let boundedEnd = newestEnd - Self.maximumAlignmentWaitSamples
+    if boundedEnd > alignedEnd {
+      hasDiscardedLateAudio = true
+    }
     return max(alignedEnd, boundedEnd, nextOutputSample)
   }
 

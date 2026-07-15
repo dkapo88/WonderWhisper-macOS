@@ -183,6 +183,11 @@ struct MeetingTranscriptBlock: Identifiable, Equatable, Sendable {
 }
 
 enum MeetingTranscriptFormatter {
+  private struct BlockKey: Hashable {
+    let source: MeetingAudioSource
+    let speaker: String?
+  }
+
   static func chronologicalTokens(
     _ tokens: [MeetingTranscriptToken]
   ) -> [MeetingTranscriptToken] {
@@ -199,13 +204,15 @@ enum MeetingTranscriptFormatter {
   static func blocks(tokens: [MeetingTranscriptToken]) -> [MeetingTranscriptBlock] {
     let sorted = chronologicalTokens(MeetingEchoSuppressor.filteredTokens(tokens))
     var result: [MeetingTranscriptBlock] = []
+    var latestBlockIndex: [BlockKey: Int] = [:]
 
     for token in sorted where !token.text.isEmpty {
-      if let last = result.last,
-         last.source == token.source,
-         last.speaker == token.speaker,
-         token.startTime - last.endTime < 2.5 {
-        result[result.count - 1] = MeetingTranscriptBlock(
+      let key = BlockKey(source: token.source, speaker: token.speaker)
+      if let index = latestBlockIndex[key],
+         token.startTime - result[index].endTime < 2.5,
+         index == result.count - 1 || token.startTime < result[result.count - 1].endTime {
+        let last = result[index]
+        result[index] = MeetingTranscriptBlock(
           id: last.id,
           source: last.source,
           startTime: last.startTime,
@@ -214,6 +221,7 @@ enum MeetingTranscriptFormatter {
           speaker: last.speaker
         )
       } else {
+        latestBlockIndex[key] = result.count
         result.append(
           MeetingTranscriptBlock(
             id: token.id,
@@ -227,7 +235,9 @@ enum MeetingTranscriptFormatter {
       }
     }
 
-    return result.map {
+    return result.sorted { lhs, rhs in
+      lhs.startTime < rhs.startTime
+    }.map {
       MeetingTranscriptBlock(
         id: $0.id,
         source: $0.source,
