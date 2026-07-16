@@ -33,6 +33,23 @@ private final class MeetingIngestionBacklogGate: @unchecked Sendable {
   }
 }
 
+private final class MeetingAudioLevelGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var enabled = false
+
+  func setEnabled(_ enabled: Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    self.enabled = enabled
+  }
+
+  var isEnabled: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return enabled
+  }
+}
+
 enum MeetingPreferences {
   static func automaticDetectionEnabled(
     defaults: UserDefaults = .standard
@@ -88,13 +105,18 @@ enum MeetingObsidianPreferences {
 }
 
 enum MeetingDetectionPolicy {
-  static let pollInterval: TimeInterval = 1
-  static let requiredConsecutiveMatches = 2
+  static let pollInterval: TimeInterval = 2
+  static let eventConfirmationDelay: TimeInterval = 1
+  static let activeMeetingPollInterval: TimeInterval = 5
   static let endConfirmationDelay: TimeInterval = 30
   static let suppressionReleaseDelay: TimeInterval = 120
 
   static var maximumConfirmationDelay: TimeInterval {
-    pollInterval * Double(requiredConsecutiveMatches)
+    pollInterval * 2
+  }
+
+  static func confirmsAutomaticStart(stableDuration: TimeInterval) -> Bool {
+    stableDuration >= eventConfirmationDelay
   }
 
   static func releasesSuppression(
@@ -139,7 +161,11 @@ final class MeetingCoordinator: ObservableObject {
   @Published private(set) var liveAudioLevels: [MeetingAudioSource: Float] = [:]
   @Published private(set) var triggerRules: [MeetingTriggerRule] = MeetingTriggerRule.load()
   @Published private(set) var liveMicrophoneApplications: [MeetingMicrophoneApplication] = []
-  @Published private(set) var overlayMinimizedSessionID: UUID?
+  @Published private(set) var overlayMinimizedSessionID: UUID? {
+    didSet {
+      audioLevelGate.setEnabled(overlayMinimizedSessionID != nil)
+    }
+  }
 
   @Published var liveObsidianContextEnabled: Bool = {
     UserDefaults.standard.bool(forKey: "meeting.context.enabled")
@@ -268,6 +294,7 @@ final class MeetingCoordinator: ObservableObject {
   private let contextSummarizer = MeetingContextSummarizer()
   private let transcriptRecovery = MeetingTranscriptRecoveryService()
   private let sonioxAsyncRecovery = MeetingSonioxAsyncRecoveryService()
+  private let audioLevelGate = MeetingAudioLevelGate()
 
   private var transcriber: MeetingTranscriptionService?
   private var preparationTask: Task<Void, Error>?
@@ -286,8 +313,10 @@ final class MeetingCoordinator: ObservableObject {
   private var lastContextAnalysisTokenCount = 0
   private var lastContextAnalysisAt: Date?
   private var detectorTimer: Timer?
+  private var detectorEventTask: Task<Void, Never>?
+  private var detectorConfirmationTask: Task<Void, Never>?
+  private var lastActiveMeetingPollAt: Date?
   private var candidate: MeetingDetectionCandidate?
-  private var candidateMatchCount = 0
   private var candidateDetectedAt: Date?
   private var automaticCandidate: MeetingDetectionCandidate?
   private var candidateMissingSince: Date?
@@ -331,6 +360,9 @@ final class MeetingCoordinator: ObservableObject {
       }
     }
     if MeetingDetectionPolicy.schedulingAllowed {
+      detector.startMonitoring { [weak self] in
+        self?.handleDetectorEvent()
+      }
       let timer = Timer(timeInterval: MeetingDetectionPolicy.pollInterval, repeats: true) {
         [weak self] _ in
         Task { @MainActor [weak self] in
@@ -347,6 +379,8 @@ final class MeetingCoordinator: ObservableObject {
   deinit {
     SystemAudioController.shared.setMeetingCaptureActive(false)
     detectorTimer?.invalidate()
+    detectorEventTask?.cancel()
+    detectorConfirmationTask?.cancel()
     persistTask?.cancel()
     preparationTask?.cancel()
     preparationMonitorTask?.cancel()
@@ -1109,17 +1143,20 @@ final class MeetingCoordinator: ObservableObject {
         }
       }
 
+      let audioLevelGate = self.audioLevelGate
       try await capture.start(
         directory: directory,
         includedApplicationScope: automaticallyStarted ? candidate?.captureScope : nil,
         onChunk: { [weak self] chunk in
-          let level = MeetingAudioMeter.level(from: chunk.samples)
-          Task { @MainActor [weak self] in
-            self?.receiveAudioLevel(
-              level,
-              source: chunk.source,
-              for: sessionID
-            )
+          if audioLevelGate.isEnabled {
+            let level = MeetingAudioMeter.level(from: chunk.samples)
+            Task { @MainActor [weak self] in
+              self?.receiveAudioLevel(
+                level,
+                source: chunk.source,
+                for: sessionID
+              )
+            }
           }
           if case .dropped = continuation.yield(chunk),
              backlogGate.claim() {
@@ -1201,10 +1238,16 @@ final class MeetingCoordinator: ObservableObject {
   private func receive(tokens: [MeetingTranscriptToken], for sessionID: UUID) {
     guard var session = session(withID: sessionID),
           !tokens.isEmpty else { return }
-    session.transcriptTokens.append(contentsOf: tokens)
-    session.transcriptTokens = MeetingTranscriptFormatter.chronologicalTokens(
-      session.transcriptTokens
-    )
+    let incoming = MeetingTranscriptFormatter.chronologicalTokens(tokens)
+    let existingLastStartTime = session.transcriptTokens.last?.startTime
+    session.transcriptTokens.append(contentsOf: incoming)
+    if let existingLastStartTime,
+       let incomingFirstStartTime = incoming.first?.startTime,
+       incomingFirstStartTime < existingLastStartTime {
+      session.transcriptTokens = MeetingTranscriptFormatter.chronologicalTokens(
+        session.transcriptTokens
+      )
+    }
     replace(session)
     schedulePersist(session)
     if activeSessionID == sessionID {
@@ -1239,8 +1282,7 @@ final class MeetingCoordinator: ObservableObject {
     guard liveObsidianContextEnabled,
           let folder = obsidianVaultURL,
           let sessionID = activeSessionID else { return }
-    let recentTokens = Array(session.transcriptTokens.suffix(260))
-    let text = MeetingTranscriptFormatter.plainText(tokens: recentTokens)
+    let text = session.transcriptTokens.suffix(40).map(\.text).joined()
     guard !text.isEmpty else { return }
     for term in MeetingVaultIndex.extractIdentifiers(from: text) {
       surfaceContext(term: term, transcript: text, folder: folder, sessionID: sessionID)
@@ -1257,10 +1299,9 @@ final class MeetingCoordinator: ObservableObject {
             >= (lastContextAnalysisAt == nil ? 24 : 80) else {
       return
     }
-    let intervalRemaining = lastContextAnalysisAt.map {
+    let delay = lastContextAnalysisAt.map {
       max(0, 30 - Date().timeIntervalSince($0))
-    } ?? 0
-    let delay = max(6, intervalRemaining)
+    } ?? 30
     let analysisID = UUID()
     contextAnalysisID = analysisID
     contextAnalysisTask = Task { [weak self] in
@@ -1294,7 +1335,10 @@ final class MeetingCoordinator: ObservableObject {
           let session = session(withID: sessionID),
           activeSessionID == sessionID else { return }
 
-    let recentTokens = Array(session.transcriptTokens.suffix(360))
+    let recentTokens = MeetingTranscriptFormatter.recentTokens(
+      session.transcriptTokens,
+      duration: 30
+    )
     let transcript = MeetingTranscriptFormatter.plainText(tokens: recentTokens)
     guard transcript.count >= 40 else { return }
     lastContextAnalysisTokenCount = session.transcriptTokens.count
@@ -1319,7 +1363,7 @@ final class MeetingCoordinator: ObservableObject {
       guard !Task.isCancelled,
             liveObsidianContextEnabled,
             activeSessionID == sessionID else { return }
-      topics = MeetingTopicExtractor.fallbackTopics(from: transcript)
+      topics = []
       contextError = "Topic extraction failed: \(error.localizedDescription)"
       AppLog.dictation.error(
         "MeetingContext: topic extraction failed: \(error.localizedDescription, privacy: .public)"
@@ -1657,7 +1701,7 @@ final class MeetingCoordinator: ObservableObject {
       guard let self else { return }
       while !Task.isCancelled {
         do {
-          try await Task.sleep(nanoseconds: 2_000_000_000)
+          try await Task.sleep(nanoseconds: 10_000_000_000)
         } catch {
           break
         }
@@ -1698,7 +1742,19 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   private func pollMeetingDetector() async {
-    liveMicrophoneApplications = detector.liveMicrophoneApplications()
+    if let activeSession {
+      guard activeSession.automaticallyStarted else { return }
+      let now = Date()
+      if let lastActiveMeetingPollAt,
+         now.timeIntervalSince(lastActiveMeetingPollAt)
+           < MeetingDetectionPolicy.activeMeetingPollInterval {
+        return
+      }
+      lastActiveMeetingPollAt = now
+    } else {
+      lastActiveMeetingPollAt = nil
+      liveMicrophoneApplications = detector.liveMicrophoneApplications()
+    }
     guard !isLoadingSessions,
           automaticDetectionEnabled,
           !isStarting,
@@ -1770,32 +1826,60 @@ final class MeetingCoordinator: ObservableObject {
 
     if candidate?.triggerID != detected.triggerID {
       candidate = detected
-      candidateMatchCount = 1
       candidateDetectedAt = Date()
       statusMessage = "Possible \(detected.appName) detected…"
       return
     }
 
     candidate = detected
-    candidateMatchCount += 1
-    if candidateMatchCount >= MeetingDetectionPolicy.requiredConsecutiveMatches {
-      let latency = candidateDetectedAt.map { Date().timeIntervalSince($0) } ?? 0
-      AppLog.dictation.log(
-        "MeetingDetector: auto-start confirmed after \(latency, format: .fixed(precision: 2))s"
-      )
-      resetDetectionState()
-      await startMeeting(
-        title: detected.appName,
-        detectedApp: detected.appName,
-        automaticallyStarted: true,
-        candidate: detected
-      )
+    let latency = candidateDetectedAt.map { Date().timeIntervalSince($0) } ?? 0
+    guard MeetingDetectionPolicy.confirmsAutomaticStart(
+      stableDuration: latency
+    ) else { return }
+    AppLog.dictation.log(
+      "MeetingDetector: auto-start confirmed after \(latency, format: .fixed(precision: 2))s"
+    )
+    resetDetectionState()
+    await startMeeting(
+      title: detected.appName,
+      detectedApp: detected.appName,
+      automaticallyStarted: true,
+      candidate: detected
+    )
+  }
+
+  private func handleDetectorEvent() {
+    guard detectorEventTask == nil else { return }
+    detectorEventTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer { detectorEventTask = nil }
+      await pollMeetingDetector()
+      scheduleDetectorConfirmationIfNeeded()
+    }
+  }
+
+  private func scheduleDetectorConfirmationIfNeeded() {
+    guard candidate != nil,
+          activeSessionID == nil,
+          detectorConfirmationTask == nil else { return }
+    detectorConfirmationTask = Task { @MainActor [weak self] in
+      do {
+        try await Task.sleep(
+          nanoseconds: UInt64(
+            MeetingDetectionPolicy.eventConfirmationDelay * 1_000_000_000
+          )
+        )
+      } catch {
+        return
+      }
+      guard let self else { return }
+      defer { detectorConfirmationTask = nil }
+      await pollMeetingDetector()
     }
   }
 
   private func resetDetectionState() {
     candidate = nil
-    candidateMatchCount = 0
     candidateDetectedAt = nil
     candidateMissingSince = nil
     if activeSessionID == nil {

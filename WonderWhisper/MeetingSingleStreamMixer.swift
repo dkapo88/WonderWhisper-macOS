@@ -80,10 +80,13 @@ final class MeetingSingleStreamMixer {
       let range = nextOutputSample..<(nextOutputSample + sampleCount)
       let system = render(source: .systemAudio, range: range)
       let microphone = render(source: .microphone, range: range)
-      let cleanedMicrophone = echoCanceller.process(
-        reference: system,
-        microphone: microphone
-      )
+      let hasSystemSignal = system.contains { $0 != 0 }
+      let hasMicrophoneSignal = microphone.contains { $0 != 0 }
+      let cleanedMicrophone = if hasSystemSignal, hasMicrophoneSignal {
+        echoCanceller.process(reference: system, microphone: microphone)
+      } else {
+        microphone
+      }
       let mixed = Self.mix(system: system, microphone: cleanedMicrophone)
       result.append(
         MeetingAudioChunk(

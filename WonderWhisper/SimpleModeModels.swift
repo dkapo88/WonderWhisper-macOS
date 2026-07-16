@@ -36,15 +36,15 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
   case settings
 
   static let displayOrder: [SimpleSidebarItem] = [
-    .hermes,
-    .beeper,
-    .meetings,
     .history,
-    .comparison,
     .dictation,
     .command,
+    .meetings,
+    .beeper,
+    .hermes,
     .vocabulary,
     .microphone,
+    .comparison,
     .permissions,
     .settings
   ]

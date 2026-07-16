@@ -33,4 +33,19 @@ struct WonderWhisperTests {
         #expect(command.selection == .rightOption)
     }
 
+    @Test func microphonePriorityFallsBackInOrderThenUsesSystemDefault() {
+        let priorities = ["desk", "built-in", "airpods"]
+
+        #expect(AudioDeviceManager.preferredInputUID(
+            priorityUIDs: priorities,
+            availableUIDs: ["built-in", "airpods"],
+            systemDefaultUID: "airpods"
+        ) == "built-in")
+        #expect(AudioDeviceManager.preferredInputUID(
+            priorityUIDs: priorities,
+            availableUIDs: [],
+            systemDefaultUID: "system"
+        ) == "system")
+    }
+
 }

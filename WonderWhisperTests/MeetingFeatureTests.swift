@@ -356,6 +356,35 @@ struct MeetingFeatureTests {
     #expect(MeetingTranscriptFormatter.blocks(tokens: tokens).first?.text == "GPT-5.6 works.")
   }
 
+  @Test func transcriptFormatterOrdersLateTokensAndPreservesTimestampTies() {
+    let firstAtTie = MeetingTranscriptToken(
+      source: .microphone,
+      startTime: 1,
+      endTime: 1.1,
+      text: " first"
+    )
+    let later = MeetingTranscriptToken(
+      source: .microphone,
+      startTime: 2,
+      endTime: 2.1,
+      text: " later"
+    )
+    let secondAtTie = MeetingTranscriptToken(
+      source: .microphone,
+      startTime: 1,
+      endTime: 1.1,
+      text: " second"
+    )
+
+    let sorted = MeetingTranscriptFormatter.chronologicalTokens([
+      later,
+      firstAtTie,
+      secondAtTie
+    ])
+
+    #expect(sorted.map(\.id) == [firstAtTie.id, secondAtTie.id, later.id])
+  }
+
   @Test func transcriptFormatterSeparatesMixedStreamSpeakers() {
     let tokens = [
       MeetingTranscriptToken(
@@ -1095,15 +1124,31 @@ struct MeetingFeatureTests {
     #expect(matches.first?.title == "AI Provider Strategy")
   }
 
-  @Test func topicFallbackExtractsNamedModelsAndCompanies() {
-    let topics = MeetingTopicExtractor.fallbackTopics(
-      from: "We discussed Grok 4.5, Microsoft, OpenAI and Anthropic during the call."
-    )
+  @Test func recentContextTokensCoverOnlyLatestThirtySeconds() {
+    let tokens = [
+      MeetingTranscriptToken(
+        source: .microphone,
+        startTime: 0,
+        endTime: 1,
+        text: " old"
+      ),
+      MeetingTranscriptToken(
+        source: .systemAudio,
+        startTime: 29,
+        endTime: 30,
+        text: " boundary"
+      ),
+      MeetingTranscriptToken(
+        source: .microphone,
+        startTime: 59,
+        endTime: 60,
+        text: " latest"
+      )
+    ]
 
-    #expect(topics.contains("Grok 4.5"))
-    #expect(topics.contains("Microsoft"))
-    #expect(topics.contains("OpenAI"))
-    #expect(topics.contains("Anthropic"))
+    let recent = MeetingTranscriptFormatter.recentTokens(tokens, duration: 30)
+
+    #expect(recent.map(\.text) == [" boundary", " latest"])
   }
 
   @Test func ticketLinksRouteJiraAndLinearIdentifiers() throws {
@@ -1217,7 +1262,10 @@ struct MeetingFeatureTests {
 
   @Test func meetingDetectionConfirmsQuicklyWithoutRetriggeringTheSameCall() {
     #expect(!MeetingDetectionPolicy.schedulingAllowed)
-    #expect(MeetingDetectionPolicy.maximumConfirmationDelay <= 5)
+    #expect(MeetingDetectionPolicy.maximumConfirmationDelay <= 4)
+    #expect(MeetingDetectionPolicy.eventConfirmationDelay == 1)
+    #expect(!MeetingDetectionPolicy.confirmsAutomaticStart(stableDuration: 0.99))
+    #expect(MeetingDetectionPolicy.confirmsAutomaticStart(stableDuration: 1))
     #expect(MeetingDetectionPolicy.endConfirmationDelay == 30)
     #expect(
       MeetingDetectionPolicy.suppressionReleaseDelay
@@ -1257,6 +1305,14 @@ struct MeetingFeatureTests {
     ))
     #expect(!MeetingStatus.processing.isTerminal)
     #expect(MeetingStatus.completed.isTerminal)
+  }
+
+  @Test func meetingDetectorSnapshotExpiresBeforeTheNextStartPoll() {
+    #expect(MeetingDetector.audioProcessSnapshotCacheDuration > 0)
+    #expect(
+      MeetingDetector.audioProcessSnapshotCacheDuration
+        < MeetingDetectionPolicy.eventConfirmationDelay
+    )
   }
 
   @Test func meetingTranscriptionEngineDefaultsLocalAndPersistsSonioxOptIn() throws {

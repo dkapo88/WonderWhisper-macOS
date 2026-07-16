@@ -191,7 +191,12 @@ enum MeetingTranscriptFormatter {
   static func chronologicalTokens(
     _ tokens: [MeetingTranscriptToken]
   ) -> [MeetingTranscriptToken] {
-    tokens.enumerated().sorted { lhs, rhs in
+    if zip(tokens, tokens.dropFirst()).allSatisfy({
+      $0.startTime <= $1.startTime
+    }) {
+      return tokens
+    }
+    return tokens.enumerated().sorted { lhs, rhs in
       if lhs.element.startTime != rhs.element.startTime {
         return lhs.element.startTime < rhs.element.startTime
       }
@@ -199,6 +204,15 @@ enum MeetingTranscriptFormatter {
       // emission order instead of using UUIDs, which scrambles words at ties.
       return lhs.offset < rhs.offset
     }.map(\.element)
+  }
+
+  static func recentTokens(
+    _ tokens: [MeetingTranscriptToken],
+    duration: TimeInterval
+  ) -> [MeetingTranscriptToken] {
+    guard let latestEndTime = tokens.map(\.endTime).max() else { return [] }
+    let cutoff = latestEndTime - max(0, duration)
+    return chronologicalTokens(tokens.filter { $0.endTime >= cutoff })
   }
 
   static func blocks(tokens: [MeetingTranscriptToken]) -> [MeetingTranscriptBlock] {

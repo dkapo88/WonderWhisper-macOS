@@ -460,7 +460,6 @@ erDiagram
         Bool beeperClipboardContextEnabled
         Double beeperClipboardTimeoutSeconds
         Bool beeperResponseMonitoringEnabled
-        Bool beeperWebSocketMonitoringEnabled
         Double beeperResponsePollingIntervalSeconds
         Double beeperResponsePollingTimeoutSeconds
         UUID selectedHermesSessionID FK "optional"
@@ -547,7 +546,8 @@ erDiagram
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
-| `audio.input.uid` | String | Selected microphone UID |
+| `audio.input.uid` | String | Preferred microphone UID; absent means follow the macOS system default |
+| `audio.input.priorities` | Data | JSON-encoded ordered `AudioDeviceInfo[]` with stable UIDs and last-known names; the first available device is used before falling back to the system default |
 | `pasteShortcut.keyCode` | Int | Paste shortcut key code |
 | `pasteShortcut.modifiers` | Int | Paste shortcut modifiers |
 | `insertion.useAX` | Bool | Use accessibility API for insertion |
@@ -598,7 +598,6 @@ erDiagram
 | `beeper.context.clipboard.enabled` | Bool | Attach recently copied text to Beeper voice messages as clipboard context |
 | `beeper.context.clipboard.timeoutSeconds` | Double | Beeper copied text freshness timeout; default 20 seconds, clamped from 1 to 600 seconds |
 | `beeper.response.monitoring.enabled` | Bool | Watch the configured Beeper chat and show new incoming text replies in response windows |
-| `beeper.response.websocket.enabled` | Bool | Try Beeper's experimental WebSocket stream before falling back to polling |
 | `beeper.response.polling.intervalSeconds` | Double | Beeper response polling interval; default 10 seconds, clamped from 2 to 60 seconds |
 | `beeper.response.polling.timeoutSeconds` | Double | Legacy bounded-response timeout retained for compatibility; default 120 seconds, clamped from 10 to 600 seconds |
 
@@ -652,7 +651,6 @@ erDiagram
         Bool beeperClipboardContextEnabled
         Double beeperClipboardTimeoutSeconds
         Bool beeperResponseMonitoringEnabled
-        Bool beeperWebSocketMonitoringEnabled
         Double beeperResponsePollingIntervalSeconds
         Double beeperResponsePollingTimeoutSeconds
         UUID selectedHermesSessionID "optional"
@@ -704,6 +702,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.18 (July 16, 2026)**: Added remembered microphone priority ordering with unavailable-device display and automatic fallback to the next available microphone or macOS system default.
+- **v1.17 (July 16, 2026)**: Removed the ambient Beeper WebSocket setting and client; response monitoring now uses bounded polling to avoid accumulating short-lived network tasks.
 - **v1.16 (July 13, 2026)**: Removed persisted provider override, LLM streaming, audio preprocessing, HTTP protocol preference, and legacy dictation-hotkey configuration; OpenRouter is now the concrete LLM path and the Groq legacy engine ID maps to batch upload.
 - **v1.14 (July 12, 2026)**: Added a pre-output Core Audio process tap for route-independent system capture, timestamp-aligned adaptive echo reduction, and one-stream Soniox meeting transcription with speaker labels, while preserving two raw CAF tracks and a source-separated fallback.
 - **v1.13 (July 11, 2026)**: Added durable user-authored manual meeting notes in the companion, final-note evidence, meeting history, and Obsidian exports.
@@ -973,6 +973,6 @@ protocol TranscriptionProvider {
 
 ---
 
-**Document Version**: 1.16
-**Last Updated**: July 13, 2026
+**Document Version**: 1.18
+**Last Updated**: July 16, 2026
 **Maintainer**: WonderWhisper Development Team

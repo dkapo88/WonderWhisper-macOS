@@ -237,10 +237,6 @@ struct BeeperIntegrationView: View {
 
         if vm.beeperResponseMonitoringEnabled {
           VStack(alignment: .leading, spacing: 8) {
-            Toggle("Use WebSocket first", isOn: $vm.beeperWebSocketMonitoringEnabled)
-              .toggleStyle(.checkbox)
-              .help("Try Beeper's experimental WebSocket stream before falling back to polling.")
-
             Stepper(
               "Poll every \(Int(vm.beeperResponsePollingIntervalSeconds)) seconds",
               value: $vm.beeperResponsePollingIntervalSeconds,

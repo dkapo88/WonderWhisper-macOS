@@ -223,7 +223,9 @@ final class MeetingCaptureService: NSObject {
     configuration.queueDepth = 1
     configuration.capturesAudio = false
     configuration.captureMicrophone = true
-    if case .deviceUID(let uid) = AudioInputSelection.load() {
+    let inputSelection = AudioInputSelection.load()
+    if case .deviceUID = inputSelection,
+       let uid = AudioDeviceManager.resolvedInputUID(for: inputSelection) {
       configuration.microphoneCaptureDeviceID = uid
     }
 

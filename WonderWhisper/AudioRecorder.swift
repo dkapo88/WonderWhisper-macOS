@@ -51,7 +51,8 @@ final class AudioRecorder: NSObject {
         switch selection {
         case .systemDefault:
             return
-        case .deviceUID(let uid):
+        case .deviceUID:
+            guard let uid = AudioDeviceManager.resolvedInputUID(for: selection) else { return }
             let current = AudioDeviceManager.currentDefaultInputUID()
             if current != uid {
                 previousDefaultInputUID = current

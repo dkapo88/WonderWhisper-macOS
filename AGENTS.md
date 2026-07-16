@@ -2,7 +2,7 @@
 
 Scope: Entire repository  
 Owner: WonderWhisper Development Team
-Last updated: July 13, 2026
+Last updated: July 16, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
@@ -13,10 +13,15 @@ WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view mo
 Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol, and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
-The app includes a persistent microphone selection feature accessible from the sidebar. Users can choose between system default (auto-switches with device changes) or override with a specific microphone. Selection is persisted via `AudioInputSelection` in `AudioDeviceManager.swift` and displayed in `MicrophoneSelectionView.swift`.
+The app includes persistent microphone priority ordering in the sidebar. Users can choose the system
+default or rank remembered microphones; unavailable choices fall through to the highest-priority
+connected device and then the system default. Selection is persisted via `AudioInputSelection` and
+`AudioDeviceManager` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with eleven sidebar tabs: Hermes, Beeper, Meetings, History, Compare, Dictation, Command, Vocabulary, Microphone, Permissions, and Settings. Scratchpad, Pro mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with eleven sidebar tabs: History, Dictation, Command, Meetings,
+  Beeper, Hermes, Vocabulary, Microphone, Compare, Permissions, and Settings. Scratchpad, Pro mode,
+  and file transcription workflows have been removed; keep new work within these surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
@@ -30,7 +35,8 @@ The app includes a persistent microphone selection feature accessible from the s
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
   Huddle/Google Meet evidence, while explicitly configured standalone apps may start on microphone
-  use. Automatic starts remain strict, while an active meeting tolerates browser
+  use. Core Audio process activity wakes strict automatic-start validation immediately, with a
+  two-second fallback heartbeat, while an active meeting tolerates browser
   title and individual audio-signal dropouts before a 30-second confirmed stop. Soniox non-final
   text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
@@ -76,6 +82,16 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-16: Made meeting auto-detection event-driven from Core Audio activity changes with a
+  two-second fallback heartbeat and one-second stable confirmation.
+- 2026-07-16: Reordered the main sidebar around history, core voice tools, meetings, integrations,
+  supporting tools, and settings.
+- 2026-07-16: Added remembered microphone priority ordering with automatic fallback across
+  dictation and meeting capture when a preferred device is unavailable.
+- 2026-07-16: Batched live context into strict 30-second transcript windows, reduced noisy topic
+  discovery and broad vault matches, skipped hidden audio metering and silent-source echo work,
+  reduced active meeting detection scans, bounded growing transcript persistence work, and replaced
+  leaking ambient Beeper WebSocket cycles with bounded polling.
 - 2026-07-15: Added ScreenCaptureKit system-audio startup fallback when the Core Audio tap is unavailable and expanded generated meeting summaries with a substantive prose TL;DR.
 - 2026-07-14: Grouped genuinely overlapping recovered speakers into readable utterances while preserving sequential turn order in display and export.
 - 2026-07-14: Batched native microphone callbacks before resampling, aligned mixed Soniox output across normal drift, and bounded genuine source stalls at 30 seconds with recovery.

@@ -481,6 +481,7 @@ private struct MeetingDetailView: View {
   @FocusState private var titleIsFocused: Bool
 
   var body: some View {
+    let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
     VStack(alignment: .leading, spacing: 0) {
       header
         .padding(22)
@@ -514,7 +515,6 @@ private struct MeetingDetailView: View {
             Label("Transcript", systemImage: "captions.bubble.fill")
               .font(.headline)
 
-            let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
             let previewSources = MeetingAudioSource.allCases.filter {
               !(livePreviews[$0] ?? "").isEmpty
             }
@@ -535,9 +535,7 @@ private struct MeetingDetailView: View {
           .padding(22)
         }
         .onChange(of: session.transcriptTokens.count) { _, _ in
-          guard let last = MeetingTranscriptFormatter.blocks(
-            tokens: session.transcriptTokens
-          ).last else { return }
+          guard let last = blocks.last else { return }
           withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(last.id, anchor: .bottom)
           }

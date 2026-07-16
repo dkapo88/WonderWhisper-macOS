@@ -501,10 +501,10 @@ private struct MeetingOverlayView: View {
   }
 
   private func transcript(_ session: MeetingSession) -> some View {
-    ScrollViewReader { proxy in
+    let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
+    return ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 12) {
-          let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
           let previewSources = MeetingAudioSource.allCases.filter {
             !(coordinator.liveTranscriptPreviews[$0] ?? "").isEmpty
           }
@@ -539,9 +539,7 @@ private struct MeetingOverlayView: View {
         .padding(.bottom, 14)
       }
       .onChange(of: session.transcriptTokens.count) { _, _ in
-        guard let last = MeetingTranscriptFormatter.blocks(
-          tokens: session.transcriptTokens
-        ).last else { return }
+        guard let last = blocks.last else { return }
         proxy.scrollTo(last.id, anchor: .bottom)
       }
       .onChange(of: coordinator.liveTranscriptPreviews) { _, previews in

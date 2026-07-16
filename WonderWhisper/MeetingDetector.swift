@@ -236,6 +236,17 @@ struct MeetingDetectionCandidate: Equatable, Sendable {
 
 @MainActor
 final class MeetingDetector {
+  nonisolated static let audioProcessSnapshotCacheDuration: TimeInterval = 0.5
+
+  private struct AudioProcessMetadata {
+    let processID: pid_t
+    let bundleID: String
+    let canonicalBundleID: String
+    let executablePath: String?
+    let name: String
+    let family: String?
+  }
+
   private struct AudioProcessState {
     let bundleID: String
     let canonicalBundleID: String
@@ -251,8 +262,87 @@ final class MeetingDetector {
     var hasOutput = false
   }
 
+  private let listenerQueue = DispatchQueue(
+    label: "com.wonderwhisper.meeting-detector-events"
+  )
   private var lastDiagnostic: String?
   private var lastLivenessDiagnostic: String?
+  private var cachedAudioProcesses: (
+    expiresAt: TimeInterval,
+    processes: [AudioProcessState]
+  )?
+  private var audioProcessMetadata: [AudioObjectID: AudioProcessMetadata] = [:]
+  private var audioActivityListener: AudioObjectPropertyListenerBlock?
+  private var monitoredProcessIDs: Set<AudioObjectID> = []
+  private var onAudioActivityChange: (() -> Void)?
+
+  deinit {
+    if let audioActivityListener {
+      var address = Self.processListAddress
+      AudioObjectRemovePropertyListenerBlock(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        listenerQueue,
+        audioActivityListener
+      )
+      for objectID in monitoredProcessIDs {
+        Self.activityAddresses.forEach { storedAddress in
+          var address = storedAddress
+          AudioObjectRemovePropertyListenerBlock(
+            objectID,
+            &address,
+            listenerQueue,
+            audioActivityListener
+          )
+        }
+      }
+    }
+  }
+
+  func startMonitoring(onChange: @escaping () -> Void) {
+    stopMonitoring()
+    onAudioActivityChange = onChange
+
+    let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+      Task { @MainActor [weak self] in
+        self?.handleAudioActivityChange()
+      }
+    }
+    var address = Self.processListAddress
+    guard AudioObjectAddPropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      listenerQueue,
+      listener
+    ) == noErr else { return }
+    audioActivityListener = listener
+    syncProcessActivityListeners(with: Self.audioProcessObjectIDs())
+  }
+
+  func stopMonitoring() {
+    onAudioActivityChange = nil
+    guard let audioActivityListener else { return }
+    var processListAddress = Self.processListAddress
+    AudioObjectRemovePropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject),
+      &processListAddress,
+      listenerQueue,
+      audioActivityListener
+    )
+    for objectID in monitoredProcessIDs {
+      Self.activityAddresses.forEach { storedAddress in
+        var address = storedAddress
+        AudioObjectRemovePropertyListenerBlock(
+          objectID,
+          &address,
+          listenerQueue,
+          audioActivityListener
+        )
+      }
+    }
+    monitoredProcessIDs.removeAll()
+    self.audioActivityListener = nil
+  }
 
   func currentCandidate(
     triggerRules: [MeetingTriggerRule] = MeetingTriggerRule.defaultRules
@@ -419,36 +509,61 @@ final class MeetingDetector {
   }
 
   private func audioProcesses() -> [AudioProcessState] {
+    let now = ProcessInfo.processInfo.systemUptime
+    if let cachedAudioProcesses,
+       cachedAudioProcesses.expiresAt > now {
+      return cachedAudioProcesses.processes
+    }
+
+    let objectIDs = Self.audioProcessObjectIDs()
+    syncProcessActivityListeners(with: objectIDs)
+    let liveObjectIDs = Set(objectIDs)
+    audioProcessMetadata = audioProcessMetadata.filter { liveObjectIDs.contains($0.key) }
     var result: [AudioProcessState] = []
     let ownBundleID = Bundle.main.bundleIdentifier?.lowercased()
-    for objectID in Self.audioProcessObjectIDs() {
-      guard let bundleID = Self.stringProperty(
-        objectID: objectID,
-        selector: kAudioProcessPropertyBundleID
-      ),
-      !bundleID.isEmpty,
-      bundleID.lowercased() != ownBundleID else { continue }
-      let executablePath = Self.executablePath(for: objectID)
-      let canonicalBundleID = Self.canonicalApplicationBundleID(
-        for: bundleID,
-        executablePath: executablePath
-      )
+    for objectID in objectIDs {
       let processID = pid_t(Self.uintProperty(
         objectID: objectID,
         selector: kAudioProcessPropertyPID
       ))
-      let localizedName = processID > 0
-        ? NSRunningApplication(processIdentifier: processID)?.localizedName
-        : nil
-      let fallbackName = Self.outermostApplicationURL(for: executablePath ?? "")?
-        .deletingPathExtension().lastPathComponent
-      result.append(
-        AudioProcessState(
+      let metadata: AudioProcessMetadata
+      if let cached = audioProcessMetadata[objectID],
+         cached.processID == processID {
+        metadata = cached
+      } else {
+        guard let bundleID = Self.stringProperty(
+          objectID: objectID,
+          selector: kAudioProcessPropertyBundleID
+        ),
+        !bundleID.isEmpty,
+        bundleID.lowercased() != ownBundleID else { continue }
+        let executablePath = Self.executablePath(for: objectID)
+        let canonicalBundleID = Self.canonicalApplicationBundleID(
+          for: bundleID,
+          executablePath: executablePath
+        )
+        let localizedName = processID > 0
+          ? NSRunningApplication(processIdentifier: processID)?.localizedName
+          : nil
+        let fallbackName = Self.outermostApplicationURL(for: executablePath ?? "")?
+          .deletingPathExtension().lastPathComponent
+        metadata = AudioProcessMetadata(
+          processID: processID,
           bundleID: bundleID,
           canonicalBundleID: canonicalBundleID,
           executablePath: executablePath,
           name: localizedName ?? fallbackName ?? canonicalBundleID,
-          family: Self.family(for: bundleID, executablePath: executablePath),
+          family: Self.family(for: bundleID, executablePath: executablePath)
+        )
+        audioProcessMetadata[objectID] = metadata
+      }
+      result.append(
+        AudioProcessState(
+          bundleID: metadata.bundleID,
+          canonicalBundleID: metadata.canonicalBundleID,
+          executablePath: metadata.executablePath,
+          name: metadata.name,
+          family: metadata.family,
           hasInput: Self.boolProperty(
             objectID: objectID,
             selector: kAudioProcessPropertyIsRunningInput
@@ -460,7 +575,59 @@ final class MeetingDetector {
         )
       )
     }
+    cachedAudioProcesses = (now + Self.audioProcessSnapshotCacheDuration, result)
     return result
+  }
+
+  private func handleAudioActivityChange() {
+    cachedAudioProcesses = nil
+    onAudioActivityChange?()
+  }
+
+  private func syncProcessActivityListeners(with objectIDs: [AudioObjectID]) {
+    guard let audioActivityListener else { return }
+    let liveObjectIDs = Set(objectIDs)
+    for objectID in Array(monitoredProcessIDs)
+      where !liveObjectIDs.contains(objectID) {
+      Self.activityAddresses.forEach { storedAddress in
+        var address = storedAddress
+        AudioObjectRemovePropertyListenerBlock(
+          objectID,
+          &address,
+          listenerQueue,
+          audioActivityListener
+        )
+      }
+      monitoredProcessIDs.remove(objectID)
+    }
+
+    for objectID in objectIDs where !monitoredProcessIDs.contains(objectID) {
+      var installedAddresses: [AudioObjectPropertyAddress] = []
+      for storedAddress in Self.activityAddresses {
+        var address = storedAddress
+        if AudioObjectAddPropertyListenerBlock(
+          objectID,
+          &address,
+          listenerQueue,
+          audioActivityListener
+        ) == noErr {
+          installedAddresses.append(storedAddress)
+        }
+      }
+      guard installedAddresses.count == Self.activityAddresses.count else {
+        installedAddresses.forEach { storedAddress in
+          var address = storedAddress
+          AudioObjectRemovePropertyListenerBlock(
+            objectID,
+            &address,
+            listenerQueue,
+            audioActivityListener
+          )
+        }
+        continue
+      }
+      monitoredProcessIDs.insert(objectID)
+    }
   }
 
   nonisolated static func audioProcessIDs(
@@ -662,6 +829,29 @@ final class MeetingDetector {
       return []
     }
     return objects
+  }
+
+  nonisolated private static var processListAddress: AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyProcessObjectList,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+  }
+
+  nonisolated private static var activityAddresses: [AudioObjectPropertyAddress] {
+    [
+      AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyIsRunningInput,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      ),
+      AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyIsRunningOutput,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+    ]
   }
 
   private static func boolProperty(

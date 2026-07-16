@@ -23,12 +23,89 @@ enum AudioInputSelection: Equatable {
     }
 }
 
-struct AudioDeviceInfo: Hashable {
+struct AudioDeviceInfo: Codable, Hashable, Identifiable {
     let uid: String
     let name: String
+
+    var id: String { uid }
 }
 
 enum AudioDeviceManager {
+    private static let inputPrioritiesKey = "audio.input.priorities"
+
+    static func inputPriorities(defaults: UserDefaults = .standard) -> [AudioDeviceInfo] {
+        if let data = defaults.data(forKey: inputPrioritiesKey),
+           let devices = try? JSONDecoder().decode([AudioDeviceInfo].self, from: data) {
+            return devices
+        }
+        guard let uid = defaults.string(forKey: "audio.input.uid"), !uid.isEmpty else {
+            return []
+        }
+        return [AudioDeviceInfo(uid: uid, name: uid)]
+    }
+
+    static func saveInputPriorities(
+        _ devices: [AudioDeviceInfo],
+        defaults: UserDefaults = .standard
+    ) {
+        guard let data = try? JSONEncoder().encode(devices) else { return }
+        defaults.set(data, forKey: inputPrioritiesKey)
+    }
+
+    static func mergedInputPriorities(
+        stored: [AudioDeviceInfo],
+        available: [AudioDeviceInfo],
+        selection: AudioInputSelection
+    ) -> [AudioDeviceInfo] {
+        let availableByUID = available.reduce(into: [String: AudioDeviceInfo]()) {
+            $0[$1.uid] = $1
+        }
+        let storedByUID = stored.reduce(into: [String: AudioDeviceInfo]()) {
+            $0[$1.uid] = $1
+        }
+        let preferredUID: String? = if case .deviceUID(let uid) = selection { uid } else { nil }
+        var seen: Set<String> = []
+        var result: [AudioDeviceInfo] = []
+
+        for uid in [preferredUID].compactMap({ $0 }) + stored.map(\.uid) + available.map(\.uid) {
+            guard seen.insert(uid).inserted else { continue }
+            result.append(
+                availableByUID[uid]
+                    ?? storedByUID[uid]
+                    ?? AudioDeviceInfo(uid: uid, name: "Previously selected microphone")
+            )
+        }
+        return result
+    }
+
+    static func promoted(
+        _ device: AudioDeviceInfo,
+        in priorities: [AudioDeviceInfo]
+    ) -> [AudioDeviceInfo] {
+        [device] + priorities.filter { $0.uid != device.uid }
+    }
+
+    static func preferredInputUID(
+        priorityUIDs: [String],
+        availableUIDs: Set<String>,
+        systemDefaultUID: String?
+    ) -> String? {
+        priorityUIDs.first(where: availableUIDs.contains) ?? systemDefaultUID
+    }
+
+    static func resolvedInputUID(for selection: AudioInputSelection) -> String? {
+        guard case .deviceUID(let selectedUID) = selection else { return nil }
+        let available = availableInputDevices()
+        let priorityUIDs = [selectedUID] + inputPriorities().map(\.uid).filter {
+            $0 != selectedUID
+        }
+        return preferredInputUID(
+            priorityUIDs: priorityUIDs,
+            availableUIDs: Set(available.map(\.uid)),
+            systemDefaultUID: currentDefaultInputUID()
+        )
+    }
+
     static func availableInputDevices() -> [AudioDeviceInfo] {
         // Enumerate HAL audio devices to avoid CMIO/camera dependency and entitlement noise
         var addr = AudioObjectPropertyAddress(
@@ -103,8 +180,8 @@ enum AudioDeviceManager {
         switch selection {
         case .systemDefault:
             effectiveUID = currentDefaultInputUID()
-        case .deviceUID(let uid):
-            effectiveUID = uid
+        case .deviceUID:
+            effectiveUID = resolvedInputUID(for: selection)
         }
         guard let uid = effectiveUID else { return false }
         if let current = inputVolume(uid: uid) {

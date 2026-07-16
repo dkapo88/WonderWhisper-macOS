@@ -346,6 +346,14 @@ final class MenuBarController: NSObject {
     }
     @objc private func selectDevice(_ sender: NSMenuItem) {
         if let uid = sender.representedObject as? String {
+            let available = AudioDeviceManager.availableInputDevices()
+            let device = available.first(where: { $0.uid == uid })
+                ?? AudioDeviceInfo(uid: uid, name: sender.title)
+            let priorities = AudioDeviceManager.promoted(
+                device,
+                in: AudioDeviceManager.inputPriorities()
+            )
+            AudioDeviceManager.saveInputPriorities(priorities)
             vm?.audioInputSelection = .deviceUID(uid)
         }
         refreshMenu()

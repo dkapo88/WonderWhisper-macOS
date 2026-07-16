@@ -439,18 +439,6 @@ final class DictationViewModel: ObservableObject {
             )
         }
     }
-    @Published var beeperWebSocketMonitoringEnabled: Bool = {
-        let key = SimpleDefaultsKey.beeperWebSocketMonitoringEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
-    }() {
-        didSet {
-            UserDefaults.standard.set(
-                beeperWebSocketMonitoringEnabled,
-                forKey: SimpleDefaultsKey.beeperWebSocketMonitoringEnabled
-            )
-            refreshBeeperResponseMonitor()
-        }
-    }
     @Published var beeperResponsePollingIntervalSeconds: Double = {
         let key = SimpleDefaultsKey.beeperResponsePollingIntervalSeconds
         let stored = UserDefaults.standard.object(forKey: key) as? Double ?? 10
@@ -537,14 +525,9 @@ final class DictationViewModel: ObservableObject {
     private lazy var beeperClient = BeeperAPIClient(
         accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
     )
-    private lazy var beeperWebSocketClient = BeeperWebSocketClient(
-        accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
-    )
     private var activeHermesPromptID: UUID?
     private var activeHermesRecordingSessionID: UUID?
     private var activeBeeperPromptID: UUID?
-    // ponytail: one monitor task per chat. Fine for a handful of chats; if the
-    // list ever grows large, collapse into a single multi-chat WS subscription.
     private var beeperResponseMonitorTasks: [Task<Void, Never>] = []
     private var focusedHermesResponseSessionID: UUID?
     private var hermesInFlightSessionIDs: Set<UUID> = []
@@ -2890,36 +2873,6 @@ final class DictationViewModel: ObservableObject {
 
         while !Task.isCancelled {
             let cycleStartedAt = Date()
-            if beeperWebSocketMonitoringEnabled {
-                let socketTimeout = max(5, min(10, interval))
-                do {
-                    let message = try await beeperWebSocketClient.waitForIncomingMessage(
-                        settings: settings,
-                        sentPendingMessageID: "",
-                        sentAt: baselineDate,
-                        timeout: socketTimeout
-                    )
-                    guard !Task.isCancelled else { return }
-                    if !seenMessageIDs.contains(message.id) {
-                        seenMessageIDs.insert(message.id)
-                        showBeeperResponse(message)
-                        AppLog.dictation.log(
-                            "Beeper ambient monitor received WebSocket message id=\(message.id, privacy: .public)"
-                        )
-                    }
-                    if let page = try? await beeperClient.listMessages(settings: settings) {
-                        cursor = page.newestCursor
-                        page.items.forEach { seenMessageIDs.insert($0.id) }
-                    }
-                    continue
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    AppLog.dictation.log(
-                        "Beeper ambient WebSocket cycle ended: \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-
             let pollResult = await pollConfiguredBeeperChatOnce(
                 settings: settings,
                 baselineDate: baselineDate,
@@ -4183,7 +4136,6 @@ private enum SimpleDefaultsKey {
     static let beeperClipboardContextEnabled = "beeper.context.clipboard.enabled"
     static let beeperClipboardTimeoutSeconds = "beeper.context.clipboard.timeoutSeconds"
     static let beeperResponseMonitoringEnabled = "beeper.response.monitoring.enabled"
-    static let beeperWebSocketMonitoringEnabled = "beeper.response.websocket.enabled"
     static let beeperResponsePollingIntervalSeconds = "beeper.response.polling.intervalSeconds"
     static let beeperSuppressWhenChatAppFrontmost = "beeper.response.suppressWhenChatAppFrontmost"
 }
