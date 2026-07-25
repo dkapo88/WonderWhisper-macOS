@@ -5,6 +5,24 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-27</title>
+      <pubDate>Sat, 25 Jul 2026 10:38:19 +0000</pubDate>
+      <sparkle:version>2026072700</sparkle:version>
+      <sparkle:shortVersionString>2026-07-27</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>What's new</h2>
+<ul>
+<li>Added Homebrew installation, so WonderWhisper can be installed from the terminal with `brew install --cask dkapo88/tap/wonderwhisper`.</li>
+<li>Documented in-app updating: WonderWhisper checks for new versions daily, and you can check on demand from the app menu, the menu bar icon, or Settings.</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials remain compatible.</li>
+<li>Updates are verified against the developer signature before installing, so macOS permissions carry over.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-27/WonderWhisper-2026-07-27.dmg" sparkle:edSignature="Ypa3J/T7+yNZw/Zui2Bqpb8KNQ9TcJAtL+JLWYzC5wNr22acglkVwuYvOikVzGvbdUlsB+iLRf8XI+fSyshXCA==" length="9527402" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-26</title>
       <pubDate>Sat, 25 Jul 2026 10:29:00 +0000</pubDate>
       <sparkle:version>2026072600</sparkle:version>
