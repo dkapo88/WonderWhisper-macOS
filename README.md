@@ -114,6 +114,14 @@ Local application data is stored under `~/Library/Application Support/HermesWhis
 
 WonderWhisper requires **macOS 15.5 or newer**.
 
+### Homebrew
+
+```sh
+brew install --cask dkapo88/tap/wonderwhisper
+```
+
+### Manual download
+
 1. Download the latest signed and notarized DMG from [GitHub Releases](https://github.com/dkapo88/WonderWhisper-macOS/releases/latest).
 2. Drag **WonderWhisper.app** into Applications.
 3. Open **Permissions** in the sidebar and grant the capabilities you use:
@@ -123,6 +131,15 @@ WonderWhisper requires **macOS 15.5 or newer**.
    - Input Monitoring
 4. Choose a transcription engine in Settings. Parakeet is the no-key, on-device default.
 5. Add API keys only for optional cloud providers or integrations.
+
+Either way, grant the permissions in step 3 on first launch.
+
+### Updates
+
+WonderWhisper checks for updates once a day and can install them itself, so you only need to
+download the app once. You can also check on demand from the **WonderWhisper** app menu, the menu
+bar icon, or **Settings → Updates**. Updates are verified against the developer signature before
+installing, so macOS permissions carry over rather than needing to be granted again.
 
 ### Upgrading from HermesWhisper
 
