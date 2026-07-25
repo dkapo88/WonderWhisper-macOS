@@ -6,6 +6,7 @@ import FluidAudio
 
 struct SimpleModeSettingsView: View {
   @ObservedObject var vm: DictationViewModel
+  @ObservedObject private var updater = UpdaterController.shared
   @State private var openRouterKeyInput: String = ""
   @State private var groqKeyInput: String = ""
   @State private var xaiKeyInput: String = ""
@@ -49,6 +50,7 @@ struct SimpleModeSettingsView: View {
         parakeetSection
         audioSection
         recordingSection
+        updatesSection
         Spacer(minLength: 0)
       }
       .padding(24)
@@ -517,6 +519,31 @@ struct SimpleModeSettingsView: View {
       }
       .padding(.top, 4)
     }
+  }
+
+  private var updatesSection: some View {
+    GroupBox("Updates") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 12) {
+          Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
+          Text("Version \(Self.displayVersion)")
+            .font(.callout)
+            .foregroundColor(.secondary)
+        }
+        Text("WonderWhisper checks for updates automatically once a day. Updates are verified against the developer signature before installing, so your macOS permissions carry over.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private static var displayVersion: String {
+    let info = Bundle.main.infoDictionary
+    let short = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+    let build = info?["CFBundleVersion"] as? String ?? ""
+    return build.isEmpty || build == short ? short : "\(short) (\(build))"
   }
 
   private func statusLabel(title: String, ok: Bool) -> some View {

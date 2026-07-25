@@ -32,6 +32,20 @@
   </dict>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright 2026 Dane Kapoor.</string>
+  <!-- Sparkle auto-update. The appcast is served from the repo's main branch over HTTPS;
+       release.sh regenerates and commits it as part of publishing a release. -->
+  <key>SUFeedURL</key>
+  <string>https://raw.githubusercontent.com/dkapo88/WonderWhisper-macOS/main/appcast.xml</string>
+  <!-- EdDSA public key. The matching private key lives in the login Keychain
+       (service "https://sparkle-project.org", account "ed25519") and never leaves this Mac.
+       Updates whose signature does not verify against this key are refused. -->
+  <key>SUPublicEDKey</key>
+  <string>wF2pS6NvdquX7AdyDVGuBWS354GHV83+Cwwa1imL9Xc=</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <!-- Check once a day; Sparkle also checks shortly after launch. -->
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
   <key>NSMicrophoneUsageDescription</key>
   <string>WonderWhisper needs microphone access to transcribe dictation and meeting audio.</string>
   <key>NSAudioCaptureUsageDescription</key>

@@ -316,6 +316,16 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
+        let updateItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        updateItem.target = self
+        menu.addItem(updateItem)
+
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(
             title: "Quit WonderWhisper",
             action: #selector(quitApp),
@@ -325,6 +335,8 @@ final class MenuBarController: NSObject {
         menu.addItem(quitItem)
         return menu
     }
+
+    @objc private func checkForUpdates() { UpdaterController.shared.checkForUpdates() }
 
     @objc private func menuToggleDictation() { vm?.toggle() }
     @objc private func toggleMeetingRecording() {
@@ -440,5 +452,19 @@ extension MenuBarController: NSMenuDelegate {
         // Re-evaluate clipboard only when the menu actually opens
         let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         addDictItem?.isEnabled = !clip.isEmpty
+    }
+}
+
+// MARK: - NSMenuItemValidation
+extension MenuBarController: NSMenuItemValidation {
+    /// NSMenu.autoenablesItems defaults to true, so AppKit — not the code that builds the
+    /// menu — owns each item's enabled state. Assigning `isEnabled` at build time is silently
+    /// discarded, so "Check for Updates…" reports its state here instead. Sparkle clears
+    /// `canCheckForUpdates` while a check is already running.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkForUpdates) {
+            return UpdaterController.shared.canCheckForUpdates
+        }
+        return true
     }
 }

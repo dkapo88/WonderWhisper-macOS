@@ -58,6 +58,30 @@ connected device and then the system default. Selection is persisted via `AudioI
 ## Build, Test, and Development Commands
 Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug build`. Execute tests with `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test`. To run a single test, use `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test -only-testing:WonderWhisperTests/WonderWhisperTests/testName`. After a successful script build, `open build/Build/Products/Debug/WonderWhisper.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations.
 
+## Releases & Auto-Update
+`Scripts/release.sh [TAG]` archives, signs, notarizes, publishes the GitHub release, and updates
+the Sparkle appcast. TAG must be `YYYY-MM-DD` with an optional `.N` same-day revision.
+
+Versioning is derived from the tag, not stored in the project: `2026-07-26` yields
+`CFBundleShortVersionString = 2026-07-26` and `CFBundleVersion = 2026072600` (`.1` -> `...01`).
+Sparkle decides whether an update exists by comparing `CFBundleVersion`, so the revision suffix
+is zero-padded — a bare concatenation would sort `2026-07-25.1` above `2026-08-01` and strand
+every later release. Do not hardcode `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in the project.
+
+Auto-update uses Sparkle 2.9.4 via SPM (`UpdaterController.swift`). The app is not sandboxed, so
+no Sparkle XPC services or entitlements are needed. `SUFeedURL` points at `appcast.xml` on `main`;
+`SUPublicEDKey` in `WonderWhisper-Info.plist` must match the EdDSA private key held in the login
+Keychain (service `https://sparkle-project.org`, account `ed25519`). That key signs every DMG —
+if it is lost, updates can still be recovered through key rotation because the app is Developer ID
+signed, but do not rotate the certificate and the EdDSA key at the same time.
+
+`Scripts/update_appcast.py` writes the feed (release notes are converted to HTML inside CDATA);
+verify it with `python3 Scripts/test_update_appcast.py`. The appcast is committed *after* the DMG
+is uploaded, so the feed never advertises a download that does not exist yet. Sparkle also refuses
+any update whose code signature does not match the running app, which is what preserves the user's
+Accessibility and Microphone grants across updates — so releases must keep using the same
+Developer ID identity.
+
 ## Coding Style & Naming Conventions
 Adopt 2-space indentation and keep lines near 100 characters. Name types with PascalCase, functions and variables with camelCase, and prefer `static let` for constants. Match filenames to the primary type (`AudioTranscriber.swift`). Imports should be organized: Foundation first, then Apple frameworks (SwiftUI, AVFoundation, etc.), then `@testable import` in tests. Favor small SwiftUI views, avoid force unwraps (use `guard` or optional chaining), use explicit error handling with `do-catch` or `throws`, and add SwiftUI previews when practical. One primary type per file. Run `swiftformat .` and `swiftlint` before posting changes when tooling is available.
 
@@ -83,6 +107,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-25: Added Sparkle 2.9.4 in-app auto-update with an EdDSA-signed appcast, a
+  "Check for Updates…" item in the app menu, menu bar, and Settings, and date-derived
+  release versioning so each build reports a unique increasing `CFBundleVersion`.
 - 2026-07-25: Fixed silent dictation data loss when a streaming engine returns nothing: the
   empty-transcript file recovery now maps the streaming engine to a file-capable model and
   endpoint instead of sending `soniox-streaming` to Groq (a guaranteed 404), reprocess

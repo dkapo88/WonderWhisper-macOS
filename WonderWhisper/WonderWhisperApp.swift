@@ -30,7 +30,29 @@ struct WonderWhisperApp: App {
                     if streamingTranscriptOverlay == nil { streamingTranscriptOverlay = StreamingTranscriptOverlay(viewModel: vm) }
                     if hermesResponseWindow == nil { hermesResponseWindow = HermesResponseWindowController(viewModel: vm) }
                     if meetingOverlay == nil { meetingOverlay = MeetingOverlayWindowController(coordinator: vm.meetingCoordinator) }
+                    // Touch the shared updater so Sparkle starts its scheduled check timer.
+                    // Without this the updater is only created when the menu is first built.
+                    _ = UpdaterController.shared
                 }
         }
+        .commands {
+            // Mac convention puts "Check for Updates…" in the app menu, directly under
+            // "About". CommandGroup(after: .appInfo) is the only placement AppKit exposes
+            // for that slot.
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesMenuItem()
+            }
+        }
+    }
+}
+
+/// "Check for Updates…" for the app menu. Kept as its own view so it can observe the updater
+/// and disable itself while a check is already running.
+private struct CheckForUpdatesMenuItem: View {
+    @ObservedObject private var updater = UpdaterController.shared
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
     }
 }
