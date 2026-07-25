@@ -20,6 +20,15 @@ final class OpenRouterLLMProvider {
         let choices: [Choice]
     }
 
+    private struct ErrorResponse: Decodable {
+        struct APIError: Decodable {
+            let code: Int?
+            let message: String
+        }
+
+        let error: APIError
+    }
+
     func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String {
         let startTime = Date()
         let hasImage = imageAttachment != nil
@@ -86,18 +95,7 @@ final class OpenRouterLLMProvider {
             )
             let elapsed = Date().timeIntervalSince(startTime)
             os_log("LLM request completed in %.2fs", log: OpenRouterLLMProvider.log, type: .debug, elapsed)
-            if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: aggregated),
-               let content = decoded.choices.first?.message.content {
-                return Self.extractFormattedText(from: content)
-            }
-            if let json = try? JSONSerialization.jsonObject(with: aggregated) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let first = choices.first,
-               let message = first["message"] as? [String: Any],
-               let content = message["content"] as? String {
-                return Self.extractFormattedText(from: content)
-            }
-            throw ProviderError.decodingFailed
+            return try Self.decodeContent(from: aggregated)
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             os_log("LLM request failed after %.2fs: %{public}@", log: OpenRouterLLMProvider.log, type: .error, elapsed, error.localizedDescription)
@@ -123,6 +121,27 @@ final class OpenRouterLLMProvider {
         case .minimal, .low, .medium:
             return .init(effort: mode.rawValue, exclude: true)
         }
+    }
+
+    static func decodeContent(from data: Data) throws -> String {
+        if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: data),
+           let content = decoded.choices.first?.message.content {
+            return extractFormattedText(from: content)
+        }
+        if let decoded = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+            throw ProviderError.http(
+                status: decoded.error.code ?? 500,
+                body: decoded.error.message
+            )
+        }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let choices = json["choices"] as? [[String: Any]],
+           let first = choices.first,
+           let message = first["message"] as? [String: Any],
+           let content = message["content"] as? String {
+            return extractFormattedText(from: content)
+        }
+        throw ProviderError.decodingFailed
     }
 
     private static func extractFormattedText(from response: String) -> String {

@@ -36,6 +36,9 @@ struct ContentView: View {
             case .command:
                 SimplePromptEditorView(vm: vm, kind: .command)
                     .navigationTitle("Command")
+            case .codex:
+                CodexIntegrationView(vm: vm)
+                    .navigationTitle("Codex")
             case .hermes:
                 HermesAgentView(vm: vm)
                     .navigationTitle("Hermes")

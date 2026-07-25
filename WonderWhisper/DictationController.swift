@@ -48,6 +48,8 @@ actor DictationController {
     private let clipboardMonitor = ClipboardContextMonitor(startsEnabled: false)
     private let clipboardWindowSeconds: TimeInterval = 10
     private var screenContextCaptureGeneration: Int = 0
+    private var screenContextCaptureTask: Task<Void, Never>?
+    private let screenContextStopWaitSeconds: TimeInterval = 0.5
 
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
     private var autoMuteEnabled: Bool = false
@@ -60,6 +62,11 @@ actor DictationController {
     /// transcribe files, so without this an empty Soniox stream silently drops the whole
     /// utterance even though a backup recording exists. Typically a Groq provider.
     private let fileFallbackTranscriber: TranscriptionProvider?
+
+    /// Surfaces a dictation failure to the UI. Without this, a dead stream plus a failed
+    /// recovery is indistinguishable from silence: the preview overlay hides on stop and
+    /// nothing else reports the error.
+    private var onUserFacingError: (@Sendable (String) async -> Void)?
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -83,6 +90,14 @@ actor DictationController {
     }
 
     private var currentPrompt: PromptConfiguration?
+
+    func setOnUserFacingError(_ callback: @escaping @Sendable (String) async -> Void) {
+        onUserFacingError = callback
+    }
+
+    private func reportRecoveryFailure(_ message: String) async {
+        await onUserFacingError?(message)
+    }
 
     func toggle(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
         self.currentPrompt = activePrompt
@@ -156,7 +171,10 @@ actor DictationController {
                 let contextGeneration = screenContextCaptureGeneration
 
                 if llmEnabled && screenContextEnabled {
-                    Task { await self.preCaptureScreenContext(generation: contextGeneration) }
+                    screenContextCaptureTask?.cancel()
+                    screenContextCaptureTask = Task {
+                        await self.preCaptureScreenContext(generation: contextGeneration)
+                    }
                 }
                 if clipboardContextEnabled {
                     await clipboardMonitor.refreshSnapshot()
@@ -238,10 +256,20 @@ actor DictationController {
                 AppLog.dictation.warning("Streaming empty and no file-capable fallback (set a Groq API key to recover Soniox failures)")
                 return transcript
             }
-            AppLog.dictation.log("Streaming empty/punctuation-only; recovering via file transcription")
+            let recoverySettings = Self.fileRecoverySettings(from: settings)
+            AppLog.dictation.log("Streaming empty/punctuation-only; recovering via file transcription model=\(recoverySettings.model, privacy: .public)")
             await Self.waitUntilFileIsStable(fileURL)
-            if let recovered = try? await fallback.transcribe(fileURL: fileURL, settings: settings),
-               !looksEmptyOrPunctuation(recovered) {
+            let recovered: String?
+            do {
+                recovered = try await fallback.transcribe(fileURL: fileURL, settings: recoverySettings)
+            } catch {
+                // Previously `try?` swallowed this. A 404/auth failure here means the utterance is
+                // lost, so it must at least reach the log and the user-facing error surface.
+                AppLog.dictation.error("File fallback failed: \(error.localizedDescription, privacy: .public)")
+                await reportRecoveryFailure("Transcription recovery failed: \(error.localizedDescription)")
+                recovered = nil
+            }
+            if let recovered, !looksEmptyOrPunctuation(recovered) {
                 AppLog.dictation.log("Recovered \(recovered.count) chars via file fallback")
                 transcript = recovered
             } else {
@@ -258,6 +286,48 @@ actor DictationController {
     private func fileCapableFallback(for streamer: TranscriptionProvider) -> TranscriptionProvider? {
         if streamer is SonioxStreamingProvider { return fileFallbackTranscriber }
         return streamer
+    }
+
+    /// Streaming engines advertise model ids that the file-upload APIs reject — Groq answers
+    /// `soniox-streaming` with 404 `model_not_found`, which `try?` then swallows, silently
+    /// dropping the whole utterance. Recovery must therefore rewrite the endpoint AND the model
+    /// to the file-capable equivalent before re-transcribing the backup recording.
+    static func fileRecoverySettings(from settings: TranscriptionSettings) -> TranscriptionSettings {
+        switch settings.model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "soniox-streaming":
+            return rewritten(settings,
+                             endpoint: AppConfig.groqAudioTranscriptions,
+                             model: AppConfig.defaultTranscriptionModel)
+        case AppConfig.defaultXAIStreamingTranscriptionModel:
+            return rewritten(settings,
+                             endpoint: AppConfig.xaiSpeechToText,
+                             model: AppConfig.defaultXAITranscriptionModel)
+        default:
+            return settings // already a file-capable engine
+        }
+    }
+
+    private static func rewritten(_ settings: TranscriptionSettings,
+                                  endpoint: URL,
+                                  model: String) -> TranscriptionSettings {
+        TranscriptionSettings(
+            endpoint: endpoint,
+            model: model,
+            timeout: settings.timeout,
+            language: settings.language,
+            vocabularyTerms: settings.vocabularyTerms,
+            context: settings.context
+        )
+    }
+
+    /// Provider + settings that can actually transcribe a saved recording. Used by both the
+    /// live empty-stream safety net and history reprocessing, so the two can never disagree.
+    private func fileRecovery(
+        for provider: TranscriptionProvider,
+        settings: TranscriptionSettings
+    ) -> (provider: TranscriptionProvider, settings: TranscriptionSettings)? {
+        guard let fallback = fileCapableFallback(for: provider) else { return nil }
+        return (fallback, Self.fileRecoverySettings(from: settings))
     }
 
     /// Best-effort abort of whichever streaming provider is active (used when finalize throws).
@@ -355,6 +425,10 @@ actor DictationController {
                     totalSeconds: Date().timeIntervalSince(overallStart)
                 )
                 return
+            }
+
+            if llmEnabled && screenContextEnabled {
+                await waitForScreenContextAfterTranscription()
             }
 
             var output = transcript
@@ -556,6 +630,8 @@ actor DictationController {
     }
 
     private func resetTransientSessionState() {
+        screenContextCaptureTask?.cancel()
+        screenContextCaptureTask = nil
         activeStreamingProvider = nil
         currentRecordingURL = nil
         insertionTargetProcessIdentifier = nil
@@ -566,6 +642,41 @@ actor DictationController {
         clipboardSnapshotForSession = nil
         screenContextCaptureGeneration += 1
         recorder.captureProfile = .standard16k
+    }
+
+    private func waitForScreenContextAfterTranscription() async {
+        if preCapturedScreenText != nil {
+            AppLog.dictation.log("Screen context ready before transcription completed")
+            return
+        }
+        guard screenContextCaptureTask != nil else {
+            AppLog.dictation.log("Screen context capture completed without terms")
+            return
+        }
+
+        let startedAt = Date()
+        let deadline = startedAt.addingTimeInterval(screenContextStopWaitSeconds)
+        while screenContextCaptureTask != nil, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+
+        let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        if preCapturedScreenText != nil {
+            AppLog.dictation.log(
+                "Screen context became ready after transcription waitMs=\(elapsedMilliseconds, privacy: .public)"
+            )
+        } else if screenContextCaptureTask == nil {
+            AppLog.dictation.log(
+                "Screen context capture completed without terms waitMs=\(elapsedMilliseconds, privacy: .public)"
+            )
+        } else {
+            AppLog.dictation.warning(
+                "Screen context capture timed out waitMs=\(elapsedMilliseconds, privacy: .public)"
+            )
+            screenContextCaptureTask?.cancel()
+            screenContextCaptureTask = nil
+            screenContextCaptureGeneration += 1
+        }
     }
 
     // Explicit controls for UI actions
@@ -732,7 +843,7 @@ actor DictationController {
                 guard let url = audioURL else { return }
                 state = .transcribing
                 let t0 = Date()
-                let reprocSettings = TranscriptionSettings(
+                let baseSettings = TranscriptionSettings(
                     endpoint: transcriberSettings.endpoint,
                     model: transcriberSettings.model,
                     timeout: transcriberSettings.timeout,
@@ -740,8 +851,17 @@ actor DictationController {
                     vocabularyTerms: transcriberSettings.vocabularyTerms,
                     context: "reprocess"
                 )
+                // A streaming engine cannot transcribe a saved file (Soniox throws
+                // notImplemented; both reject their streaming model id on the file API), so
+                // route through the same recovery mapping the live safety net uses.
+                guard let recovery = fileRecovery(for: transcriber, settings: baseSettings) else {
+                    AppLog.dictation.warning("Reprocess has no file-capable transcriber for the current engine")
+                    await reportRecoveryFailure("Cannot re-transcribe: set a Groq API key to recover streaming recordings.")
+                    state = .idle
+                    return
+                }
                 transcript = applyVocabularyCorrections(
-                    to: try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
+                    to: try await recovery.provider.transcribe(fileURL: url, settings: recovery.settings)
                 )
                 transcribeDT = Date().timeIntervalSince(t0)
             }
@@ -823,9 +943,15 @@ actor DictationController {
         }
     }
 
-    private static func shouldReprocessSavedTranscriptOnly(entry: HistoryEntry,
-                                                           currentTranscriptionModel: String,
-                                                           hasAudio: Bool) -> Bool {
+    static func shouldReprocessSavedTranscriptOnly(entry: HistoryEntry,
+                                                   currentTranscriptionModel: String,
+                                                   hasAudio: Bool) -> Bool {
+        // An empty transcript has nothing for the LLM to reprocess, so when the audio is still
+        // on disk always re-transcribe instead. Without this, a streaming entry that landed
+        // empty re-runs the LLM on "" forever and can never be recovered.
+        if hasAudio, entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false
+        }
         if isRealtimeOnlyTranscriptionModel(entry.transcriptionModel) {
             return true
         }
@@ -884,6 +1010,11 @@ extension DictationController {
     }
 
     private func preCaptureScreenContext(generation: Int) async {
+        defer {
+            if generation == screenContextCaptureGeneration {
+                screenContextCaptureTask = nil
+            }
+        }
         if !screenContextEnabled { return }
         guard generation == screenContextCaptureGeneration else { return }
 

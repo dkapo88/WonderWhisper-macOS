@@ -169,6 +169,8 @@ final class MeetingCaptureService: NSObject {
   func start(
     directory: URL,
     includedApplicationScope: MeetingApplicationScope? = nil,
+    initialSegmentIndexes: [MeetingAudioSource: Int] = [:],
+    timelineOffset: TimeInterval = 0,
     onChunk: @escaping (MeetingAudioChunk) -> Void,
     onError: @escaping (Error) -> Void
   ) async throws {
@@ -246,11 +248,15 @@ final class MeetingCaptureService: NSObject {
     resetFatalErrorState()
     self.systemWriter = MeetingAudioSegmentWriter(
       directory: directory,
-      source: .systemAudio
+      source: .systemAudio,
+      initialSegmentIndex: initialSegmentIndexes[.systemAudio] ?? 0,
+      timelineOffset: timelineOffset
     )
     self.microphoneWriter = MeetingAudioSegmentWriter(
       directory: directory,
-      source: .microphone
+      source: .microphone,
+      initialSegmentIndex: initialSegmentIndexes[.microphone] ?? 0,
+      timelineOffset: timelineOffset
     )
 
     systemTap.samplesHandler = { [weak self] data, sampleRate, hostTime in

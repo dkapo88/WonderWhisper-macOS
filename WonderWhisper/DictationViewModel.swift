@@ -51,6 +51,9 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var audioLevel: Float = 0
     @Published var sonioxPreviewText: String = ""  // Live transcript preview for Soniox streaming
+    /// Last user-facing dictation failure. The live preview overlay hides on stop, so without
+    /// this a dead stream or failed recovery would be indistinguishable from silence.
+    @Published var dictationError: String?
     @Published var audioInputSelection: AudioInputSelection = AudioInputSelection.load() {
         didSet {
             guard audioInputSelection != oldValue else { return }
@@ -325,6 +328,89 @@ final class DictationViewModel: ObservableObject {
     @Published var selectedHermesSessionID: UUID? {
         didSet { updateHermesChatProjection() }
     }
+    @Published var codexEnabled: Bool =
+        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexEnabled) as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(codexEnabled, forKey: SimpleDefaultsKey.codexEnabled)
+            refreshPromptHotkeys()
+            refreshCodexMonitor()
+        }
+    }
+    @Published var codexRootFolder: String =
+        UserDefaults.standard.string(forKey: SimpleDefaultsKey.codexRootFolder)
+        ?? CodexTaskDirectory.defaultRoot {
+        didSet {
+            UserDefaults.standard.set(codexRootFolder, forKey: SimpleDefaultsKey.codexRootFolder)
+        }
+    }
+    @Published var codexSelection: HotkeyManager.Selection? =
+        DictationViewModel.loadCodexSelection() {
+        didSet {
+            persistCodexSelection()
+            refreshPromptHotkeys()
+        }
+    }
+    @Published var codexPinNewTasks: Bool =
+        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexPinNewTasks) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(codexPinNewTasks, forKey: SimpleDefaultsKey.codexPinNewTasks)
+        }
+    }
+    @Published var codexMonitorProjectlessTasks: Bool =
+        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexMonitorProjectlessTasks)
+        as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(
+                codexMonitorProjectlessTasks,
+                forKey: SimpleDefaultsKey.codexMonitorProjectlessTasks
+            )
+            refreshCodexMonitor()
+        }
+    }
+    @Published var codexPostProcessingEnabled: Bool =
+        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexPostProcessingEnabled)
+        as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(
+                codexPostProcessingEnabled,
+                forKey: SimpleDefaultsKey.codexPostProcessingEnabled
+            )
+        }
+    }
+    @Published var codexClipboardContextEnabled: Bool =
+        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled)
+        as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(
+                codexClipboardContextEnabled,
+                forKey: SimpleDefaultsKey.codexClipboardContextEnabled
+            )
+            updateClipboardMonitorEnabled()
+        }
+    }
+    @Published var codexClipboardTimeoutSeconds: Double = {
+        let value = UserDefaults.standard.object(
+            forKey: SimpleDefaultsKey.codexClipboardTimeoutSeconds
+        ) as? Double ?? HermesClipboardContextPolicy.defaultRetentionWindow
+        return HermesClipboardContextPolicy.clampedRetentionWindow(value)
+    }() {
+        didSet {
+            let clamped = HermesClipboardContextPolicy.clampedRetentionWindow(
+                codexClipboardTimeoutSeconds
+            )
+            if clamped != codexClipboardTimeoutSeconds {
+                codexClipboardTimeoutSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(
+                clamped,
+                forKey: SimpleDefaultsKey.codexClipboardTimeoutSeconds
+            )
+        }
+    }
+    @Published var codexConnectionStatus: String?
+    @Published var codexConnectionSucceeded: Bool?
+    @Published var codexIsSending: Bool = false
     @Published var beeperEnabled: Bool = UserDefaults.standard.object(forKey: "beeper.enabled") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(beeperEnabled, forKey: "beeper.enabled")
@@ -525,10 +611,16 @@ final class DictationViewModel: ObservableObject {
     private lazy var beeperClient = BeeperAPIClient(
         accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
     )
+    private let codexClient = CodexAppServerClient()
+    private let codexDesktopClient = CodexDesktopIPCClient()
     private var activeHermesPromptID: UUID?
     private var activeHermesRecordingSessionID: UUID?
     private var activeBeeperPromptID: UUID?
+    private var activeCodexPromptID: UUID?
+    private var activeCodexThreadID: String?
+    private var activeCodexResponseWindowID: UUID?
     private var beeperResponseMonitorTasks: [Task<Void, Never>] = []
+    private var codexMonitorTask: Task<Void, Never>?
     private var focusedHermesResponseSessionID: UUID?
     private var hermesInFlightSessionIDs: Set<UUID> = []
     private var hermesActiveRequestIDs: [UUID: UUID] = [:]
@@ -536,6 +628,12 @@ final class DictationViewModel: ObservableObject {
     private var hermesScreenshotTask: Task<ScreenCaptureSnapshot?, Never>?
     private var hermesClipboardTask: Task<String?, Never>?
     private var beeperClipboardTask: Task<String?, Never>?
+    private var codexClipboardTask: Task<String?, Never>?
+    private var codexResponseWindowTargets: [UUID: String] = [:]
+    private var codexSeenAgentMessageIDs: Set<String> = []
+    private var codexKnownThreadUpdates: [String: Date] = [:]
+    private var codexInFlightThreadIDs: Set<String> = []
+    private var codexOwnedThreadIDs: Set<String> = DictationViewModel.loadCodexOwnedThreadIDs()
     private struct BeeperReplyTarget {
         let chatID: String
         let messageID: String
@@ -550,6 +648,8 @@ final class DictationViewModel: ObservableObject {
             UserDefaults.standard.object(forKey: SimpleDefaultsKey.hermesClipboardContextEnabled) as? Bool ?? true
         ) || (
             UserDefaults.standard.object(forKey: SimpleDefaultsKey.beeperClipboardContextEnabled) as? Bool ?? true
+        ) || (
+            UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled) as? Bool ?? true
         )
     )
 
@@ -671,7 +771,10 @@ final class DictationViewModel: ObservableObject {
         }
 
         // Choose initial LLM provider/endpoints based on persisted settings
-        let storedSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
+        let storedSystem = SimpleModeDefaults.migratingLegacyScreenContextTag(
+            in: UserDefaults.standard.string(forKey: "llm.systemPrompt")
+                ?? AppConfig.defaultSystemPromptTemplate
+        )
         let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
         let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: legacyBasePrompt)
 
@@ -721,13 +824,18 @@ final class DictationViewModel: ObservableObject {
         Task {
             await hermesClipboardMonitor.start()
             await hermesClipboardMonitor.setMonitoringEnabled(
-                hermesClipboardContextEnabled || beeperClipboardContextEnabled
+                hermesClipboardContextEnabled
+                    || beeperClipboardContextEnabled
+                    || codexClipboardContextEnabled
             )
             await controller.updateLLMEnabled(activeLLMEnabled)
             await controller.updateScreenContextEnabled(activeScreenContextEnabled)
             await controller.updateScreenContextCaptureMode(screenContextCaptureMode)
             await controller.updateClipboardContextEnabled(activeClipboardContextEnabled)
             await controller.updateActiveTextFieldEnabled(resolvedActiveTextField(for: nil))
+            await controller.setOnUserFacingError { [weak self] message in
+                await MainActor.run { self?.dictationError = message }
+            }
         }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
@@ -735,6 +843,7 @@ final class DictationViewModel: ObservableObject {
         }
         refreshPromptHotkeys()
         refreshBeeperResponseMonitor()
+        refreshCodexMonitor()
 
         configureSimpleModeState()
         let loadedHermesSessions = hermesSessionStore.loadSessions()
@@ -760,6 +869,7 @@ final class DictationViewModel: ObservableObject {
                     || self.hermesIsSending
                     || self.beeperIsSending
                     || self.beeperIsAwaitingResponse
+                    || self.codexIsSending
                     || self.status == "Transcribing"
                     || self.status == "Processing"
                     || self.status == "Inserting"
@@ -782,6 +892,10 @@ final class DictationViewModel: ObservableObject {
                     if self.status != "Waiting for Beeper response" {
                         self.status = "Waiting for Beeper response"
                     }
+                    return
+                }
+                if self.codexIsSending, s != "Recording", s != "Transcribing" {
+                    if self.status != "Waiting for Codex" { self.status = "Waiting for Codex" }
                     return
                 }
                 if self.status != s { self.status = s }
@@ -834,6 +948,12 @@ final class DictationViewModel: ObservableObject {
         beeperResponseMonitorTasks = []
         beeperClipboardTask?.cancel()
         beeperClipboardTask = nil
+        codexClipboardTask?.cancel()
+        codexClipboardTask = nil
+        codexMonitorTask?.cancel()
+        codexMonitorTask = nil
+        let client = codexClient
+        Task { await client.stop() }
         // Provider cache will be cleaned up automatically when object is deallocated
     }
 
@@ -877,6 +997,11 @@ final class DictationViewModel: ObservableObject {
             if case .recording = currentState,
                let beeperPromptID = activeBeeperPromptID {
                 await finishBeeperRecording(promptID: beeperPromptID)
+                return
+            }
+            if case .recording = currentState,
+               let codexPromptID = activeCodexPromptID {
+                await finishCodexRecording(promptID: codexPromptID)
                 return
             }
 
@@ -960,6 +1085,10 @@ final class DictationViewModel: ObservableObject {
                 await finishBeeperRecording(promptID: beeperPromptID)
                 return
             }
+            if let codexPromptID = activeCodexPromptID {
+                await finishCodexRecording(promptID: codexPromptID)
+                return
+            }
 
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
@@ -999,6 +1128,7 @@ final class DictationViewModel: ObservableObject {
                 self.recordingStartInProgress = false
                 self.clearActiveHermesRecording(cancelContext: true)
                 self.clearActiveBeeperRecording(cancelContext: true)
+                self.clearActiveCodexRecording(cancelContext: true)
             }
             await controller.cancel()
 
@@ -1525,12 +1655,14 @@ final class DictationViewModel: ObservableObject {
         if sanitized.rules.isEmpty {
             sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
         }
+        sanitized.rules = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.rules)
         if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
         }
         if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
         }
+        sanitized.footer = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.footer)
         return sanitized
     }
 
@@ -1910,7 +2042,7 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .comparison, .hermes, .beeper, .meetings,
+        case .vocabulary, .history, .comparison, .codex, .hermes, .beeper, .meetings,
              .microphone, .permissions, .settings:
             return nil
         }
@@ -2023,7 +2155,9 @@ final class DictationViewModel: ObservableObject {
         promptHotkeyManager.unregisterAll()
         for prompt in prompts {
             if let selection = prompt.selection {
-                guard !(beeperEnabled && beeperSelection == selection) else { continue }
+                guard !(beeperEnabled && beeperSelection == selection),
+                      !(hermesAgentEnabled && hermesSelection == selection),
+                      !(codexEnabled && codexSelection == selection) else { continue }
                 promptHotkeyManager.register(selection: selection, for: prompt.id)
             } else if let shortcut = prompt.shortcut {
                 promptHotkeyManager.register(shortcut: shortcut, for: prompt.id)
@@ -2031,11 +2165,17 @@ final class DictationViewModel: ObservableObject {
         }
         if hermesAgentEnabled,
            let hermesSelection,
-           !(beeperEnabled && beeperSelection == hermesSelection) {
+           !(beeperEnabled && beeperSelection == hermesSelection),
+           !(codexEnabled && codexSelection == hermesSelection) {
             promptHotkeyManager.register(selection: hermesSelection, for: HermesAgentHotkey.promptID)
         }
-        if beeperEnabled, let beeperSelection {
+        if beeperEnabled,
+           let beeperSelection,
+           !(codexEnabled && codexSelection == beeperSelection) {
             promptHotkeyManager.register(selection: beeperSelection, for: BeeperHotkey.promptID)
+        }
+        if codexEnabled, let codexSelection {
+            promptHotkeyManager.register(selection: codexSelection, for: CodexHotkey.promptID)
         }
     }
 
@@ -2067,6 +2207,14 @@ final class DictationViewModel: ObservableObject {
                 sessionID: targetSessionID
             )
         }
+    }
+
+    func startResponseWindowVoiceReply(to sessionID: UUID) {
+        if codexResponseWindowTargets[sessionID] != nil {
+            startCodexReply(to: sessionID)
+            return
+        }
+        startHermesReply(to: sessionID)
     }
 
     func startNewHermesSessionRecording() {
@@ -2111,6 +2259,13 @@ final class DictationViewModel: ObservableObject {
             }
             return
         }
+        if let threadID = codexResponseWindowTargets[sessionID] {
+            removeHermesResponseWindow(for: sessionID)
+            Task {
+                await submitCodexTextTurn(text, threadID: threadID)
+            }
+            return
+        }
         sendHermesTextReply(text, to: sessionID, dismissResponseWindow: true)
     }
 
@@ -2133,7 +2288,9 @@ final class DictationViewModel: ObservableObject {
 
     func activateHermesSession(_ sessionID: UUID) {
         focusedHermesResponseSessionID = sessionID
-        selectedHermesSessionID = sessionID
+        if hermesSessions.contains(where: { $0.id == sessionID }) {
+            selectedHermesSessionID = sessionID
+        }
     }
 
     func dismissHermesResponse(sessionID: UUID) {
@@ -2284,13 +2441,74 @@ final class DictationViewModel: ObservableObject {
         if let selection,
            selection == simpleDictationSettings.selection
             || selection == simpleCommandSettings.selection
-            || selection == beeperSelection {
+            || selection == beeperSelection
+            || selection == codexSelection {
             hermesConnectionStatus = "That shortcut is already assigned to another voice flow."
             hermesConnectionSucceeded = false
             return
         }
         guard hermesSelection != selection else { return }
         hermesSelection = selection
+    }
+
+    var isCodexRecording: Bool {
+        activeCodexPromptID != nil
+    }
+
+    func startCodexRecording() {
+        Task {
+            let state = await controller.currentState()
+            if case .recording = state, let promptID = activeCodexPromptID {
+                await finishCodexRecording(promptID: promptID)
+                return
+            }
+            guard isIdleOrError(state) else { return }
+            await beginCodexRecording(promptID: SimplePromptKind.command.promptID)
+        }
+    }
+
+    private func startCodexReply(to responseWindowID: UUID) {
+        Task {
+            let state = await controller.currentState()
+            if case .recording = state, let promptID = activeCodexPromptID {
+                await finishCodexRecording(promptID: promptID)
+                return
+            }
+            guard isIdleOrError(state),
+                  codexResponseWindowTargets[responseWindowID] != nil else { return }
+            await beginCodexRecording(
+                promptID: SimplePromptKind.command.promptID,
+                responseWindowID: responseWindowID
+            )
+        }
+    }
+
+    func setCodexSelection(_ selection: HotkeyManager.Selection?) {
+        if let selection,
+           selection == simpleDictationSettings.selection
+            || selection == simpleCommandSettings.selection
+            || selection == hermesSelection
+            || selection == beeperSelection {
+            codexConnectionStatus = "That shortcut is already assigned to another voice flow."
+            codexConnectionSucceeded = false
+            return
+        }
+        guard codexSelection != selection else { return }
+        codexSelection = selection
+    }
+
+    func testCodexConnection() async {
+        codexConnectionStatus = "Testing Codex App Server..."
+        codexConnectionSucceeded = nil
+        do {
+            try await codexClient.checkConnection()
+            codexConnectionStatus = "Codex App Server is ready."
+            codexConnectionSucceeded = true
+        } catch {
+            codexConnectionStatus = "Codex connection failed: \(error.localizedDescription)"
+            codexConnectionSucceeded = false
+        }
+        settingsNotice = codexConnectionStatus
     }
 
     var isBeeperRecording: Bool {
@@ -2342,7 +2560,9 @@ final class DictationViewModel: ObservableObject {
     func setBeeperSelection(_ selection: HotkeyManager.Selection?) {
         if let selection,
            selection == simpleDictationSettings.selection
-            || selection == simpleCommandSettings.selection {
+            || selection == simpleCommandSettings.selection
+            || selection == hermesSelection
+            || selection == codexSelection {
             beeperConnectionStatus = "That shortcut is already assigned to another voice flow."
             beeperConnectionSucceeded = false
             return
@@ -2425,6 +2645,12 @@ final class DictationViewModel: ObservableObject {
         return id
     }
 
+    private func focusedCodexResponseWindowID() -> UUID? {
+        guard let id = focusedHermesResponseSessionID,
+              codexResponseWindowTargets[id] != nil else { return nil }
+        return id
+    }
+
     private func handleHermesPromptHotkey(id: UUID,
                                           phase: PromptHotkeyManager.TriggerPhase,
                                           currentState: DictationController.State) async {
@@ -2486,6 +2712,32 @@ final class DictationViewModel: ObservableObject {
             let state = await controller.currentState()
             if case .recording = state, activeBeeperPromptID != nil {
                 await finishBeeperRecording(promptID: activeBeeperPromptID ?? id)
+            }
+        }
+    }
+
+    private func handleCodexPromptHotkey(id: UUID,
+                                         phase: PromptHotkeyManager.TriggerPhase,
+                                         currentState: DictationController.State) async {
+        switch phase {
+        case .down:
+            promptPressTimes[id] = Date()
+            if let codexPromptID = activeCodexPromptID {
+                await finishCodexRecording(promptID: codexPromptID)
+                return
+            }
+            switch currentState {
+            case .idle, .error:
+                await beginCodexRecording(promptID: id)
+            default:
+                break
+            }
+        case .up:
+            guard let start = promptPressTimes.removeValue(forKey: id) else { return }
+            guard Date().timeIntervalSince(start) >= promptPressThreshold else { return }
+            let state = await controller.currentState()
+            if case .recording = state, activeCodexPromptID != nil {
+                await finishCodexRecording(promptID: activeCodexPromptID ?? id)
             }
         }
     }
@@ -2595,6 +2847,257 @@ final class DictationViewModel: ObservableObject {
             }
             await restoreOriginalPromptIfNeeded()
         }
+    }
+
+    private func beginCodexRecording(promptID: UUID,
+                                     responseWindowID explicitResponseWindowID: UUID? = nil) async {
+        guard codexEnabled else { return }
+        let responseWindowID = explicitResponseWindowID ?? focusedCodexResponseWindowID()
+        let threadID = responseWindowID.flatMap { codexResponseWindowTargets[$0] }
+        prepareCodexContextCapture()
+
+        await MainActor.run {
+            if let responseWindowID {
+                self.hermesResponseWindowStates = HermesResponseWindowLifecycle
+                    .replyRecordingStarted(
+                        self.hermesResponseWindowStates,
+                        sessionID: responseWindowID
+                    )
+            }
+            self.isRecording = true
+            self.recordingStartTimestamp = Date()
+            self.recordingStartInProgress = true
+            self.recordingStopInProgress = false
+            self.activeCodexPromptID = promptID
+            self.activeCodexThreadID = threadID
+            self.activeCodexResponseWindowID = responseWindowID
+        }
+
+        await MainActor.run {
+            if self.selectedPromptID != promptID {
+                self.suppressSimpleSidebarSync = true
+                self.selectedPromptID = promptID
+            }
+        }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await MainActor.run {
+            self.suppressSimpleSidebarSync = false
+            self.updateProvidersImmediately()
+        }
+        await waitForLatestProviderUpdate()
+        await controller.updateLLMEnabled(false)
+        await controller.updateScreenContextEnabled(false)
+        await controller.updateClipboardContextEnabled(false)
+
+        let activePrompt = await MainActor.run {
+            self.prompts.first(where: { $0.id == promptID })
+        }
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        let state = await controller.currentState()
+        await MainActor.run {
+            self.recordingStartInProgress = false
+            if case .error = state {
+                self.clearActiveCodexRecording(cancelContext: true)
+                self.isRecording = false
+            }
+        }
+    }
+
+    private func finishCodexRecording(promptID: UUID) async {
+        let threadID = activeCodexThreadID
+        let responseWindowID = activeCodexResponseWindowID
+        await MainActor.run {
+            if let responseWindowID {
+                self.hermesResponseWindowStates = HermesResponseWindowLifecycle
+                    .replyRecordingFinished(
+                        self.hermesResponseWindowStates,
+                        sessionID: responseWindowID
+                    )
+            }
+            self.recordingStopInProgress = true
+            self.isRecording = false
+            self.recordingStartTimestamp = nil
+            self.recordingStartInProgress = false
+        }
+
+        let activePrompt = await MainActor.run {
+            self.prompts.first(where: { $0.id == promptID })
+        }
+        do {
+            guard let result = try await controller.finishTranscriptionOnly(
+                activePrompt: activePrompt
+            ) else {
+                await MainActor.run {
+                    self.clearActiveCodexRecording(cancelContext: true)
+                }
+                return
+            }
+            await MainActor.run {
+                self.activeCodexPromptID = nil
+                self.activeCodexThreadID = nil
+                self.activeCodexResponseWindowID = nil
+            }
+            await restoreOriginalPromptIfNeeded()
+            await submitCodexTurn(
+                result,
+                threadID: threadID,
+                responseWindowID: responseWindowID
+            )
+        } catch {
+            await MainActor.run {
+                self.clearActiveCodexRecording(cancelContext: true)
+                self.codexConnectionStatus = "Codex transcription failed: \(error.localizedDescription)"
+                self.codexConnectionSucceeded = false
+                self.settingsNotice = self.codexConnectionStatus
+            }
+            await restoreOriginalPromptIfNeeded()
+        }
+    }
+
+    private func submitCodexTurn(_ turn: DictationController.TranscriptionOnlyResult,
+                                 threadID: String?,
+                                 responseWindowID: UUID?) async {
+        let rawTranscript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTranscript.isEmpty else {
+            clearCodexContextCapture(cancel: true)
+            codexConnectionStatus = "No speech was detected for Codex."
+            codexConnectionSucceeded = false
+            return
+        }
+
+        codexIsSending = true
+        codexConnectionStatus = "Sending to Codex..."
+        codexConnectionSucceeded = nil
+        defer { codexIsSending = false }
+
+        do {
+            let clipboardText = await consumeCodexClipboardContext()
+            let transcript = await postProcessCodexTranscriptIfNeeded(rawTranscript, turn: turn)
+            let outboundText = HermesAgentAPIClient.enrichedInputText(
+                input: transcript,
+                imageAttachment: nil,
+                clipboardText: clipboardText
+            )
+
+            let target: CodexThreadSummary
+            var shouldPin = false
+            if let threadID {
+                target = try await codexClient.readThread(threadID).thread
+            } else {
+                let directory = try CodexTaskDirectory.create(
+                    root: codexRootFolder,
+                    prompt: transcript
+                )
+                target = try await codexClient.startThread(
+                    cwd: directory,
+                    title: HermesSessionNaming.title(for: transcript)
+                )
+                codexOwnedThreadIDs.insert(target.id)
+                Self.saveCodexOwnedThreadIDs(codexOwnedThreadIDs)
+                shouldPin = codexPinNewTasks
+            }
+
+            codexInFlightThreadIDs.insert(target.id)
+            defer { codexInFlightThreadIDs.remove(target.id) }
+            if threadID != nil, let responseWindowID {
+                removeHermesResponseWindow(for: responseWindowID)
+            }
+
+            let start = Date()
+            let result: CodexTurnResult
+            if threadID == nil {
+                result = try await codexClient.send(text: outboundText, to: target.id)
+            } else {
+                result = try await codexDesktopClient.send(text: outboundText, to: target.id)
+            }
+            let codexSeconds = Date().timeIntervalSince(start)
+            if shouldPin {
+                let pinned = await CodexTaskPinner.pin(threadID: target.id)
+                if !pinned {
+                    codexConnectionStatus =
+                        "Codex replied, but automatic pinning needs Accessibility permission."
+                }
+            }
+            codexSeenAgentMessageIDs.insert(result.message.id)
+            if threadID == nil, let responseWindowID {
+                removeHermesResponseWindow(for: responseWindowID)
+            }
+            showCodexResponse(
+                threadID: target.id,
+                title: target.displayTitle,
+                text: result.message.text
+            )
+            codexConnectionStatus = "Codex response received."
+            codexConnectionSucceeded = true
+            settingsNotice = codexConnectionStatus
+
+            await history.append(
+                fileURL: turn.fileURL,
+                appName: turn.appName,
+                bundleID: turn.bundleID,
+                transcript: transcript,
+                output: "",
+                screenContext: nil,
+                screenContextMethod: nil,
+                screenImage: nil,
+                selectedText: turn.selectedText,
+                activeTextField: turn.activeTextField,
+                llmSystemMessage: nil,
+                llmUserMessage: outboundText,
+                transcriptionModel: turn.transcriptionModel,
+                llmModel: "Codex App Server",
+                transcriptionSeconds: turn.transcriptionSeconds,
+                llmSeconds: codexSeconds,
+                totalSeconds: turn.totalSeconds + codexSeconds
+            )
+        } catch {
+            codexConnectionStatus = "Codex task failed: \(error.localizedDescription)"
+            codexConnectionSucceeded = false
+            settingsNotice = codexConnectionStatus
+            let errorID = responseWindowID ?? UUID()
+            upsertHermesResponseWindow(
+                sessionID: errorID,
+                title: "Codex Error",
+                text: error.localizedDescription,
+                isError: true,
+                supportsReply: threadID != nil
+            )
+            if let threadID {
+                codexResponseWindowTargets[errorID] = threadID
+            }
+        }
+    }
+
+    private func submitCodexTextTurn(_ text: String, threadID: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        codexIsSending = true
+        defer { codexIsSending = false }
+
+        do {
+            let snapshot = try await codexClient.readThread(threadID)
+            codexInFlightThreadIDs.insert(threadID)
+            defer { codexInFlightThreadIDs.remove(threadID) }
+            let result = try await codexDesktopClient.send(text: trimmed, to: threadID)
+            codexSeenAgentMessageIDs.insert(result.message.id)
+            showCodexResponse(
+                threadID: threadID,
+                title: snapshot.thread.displayTitle,
+                text: result.message.text
+            )
+            codexConnectionStatus = "Codex response received."
+            codexConnectionSucceeded = true
+        } catch {
+            codexConnectionStatus = "Codex reply failed: \(error.localizedDescription)"
+            codexConnectionSucceeded = false
+            showCodexResponse(
+                threadID: threadID,
+                title: "Codex Error",
+                text: error.localizedDescription,
+                isError: true
+            )
+        }
+        settingsNotice = codexConnectionStatus
     }
 
     private func beginBeeperRecording(promptID: UUID) async {
@@ -2997,6 +3500,92 @@ final class DictationViewModel: ObservableObject {
         )
     }
 
+    private func refreshCodexMonitor() {
+        codexMonitorTask?.cancel()
+        codexMonitorTask = nil
+        codexSeenAgentMessageIDs.removeAll()
+        codexKnownThreadUpdates.removeAll()
+        guard codexEnabled, codexMonitorProjectlessTasks else { return }
+        codexMonitorTask = Task { [weak self] in
+            await self?.monitorCodexProjectlessTasks()
+        }
+    }
+
+    private func monitorCodexProjectlessTasks() async {
+        var isBaseline = true
+        var cycle = 0
+        while !Task.isCancelled {
+            do {
+                let monitoredIDs = CodexDesktopState.projectlessThreadIDs()
+                    .union(codexOwnedThreadIDs)
+                let threads = try await codexClient.listThreads()
+                    .filter { monitoredIDs.contains($0.id) }
+                if codexConnectionSucceeded != true {
+                    AppLog.dictation.log(
+                        "Codex monitor connected projectlessThreads=\(threads.count, privacy: .public)"
+                    )
+                    codexConnectionStatus = "Codex monitoring is active."
+                    codexConnectionSucceeded = true
+                }
+                let fullSweep = cycle % 10 == 0
+
+                for thread in threads {
+                    let lastUpdate = codexKnownThreadUpdates[thread.id]
+                    guard isBaseline || fullSweep || lastUpdate != thread.updatedAt else {
+                        continue
+                    }
+                    let snapshot = try await codexClient.readThread(thread.id)
+                    let messages = snapshot.agentMessages
+                    if isBaseline {
+                        codexSeenAgentMessageIDs.formUnion(messages.map(\.id))
+                    } else {
+                        let newMessages = messages.filter {
+                            !codexSeenAgentMessageIDs.contains($0.id)
+                        }
+                        codexSeenAgentMessageIDs.formUnion(messages.map(\.id))
+                        if !codexInFlightThreadIDs.contains(thread.id),
+                           let message = newMessages.last(where: {
+                            $0.phase == nil || $0.phase == "final_answer"
+                           }) {
+                            showCodexResponse(
+                                threadID: thread.id,
+                                title: snapshot.thread.displayTitle,
+                                text: message.text
+                            )
+                        }
+                    }
+                    codexKnownThreadUpdates[thread.id] = thread.updatedAt
+                }
+                isBaseline = false
+                cycle += 1
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            } catch {
+                AppLog.dictation.error(
+                    "Codex monitoring failed: \(error.localizedDescription, privacy: .public)"
+                )
+                codexConnectionStatus = "Codex monitoring paused: \(error.localizedDescription)"
+                codexConnectionSucceeded = false
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private func showCodexResponse(threadID: String,
+                                   title: String,
+                                   text: String,
+                                   isError: Bool = false) {
+        let windowID = codexResponseWindowTargets.first {
+            $0.value == threadID
+        }?.key ?? UUID(uuidString: threadID) ?? UUID()
+        codexResponseWindowTargets[windowID] = threadID
+        upsertHermesResponseWindow(
+            sessionID: windowID,
+            title: title,
+            text: text,
+            isError: isError
+        )
+    }
+
     private func submitHermesTurn(_ turn: DictationController.TranscriptionOnlyResult,
                                   sessionID: UUID) async {
         let rawTranscript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3261,6 +3850,22 @@ final class DictationViewModel: ObservableObject {
         )
     }
 
+    private func postProcessCodexTranscriptIfNeeded(
+        _ rawTranscript: String,
+        turn: DictationController.TranscriptionOnlyResult
+    ) async -> String {
+        await postProcessTranscriptIfNeeded(
+            rawTranscript,
+            enabled: codexPostProcessingEnabled,
+            appName: "Codex",
+            selectedText: turn.selectedText,
+            activeTextField: turn.activeTextField,
+            screenContextTerms: nil,
+            clipboardText: nil,
+            label: "Codex"
+        )
+    }
+
     private func postProcessTranscriptIfNeeded(
         _ rawTranscript: String,
         enabled: Bool,
@@ -3510,7 +4115,8 @@ final class DictationViewModel: ObservableObject {
         }
         hermesResponseWindowState = state
         focusedHermesResponseSessionID = sessionID
-        if supportsVoiceReply ?? supportsReply {
+        if supportsVoiceReply ?? supportsReply,
+           hermesSessions.contains(where: { $0.id == sessionID }) {
             selectedHermesSessionID = sessionID
         }
     }
@@ -3530,6 +4136,7 @@ final class DictationViewModel: ObservableObject {
     private func removeHermesResponseWindow(for sessionID: UUID) {
         hermesResponseWindowStates.removeAll { $0.id == sessionID }
         beeperResponseWindowTargets[sessionID] = nil
+        codexResponseWindowTargets[sessionID] = nil
         if beeperResponseWindowIDForActiveRecording == sessionID {
             beeperResponseWindowIDForActiveRecording = nil
         }
@@ -3570,8 +4177,42 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateClipboardMonitorEnabled() {
-        let enabled = hermesClipboardContextEnabled || beeperClipboardContextEnabled
+        let enabled = hermesClipboardContextEnabled
+            || beeperClipboardContextEnabled
+            || codexClipboardContextEnabled
         Task { await hermesClipboardMonitor.setMonitoringEnabled(enabled) }
+    }
+
+    private func prepareCodexContextCapture() {
+        clearCodexContextCapture(cancel: true)
+        guard codexClipboardContextEnabled else { return }
+        let recordingStartedAt = Date()
+        let clipboardMonitor = hermesClipboardMonitor
+        let pasteboardChangeCount = Self.currentPasteboardChangeCount()
+        let retentionWindow = HermesClipboardContextPolicy.clampedRetentionWindow(
+            codexClipboardTimeoutSeconds
+        )
+        codexClipboardTask = Task.detached(priority: .userInitiated) {
+            await DictationViewModel.captureHermesClipboardContext(
+                recordingStartedAt: recordingStartedAt,
+                pasteboardChangeCount: pasteboardChangeCount,
+                retentionWindow: retentionWindow,
+                clipboardMonitor: clipboardMonitor
+            )
+        }
+    }
+
+    private func consumeCodexClipboardContext() async -> String? {
+        let task = codexClipboardTask
+        codexClipboardTask = nil
+        return await task?.value
+    }
+
+    private func clearCodexContextCapture(cancel: Bool) {
+        if cancel {
+            codexClipboardTask?.cancel()
+        }
+        codexClipboardTask = nil
     }
 
     private func prepareBeeperContextCapture() {
@@ -3680,6 +4321,22 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    private func clearActiveCodexRecording(cancelContext: Bool = false) {
+        activeCodexPromptID = nil
+        activeCodexThreadID = nil
+        if let responseWindowID = activeCodexResponseWindowID {
+            hermesResponseWindowStates = HermesResponseWindowLifecycle
+                .replyRecordingCancelled(
+                    hermesResponseWindowStates,
+                    sessionID: responseWindowID
+                )
+        }
+        activeCodexResponseWindowID = nil
+        if cancelContext {
+            clearCodexContextCapture(cancel: true)
+        }
+    }
+
     private func clearHermesScreenshotCapture(cancel: Bool) {
         if cancel {
             hermesScreenshotTask?.cancel()
@@ -3767,7 +4424,18 @@ final class DictationViewModel: ObservableObject {
             )
             return
         }
-        if activeHermesPromptID != nil || activeBeeperPromptID != nil {
+        if id == CodexHotkey.promptID {
+            guard codexEnabled else { return }
+            await handleCodexPromptHotkey(
+                id: SimplePromptKind.command.promptID,
+                phase: phase,
+                currentState: state
+            )
+            return
+        }
+        if activeHermesPromptID != nil
+            || activeBeeperPromptID != nil
+            || activeCodexPromptID != nil {
             return
         }
 
@@ -4131,6 +4799,15 @@ private enum SimpleDefaultsKey {
     static let hermesClipboardContextEnabled = "hermes.context.clipboard.enabled"
     static let hermesClipboardTimeoutSeconds = "hermes.context.clipboard.timeoutSeconds"
     static let hermesPostProcessingEnabled = "hermes.postProcessing.enabled"
+    static let codexEnabled = "codex.enabled"
+    static let codexRootFolder = "codex.rootFolder"
+    static let codexSelection = "codex.shortcut.selection"
+    static let codexPinNewTasks = "codex.pinNewTasks"
+    static let codexMonitorProjectlessTasks = "codex.monitorProjectlessTasks"
+    static let codexPostProcessingEnabled = "codex.postProcessing.enabled"
+    static let codexClipboardContextEnabled = "codex.context.clipboard.enabled"
+    static let codexClipboardTimeoutSeconds = "codex.context.clipboard.timeoutSeconds"
+    static let codexOwnedThreadIDs = "codex.ownedThreadIDs"
     static let beeperSelection = "beeper.shortcut.selection"
     static let beeperPostProcessingEnabled = "beeper.postProcessing.enabled"
     static let beeperClipboardContextEnabled = "beeper.context.clipboard.enabled"
@@ -4216,12 +4893,14 @@ private extension DictationViewModel {
             if sanitized.rules.isEmpty {
                 sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
             }
+            sanitized.rules = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.rules)
             if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
             }
             if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
             }
+            sanitized.footer = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.footer)
             return sanitized
         }
         return SimpleModeDefaults.settings(for: kind)
@@ -4331,6 +5010,29 @@ private extension DictationViewModel {
             UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.beeperSelection)
         }
     }
+
+    static func loadCodexSelection() -> HotkeyManager.Selection? {
+        guard let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.codexSelection) else {
+            return nil
+        }
+        return HotkeyManager.Selection(rawValue: raw)
+    }
+
+    func persistCodexSelection() {
+        if let codexSelection {
+            UserDefaults.standard.set(codexSelection.rawValue, forKey: SimpleDefaultsKey.codexSelection)
+        } else {
+            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.codexSelection)
+        }
+    }
+
+    static func loadCodexOwnedThreadIDs() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: SimpleDefaultsKey.codexOwnedThreadIDs) ?? [])
+    }
+
+    static func saveCodexOwnedThreadIDs(_ threadIDs: Set<String>) {
+        UserDefaults.standard.set(threadIDs.sorted(), forKey: SimpleDefaultsKey.codexOwnedThreadIDs)
+    }
 }
 
 private extension DictationViewModel {
@@ -4366,7 +5068,13 @@ private extension DictationViewModel {
         let defaults = UserDefaults.standard
         var loaded: [PromptConfiguration] = []
         if let data = defaults.data(forKey: "prompts.library"), let decoded = try? JSONDecoder().decode([PromptConfiguration].self, from: data) {
-            loaded = decoded
+            loaded = decoded.map { prompt in
+                var migrated = prompt
+                migrated.systemPrompt = SimpleModeDefaults.migratingLegacyScreenContextTag(
+                    in: prompt.systemPrompt
+                )
+                return migrated
+            }
         }
         if loaded.isEmpty {
             let defaultPrompt = PromptConfiguration(

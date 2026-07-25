@@ -210,7 +210,8 @@ final class ScreenContextService {
     }
 
     func captureFullScreenContextTerms(preferAccurate: Bool) async -> ScreenContextPreprocessingResult? {
-        return await withCheckedContinuation { continuation in
+        return await withCheckedContinuation {
+            (continuation: CheckedContinuation<ScreenContextPreprocessingResult?, Never>) in
             backgroundQueue.async {
                 let svc = ScreenCaptureService()
                 let correctionHints = ScreenContextPreprocessor.defaultCorrectionHints()

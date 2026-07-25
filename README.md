@@ -26,9 +26,9 @@ WonderWhisper brings dictation, meeting intelligence, and voice-driven workflows
 
 | Dictate | Meet | Connect |
 | --- | --- | --- |
-| Speak into any focused text field with a global hotkey. Clean up the result, preserve your voice, or transform selected text with Command Mode. | Record microphone and Mac system audio, follow a live transcript, take manual notes, surface Obsidian context, and export a Markdown summary. | Send voice messages through Beeper or run optional long-lived tasks against a Hermes Agent server. |
+| Speak into any focused text field with a global hotkey. Clean up the result, preserve your voice, or transform selected text with Command Mode. | Record microphone and Mac system audio, follow a live transcript, take manual notes, surface Obsidian context, and export a Markdown summary. | Create and reply to Codex tasks by voice, send messages through Beeper, or run long-lived tasks against a Hermes Agent server. |
 
-Hermes is now an optional integration—not the identity of the app. WonderWhisper is designed as a broader voice workspace that remains useful even when Hermes and Beeper are never configured.
+Hermes is now an optional integration—not the identity of the app. WonderWhisper is designed as a broader voice workspace that remains useful even when Codex, Hermes, and Beeper are never configured.
 
 ## Meeting notes
 
@@ -131,6 +131,15 @@ Quit HermesWhisper before installing WonderWhisper. The new app deliberately ret
 Because the application filename changed, remove the old `/Applications/HermesWhisper.app` after installing WonderWhisper to avoid keeping two launchable copies.
 
 ## Optional integrations
+
+### Codex
+
+The Codex tab uses the local Codex App Server bundled with the desktop app; no separate API key is
+required. A dedicated hotkey creates a task in a prompt-named folder under today's
+`~/Documents/Codex/YYYY-MM-DD/` directory, or replies to the frontmost Codex response window.
+Replies use Codex Desktop's local task bridge so both sides of the follow-up remain visible in the
+same desktop task. WonderWhisper can also pin new tasks, include recent clipboard text, and monitor
+projectless tasks created from either app for completed responses.
 
 ### Beeper
 

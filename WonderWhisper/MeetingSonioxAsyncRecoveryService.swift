@@ -18,6 +18,7 @@ actor MeetingSonioxAsyncRecoveryService {
     let filename: String
     let source: MeetingAudioSource
     let index: Int
+    let startTime: TimeInterval
   }
 
   private struct IdentifierResponse: Decodable {
@@ -222,7 +223,8 @@ actor MeetingSonioxAsyncRecoveryService {
       return RawSegment(
         filename: segment.filename,
         source: segment.source,
-        index: segment.index
+        index: segment.index,
+        startTime: segment.startTime
       )
     }
     var result: [MeetingAudioSource: [RawSegment]] = [:]
@@ -269,7 +271,26 @@ actor MeetingSonioxAsyncRecoveryService {
       interleaved: false
     )
 
+    var outputFrames: AVAudioFramePosition = 0
     for segment in segments {
+      let targetFrame = AVAudioFramePosition(
+        (segment.startTime * processingFormat.sampleRate).rounded()
+      )
+      while outputFrames < targetFrame {
+        let silenceFrameCount = min(16_000, targetFrame - outputFrames)
+        guard let silence = AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: AVAudioFrameCount(silenceFrameCount)
+        ) else {
+          throw RecoveryError.failed("Could not allocate a Soniox recovery silence buffer.")
+        }
+        silence.frameLength = AVAudioFrameCount(silenceFrameCount)
+        if let channel = silence.floatChannelData?.pointee {
+          channel.initialize(repeating: 0, count: Int(silenceFrameCount))
+        }
+        try output.write(from: silence)
+        outputFrames += silenceFrameCount
+      }
       let inputURL = sessionDirectory.appendingPathComponent(segment.filename)
       let input = try AVAudioFile(
         forReading: inputURL,
@@ -291,6 +312,7 @@ actor MeetingSonioxAsyncRecoveryService {
         try input.read(into: buffer, frameCount: AVAudioFrameCount(remaining))
         guard buffer.frameLength > 0 else { break }
         try output.write(from: buffer)
+        outputFrames += AVAudioFramePosition(buffer.frameLength)
       }
     }
   }

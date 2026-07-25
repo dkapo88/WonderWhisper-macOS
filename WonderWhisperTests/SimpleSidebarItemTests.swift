@@ -9,6 +9,7 @@ struct SimpleSidebarItemTests {
       .dictation,
       .command,
       .meetings,
+      .codex,
       .beeper,
       .hermes,
       .vocabulary,
@@ -17,6 +18,7 @@ struct SimpleSidebarItemTests {
       .permissions,
       .settings
     ])
+    #expect(SimpleSidebarItem.codex.title == "Codex")
     #expect(SimpleSidebarItem.beeper.title == "Beeper")
     #expect(SimpleSidebarItem.comparison.title == "Compare")
   }

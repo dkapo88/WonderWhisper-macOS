@@ -40,7 +40,7 @@ There are 3 issues:
   - Convert spoken emoji names: "fire emoji" → 🔥
 
 - **Names & Terms**
-  - Use `<VOCABULARY>` first and `<SCREEN_CONTENTS>` second for name and term corrections
+  - Use `<VOCABULARY>` first and `<SCREEN_CONTEXT_TERMS>` second for name and term corrections
   - Only correct when there is a clear phonetic or contextual match
   - Preserve the casing and spelling from the trusted context
   - When `<ACTIVE_APPLICATION>` is "Slack" or "slack", use @ before first names when they are clearly being addressed: "Eloise" → "@eloise". Only do this in Slack, not other apps

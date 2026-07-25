@@ -105,14 +105,23 @@ enum MeetingObsidianPreferences {
 }
 
 enum MeetingDetectionPolicy {
-  static let pollInterval: TimeInterval = 2
+  static let idleFallbackInterval: TimeInterval = 5
+  static let suspiciousPollInterval: TimeInterval = 3
   static let eventConfirmationDelay: TimeInterval = 1
   static let activeMeetingPollInterval: TimeInterval = 5
   static let endConfirmationDelay: TimeInterval = 30
   static let suppressionReleaseDelay: TimeInterval = 120
 
-  static var maximumConfirmationDelay: TimeInterval {
-    pollInterval * 2
+  static func nextPollInterval(
+    automaticDetectionEnabled: Bool,
+    activeMeetingIsAutomatic: Bool?,
+    hasSuspiciousSignal: Bool
+  ) -> TimeInterval? {
+    guard automaticDetectionEnabled else { return nil }
+    if let activeMeetingIsAutomatic {
+      return activeMeetingIsAutomatic ? activeMeetingPollInterval : nil
+    }
+    return hasSuspiciousSignal ? suspiciousPollInterval : idleFallbackInterval
   }
 
   static func confirmsAutomaticStart(stableDuration: TimeInterval) -> Bool {
@@ -153,6 +162,7 @@ final class MeetingCoordinator: ObservableObject {
   @Published private(set) var isStopping = false
   @Published private(set) var statusMessage = "Ready"
   @Published private(set) var lastError: String?
+  @Published private(set) var noteGenerationSessionIDs: Set<UUID> = []
   @Published private(set) var contextCards: [MeetingContextCard] = []
   @Published private(set) var contextStatus = "Listening for useful topics…"
   @Published private(set) var contextError: String?
@@ -217,6 +227,7 @@ final class MeetingCoordinator: ObservableObject {
       suppressedAutomaticFamily = nil
       suppressedFamilyMissingSince = nil
       resetDetectionState()
+      refreshDetectorScheduling()
     }
   }
 
@@ -251,6 +262,19 @@ final class MeetingCoordinator: ObservableObject {
   }() {
     didSet {
       UserDefaults.standard.set(noteModel, forKey: "meeting.notes.model")
+    }
+  }
+
+  @Published var notePrompt: String = {
+    MeetingNoteGenerator.resolvedPrompt(
+      UserDefaults.standard.string(forKey: MeetingNoteGenerator.promptDefaultsKey)
+    )
+  }() {
+    didSet {
+      UserDefaults.standard.set(
+        MeetingNoteGenerator.resolvedPrompt(notePrompt),
+        forKey: MeetingNoteGenerator.promptDefaultsKey
+      )
     }
   }
 
@@ -313,7 +337,9 @@ final class MeetingCoordinator: ObservableObject {
   private var lastContextAnalysisTokenCount = 0
   private var lastContextAnalysisAt: Date?
   private var detectorTimer: Timer?
+  private var detectorTimerGeneration = 0
   private var detectorEventTask: Task<Void, Never>?
+  private var detectorEventPending = false
   private var detectorConfirmationTask: Task<Void, Never>?
   private var lastActiveMeetingPollAt: Date?
   private var candidate: MeetingDetectionCandidate?
@@ -326,6 +352,7 @@ final class MeetingCoordinator: ObservableObject {
   private var lastDetectedAt: Date?
   private var seenContextTerms: Set<String> = []
   private var generatedTitleEligibleSessionIDs: Set<UUID> = []
+  private var resumedSessionIDs: Set<UUID> = []
   private var forcedFullRecoverySources: [UUID: Set<MeetingAudioSource>] = [:]
   private var manualNotesDrafts: [UUID: String] = [:]
   private var manualNotesRevisions: [UUID: Int] = [:]
@@ -363,15 +390,6 @@ final class MeetingCoordinator: ObservableObject {
       detector.startMonitoring { [weak self] in
         self?.handleDetectorEvent()
       }
-      let timer = Timer(timeInterval: MeetingDetectionPolicy.pollInterval, repeats: true) {
-        [weak self] _ in
-        Task { @MainActor [weak self] in
-          await self?.pollMeetingDetector()
-        }
-      }
-      timer.tolerance = 0.1
-      RunLoop.main.add(timer, forMode: .common)
-      detectorTimer = timer
     }
     statusMessage = automaticDetectionEnabled ? "Watching for meetings" : "Ready"
   }
@@ -398,7 +416,42 @@ final class MeetingCoordinator: ObservableObject {
       title: title,
       detectedApp: nil,
       automaticallyStarted: false,
-      candidate: nil
+      candidate: nil,
+      resuming: nil
+    )
+  }
+
+  func refreshLiveMicrophoneApplications() {
+    let applications = detector.liveMicrophoneApplications()
+    guard applications != liveMicrophoneApplications else { return }
+    liveMicrophoneApplications = applications
+  }
+
+  func canResumeMeeting(_ session: MeetingSession) -> Bool {
+    MeetingResumePlan.canResume(session)
+      && activeSessionID == nil
+      && !isLoadingSessions
+      && !isStarting
+      && !isStopping
+      && finalizationTasks[session.id] == nil
+      && !noteGenerationSessionIDs.contains(session.id)
+  }
+
+  func resumeMeeting(_ session: MeetingSession) async {
+    guard var currentSession = self.session(withID: session.id),
+          canResumeMeeting(currentSession) else { return }
+    let retainedAudioFiles = await store.audioFiles(for: currentSession.id)
+    if !retainedAudioFiles.isEmpty {
+      currentSession.audioFiles = retainedAudioFiles
+      replace(currentSession)
+      await persist(currentSession)
+    }
+    await startMeeting(
+      title: currentSession.title,
+      detectedApp: currentSession.detectedApp,
+      automaticallyStarted: false,
+      candidate: nil,
+      resuming: currentSession
     )
   }
 
@@ -480,8 +533,14 @@ final class MeetingCoordinator: ObservableObject {
       session.errorMessage = "Live transcription warning: "
         + MeetingIngestionBacklogPolicy.warningMessage
     }
-    session.audioFiles = audioFiles
-    session.endedAt = Date()
+    session.audioFiles = Array(Set(session.audioFiles + audioFiles)).sorted()
+    let endedAt = Date()
+    if let recordingStartedAt = session.recordingStartedAt {
+      session.recordedDuration = (session.recordedDuration ?? 0)
+        + max(0, endedAt.timeIntervalSince(recordingStartedAt))
+    }
+    session.recordingStartedAt = nil
+    session.endedAt = endedAt
     session.status = .processing
     replace(session)
     self.activeSessionID = nil
@@ -495,13 +554,15 @@ final class MeetingCoordinator: ObservableObject {
     overlayMinimizedSessionID = nil
     await persist(session)
     isStopping = false
+    scheduleNextDetectorPoll()
     statusMessage = "Meeting stopped • finishing transcript…"
 
     let sessionID = session.id
-    let shouldGenerateNotes = generateMeetingNotes
+    let shouldGenerateNotes = generateMeetingNotes || resumedSessionIDs.contains(sessionID)
     let selectedNoteModel = noteModel
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .nonEmpty ?? "openai/gpt-5.4-nano"
+    let selectedNotePrompt = notePrompt
     let shouldAutoExport = automaticallyExportToObsidian
     let exportFolder = obsidianExportFolderURL
     finalizationTasks[sessionID] = Task { @MainActor [weak self] in
@@ -520,6 +581,7 @@ final class MeetingCoordinator: ObservableObject {
         transcriptionCleanupTask: finalizingTranscriptionCleanupTask,
         generateNotes: shouldGenerateNotes,
         noteModel: selectedNoteModel,
+        notePrompt: selectedNotePrompt,
         autoExport: shouldAutoExport,
         exportFolder: exportFolder
       )
@@ -601,6 +663,7 @@ final class MeetingCoordinator: ObservableObject {
       statusMessage = "Meeting retained because discard failed"
     }
     isStopping = false
+    scheduleNextDetectorPoll()
   }
 
   private func finalizeMeeting(
@@ -611,6 +674,7 @@ final class MeetingCoordinator: ObservableObject {
     transcriptionCleanupTask: Task<Void, Never>?,
     generateNotes: Bool,
     noteModel: String,
+    notePrompt: String,
     autoExport: Bool,
     exportFolder: URL?
   ) async {
@@ -733,7 +797,8 @@ final class MeetingCoordinator: ObservableObject {
         generatedNotes = try await noteGenerator.generate(
           transcript: transcript,
           manualNotes: manualNotes,
-          model: noteModel
+          model: noteModel,
+          prompt: notePrompt
         )
       } catch {
         notesWarning = "Meeting notes were not generated: \(error.localizedDescription)"
@@ -756,6 +821,7 @@ final class MeetingCoordinator: ObservableObject {
     }
     generatedTitleEligibleSessionIDs.remove(sessionID)
     session.status = .completed
+    resumedSessionIDs.remove(sessionID)
     if !Task.isCancelled, autoExport, let exportFolder {
       do {
         let exported = try MeetingObsidianExporter.export(
@@ -896,12 +962,14 @@ final class MeetingCoordinator: ObservableObject {
     triggerRules = MeetingTriggerRule.deduplicated(rules)
     MeetingTriggerRule.save(triggerRules)
     resetDetectionState()
+    refreshDetectorScheduling()
   }
 
   func exportToObsidian(_ session: MeetingSession) async {
     guard let currentSession = self.session(withID: session.id),
           currentSession.status.isTerminal,
-          finalizationTasks[session.id] == nil else {
+          finalizationTasks[session.id] == nil,
+          !noteGenerationSessionIDs.contains(session.id) else {
       lastError = "Wait for the meeting transcript to finish saving before exporting it."
       return
     }
@@ -924,13 +992,113 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
+  func regenerateNotes(for session: MeetingSession) async {
+    guard let currentSession = self.session(withID: session.id),
+          currentSession.status.isTerminal,
+          finalizationTasks[session.id] == nil,
+          noteGenerationSessionIDs.insert(session.id).inserted else {
+      return
+    }
+    defer { noteGenerationSessionIDs.remove(session.id) }
+
+    let transcript = MeetingTranscriptFormatter.plainText(
+      tokens: currentSession.transcriptTokens
+    )
+    let manualNotes = currentSession.manualNotesMarkdown?.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    ) ?? ""
+    guard !transcript.isEmpty || !manualNotes.isEmpty else {
+      lastError = "This meeting has no transcript or manual notes to summarize."
+      return
+    }
+
+    updateNoteGenerationStatus(
+      currentSession.notesMarkdown == nil
+        ? "Generating meeting summary…"
+        : "Regenerating meeting summary…",
+      for: session.id
+    )
+    do {
+      let generated = try await noteGenerator.generate(
+        transcript: transcript,
+        manualNotes: manualNotes,
+        model: noteModel,
+        prompt: notePrompt
+      )
+      guard var updated = self.session(withID: session.id) else { return }
+      updated.notesMarkdown = generated.markdown
+      if updated.errorMessage?.hasPrefix("Meeting notes were not generated:") == true {
+        updated.errorMessage = nil
+      }
+      do {
+        try await store.save(updated)
+      } catch {
+        updateNoteGenerationStatus(
+          "Meeting summary could not be saved",
+          error: "Meeting summary could not be saved: \(error.localizedDescription)",
+          for: session.id
+        )
+        return
+      }
+      replace(updated)
+      updateNoteGenerationStatus(
+        updated.exportedMarkdownPath == nil
+          ? "Meeting summary generated"
+          : "Meeting summary generated — re-export to update Obsidian",
+        for: session.id
+      )
+    } catch {
+      if MeetingNoteRetryPolicy.isCancellation(error) {
+        updateNoteGenerationStatus("Meeting summary generation cancelled", for: session.id)
+        return
+      }
+      let message = "Meeting notes were not generated: \(error.localizedDescription)"
+      guard var updated = self.session(withID: session.id) else { return }
+      if updated.errorMessage == nil
+          || updated.errorMessage?.hasPrefix("Meeting notes were not generated:") == true {
+        updated.errorMessage = message
+        do {
+          try await store.save(updated)
+          replace(updated)
+        } catch {
+          updateNoteGenerationStatus(
+            "Meeting summary failed and the warning could not be saved",
+            error: message,
+            for: session.id
+          )
+          return
+        }
+      }
+      updateNoteGenerationStatus(
+        "Meeting summary failed",
+        error: message,
+        for: session.id
+      )
+    }
+  }
+
+  func restoreDefaultNotePrompt() {
+    notePrompt = MeetingNoteGenerator.defaultPrompt
+  }
+
+  private func updateNoteGenerationStatus(
+    _ status: String,
+    error: String? = nil,
+    for sessionID: UUID
+  ) {
+    guard activeSessionID == nil, selectedSession?.id == sessionID else { return }
+    statusMessage = status
+    lastError = error
+  }
+
   func openExportedNote(_ session: MeetingSession) {
     guard let path = session.exportedMarkdownPath else { return }
     MeetingObsidianExporter.open(URL(fileURLWithPath: path))
   }
 
   func copyMarkdown(_ session: MeetingSession) {
-    guard let currentSession = self.session(withID: session.id) else { return }
+    guard !noteGenerationSessionIDs.contains(session.id),
+          let currentSession = self.session(withID: session.id) else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(
       MeetingObsidianExporter.document(for: currentSession),
@@ -956,8 +1124,9 @@ final class MeetingCoordinator: ObservableObject {
 
   func delete(_ session: MeetingSession) async {
     guard session.id != activeSessionID else { return }
-    guard finalizationTasks[session.id] == nil else {
-      lastError = "Wait for the meeting transcript to finish saving before deleting it."
+    guard finalizationTasks[session.id] == nil,
+          !noteGenerationSessionIDs.contains(session.id) else {
+      lastError = "Wait for meeting processing to finish before deleting it."
       return
     }
     do {
@@ -1053,7 +1222,8 @@ final class MeetingCoordinator: ObservableObject {
     title: String?,
     detectedApp: String?,
     automaticallyStarted: Bool,
-    candidate: MeetingDetectionCandidate?
+    candidate: MeetingDetectionCandidate?,
+    resuming resumedSession: MeetingSession?
   ) async {
     guard !isLoadingSessions,
           activeSessionID == nil,
@@ -1076,13 +1246,36 @@ final class MeetingCoordinator: ObservableObject {
     statusMessage = "Starting meeting capture…"
 
     let defaultTitle = Self.defaultTitle(detectedApp: detectedApp)
-    var session = MeetingSession(
-      title: title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? defaultTitle,
-      detectedApp: detectedApp,
-      automaticallyStarted: automaticallyStarted,
-      transcriptionEngine: activeTranscriptionEngine
-    )
-    sessions.insert(session, at: 0)
+    let resumePlan = resumedSession.map(MeetingResumePlan.init)
+    let wasInterruptedResume = resumedSession?.status == .interrupted
+    var session: MeetingSession
+    if var resumedSession {
+      if wasInterruptedResume {
+        forcedFullRecoverySources[resumedSession.id, default: []]
+          .formUnion(MeetingAudioSource.captureSources)
+      }
+      resumedSession.recordedDuration = resumedSession.duration
+      resumedSession.recordingStartedAt = Date()
+      resumedSession.endedAt = nil
+      resumedSession.transcriptionEngine = activeTranscriptionEngine
+      resumedSession.status = .recording
+      resumedSession.errorMessage = nil
+      session = resumedSession
+      replace(session)
+      resumedSessionIDs.insert(session.id)
+    } else {
+      let startedAt = Date()
+      session = MeetingSession(
+        title: title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? defaultTitle,
+        startedAt: startedAt,
+        recordedDuration: 0,
+        recordingStartedAt: startedAt,
+        detectedApp: detectedApp,
+        automaticallyStarted: automaticallyStarted,
+        transcriptionEngine: activeTranscriptionEngine
+      )
+      sessions.insert(session, at: 0)
+    }
     let hasUserProvidedTitle = !automaticallyStarted
       && title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
     if !hasUserProvidedTitle {
@@ -1107,8 +1300,10 @@ final class MeetingCoordinator: ObservableObject {
     do {
       let directory = try await store.directory(for: session.id)
       let sessionID = session.id
+      let timelineOffset = resumePlan?.timelineOffset ?? 0
       let transcriber = MeetingTranscriptionService(
         engine: activeTranscriptionEngine,
+        timelineOffset: timelineOffset,
         tokenHandler: { [weak self] tokens in
           await self?.receive(tokens: tokens, for: sessionID)
         },
@@ -1147,7 +1342,15 @@ final class MeetingCoordinator: ObservableObject {
       try await capture.start(
         directory: directory,
         includedApplicationScope: automaticallyStarted ? candidate?.captureScope : nil,
+        initialSegmentIndexes: resumePlan?.initialSegmentIndexes ?? [:],
+        timelineOffset: timelineOffset,
         onChunk: { [weak self] chunk in
+          let timelineChunk = MeetingAudioChunk(
+            source: chunk.source,
+            samples: chunk.samples,
+            startTime: timelineOffset + chunk.startTime,
+            duration: chunk.duration
+          )
           if audioLevelGate.isEnabled {
             let level = MeetingAudioMeter.level(from: chunk.samples)
             Task { @MainActor [weak self] in
@@ -1158,7 +1361,7 @@ final class MeetingCoordinator: ObservableObject {
               )
             }
           }
-          if case .dropped = continuation.yield(chunk),
+          if case .dropped = continuation.yield(timelineChunk),
              backlogGate.claim() {
             continuation.finish()
             Task { @MainActor [weak self] in
@@ -1180,6 +1383,7 @@ final class MeetingCoordinator: ObservableObject {
       refreshVaultIndexIfNeeded()
       statusMessage = "Recording meeting • \(activeTranscriptionEngine.recordingLabel)"
       isStarting = false
+      scheduleNextDetectorPoll()
       preparationMonitorTask = Task { @MainActor [weak self] in
         do {
           try await task.value
@@ -1209,10 +1413,19 @@ final class MeetingCoordinator: ObservableObject {
       if let transcriber = self.transcriber {
         await transcriber.cleanup()
       }
-      session.status = .failed
-      session.endedAt = Date()
+      session.status = wasInterruptedResume ? .interrupted : .failed
+      let endedAt = Date()
+      if let recordingStartedAt = session.recordingStartedAt {
+        session.recordedDuration = (session.recordedDuration ?? 0)
+          + max(0, endedAt.timeIntervalSince(recordingStartedAt))
+      }
+      session.recordingStartedAt = nil
+      session.endedAt = endedAt
       session.errorMessage = error.localizedDescription
-      forcedFullRecoverySources.removeValue(forKey: session.id)
+      resumedSessionIDs.remove(session.id)
+      if !wasInterruptedResume {
+        forcedFullRecoverySources.removeValue(forKey: session.id)
+      }
       generatedTitleEligibleSessionIDs.remove(session.id)
       replace(session)
       await persist(session)
@@ -1230,6 +1443,7 @@ final class MeetingCoordinator: ObservableObject {
       overlayMinimizedSessionID = nil
       SystemAudioController.shared.setMeetingCaptureActive(false)
       isStarting = false
+      scheduleNextDetectorPoll()
       lastError = "Meeting capture could not start: \(error.localizedDescription)"
       statusMessage = "Meeting capture failed"
     }
@@ -1742,23 +1956,39 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   private func pollMeetingDetector() async {
+    guard !isLoadingSessions,
+          automaticDetectionEnabled,
+          !isStarting,
+          !isStopping else {
+      scheduleNextDetectorPoll()
+      return
+    }
+
     if let activeSession {
-      guard activeSession.automaticallyStarted else { return }
+      guard activeSession.automaticallyStarted else {
+        scheduleNextDetectorPoll()
+        return
+      }
       let now = Date()
       if let lastActiveMeetingPollAt,
          now.timeIntervalSince(lastActiveMeetingPollAt)
            < MeetingDetectionPolicy.activeMeetingPollInterval {
+        let elapsed = now.timeIntervalSince(lastActiveMeetingPollAt)
+        scheduleNextDetectorPoll(
+          after: MeetingDetectionPolicy.activeMeetingPollInterval - elapsed
+        )
         return
       }
       lastActiveMeetingPollAt = now
     } else {
       lastActiveMeetingPollAt = nil
-      liveMicrophoneApplications = detector.liveMicrophoneApplications()
+      refreshLiveMicrophoneApplications()
     }
-    guard !isLoadingSessions,
-          automaticDetectionEnabled,
-          !isStarting,
-          !isStopping else { return }
+    defer {
+      scheduleNextDetectorPoll()
+      scheduleDetectorConfirmationIfNeeded()
+    }
+
     let detected = detector.currentCandidate(triggerRules: triggerRules)
     if let detected {
       lastDetectedFamily = detected.bundleFamily
@@ -1825,6 +2055,7 @@ final class MeetingCoordinator: ObservableObject {
     }
 
     if candidate?.triggerID != detected.triggerID {
+      cancelDetectorConfirmation()
       candidate = detected
       candidateDetectedAt = Date()
       statusMessage = "Possible \(detected.appName) detected…"
@@ -1844,41 +2075,97 @@ final class MeetingCoordinator: ObservableObject {
       title: detected.appName,
       detectedApp: detected.appName,
       automaticallyStarted: true,
-      candidate: detected
+      candidate: detected,
+      resuming: nil
     )
   }
 
   private func handleDetectorEvent() {
+    guard automaticDetectionEnabled else { return }
+    detectorEventPending = true
     guard detectorEventTask == nil else { return }
     detectorEventTask = Task { @MainActor [weak self] in
       guard let self else { return }
       defer { detectorEventTask = nil }
-      await pollMeetingDetector()
-      scheduleDetectorConfirmationIfNeeded()
+      repeat {
+        detectorEventPending = false
+        await pollMeetingDetector()
+      } while detectorEventPending && automaticDetectionEnabled
     }
   }
 
   private func scheduleDetectorConfirmationIfNeeded() {
-    guard candidate != nil,
+    guard let candidate,
+          let candidateDetectedAt,
           activeSessionID == nil,
           detectorConfirmationTask == nil else { return }
+    let elapsed = Date().timeIntervalSince(candidateDetectedAt)
+    let delay = max(0, MeetingDetectionPolicy.eventConfirmationDelay - elapsed)
+    let triggerID = candidate.triggerID
     detectorConfirmationTask = Task { @MainActor [weak self] in
       do {
         try await Task.sleep(
-          nanoseconds: UInt64(
-            MeetingDetectionPolicy.eventConfirmationDelay * 1_000_000_000
-          )
+          nanoseconds: UInt64(delay * 1_000_000_000)
         )
       } catch {
         return
       }
-      guard let self else { return }
-      defer { detectorConfirmationTask = nil }
-      await pollMeetingDetector()
+      guard let self,
+            self.candidate?.triggerID == triggerID,
+            self.candidateDetectedAt == candidateDetectedAt else { return }
+      self.detectorConfirmationTask = nil
+      await self.pollMeetingDetector()
     }
   }
 
+  private func cancelDetectorConfirmation() {
+    detectorConfirmationTask?.cancel()
+    detectorConfirmationTask = nil
+  }
+
+  private func refreshDetectorScheduling() {
+    detectorTimerGeneration &+= 1
+    detectorTimer?.invalidate()
+    detectorTimer = nil
+    guard MeetingDetectionPolicy.schedulingAllowed else { return }
+    if automaticDetectionEnabled, !isLoadingSessions {
+      handleDetectorEvent()
+    } else if !automaticDetectionEnabled {
+      detectorEventPending = false
+      cancelDetectorConfirmation()
+      liveMicrophoneApplications = []
+    }
+  }
+
+  private func scheduleNextDetectorPoll(after overrideInterval: TimeInterval? = nil) {
+    detectorTimerGeneration &+= 1
+    let generation = detectorTimerGeneration
+    detectorTimer?.invalidate()
+    detectorTimer = nil
+    guard MeetingDetectionPolicy.schedulingAllowed else { return }
+
+    let interval = overrideInterval ?? MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: automaticDetectionEnabled,
+      activeMeetingIsAutomatic: activeSession?.automaticallyStarted,
+      hasSuspiciousSignal: candidate != nil || suppressedAutomaticFamily != nil
+    )
+    guard let interval else { return }
+
+    let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self,
+              self.detectorTimerGeneration == generation else { return }
+        self.detectorTimer = nil
+        await self.pollMeetingDetector()
+      }
+    }
+    timer.tolerance = min(10, interval * 0.1)
+    RunLoop.main.add(timer, forMode: .common)
+    detectorTimer = timer
+  }
+
   private func resetDetectionState() {
+    cancelDetectorConfirmation()
     candidate = nil
     candidateDetectedAt = nil
     candidateMissingSince = nil

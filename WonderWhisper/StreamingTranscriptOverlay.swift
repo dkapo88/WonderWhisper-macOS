@@ -13,6 +13,8 @@ final class StreamingTranscriptOverlay {
 
   // Track visibility state
   private var isVisible: Bool = false
+  // Auto-dismiss for an error flash; cancelled if a newer error arrives.
+  private var errorDismissTask: Task<Void, Never>?
 
   init(viewModel: DictationViewModel) {
     self.vm = viewModel
@@ -60,6 +62,15 @@ final class StreamingTranscriptOverlay {
       }
       .store(in: &cancellables)
 
+    // Failures must outlive the recording: the visibility predicate above hides the overlay the
+    // moment recording stops, which is exactly when an empty-transcript failure is discovered.
+    viewModel.$dictationError
+      .compactMap { $0 }
+      .sink { [weak self] message in
+        self?.flashError(message)
+      }
+      .store(in: &cancellables)
+
     // Reposition on screen changes (routed through cancellables so it is not leaked)
     NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
       .sink { [weak self] _ in
@@ -73,6 +84,9 @@ final class StreamingTranscriptOverlay {
   func show() {
     guard !isVisible else { return }
     isVisible = true
+    // A new session supersedes any error still on screen from the previous one.
+    errorDismissTask?.cancel()
+    errorDismissTask = nil
 
     positionAtTopCenter()
     contentView.setText("")
@@ -102,21 +116,43 @@ final class StreamingTranscriptOverlay {
     })
   }
 
+  /// Show a failure message on its own, independent of the recording-visibility predicate,
+  /// and dismiss it after a few seconds. Dictation failures are only discovered at stop, when
+  /// the normal preview overlay is already hiding.
+  func flashError(_ message: String) {
+    errorDismissTask?.cancel()
+    isVisible = true
+    positionAtTopCenter()
+    contentView.setText("⚠︎ \(message)")
+    resizeToFitContent()
+    window.alphaValue = 1
+    window.orderFrontRegardless()
+
+    errorDismissTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 6_000_000_000)
+      guard !Task.isCancelled else { return }
+      self?.hide()
+    }
+  }
+
   /// Update the displayed transcript text
   func updateText(_ text: String) {
     // Skip redundant work when the preview hasn't changed (provider can re-emit identical text).
     guard contentView.setText(text) else { return }
 
-    // Auto-resize based on content. Use animate:false for live token updates — animating a
-    // setFrame on every token is janky and O(n^2) over a sentence; reserve animation for show/hide.
+    resizeToFitContent()
+  }
+
+  /// Auto-resize based on content. Use animate:false for live token updates — animating a
+  /// setFrame on every token is janky and O(n^2) over a sentence; reserve animation for show/hide.
+  private func resizeToFitContent() {
     let newHeight = contentView.preferredHeight()
-    if abs(window.frame.height - newHeight) > 10 {
-      var frame = window.frame
-      let heightDiff = newHeight - frame.height
-      frame.size.height = newHeight
-      frame.origin.y -= heightDiff // Keep top position stable
-      window.setFrame(frame, display: true, animate: false)
-    }
+    guard abs(window.frame.height - newHeight) > 10 else { return }
+    var frame = window.frame
+    let heightDiff = newHeight - frame.height
+    frame.size.height = newHeight
+    frame.origin.y -= heightDiff // Keep top position stable
+    window.setFrame(frame, display: true, animate: false)
   }
 
   private func positionAtTopCenter() {

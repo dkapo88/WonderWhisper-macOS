@@ -23,6 +23,7 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
+  case codex
   case hermes
   case beeper
   case meetings
@@ -40,6 +41,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     .dictation,
     .command,
     .meetings,
+    .codex,
     .beeper,
     .hermes,
     .vocabulary,
@@ -55,6 +57,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "Dictation"
     case .command: return "Command"
+    case .codex: return "Codex"
     case .hermes: return "Hermes"
     case .beeper: return "Beeper"
     case .meetings: return "Meetings"
@@ -71,6 +74,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "mic.fill"
     case .command: return "wand.and.stars"
+    case .codex: return "terminal.fill"
     case .hermes: return "sparkles"
     case .beeper: return "paperplane.fill"
     case .meetings: return "person.2.wave.2.fill"
@@ -90,6 +94,10 @@ enum HermesAgentHotkey {
 
 enum BeeperHotkey {
   static let promptID = UUID(uuidString: "F7E9C20B-4D76-44E8-8B37-B9FA35E5F7D7")!
+}
+
+enum CodexHotkey {
+  static let promptID = UUID(uuidString: "FC89D025-8417-4DE6-A078-B6F2A9D151D5")!
 }
 
 enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
@@ -286,6 +294,10 @@ struct SimplePromptSettings: Codable, Equatable {
 enum SimpleModeDefaults {
   static let defaultModelID = "moonshotai/kimi-k2-0905"
 
+  static func migratingLegacyScreenContextTag(in text: String) -> String {
+    text.replacingOccurrences(of: "<SCREEN_CONTENTS>", with: "<SCREEN_CONTEXT_TERMS>")
+  }
+
   static func defaultRules(for kind: SimplePromptKind) -> String {
     switch kind {
     case .dictation:
@@ -378,7 +390,7 @@ Follow the rule list below precisely:
 
 **Using Context for Spelling/Formatting**
 - `<VOCABULARY>`: Priority reference for name and term corrections (phonetic matching)
-- `<SCREEN_CONTENTS>`: Secondary reference for visible names/terms
+- `<SCREEN_CONTEXT_TERMS>`: Secondary reference for visible names/terms
 - `<SELECTED_TEXT>`: Additional reference for visible names/terms
 - `<ACTIVE_APPLICATION>`: Determines app-specific formatting conventions
 - Only apply corrections when context clearly confirms the match
@@ -411,7 +423,7 @@ SYSTEM REQUIREMENTS:
     "**Structure & Paragraphs**\n- Do not output a giant paragraph\n- Use short paragraphs by default\n- Start a new paragraph for topic changes, natural pauses, or a new action/request\n- Add headings for longer technical notes, planning notes, or multi-topic dictation\n- Keep short chat messages compact when headings would feel unnatural",
     "**Lists & Extraction**\n- Prefer lists whenever they improve clarity, brevity, or scanability\n- Convert spoken sequences into numbered lists, bullets, or sub-bullets\n- Use multi-level structure when the content has hierarchy, such as 1, 1A, 1B\n- Pull out actions, options, issues, requirements, examples, risks, and decisions into lists when useful\n- Example: \"there are three issues first login is slow second payment fails third images won't load\" →\n\nThere are 3 issues:\n1. Login is slow\n2. Payment fails\n3. Images won't load",
     "**Numbers & Symbols**\n- Convert numbers to digits: \"twenty\" → \"20\"\n- Treat currency as Singapore dollars: \"five dollars\" → \"$5\"\n- Convert common symbols: \"percent\" → \"%\", \"times\" → \"×\", \"equals\" → \"=\"\n- Convert spoken emoji names: \"fire emoji\" → 🔥",
-    "**Names & Terms**\n- Use `<VOCABULARY>` first and `<SCREEN_CONTENTS>` second for name and term corrections\n- Only correct when there is a clear phonetic or contextual match\n- Preserve the casing and spelling from the trusted context\n- When `<ACTIVE_APPLICATION>` is \"Slack\" or \"slack\", use @ before first names when they are clearly being addressed: \"Eloise\" → \"@eloise\". Only do this in Slack, not other apps\n- In any app, if I say \"at [name]\", format it as a mention: \"at Eloise\" → \"@eloise\"",
+    "**Names & Terms**\n- Use `<VOCABULARY>` first and `<SCREEN_CONTEXT_TERMS>` second for name and term corrections\n- Only correct when there is a clear phonetic or contextual match\n- Preserve the casing and spelling from the trusted context\n- When `<ACTIVE_APPLICATION>` is \"Slack\" or \"slack\", use @ before first names when they are clearly being addressed: \"Eloise\" → \"@eloise\". Only do this in Slack, not other apps\n- In any app, if I say \"at [name]\", format it as a mention: \"at Eloise\" → \"@eloise\"",
     "**Punctuation & Formatting**\n- Use British spelling: \"colour\", \"analyse\", \"centre\"\n- Use commas, periods, question marks, and line breaks to make the output easy to read\n- Never use em dashes or en dashes, use commas or periods instead\n- Do not start sentences with \"And\". Merge with the previous sentence or remove it\n- Example: \"We're ready. And we should go.\" → \"We're ready and we should go.\"",
     "**Application-Specific Formatting**\n- Email apps (Gmail, Shortwave, Spark, Notion Mail, Mimestream, Front, Missive): use a greeting when appropriate, then clear paragraphs or lists\n- Chat apps (Slack, Telegram, WhatsApp, Beeper): keep it casual, concise, and easy to scan\n- Note apps (Notion, Granary, Notes, Upnote): use headings, paragraphs, and lists for longer content"
   ]

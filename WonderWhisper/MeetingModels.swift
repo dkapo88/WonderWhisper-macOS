@@ -116,6 +116,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var title: String
   let startedAt: Date
   var endedAt: Date?
+  var recordedDuration: TimeInterval?
+  var recordingStartedAt: Date?
   var detectedApp: String?
   var automaticallyStarted: Bool
   var transcriptionEngine: MeetingTranscriptionEngine?
@@ -131,6 +133,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        title: String,
        startedAt: Date = Date(),
        endedAt: Date? = nil,
+       recordedDuration: TimeInterval? = nil,
+       recordingStartedAt: Date? = nil,
        detectedApp: String? = nil,
        automaticallyStarted: Bool = false,
        transcriptionEngine: MeetingTranscriptionEngine? = nil,
@@ -145,6 +149,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.title = title
     self.startedAt = startedAt
     self.endedAt = endedAt
+    self.recordedDuration = recordedDuration
+    self.recordingStartedAt = recordingStartedAt
     self.detectedApp = detectedApp
     self.automaticallyStarted = automaticallyStarted
     self.transcriptionEngine = transcriptionEngine
@@ -158,11 +164,54 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   }
 
   var duration: TimeInterval {
-    max(0, (endedAt ?? Date()).timeIntervalSince(startedAt))
+    if let recordedDuration {
+      let activeDuration = recordingStartedAt.map {
+        max(0, Date().timeIntervalSince($0))
+      } ?? 0
+      return max(0, recordedDuration + activeDuration)
+    }
+    return max(0, (endedAt ?? Date()).timeIntervalSince(startedAt))
   }
 
   var transcriptMarkdown: String {
     MeetingTranscriptFormatter.markdown(tokens: transcriptTokens)
+  }
+}
+
+struct MeetingResumePlan: Equatable, Sendable {
+  let timelineOffset: TimeInterval
+  let initialSegmentIndexes: [MeetingAudioSource: Int]
+
+  init(session: MeetingSession) {
+    let transcriptEnd = session.transcriptTokens.map {
+      max($0.startTime, $0.endTime)
+    }.max() ?? 0
+    timelineOffset = max(session.duration, transcriptEnd)
+    initialSegmentIndexes = Dictionary(uniqueKeysWithValues:
+      MeetingAudioSource.captureSources.map { source in
+        let maximumIndex = session.audioFiles.compactMap {
+          MeetingResumePlan.segmentIndex(filename: $0, source: source)
+        }.max() ?? 0
+        return (source, maximumIndex)
+      }
+    )
+  }
+
+  static func canResume(_ session: MeetingSession) -> Bool {
+    session.status.isTerminal
+  }
+
+  private static func segmentIndex(
+    filename: String,
+    source: MeetingAudioSource
+  ) -> Int? {
+    let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+    let parts = stem.split(separator: "-", omittingEmptySubsequences: false)
+    guard parts.count == 2 || parts.count == 3,
+          parts[0] == Substring(source.filenamePrefix),
+          let index = Int(parts[1]),
+          index > 0 else { return nil }
+    return index
   }
 }
 

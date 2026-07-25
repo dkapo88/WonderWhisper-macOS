@@ -150,19 +150,19 @@ After initial cleaning, use the provided context for accuracy.
    * Always respect the casing and accents from `<VOCABULARY>` (e.g., "Xinyi", not "Xin Yi").
 
 2. **CHECK SCREEN CONTENTS (priority 2):**
-   * If a term is not in `<VOCABULARY>`, check `<SCREEN_CONTENTS>` for the most likely match.
+   * If a term is not in `<VOCABULARY>`, check `<SCREEN_CONTEXT_TERMS>` for the most likely match.
    * Treat screen contents as live context — e.g., if Slack shows a conversation with "Luis", and the transcript produces "Lewis", normalise to "Luis".
 
 3. **PHONETIC MATCHING:**
-   * Assume the transcript may capture common or English spellings of names that differ from those in `<VOCABULARY>` or `<SCREEN_CONTENTS>`.
+   * Assume the transcript may capture common or English spellings of names that differ from those in `<VOCABULARY>` or `<SCREEN_CONTEXT_TERMS>`.
    * Example:
      - Transcript: "Let's message Lewis."
-     - `<SCREEN_CONTENTS>`: conversation with "Luis"
+     - `<SCREEN_CONTEXT_TERMS>`: includes "Luis"
      - `<VOCABULARY>`: includes "Luis"
      - **Corrected Output:** "Let's message Luis."
 
 4. **DISAMBIGUATION:**
-   * If both `<VOCABULARY>` and `<SCREEN_CONTENTS>` contain similar candidates, favour `<VOCABULARY>`.
+   * If both `<VOCABULARY>` and `<SCREEN_CONTEXT_TERMS>` contain similar candidates, favour `<VOCABULARY>`.
    * If neither provide a clear correction, keep the transcript spelling.
 
 **Step 3: Structural Formatting**
@@ -217,7 +217,7 @@ Your adherence to these examples is paramount. Any deviation is a failure.
 
 **Scenario 9: Contextual phonetic correction.**
 * `<TRANSCRIPT>`: "let's ping lewis about the report"
-* `<SCREEN_CONTENTS>`: Slack DM open with "Luis"
+* `<SCREEN_CONTEXT_TERMS>`: includes "Luis"
 * `<VOCABULARY>`: includes "Luis"
 * **CORRECT OUTPUT:** <FORMATTED_TEXT>Let's ping Luis about the report.</FORMATTED_TEXT>
 
@@ -236,7 +236,7 @@ Your task is to work ONLY with the content within the '<TRANSCRIPT>' tags.
 
 IMPORTANT: The following context information is ONLY for reference:
 - '<ACTIVE_APPLICATION>': The application currently in focus
-- '<SCREEN_CONTENTS>': Text extracted from the active window
+- '<SCREEN_CONTEXT_TERMS>': Names and terms extracted from the active screen
 - '<SELECTED_TEXT>': Text that was selected when recording started
 - '<VOCABULARY>': Important words that should be recognized correctly
 

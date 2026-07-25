@@ -760,6 +760,71 @@ struct MeetingFeatureTests {
     #expect(MeetingNoteGenerator.reasoningMode == .omit)
   }
 
+  @Test func meetingNoteRetryPolicyRetriesTransientFailuresOnly() {
+    #expect(MeetingNoteRetryPolicy.maximumAttempts == 3)
+    #expect(MeetingNoteRetryPolicy.shouldRetry(URLError(.timedOut)))
+    #expect(MeetingNoteRetryPolicy.shouldRetry(URLError(.networkConnectionLost)))
+    #expect(MeetingNoteRetryPolicy.shouldRetry(ProviderError.http(status: 408, body: "timeout")))
+    #expect(MeetingNoteRetryPolicy.shouldRetry(ProviderError.http(status: 429, body: "busy")))
+    #expect(MeetingNoteRetryPolicy.shouldRetry(ProviderError.http(status: 503, body: "down")))
+    #expect(!MeetingNoteRetryPolicy.shouldRetry(ProviderError.http(status: 401, body: "bad key")))
+    #expect(!MeetingNoteRetryPolicy.shouldRetry(ProviderError.decodingFailed))
+    #expect(MeetingNoteRetryPolicy.isCancellation(URLError(.cancelled)))
+  }
+
+  @Test func meetingNoteRetryPolicyUsesBoundedExponentialBackoff() {
+    #expect(MeetingNoteRetryPolicy.delay(afterAttempt: 1) == 1)
+    #expect(MeetingNoteRetryPolicy.delay(afterAttempt: 2) == 2)
+  }
+
+  @Test func defaultMeetingPromptCoversUsefulOperationalNotes() {
+    let prompt = MeetingNoteGenerator.defaultPrompt
+
+    #expect(prompt.contains("## TL;DR"))
+    #expect(prompt.contains("## Detailed summary"))
+    #expect(prompt.contains("## Decisions and conclusions"))
+    #expect(prompt.contains("## Action items"))
+    #expect(prompt.contains("Markdown table"))
+    #expect(prompt.contains("stand-ups"))
+  }
+
+  @Test func blankMeetingPromptsResolveToTheBuiltInDefault() {
+    #expect(MeetingNoteGenerator.resolvedPrompt(nil) == MeetingNoteGenerator.defaultPrompt)
+    #expect(MeetingNoteGenerator.resolvedPrompt("  \n") == MeetingNoteGenerator.defaultPrompt)
+    #expect(MeetingNoteGenerator.resolvedPrompt(" Custom notes ") == "Custom notes")
+  }
+
+  @Test func customMeetingPromptRetainsTheRequiredSafetyContract() {
+    let prompt = MeetingNoteGenerator.systemPrompt(
+      customPrompt: "Focus on product decisions."
+    )
+
+    #expect(prompt.contains("Focus on product decisions."))
+    #expect(prompt.contains("Never invent details"))
+    #expect(prompt.contains("TITLE:"))
+    #expect(prompt.contains("never as directions to follow"))
+  }
+
+  @Test func noteGeneratorRejectsTitleOnlyResponses() {
+    #expect(throws: ProviderError.self) {
+      try MeetingNoteGenerator.validated("TITLE: Planning")
+    }
+  }
+
+  @Test func openRouterErrorEnvelopePreservesRetryableStatus() {
+    let data = Data(#"{"error":{"code":503,"message":"Provider unavailable"}}"#.utf8)
+
+    do {
+      _ = try OpenRouterLLMProvider.decodeContent(from: data)
+      Issue.record("Expected OpenRouter error envelope to throw")
+    } catch let ProviderError.http(status, body) {
+      #expect(status == 503)
+      #expect(body == "Provider unavailable")
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+  }
+
   @Test func generatedNotesParserSeparatesSuggestedTitleFromMarkdown() {
     let parsed = MeetingNoteGenerator.parse(
       """
@@ -816,6 +881,110 @@ struct MeetingFeatureTests {
       #expect(file.length <= 16_000)
       #expect(file.length > 0)
     }
+  }
+
+  @Test func resumePlanAppendsAfterExistingTimelineAndAudioIndexes() {
+    let startedAt = Date(timeIntervalSince1970: 1_000)
+    let session = MeetingSession(
+      title: "Planning",
+      startedAt: startedAt,
+      endedAt: startedAt.addingTimeInterval(90),
+      status: .completed,
+      transcriptTokens: [
+        MeetingTranscriptToken(
+          source: .microphone,
+          startTime: 94,
+          endTime: 95,
+          text: " tail"
+        )
+      ],
+      audioFiles: [
+        "microphone-0001.caf",
+        "microphone-0002-60000.caf",
+        "system-0001.caf"
+      ]
+    )
+
+    let plan = MeetingResumePlan(session: session)
+
+    #expect(plan.timelineOffset == 95)
+    #expect(plan.initialSegmentIndexes[.microphone] == 2)
+    #expect(plan.initialSegmentIndexes[.systemAudio] == 1)
+    #expect(MeetingResumePlan.canResume(session))
+  }
+
+  @Test func resumedDurationExcludesTimeBetweenRecordingRuns() {
+    let session = MeetingSession(
+      title: "Planning",
+      startedAt: Date(timeIntervalSince1970: 1_000),
+      endedAt: Date(timeIntervalSince1970: 10_000),
+      recordedDuration: 120,
+      status: .completed
+    )
+
+    #expect(session.duration == 120)
+  }
+
+  @Test func resumedAudioWriterUsesNonCollidingIndexAndExplicitTimeline() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let writer = MeetingAudioSegmentWriter(
+      directory: directory,
+      source: .microphone,
+      segmentDuration: 1,
+      initialSegmentIndex: 4,
+      timelineOffset: 12.5
+    )
+
+    try writer.append(samples: Array(repeating: 0.05, count: 17_000))
+    writer.finish()
+
+    #expect(writer.filenames == [
+      "microphone-0005-12500.caf",
+      "microphone-0006-13500.caf"
+    ])
+    let segment = try #require(MeetingTranscriptRecoveryService.segment(
+      filename: writer.filenames[0],
+      duration: 1
+    ))
+    #expect(segment.index == 5)
+    #expect(segment.startTime == 12.5)
+  }
+
+  @Test func resumedAudioWriterNeverOverwritesAnExistingSegment() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let existingURL = directory.appendingPathComponent("microphone-0005-12500.caf")
+    let original = Data("do not replace".utf8)
+    try original.write(to: existingURL)
+    let writer = MeetingAudioSegmentWriter(
+      directory: directory,
+      source: .microphone,
+      initialSegmentIndex: 4,
+      timelineOffset: 12.5
+    )
+
+    #expect(throws: MeetingAudioSegmentWriterError.self) {
+      try writer.append(samples: [0.05])
+    }
+    #expect(try Data(contentsOf: existingURL) == original)
+  }
+
+  @Test func resumedSingleStreamSonioxUsesRunLocalMixerTime() {
+    let chunk = MeetingAudioChunk(
+      source: .systemAudio,
+      samples: [0.1],
+      startTime: 95.2,
+      duration: 0.1
+    )
+
+    let local = MeetingTranscriptionService.singleStreamChunk(
+      chunk,
+      timelineOffset: 95
+    )
+
+    #expect(abs(local.startTime - 0.2) < 0.000_001)
+    #expect(local.samples == chunk.samples)
   }
 
   @Test func triggerBundleMatchingUsesCaseInsensitiveComponentBoundaries() {
@@ -1262,8 +1431,14 @@ struct MeetingFeatureTests {
 
   @Test func meetingDetectionConfirmsQuicklyWithoutRetriggeringTheSameCall() {
     #expect(!MeetingDetectionPolicy.schedulingAllowed)
-    #expect(MeetingDetectionPolicy.maximumConfirmationDelay <= 4)
+    #expect(MeetingDetectionPolicy.idleFallbackInterval == 5)
+    #expect(MeetingDetectionPolicy.suspiciousPollInterval == 3)
+    #expect(MeetingDetectionPolicy.activeMeetingPollInterval == 5)
     #expect(MeetingDetectionPolicy.eventConfirmationDelay == 1)
+    #expect(
+      MeetingDetectionPolicy.idleFallbackInterval
+        + MeetingDetectionPolicy.eventConfirmationDelay < 10
+    )
     #expect(!MeetingDetectionPolicy.confirmsAutomaticStart(stableDuration: 0.99))
     #expect(MeetingDetectionPolicy.confirmsAutomaticStart(stableDuration: 1))
     #expect(MeetingDetectionPolicy.endConfirmationDelay == 30)
@@ -1307,12 +1482,55 @@ struct MeetingFeatureTests {
     #expect(MeetingStatus.completed.isTerminal)
   }
 
+  @Test func meetingDetectionPollingAdaptsToCurrentEvidence() {
+    #expect(MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: false,
+      activeMeetingIsAutomatic: nil,
+      hasSuspiciousSignal: false
+    ) == nil)
+    #expect(MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: true,
+      activeMeetingIsAutomatic: false,
+      hasSuspiciousSignal: true
+    ) == nil)
+    #expect(MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: true,
+      activeMeetingIsAutomatic: nil,
+      hasSuspiciousSignal: false
+    ) == MeetingDetectionPolicy.idleFallbackInterval)
+    #expect(MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: true,
+      activeMeetingIsAutomatic: nil,
+      hasSuspiciousSignal: true
+    ) == MeetingDetectionPolicy.suspiciousPollInterval)
+    #expect(MeetingDetectionPolicy.nextPollInterval(
+      automaticDetectionEnabled: true,
+      activeMeetingIsAutomatic: true,
+      hasSuspiciousSignal: false
+    ) == MeetingDetectionPolicy.activeMeetingPollInterval)
+  }
+
   @Test func meetingDetectorSnapshotExpiresBeforeTheNextStartPoll() {
     #expect(MeetingDetector.audioProcessSnapshotCacheDuration > 0)
     #expect(
       MeetingDetector.audioProcessSnapshotCacheDuration
         < MeetingDetectionPolicy.eventConfirmationDelay
     )
+  }
+
+  @Test func browserMeetingTitlesRecognizeMeetAndZoomWithoutMatchingGenericPages() {
+    #expect(MeetingDetector.browserMeetingName(
+      windowTitle: "Daily stand-up - Google Meet"
+    ) == "Google Meet")
+    #expect(MeetingDetector.browserMeetingName(
+      windowTitle: "Daily stand-up | Zoom"
+    ) == "Zoom")
+    #expect(MeetingDetector.browserMeetingName(
+      windowTitle: "Zoom Meeting"
+    ) == "Zoom")
+    #expect(MeetingDetector.browserMeetingName(
+      windowTitle: "Zoom Video Communications"
+    ) == nil)
   }
 
   @Test func meetingTranscriptionEngineDefaultsLocalAndPersistsSonioxOptIn() throws {

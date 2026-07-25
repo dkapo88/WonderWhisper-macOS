@@ -362,7 +362,9 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         isTextReplyVisible: textReplySessionIDs.contains(state.id),
         onCopyRaw: { HermesResponseClipboard.copyRaw(state.text) },
         onCopyFormatted: { HermesResponseClipboard.copyFormatted(state.text, isHTML: state.isHTML) },
-        onReply: { [weak self] in self?.viewModel?.startHermesReply(to: state.id) },
+        onReply: { [weak self] in
+          self?.viewModel?.startResponseWindowVoiceReply(to: state.id)
+        },
         onToggleTextReply: { [weak self] in self?.toggleTextReply(for: state.id) },
         onSendTextReply: { [weak self] text in
           self?.sendTextReply(text, sessionID: state.id)

@@ -37,13 +37,23 @@ final class ScreenCaptureService: NSObject {
       let content = try await SCShareableContent.current
       Self.signposter.endInterval("SCShareableContent.current", state)
 
-      if let window = frontmostWindow(in: content),
-         let snapshot = try await captureWindow(
-          window,
-          maxDimension: maxDimension,
-          lossless: lossless
-         ) {
-        return snapshot
+      if let window = frontmostWindow(in: content) {
+        do {
+          if let snapshot = try await captureWindow(
+            window,
+            maxDimension: maxDimension,
+            lossless: lossless
+          ) {
+            return snapshot
+          }
+          AppLog.screen.warning("Active window capture returned no image; falling back to display")
+        } catch {
+          AppLog.screen.warning(
+            "Active window capture failed; falling back to display: \(error.localizedDescription)"
+          )
+        }
+      } else {
+        AppLog.screen.log("No active window candidate; falling back to display")
       }
 
       let mainID = CGMainDisplayID()

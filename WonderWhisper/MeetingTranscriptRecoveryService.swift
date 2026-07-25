@@ -106,9 +106,16 @@ actor MeetingTranscriptRecoveryService {
           url.pathExtension.lowercased() == "caf" else { return nil }
     let stem = url.deletingPathExtension().lastPathComponent
     let parts = stem.split(separator: "-", omittingEmptySubsequences: false)
-    guard parts.count == 2,
+    guard parts.count == 2 || parts.count == 3,
           let index = Int(parts[1]),
           index > 0 else { return nil }
+    let explicitStartTime: TimeInterval?
+    if parts.count == 3 {
+      guard let startMilliseconds = Int64(parts[2]), startMilliseconds >= 0 else { return nil }
+      explicitStartTime = Double(startMilliseconds) / 1_000
+    } else {
+      explicitStartTime = nil
+    }
 
     let source: MeetingAudioSource
     switch parts[0] {
@@ -121,7 +128,7 @@ actor MeetingTranscriptRecoveryService {
       filename: filename,
       source: source,
       index: index,
-      startTime: Double(index - 1) * segmentDuration,
+      startTime: explicitStartTime ?? Double(index - 1) * segmentDuration,
       duration: duration
     )
   }

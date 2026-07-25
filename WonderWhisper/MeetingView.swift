@@ -8,6 +8,8 @@ struct MeetingView: View {
   @State private var showingTriggerApps = false
   @State private var customTriggerBundleID = ""
   @State private var settingsExpanded = false
+  @State private var showingSummaryPromptEditor = false
+  @State private var summaryPromptDraft = ""
 
   var body: some View {
     HSplitView {
@@ -34,6 +36,16 @@ struct MeetingView: View {
       }
     } message: { session in
       Text("This removes \(session.title), its transcript, and its locally stored audio.")
+    }
+    .sheet(isPresented: $showingSummaryPromptEditor) {
+      MeetingSummaryPromptEditor(
+        prompt: $summaryPromptDraft,
+        onCancel: { showingSummaryPromptEditor = false },
+        onSave: {
+          coordinator.notePrompt = MeetingNoteGenerator.resolvedPrompt(summaryPromptDraft)
+          showingSummaryPromptEditor = false
+        }
+      )
     }
   }
 
@@ -174,6 +186,7 @@ struct MeetingView: View {
         Toggle("Detect meetings", isOn: $coordinator.automaticDetectionEnabled)
         Spacer(minLength: 0)
         Button("Apps…") {
+          coordinator.refreshLiveMicrophoneApplications()
           showingTriggerApps = true
         }
         .controlSize(.small)
@@ -205,6 +218,25 @@ struct MeetingView: View {
           selection: $coordinator.noteModel,
           favoriteModels: favoriteModels
         )
+
+        HStack(spacing: 8) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Meeting summary prompt")
+            Text("Controls the structure and emphasis of generated notes")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+          Spacer(minLength: 0)
+          Button {
+            summaryPromptDraft = coordinator.notePrompt
+            showingSummaryPromptEditor = true
+          } label: {
+            Image(systemName: "square.and.pencil")
+          }
+          .controlSize(.small)
+          .accessibilityLabel("Edit meeting summary prompt")
+          .help("Edit meeting summary prompt")
+        }
       }
 
       if coordinator.liveObsidianContextEnabled {
@@ -347,6 +379,10 @@ struct MeetingView: View {
           ? coordinator.liveTranscriptPreviews
           : [:],
         onTitleChange: { coordinator.updateTitle($0, for: session.id) },
+        canResume: coordinator.canResumeMeeting(session),
+        onResume: { Task { await coordinator.resumeMeeting(session) } },
+        isGeneratingNotes: coordinator.noteGenerationSessionIDs.contains(session.id),
+        onRegenerateNotes: { Task { await coordinator.regenerateNotes(for: session) } },
         onExport: { Task { await coordinator.exportToObsidian(session) } },
         onOpenExport: { coordinator.openExportedNote(session) },
         onCopyMarkdown: { coordinator.copyMarkdown(session) },
@@ -428,6 +464,66 @@ private struct MeetingModelPicker: View {
   }
 }
 
+private struct MeetingSummaryPromptEditor: View {
+  @Binding var prompt: String
+  let onCancel: () -> Void
+  let onSave: () -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(alignment: .top, spacing: 12) {
+        Image(systemName: "text.document")
+          .font(.title2)
+          .foregroundStyle(.tint)
+          .frame(width: 30, height: 30)
+
+        VStack(alignment: .leading, spacing: 3) {
+          Text("Meeting summary prompt")
+            .font(.title3.weight(.semibold))
+          Text("Set the structure, emphasis, and level of detail used for generated notes.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+
+        Spacer()
+      }
+      .padding(22)
+
+      Divider()
+
+      TextEditor(text: $prompt)
+        .font(.body)
+        .scrollContentBackground(.hidden)
+        .padding(18)
+        .background(Color(nsColor: .textBackgroundColor))
+        .accessibilityLabel("Meeting summary prompt")
+
+      Divider()
+
+      HStack(spacing: 10) {
+        Button("Restore default") {
+          prompt = MeetingNoteGenerator.defaultPrompt
+        }
+
+        Text("\(prompt.count.formatted()) characters")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+
+        Spacer()
+
+        Button("Cancel", action: onCancel)
+          .keyboardShortcut(.cancelAction)
+        Button("Save prompt", action: onSave)
+          .buttonStyle(.borderedProminent)
+          .keyboardShortcut(.defaultAction)
+      }
+      .padding(16)
+      .background(Color(nsColor: .controlBackgroundColor))
+    }
+    .frame(minWidth: 620, idealWidth: 680, minHeight: 500, idealHeight: 560)
+  }
+}
+
 private struct MeetingFolderSetting: View {
   let title: String
   let path: String?
@@ -468,10 +564,16 @@ private struct MeetingFolderSetting: View {
 }
 
 private struct MeetingDetailView: View {
+  private static let topAnchorID = "meeting-detail-top"
+
   let session: MeetingSession
   let isActive: Bool
   let livePreviews: [MeetingAudioSource: String]
   let onTitleChange: (String) -> Void
+  let canResume: Bool
+  let onResume: () -> Void
+  let isGeneratingNotes: Bool
+  let onRegenerateNotes: () -> Void
   let onExport: () -> Void
   let onOpenExport: () -> Void
   let onCopyMarkdown: () -> Void
@@ -491,6 +593,10 @@ private struct MeetingDetailView: View {
       ScrollViewReader { proxy in
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 18) {
+            Color.clear
+              .frame(height: 0)
+              .id(Self.topAnchorID)
+
             if let manualNotes = session.manualNotesMarkdown,
                !manualNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
               VStack(alignment: .leading, spacing: 8) {
@@ -535,6 +641,7 @@ private struct MeetingDetailView: View {
           .padding(22)
         }
         .onChange(of: session.transcriptTokens.count) { _, _ in
+          guard isActive else { return }
           guard let last = blocks.last else { return }
           withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(last.id, anchor: .bottom)
@@ -546,6 +653,12 @@ private struct MeetingDetailView: View {
           }) else { return }
           withAnimation(.easeOut(duration: 0.15)) {
             proxy.scrollTo("live-\(source.rawValue)", anchor: .bottom)
+          }
+        }
+        .onChange(of: session.id, initial: true) { _, _ in
+          Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(Self.topAnchorID, anchor: .top)
           }
         }
       }
@@ -562,47 +675,26 @@ private struct MeetingDetailView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .top, spacing: 12) {
-        TextField(
-          "Meeting title",
-          text: $titleDraft
-        )
-        .textFieldStyle(.plain)
-        .font(.title2.weight(.semibold))
-        .focused($titleIsFocused)
-        .onSubmit(commitTitle)
-        .onChange(of: titleIsFocused) { wasFocused, isFocused in
-          if wasFocused && !isFocused {
-            commitTitle()
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 12) {
+          titleField
+            .frame(minWidth: 180)
+
+          Spacer()
+
+          if showsTerminalActions {
+            terminalActions
           }
         }
 
-        Spacer()
-
-        if !isActive, session.status.isTerminal {
-          Button(action: onCopyMarkdown) {
-            Image(systemName: "doc.on.doc")
+        VStack(alignment: .leading, spacing: 8) {
+          titleField
+          if showsTerminalActions {
+            HStack {
+              Spacer()
+              terminalActions
+            }
           }
-          .help("Copy meeting as Markdown")
-
-          Button(action: onRevealAudio) {
-            Image(systemName: "waveform.path.badge.plus")
-          }
-          .help("Reveal retained meeting audio")
-
-          if let exportedPath = session.exportedMarkdownPath,
-             FileManager.default.fileExists(atPath: exportedPath) {
-            Button("Open in Obsidian", action: onOpenExport)
-          }
-          Button(
-            session.exportedMarkdownPath == nil ? "Export" : "Re-export",
-            action: onExport
-          )
-
-          Button(role: .destructive, action: onDelete) {
-            Image(systemName: "trash")
-          }
-          .help("Delete meeting")
         }
       }
 
@@ -628,6 +720,77 @@ private struct MeetingDetailView: View {
           .foregroundStyle(.orange)
       }
     }
+  }
+
+  private var titleField: some View {
+    TextField("Meeting title", text: $titleDraft)
+      .textFieldStyle(.plain)
+      .font(.title2.weight(.semibold))
+      .focused($titleIsFocused)
+      .onSubmit(commitTitle)
+      .onChange(of: titleIsFocused) { wasFocused, isFocused in
+        if wasFocused && !isFocused {
+          commitTitle()
+        }
+      }
+  }
+
+  private var showsTerminalActions: Bool {
+    !isActive && session.status.isTerminal
+  }
+
+  @ViewBuilder private var terminalActions: some View {
+    Button(action: onResume) {
+      Image(systemName: "play.circle.fill")
+    }
+    .disabled(!canResume)
+    .accessibilityLabel("Resume meeting")
+    .help("Continue recording into this meeting and regenerate its summary when done")
+
+    Button(action: onRegenerateNotes) {
+      if isGeneratingNotes {
+        ProgressView()
+          .controlSize(.small)
+      } else {
+        Image(systemName: "arrow.clockwise.circle")
+      }
+    }
+    .disabled(isGeneratingNotes)
+    .accessibilityLabel(
+      session.notesMarkdown == nil ? "Retry meeting summary" : "Regenerate meeting summary"
+    )
+    .help(
+      session.notesMarkdown == nil
+        ? "Retry summary using the current model and prompt"
+        : "Regenerate summary using the current model and prompt"
+    )
+
+    Button(action: onCopyMarkdown) {
+      Image(systemName: "doc.on.doc")
+    }
+    .disabled(isGeneratingNotes)
+    .help("Copy meeting as Markdown")
+
+    Button(action: onRevealAudio) {
+      Image(systemName: "waveform.path.badge.plus")
+    }
+    .help("Reveal retained meeting audio")
+
+    if let exportedPath = session.exportedMarkdownPath,
+       FileManager.default.fileExists(atPath: exportedPath) {
+      Button("Open in Obsidian", action: onOpenExport)
+    }
+    Button(
+      session.exportedMarkdownPath == nil ? "Export" : "Re-export",
+      action: onExport
+    )
+    .disabled(isGeneratingNotes)
+
+    Button(role: .destructive, action: onDelete) {
+      Image(systemName: "trash")
+    }
+    .disabled(isGeneratingNotes)
+    .help("Delete meeting")
   }
 
   private func commitTitle() {

@@ -19,9 +19,10 @@ connected device and then the system default. Selection is persisted via `AudioI
 `AudioDeviceManager` and displayed in `MicrophoneSelectionView.swift`.
 
 ## Feature Scope & Providers
-- The app ships a single window with eleven sidebar tabs: History, Dictation, Command, Meetings,
-  Beeper, Hermes, Vocabulary, Microphone, Compare, Permissions, and Settings. Scratchpad, Pro mode,
-  and file transcription workflows have been removed; keep new work within these surfaces.
+- The app ships a single window with twelve sidebar tabs: History, Dictation, Command, Meetings,
+  Codex, Beeper, Hermes, Vocabulary, Microphone, Compare, Permissions, and Settings. Scratchpad,
+  Pro mode, and file transcription workflows have been removed; keep new work within these
+  surfaces.
 - Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
@@ -82,6 +83,30 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-25: Fixed silent dictation data loss when a streaming engine returns nothing: the
+  empty-transcript file recovery now maps the streaming engine to a file-capable model and
+  endpoint instead of sending `soniox-streaming` to Groq (a guaranteed 404), reprocess
+  re-transcribes an empty entry whenever its audio is still on disk instead of re-running the
+  LLM on an empty string, and recovery failures surface in the overlay rather than being
+  swallowed by `try?`.
+- 2026-07-23: Retained full-display OCR for reliable dictation context and hardened the separate
+  active-window screenshot path to fall back after capture failures.
+- 2026-07-23: Added a bounded post-transcription wait for dictation screen context and aligned
+  screen-context prompt tags and documented spelling-replacement rules with runtime behavior.
+- 2026-07-23: Reset meeting details to the summary at the top when selecting a recording while
+  retaining transcript auto-scroll only for the actively recording meeting.
+- 2026-07-23: Bounded automatic meeting detection fallback to five seconds after missed Core Audio
+  events and recognized active Zoom browser meetings alongside Google Meet.
+- 2026-07-22: Made automatic meeting detection event-first with adaptive idle, suspicious, and
+  active polling so expensive Core Audio process scans no longer run every two seconds at idle.
+- 2026-07-22: Replaced meeting Resume and summary retry labels with compact accessible icons and
+  added a spacious modal editor for the restorable meeting-summary prompt and richer default.
+- 2026-07-22: Added safe meeting-session resume with appended audio and transcript timelines,
+  accumulated recording duration, and automatic full-summary regeneration after stopping.
+- 2026-07-22: Added in-app meeting-summary regeneration and bounded automatic retries for
+  transient OpenRouter timeouts, connection failures, rate limits, and server errors.
+- 2026-07-16: Added Codex App Server voice tasks with date-folder creation, automatic pinning,
+  projectless-task monitoring, clipboard context, and desktop-routed voice and typed replies.
 - 2026-07-16: Made meeting auto-detection event-driven from Core Audio activity changes with a
   two-second fallback heartbeat and one-second stable confirmation.
 - 2026-07-16: Reordered the main sidebar around history, core voice tools, meetings, integrations,

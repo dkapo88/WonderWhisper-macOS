@@ -43,6 +43,11 @@ actor MeetingSessionStore {
     )
   }
 
+  func audioFiles(for sessionID: UUID) -> [String] {
+    let directory = rootDirectory.appendingPathComponent(sessionID.uuidString, isDirectory: true)
+    return retainedAudioURLs(in: directory).map(\.lastPathComponent).sorted()
+  }
+
   func saveManualNotes(_ notes: String?, for sessionID: UUID, revision: Int) throws {
     let directory = rootDirectory.appendingPathComponent(sessionID.uuidString, isDirectory: true)
     guard fileManager.fileExists(atPath: directory.path),
@@ -72,20 +77,23 @@ actor MeetingSessionStore {
         session.manualNotesMarkdown = manualNotes.trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty ? nil : manualNotes
       }
-      let recoveredAudioFiles = (try? fileManager.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-      ))?.compactMap { url -> String? in
-        guard url.pathExtension.lowercased() == "caf",
-              url.lastPathComponent.hasPrefix("microphone-")
-                || url.lastPathComponent.hasPrefix("system-") else { return nil }
-        return url.lastPathComponent
-      }.sorted() ?? []
+      let retainedAudioURLs = retainedAudioURLs(in: directory)
+      let recoveredAudioFiles = retainedAudioURLs.map(\.lastPathComponent).sorted()
       if !recoveredAudioFiles.isEmpty {
         session.audioFiles = recoveredAudioFiles
       }
       if session.status == .recording || session.status == .processing {
+        if let recordingStartedAt = session.recordingStartedAt {
+          let lastAudioWrite = retainedAudioURLs.compactMap {
+            try? $0.resourceValues(forKeys: [.contentModificationDateKey])
+              .contentModificationDate
+          }.max() ?? recordingStartedAt
+          let interruptionDate = min(Date(), max(recordingStartedAt, lastAudioWrite))
+          session.recordedDuration = (session.recordedDuration ?? 0)
+            + max(0, interruptionDate.timeIntervalSince(recordingStartedAt))
+          session.recordingStartedAt = nil
+          session.endedAt = interruptionDate
+        }
         session.status = .interrupted
         session.endedAt = session.endedAt ?? Date()
         session.errorMessage = "WonderWhisper stopped before this meeting was finalized."
@@ -94,6 +102,18 @@ actor MeetingSessionStore {
       sessions.append(session)
     }
     return sessions.sorted { $0.startedAt > $1.startedAt }
+  }
+
+  private func retainedAudioURLs(in directory: URL) -> [URL] {
+    (try? fileManager.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey],
+      options: [.skipsHiddenFiles]
+    ))?.filter { url in
+      url.pathExtension.lowercased() == "caf"
+        && (url.lastPathComponent.hasPrefix("microphone-")
+          || url.lastPathComponent.hasPrefix("system-"))
+    } ?? []
   }
 
   func delete(_ session: MeetingSession) throws {

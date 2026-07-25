@@ -198,6 +198,23 @@ latest message. Deleting a session permanently removes only the local WonderWhis
 record; it does not delete remote Hermes VPS context unless the API later adds a
 separate remote delete operation.
 
+### 3a. Codex Task Integration
+
+`CodexAppServerClient` launches the Codex desktop app's bundled `codex app-server` process and uses
+JSONL requests to start, list, read, monitor, and send the initial turn to Codex tasks. New voice
+tasks are non-ephemeral and use a prompt-derived working directory under
+`~/Documents/Codex/YYYY-MM-DD/<prompt-slug>/`. WonderWhisper persists only the task IDs it creates;
+the conversation remains owned by Codex and is available in the Codex desktop app.
+
+Each response window maps its UUID-shaped Codex task ID back to that exact task. Voice and typed
+replies use `CodexDesktopIPCClient` to start the turn through the running desktop app, then tail the
+task rollout until completion. This keeps follow-up user and agent messages in the desktop task's
+live state. The ambient monitor polls projectless task IDs from
+`~/.codex/.codex-global-state.json`, unions them with WonderWhisper-created task IDs, and surfaces
+newly completed agent messages without importing a full local chat history. Automatic pinning opens
+the task's `codex://threads/<id>` deep link and invokes the Codex Pin Task shortcut, which requires
+macOS Accessibility permission.
+
 ---
 
 ### 4. Meeting Notes System
@@ -211,6 +228,8 @@ erDiagram
         String title
         Date startedAt
         Date endedAt "optional"
+        Double recordedDuration "optional, accumulated capture time"
+        Date recordingStartedAt "optional, current capture run"
         String detectedApp "optional"
         Bool automaticallyStarted
         String transcriptionEngine "optional, parakeet or soniox"
@@ -401,7 +420,7 @@ erDiagram
     }
     
     SimpleSidebarItem {
-        String value "hermes, beeper, meetings, history, comparison, dictation, command, vocabulary, microphone, permissions, settings"
+        String value "codex, hermes, beeper, meetings, history, comparison, dictation, command, vocabulary, microphone, permissions, settings"
     }
     
     SimpleVoiceEngine {
@@ -454,6 +473,10 @@ erDiagram
         String llmModel
         Bool screenContextEnabled
         ScreenContextCaptureMode screenContextCaptureMode
+        Bool codexEnabled
+        String codexRootFolder
+        Bool codexPinNewTasks
+        Bool codexMonitorProjectlessTasks
         Bool hermesAgentEnabled
         Bool beeperEnabled
         String beeperChatID
@@ -568,6 +591,7 @@ erDiagram
 | `meeting.autoDetection.triggerRules` | Data | JSON-encoded `MeetingTriggerRule[]` containing bundle prefix, display name, strict Meet/Slack or explicit-microphone mode, and app-scoped capture rule; migrates legacy `meeting.autoDetect.apps` values |
 | `meeting.notes.generate` | Bool | Opt in to sending the complete transcript to OpenRouter for Markdown notes after capture; defaults to false |
 | `meeting.notes.model` | String | OpenRouter model used for final notes and suggested meeting titles; defaults to `openai/gpt-5.4-nano` |
+| `meeting.notes.prompt` | String | Auto-saved custom instructions for final meeting summaries; defaults to the built-in stand-up-friendly structured notes prompt |
 | `meeting.obsidian.vaultRoot` | String | Obsidian vault root used for local Markdown indexing and live-context links; migrates the root containing the legacy `meeting.obsidian.folder` selection |
 | `meeting.obsidian.exportFolder` | String | Optional meeting-summary export folder inside the configured vault; falls back to the vault root and migrates the legacy `meeting.obsidian.folder` selection |
 | `meeting.obsidian.folder` | String | Legacy combined vault/export folder key, migrated to the separate vault-root and export-folder settings |
@@ -590,6 +614,15 @@ erDiagram
 | `hermes.postProcessing.enabled` | Bool | Clean Hermes dictations through the OpenRouter post-processing flow before sending |
 | `hermes.chat.maxMessages` | Int | Maximum persisted Hermes chat messages to retain; default 50 |
 | `hermes.sessions.maxSessions` | Int | Maximum persisted Hermes sessions to retain; default 25 |
+| `codex.enabled` | Bool | Enable Codex voice tasks and the dedicated hotkey |
+| `codex.rootFolder` | String | Root folder for new dated Codex task directories; defaults to `~/Documents/Codex` |
+| `codex.shortcut.selection` | String | Optional dedicated Codex activation key |
+| `codex.pinNewTasks` | Bool | Automatically open and pin newly created Codex tasks; defaults to true |
+| `codex.monitorProjectlessTasks` | Bool | Monitor completed responses from projectless Codex tasks; defaults to true |
+| `codex.postProcessing.enabled` | Bool | Clean Codex voice transcripts through the Dictation post-processing flow before sending |
+| `codex.context.clipboard.enabled` | Bool | Include recently copied text with Codex voice turns |
+| `codex.context.clipboard.timeoutSeconds` | Double | Codex copied-text freshness timeout; defaults to the shared clipboard retention window |
+| `codex.ownedThreadIDs` | Array<String> | Codex task IDs created by WonderWhisper and retained for ambient monitoring |
 | `beeper.enabled` | Bool | Enable the dedicated Beeper voice-send hotkey |
 | `beeper.api.baseURL` | String | Beeper Desktop API base URL; defaults to `http://localhost:23373`, root and `/v1` URLs are both accepted |
 | `beeper.chat.id` | String | Target Beeper chat ID for send-only voice messages |
@@ -702,6 +735,7 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.19 (July 16, 2026)**: Added Codex task creation, desktop-routed continuation, dated working directories, automatic desktop pinning, clipboard context, and ambient projectless-task response monitoring.
 - **v1.18 (July 16, 2026)**: Added remembered microphone priority ordering with unavailable-device display and automatic fallback to the next available microphone or macOS system default.
 - **v1.17 (July 16, 2026)**: Removed the ambient Beeper WebSocket setting and client; response monitoring now uses bounded polling to avoid accumulating short-lived network tasks.
 - **v1.16 (July 13, 2026)**: Removed persisted provider override, LLM streaming, audio preprocessing, HTTP protocol preference, and legacy dictation-hotkey configuration; OpenRouter is now the concrete LLM path and the Groq legacy engine ID maps to batch upload.
@@ -826,6 +860,26 @@ sequenceDiagram
     DictationViewModel->>HermesSessionStore: mark session interrupted and keep it replyable
     User->>DictationViewModel: Archive, restore, or delete a local session record
     DictationViewModel->>HermesSessionStore: persist active/archive lifecycle changes
+```
+
+### Codex Voice Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant WonderWhisper
+    participant AppServer as Codex App Server
+    participant Desktop as Codex Desktop
+
+    User->>WonderWhisper: Trigger Codex hotkey
+    WonderWhisper->>WonderWhisper: Target frontmost Codex response window or create dated task folder
+    WonderWhisper->>AppServer: Create task and send its initial turn
+    WonderWhisper->>Desktop: Send existing-task replies through local IPC
+    Desktop-->>WonderWhisper: Persist task turn and completion
+    WonderWhisper->>Desktop: Open deep link and pin new task
+    WonderWhisper-->>User: Show task-specific response window
+    User->>Desktop: Continue the same task directly in Codex
+    WonderWhisper->>AppServer: Poll projectless tasks and surface later completed responses
 ```
 
 ---

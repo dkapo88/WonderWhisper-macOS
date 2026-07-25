@@ -6,11 +6,24 @@ enum TextReplacement {
     static func parseRules(_ rules: String) -> [Rule] {
         let lines = rules.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
         var out: [Rule] = []
-        for line in lines where !line.isEmpty && line.contains("=") {
-            let parts = line.split(separator: "=", maxSplits: 1)
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
-            if parts.count == 2, !parts[0].isEmpty {
-                out.append(Rule(from: parts[0], to: parts[1]))
+        for line in lines where !line.isEmpty {
+            let separator: String
+            if line.contains("->") {
+                separator = "->"
+            } else if line.contains("=") {
+                separator = "="
+            } else {
+                continue
+            }
+            let parts = line.components(separatedBy: separator)
+            let from = parts.first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"")) ?? ""
+            let to = parts.dropFirst().joined(separator: separator)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            if !from.isEmpty {
+                out.append(Rule(from: from, to: to))
             }
         }
         return out

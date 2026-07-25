@@ -365,7 +365,8 @@ final class MeetingDetector {
       )
     }
 
-    let browserFamilies = googleMeetBrowserFamilies()
+    let browserMeetings = browserMeetingWindows()
+    let browserFamilies = browserMeetings.map { $0.family }
     let activeBrowserFamilies = Set(browserFamilies.filter { family in
       let browser = Self.audioState(for: family, states: states)
       return Self.meetAudioIsActive(
@@ -383,9 +384,11 @@ final class MeetingDetector {
       return (browserFamily, rule)
     }.first
     if let (browserFamily, browserRule) = browserMatch {
-      logDiagnostic("Google Meet candidate family=\(browserFamily) input=true output=true")
+      let appName = browserMeetings.first(where: { $0.family == browserFamily })?.appName
+        ?? "Browser meeting"
+      logDiagnostic("\(appName) candidate family=\(browserFamily) input=true output=true")
       return MeetingDetectionCandidate(
-        appName: "Google Meet",
+        appName: appName,
         bundleFamily: browserFamily,
         triggerID: "\(browserRule.id):\(browserFamily)",
         captureScope: .knownFamily(browserFamily)
@@ -397,7 +400,7 @@ final class MeetingDetector {
         let browser = Self.audioState(for: family, states: states)
         return "\(family):input=\(browser.hasInput),output=\(browser.hasOutput)"
       }.joined(separator: " ")
-      logDiagnostic("Google Meet windows \(diagnostic)")
+      logDiagnostic("Browser meeting windows \(diagnostic)")
     }
 
     for rule in rules where rule.detectionMode == .microphone {
@@ -665,19 +668,19 @@ final class MeetingDetector {
     return result
   }
 
-  private func googleMeetBrowserFamilies() -> [String] {
+  private func browserMeetingWindows() -> [(family: String, appName: String)] {
     guard let windows = CGWindowListCopyWindowInfo(
       [.optionAll, .excludeDesktopElements],
       kCGNullWindowID
     ) as? [[String: Any]] else {
       return []
     }
-    var result: [String] = []
+    var result: [(family: String, appName: String)] = []
     var seen: Set<String> = []
     for window in windows {
       let owner = (window[kCGWindowOwnerName as String] as? String)?.lowercased() ?? ""
       let title = (window[kCGWindowName as String] as? String)?.lowercased() ?? ""
-      guard title.contains("google meet") || title.contains("meet -") else { continue }
+      guard let appName = Self.browserMeetingName(windowTitle: title) else { continue }
       let family: String?
       if owner.contains("google chrome") {
         family = "chrome"
@@ -691,10 +694,21 @@ final class MeetingDetector {
         family = nil
       }
       if let family, seen.insert(family).inserted {
-        result.append(family)
+        result.append((family, appName))
       }
     }
     return result
+  }
+
+  nonisolated static func browserMeetingName(windowTitle: String) -> String? {
+    let title = windowTitle.lowercased()
+    if title.contains("google meet") || title.contains("meet -") {
+      return "Google Meet"
+    }
+    if title.contains("zoom meeting") || title.hasSuffix(" | zoom") {
+      return "Zoom"
+    }
+    return nil
   }
 
   nonisolated static func family(

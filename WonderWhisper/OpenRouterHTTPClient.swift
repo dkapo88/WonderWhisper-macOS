@@ -7,7 +7,10 @@ struct OpenRouterHTTPClient {
 
     static let session: URLSession = {
         let cfg = NetworkConfiguration.createConfiguration(timeout: 15, maxConnections: 8)
-        cfg.timeoutIntervalForResource = 60
+        // Individual requests still enforce their own timeout. Keep the session-wide resource
+        // limit above the longest supported LLM request so it cannot cut a 120-second meeting
+        // summary request short.
+        cfg.timeoutIntervalForResource = 300
         return URLSession(configuration: cfg)
     }()
 

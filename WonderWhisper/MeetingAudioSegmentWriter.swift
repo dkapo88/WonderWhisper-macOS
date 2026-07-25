@@ -3,9 +3,15 @@ import Foundation
 
 enum MeetingAudioSegmentWriterError: LocalizedError {
   case bufferAllocationFailed
+  case fileAlreadyExists(String)
 
   var errorDescription: String? {
-    "Could not allocate a buffer for retained meeting audio."
+    switch self {
+    case .bufferAllocationFailed:
+      return "Could not allocate a buffer for retained meeting audio."
+    case .fileAlreadyExists(let filename):
+      return "Retained meeting audio already exists at \(filename)."
+    }
   }
 }
 
@@ -18,15 +24,22 @@ final class MeetingAudioSegmentWriter {
 
   private var currentFile: AVAudioFile?
   private var currentSegmentFrames = 0
-  private var segmentIndex = 0
+  private var segmentIndex: Int
+  private let initialSegmentIndex: Int
+  private let timelineOffset: TimeInterval
   private(set) var filenames: [String] = []
 
   init(directory: URL,
        source: MeetingAudioSource,
-       segmentDuration: TimeInterval = 60) {
+       segmentDuration: TimeInterval = 60,
+       initialSegmentIndex: Int = 0,
+       timelineOffset: TimeInterval = 0) {
     self.directory = directory
     self.source = source
     self.segmentFrameLimit = max(16_000, Int(segmentDuration * 16_000))
+    self.segmentIndex = max(0, initialSegmentIndex)
+    self.initialSegmentIndex = max(0, initialSegmentIndex)
+    self.timelineOffset = max(0, timelineOffset)
     self.processingFormat = AVAudioFormat(
       commonFormat: .pcmFormatFloat32,
       sampleRate: 16_000,
@@ -66,12 +79,28 @@ final class MeetingAudioSegmentWriter {
     currentFile = nil
     currentSegmentFrames = 0
     segmentIndex += 1
-    let filename = String(
-      format: "%@-%04d.caf",
-      source.filenamePrefix,
-      segmentIndex
-    )
+    let filename: String
+    if timelineOffset > 0 {
+      let localSegment = segmentIndex - initialSegmentIndex - 1
+      let startTime = timelineOffset
+        + Double(localSegment * segmentFrameLimit) / 16_000
+      filename = String(
+        format: "%@-%04d-%lld.caf",
+        source.filenamePrefix,
+        segmentIndex,
+        Int64((startTime * 1_000).rounded())
+      )
+    } else {
+      filename = String(
+        format: "%@-%04d.caf",
+        source.filenamePrefix,
+        segmentIndex
+      )
+    }
     let url = directory.appendingPathComponent(filename)
+    guard !FileManager.default.fileExists(atPath: url.path) else {
+      throw MeetingAudioSegmentWriterError.fileAlreadyExists(filename)
+    }
     currentFile = try AVAudioFile(
       forWriting: url,
       settings: fileSettings,

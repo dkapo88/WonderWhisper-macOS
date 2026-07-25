@@ -108,6 +108,32 @@ struct PromptBuilderTests {
         #expect(terms == ["Valid Term"])
     }
 
+    @Test func textReplacementAcceptsDocumentedArrowAndLegacyEqualsRules() {
+        let corrected = TextReplacement.apply(
+            to: "Ask easy pay about color and old name.",
+            withRules: "easy pay -> Ezypay\ncolor -> colour\nold name = NewName"
+        )
+
+        #expect(corrected == "Ask Ezypay about colour and NewName.")
+    }
+
+    @Test func defaultDictationPromptNamesTheRuntimeScreenContextTag() {
+        let prompt = SimplePromptComposer.systemPrompt(
+            settings: SimpleModeDefaults.settings(for: .dictation)
+        )
+
+        #expect(prompt.contains("<SCREEN_CONTEXT_TERMS>"))
+        #expect(!prompt.contains("<SCREEN_CONTENTS>"))
+    }
+
+    @Test func persistedDictationPromptTagMigratesWithoutChangingOtherText() {
+        let migrated = SimpleModeDefaults.migratingLegacyScreenContextTag(
+            in: "Use <SCREEN_CONTENTS> carefully. Keep this custom instruction."
+        )
+
+        #expect(migrated == "Use <SCREEN_CONTEXT_TERMS> carefully. Keep this custom instruction.")
+    }
+
     @Test func vocabularyTextCorrectorFixesNearMissProperNouns() {
         let corrected = VocabularyTextCorrector.apply(
             to: "It should be okay with Ezipay, then I will talk to McKenzie.",

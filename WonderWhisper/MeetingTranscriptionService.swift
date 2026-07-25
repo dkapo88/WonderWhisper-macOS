@@ -142,6 +142,7 @@ actor MeetingTranscriptionService {
   private static let maximumPendingChunks = 6_000
 
   nonisolated private let engine: MeetingTranscriptionEngine
+  nonisolated private let timelineOffset: TimeInterval
   nonisolated private let singleStreamIngress = MeetingSingleStreamIngress()
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
@@ -160,10 +161,12 @@ actor MeetingTranscriptionService {
 
   init(
     engine: MeetingTranscriptionEngine = .parakeet,
+    timelineOffset: TimeInterval = 0,
     tokenHandler: @escaping TokenHandler,
     previewHandler: @escaping PreviewHandler = { _, _ in }
   ) {
     self.engine = engine
+    self.timelineOffset = max(0, timelineOffset)
     self.tokenHandler = tokenHandler
     self.previewHandler = previewHandler
   }
@@ -194,10 +197,25 @@ actor MeetingTranscriptionService {
 
   nonisolated func ingest(_ chunk: MeetingAudioChunk) async throws {
     if engine == .soniox {
-      try await singleStreamIngress.ingest(chunk)
+      try await singleStreamIngress.ingest(Self.singleStreamChunk(
+        chunk,
+        timelineOffset: timelineOffset
+      ))
       return
     }
     try await ingestSourceSpecific(chunk)
+  }
+
+  nonisolated static func singleStreamChunk(
+    _ chunk: MeetingAudioChunk,
+    timelineOffset: TimeInterval
+  ) -> MeetingAudioChunk {
+    MeetingAudioChunk(
+      source: chunk.source,
+      samples: chunk.samples,
+      startTime: max(0, chunk.startTime - max(0, timelineOffset)),
+      duration: chunk.duration
+    )
   }
 
   private func ingestSourceSpecific(_ chunk: MeetingAudioChunk) async throws {
@@ -547,7 +565,7 @@ actor MeetingTranscriptionService {
     source: MeetingAudioSource
   ) async {
     guard !tokens.isEmpty else { return }
-    let offset = sourceOffsets[source] ?? 0
+    let offset = sourceOffsets[source] ?? (source == .mixed ? timelineOffset : 0)
     var endTime = sonioxEndTimes[source] ?? offset
     let mapped = tokens.compactMap { token -> MeetingTranscriptToken? in
       guard !token.text.isEmpty,
