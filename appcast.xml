@@ -1,8 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0">
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <title>WonderWhisper</title>
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
+    <item>
+      <title>2026-07-26</title>
+      <pubDate>Sat, 25 Jul 2026 10:29:00 +0000</pubDate>
+      <sparkle:version>2026072600</sparkle:version>
+      <sparkle:shortVersionString>2026-07-26</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>What's new</h2>
+<ul>
+<li>Added automatic updates. WonderWhisper now checks for new versions once a day and can download and install them for you, so you no longer need to fetch a disk image by hand. Updates are verified against the developer signature before installing, which means your macOS permissions carry over untouched.</li>
+<li>Added Check for Updates to the WonderWhisper app menu, the menu bar icon, and Settings.</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>This is the first release with built-in updating. Future versions will offer themselves automatically from here.</li>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials remain compatible.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-26/WonderWhisper-2026-07-26.dmg" sparkle:edSignature="lJDe8QYBwdrYMYmzo7gSjKpGJONELBcr8pmfB5HP00dlhDa8qPjEXvTnh+VUcfTspjOX/9CzQ2cGv//fWMZNBw==" length="9527533" type="application/octet-stream" />
+    </item>
   </channel>
 </rss>
