@@ -5,6 +5,37 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-27.1</title>
+      <pubDate>Sun, 26 Jul 2026 18:52:33 +0000</pubDate>
+      <sparkle:version>2026072701</sparkle:version>
+      <sparkle:shortVersionString>2026-07-27.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>What's new</h2>
+<ul>
+<li>Beeper messages now arrive in a WonderWhisper response panel. The panel says what came in and what the keyword filter held back, with earlier and new counts stated separately rather than summed.</li>
+<li>A burst of messages from one chat stays on a single panel that updates in place, instead of stacking a new window per message. The newest message is what you see and what you reply to.</li>
+<li>Minimizing a panel no longer silences the chat. If a new message arrives from a chat you minimized, that same panel comes back to the front with the new message in it. Minimize puts the window away; Snooze is the only thing that puts the chat away.</li>
+<li>Typing a reply holds the panel still. While you have a draft in the composer or a reply in flight, the body stops moving and the new-message count keeps climbing; the moment you clear the draft the panel catches up.</li>
+<li>Added Snooze to Beeper panels. One click snoozes the chat for an hour; 15 minutes and Until morning are in the menu. A snoozed chat stays out of your way everywhere except the menu bar, which is also where you resume it early.</li>
+<li>Added Open Beeper to jump straight to the app.</li>
+<li>A failed text reply now keeps your words. The composer stays open, the failure is named in the status row, and Send becomes Retry. Previously a failed send looked exactly like a successful one: an empty composer.</li>
+<li>Sending from the in-app composer with the agent off no longer destroys what you typed.</li>
+</ul>
+<h2>Fixes</h2>
+<ul>
+<li>⇧⌘C now works the first time, without opening the menu that owns it.</li>
+<li>The menu bar's snooze section rebuilds on every open, so the countdown is current and a resumed chat disappears immediately.</li>
+<li>VoiceOver reads the Beeper status line as one sentence and names the Open Beeper button, instead of speaking the separator dots and an unnamed link.</li>
+<li>A voice reply can no longer lose the message it was answering. While you are recording, Close and Snooze on that panel are disabled, and ⌘W, Escape and the window close button cannot dismiss it out from under the recording. Previously either one dropped the reply target, and the finished transcription went out unaddressed or, with several chats configured, to the wrong one. Close and Snooze work as normal once the reply is sending.</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials remain compatible.</li>
+<li>Hermes and Codex response panels are unchanged.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-27.1/WonderWhisper-2026-07-27.1.dmg" sparkle:edSignature="Cgii6inAKJml644E5AWEedkpVP9gWfs2y+4IE2el79n4ymUNHvJedtoVKmwfQ7nj4fElIDA8RJfB5U9Wt7Z0Cg==" length="9629178" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-27</title>
       <pubDate>Sat, 25 Jul 2026 10:38:19 +0000</pubDate>
       <sparkle:version>2026072700</sparkle:version>
