@@ -27,6 +27,12 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var isSendingReply: Bool
   /// Set only on a re-presented state, and seeds a fresh draft once at panel creation.
   var preservedReplyText: String?
+  /// Held messages older than the displayed body. Beeper only; 0 everywhere else.
+  var earlierCount: Int
+  /// Held messages newer than the displayed body. Beeper only; 0 everywhere else.
+  var newerCount: Int
+  /// Why this panel is on screen. Drives the `Snooze ended · ` prefix, nothing else.
+  var reason: HermesResponseReason
 
   init(id: UUID = UUID(),
        title: String,
@@ -40,7 +46,10 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        beeperChatID: String? = nil,
        replyFailure: String? = nil,
        isSendingReply: Bool = false,
-       preservedReplyText: String? = nil) {
+       preservedReplyText: String? = nil,
+       earlierCount: Int = 0,
+       newerCount: Int = 0,
+       reason: HermesResponseReason = .live) {
     self.id = id
     self.title = title
     self.text = text
@@ -54,6 +63,56 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.replyFailure = replyFailure
     self.isSendingReply = isSendingReply
     self.preservedReplyText = preservedReplyText
+    self.earlierCount = earlierCount
+    self.newerCount = newerCount
+    self.reason = reason
+  }
+
+  /// Beeper panels get the message glyph, the status line and the Snooze control; Hermes and
+  /// Codex panels get none of them. `beeperChatID` is the discriminator and the snooze payload
+  /// in one field — do not infer the source from `title` or `supportsTextReply`, Codex uses
+  /// text reply too.
+  var beeperChat: String? {
+    guard let beeperChatID, !beeperChatID.isEmpty else { return nil }
+    return beeperChatID
+  }
+}
+
+enum HermesResponseReason: Equatable {
+  case live
+  case snoozeExpired
+}
+
+/// The one status line under a Beeper panel's header, as a pure function of the two counters
+/// and the reason. Empty means render nothing at all — no line, no `Open Beeper`.
+///
+/// The two counters are separate quantities and only one of them is true about any given held
+/// message, so the copy states each one rather than summing them. `Snooze ended` is a
+/// reason-for-appearance tag, never a coverage claim: the gate records what it suppressed, not
+/// what was sent, so no phrasing here may say "while you were snoozed". Past tense, because at
+/// the moment this panel appears the chat is no longer snoozed.
+///
+/// No cap on the number. "+49" is the signal; capping at "+9" would lie precisely when the
+/// information matters most.
+enum HermesBeeperStatusLine {
+  struct Segment: Equatable {
+    var text: String
+    /// The live count is the one number that is still moving, so it earns weight. Weight only —
+    /// never colour, never a badge, never red. Red reads as "deal with me now", which is the
+    /// opposite of "the rest are in Beeper".
+    var isEmphasized: Bool = false
+  }
+
+  static func segments(
+    earlierCount: Int,
+    newerCount: Int,
+    reason: HermesResponseReason
+  ) -> [Segment] {
+    var segments: [Segment] = []
+    if reason == .snoozeExpired { segments.append(Segment(text: "Snooze ended")) }
+    if earlierCount > 0 { segments.append(Segment(text: "+\(earlierCount) earlier")) }
+    if newerCount > 0 { segments.append(Segment(text: "\(newerCount) new", isEmphasized: true)) }
+    return segments
   }
 }
 
@@ -687,7 +746,11 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         },
         onMinimize: { [weak self] in self?.minimizePanel(sessionID: sessionID) },
         onRestore: { [weak self] in self?.restorePanel(sessionID: sessionID) },
-        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: sessionID) }
+        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: sessionID) },
+        onSnooze: { [weak self] duration in
+          self?.viewModel?.snoozeBeeperResponse(sessionID: sessionID, duration: duration)
+        },
+        onOpenBeeper: { [weak self] in self?.viewModel?.openBeeperApp() }
       )
     )
 
@@ -880,6 +943,8 @@ private struct HermesResponsePanelHost: View {
   var onMinimize: () -> Void
   var onRestore: () -> Void
   var onClose: () -> Void
+  var onSnooze: (BeeperSnoozeDuration) -> Void
+  var onOpenBeeper: () -> Void
 
   var body: some View {
     if model.isMinimized {
@@ -897,7 +962,9 @@ private struct HermesResponsePanelHost: View {
         onCancelTextReply: onCancelTextReply,
         onSendTextReply: onSendTextReply,
         onMinimize: onMinimize,
-        onClose: onClose
+        onClose: onClose,
+        onSnooze: onSnooze,
+        onOpenBeeper: onOpenBeeper
       )
     }
   }
@@ -964,10 +1031,17 @@ private struct HermesResponsePanelView: View {
   var onSendTextReply: (String) -> Void
   var onMinimize: () -> Void
   var onClose: () -> Void
+  var onSnooze: (BeeperSnoozeDuration) -> Void
+  var onOpenBeeper: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      header
+      // The status line is context for the body you are about to read, not a footnote, so it
+      // groups tight to the header rather than taking the stack's full 14pt.
+      VStack(alignment: .leading, spacing: 6) {
+        header
+        beeperStatusLine
+      }
 
       if state.isRecordingReply {
         recordingIndicator
@@ -1014,9 +1088,17 @@ private struct HermesResponsePanelView: View {
     )
   }
 
+  /// `waveform.and.sparkles` is a generic AI glyph, and a Beeper panel is a message from a
+  /// person. Source only — burst and snooze state stay in the status line, which can spell them
+  /// out; an icon cannot.
+  private var headerGlyph: String {
+    if state.isError { return "exclamationmark.triangle.fill" }
+    return state.beeperChat == nil ? "waveform.and.sparkles" : "bubble.left.fill"
+  }
+
   private var header: some View {
     HStack(spacing: 10) {
-      Image(systemName: state.isError ? "exclamationmark.triangle.fill" : "waveform.and.sparkles")
+      Image(systemName: headerGlyph)
         .font(.title3)
         .foregroundStyle(state.isError ? .red : .blue)
         .frame(width: 26, height: 26)
@@ -1055,8 +1137,45 @@ private struct HermesResponsePanelView: View {
     HermesPanelPrimaryAction.resolve(state)
   }
 
+  @ViewBuilder
+  private var beeperStatusLine: some View {
+    let segments = HermesBeeperStatusLine.segments(
+      earlierCount: state.earlierCount,
+      newerCount: state.newerCount,
+      reason: state.reason
+    )
+    if state.beeperChat != nil, !segments.isEmpty {
+      HStack(spacing: 4) {
+        // Secondary applies to the copy only. The link keeps the accent colour it needs to
+        // read as clickable at all.
+        Group {
+          ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+            if index > 0 {
+              Text("·")
+            }
+            Text(segment.text)
+              .fontWeight(segment.isEmphasized ? .medium : .regular)
+          }
+
+          Text("·")
+        }
+        .foregroundStyle(.secondary)
+
+        // Telling Dane the rest are in Beeper without a way to get there manufactures the
+        // friction this feature exists to remove.
+        Button("Open Beeper", action: onOpenBeeper)
+          .buttonStyle(.link)
+      }
+      .font(.caption)
+    }
+  }
+
   private var actionRow: some View {
     HStack(spacing: 10) {
+      if state.beeperChat != nil {
+        snoozeControl
+      }
+
       Spacer()
 
       Menu {
@@ -1094,6 +1213,28 @@ private struct HermesResponsePanelView: View {
       }
     }
     .background(copyRawShortcut)
+  }
+
+  /// Leading edge of the row, held away from the reply cluster by the row's `Spacer()`.
+  /// Physical distance from where the hand is going is what "do not crowd the reply" means.
+  ///
+  /// Primary click is 1 hour, not 15 minutes: the real triggers are a meeting, a deep-work
+  /// block, dinner, and 15 minutes covers none of them. The label states the duration, so the
+  /// click holds no surprise and needs no undo at the point of click — regret is handled in the
+  /// menu bar. "Until morning" rather than "rest of day", which is ambiguous at 11pm and
+  /// meaningless at 2am.
+  private var snoozeControl: some View {
+    Menu {
+      Button("15 minutes") { onSnooze(.fifteenMinutes) }
+      Button("1 hour") { onSnooze(.oneHour) }
+      Button("Until morning") { onSnooze(.untilMorning) }
+    } label: {
+      Label("Snooze 1h", systemImage: "moon.zzz")
+    } primaryAction: {
+      onSnooze(.oneHour)
+    }
+    .fixedSize()
+    .help("Snooze this chat for an hour. Open for other durations.")
   }
 
   // ⇧⌘C is carried by an invisible Button, not by the Menu or by an item inside it.

@@ -2805,8 +2805,29 @@ final class DictationViewModel: ObservableObject {
         AppLog.dictation.log(
             "Beeper response accumulator flushed chat=\(chatID, privacy: .public) count=\(accumulator.count, privacy: .public)"
         )
-        showBeeperResponse(accumulator.latest)
+        // The body is the newest held message, so everything else the gate ate is older than it.
+        // ponytail: `newerCount` stays 0 until the §4 hold path lands — nothing can arrive after
+        // the displayed message while the panel is not yet on screen.
+        showBeeperResponse(
+            accumulator.latest,
+            earlierCount: accumulator.count - 1,
+            reason: .snoozeExpired
+        )
     }
+
+    /// `Open Beeper` on the status line. Plain app launch — a chat deep link is not worth
+    /// hunting for, and the panel already carries the message that matters.
+    func openBeeperApp() {
+        guard let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: Self.beeperBundleIdentifier
+        ) else {
+            AppLog.dictation.warning("Open Beeper failed: app not installed")
+            return
+        }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    private static let beeperBundleIdentifier = "com.automattic.beeper.desktop"
 
     private static let beeperChatsKey = "beeper.chats"
 
@@ -3798,10 +3819,16 @@ final class DictationViewModel: ObservableObject {
         AppLog.dictation.log(
             "Beeper ambient monitor received polled message id=\(newest.id, privacy: .public)"
         )
-        showBeeperResponse(newest)
+        // Newest is the body, so the rest of the burst is older than it. They are still not
+        // readable in the panel, but the count is now on screen instead of only in Console.
+        showBeeperResponse(newest, earlierCount: surviving.count - 1)
     }
 
-    private func showBeeperResponse(_ message: BeeperMessage) {
+    private func showBeeperResponse(
+        _ message: BeeperMessage,
+        earlierCount: Int = 0,
+        reason: HermesResponseReason = .live
+    ) {
         let text = message.displayText
         guard !Self.beeperResponseIsFiltered(text, keywords: beeperResponseFilterKeywords) else {
             AppLog.dictation.log(
@@ -3838,7 +3865,9 @@ final class DictationViewModel: ObservableObject {
             isError: false,
             supportsReply: false,
             supportsTextReply: true,
-            beeperChatID: message.chatID
+            beeperChatID: message.chatID,
+            earlierCount: earlierCount,
+            reason: reason
         )
     }
 
@@ -4440,7 +4469,9 @@ final class DictationViewModel: ObservableObject {
                                             supportsReply: Bool = true,
                                             supportsVoiceReply: Bool? = nil,
                                             supportsTextReply: Bool? = nil,
-                                            beeperChatID: String? = nil) {
+                                            beeperChatID: String? = nil,
+                                            earlierCount: Int = 0,
+                                            reason: HermesResponseReason = .live) {
         let state = HermesResponseWindowState(
             id: sessionID,
             title: title,
@@ -4450,7 +4481,9 @@ final class DictationViewModel: ObservableObject {
             supportsReply: supportsReply,
             supportsVoiceReply: supportsVoiceReply,
             supportsTextReply: supportsTextReply,
-            beeperChatID: beeperChatID
+            beeperChatID: beeperChatID,
+            earlierCount: earlierCount,
+            reason: reason
         )
         if let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }) {
             hermesResponseWindowStates[index] = state

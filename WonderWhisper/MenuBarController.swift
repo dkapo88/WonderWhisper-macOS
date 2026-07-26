@@ -193,6 +193,42 @@ final class MenuBarController: NSObject {
         return item
     }
 
+    /// The only place a snooze is visible, and the only way to undo one early. Nothing is drawn
+    /// while a chat is snoozed — silence is the contract — so this is the whole affordance:
+    /// findable when wanted, invisible when not. Nothing snoozed adds zero items, not an empty
+    /// section. `buildMenu()` runs on every open, so the countdown is fresh with no timer.
+    ///
+    /// The title leads with the verb rather than the design's `Sam — snoozed 47m`: a menu item
+    /// whose click resumes should say so, and the countdown still reads as the reason.
+    private func addSnoozedBeeperChats(to menu: NSMenu) {
+        guard let vm else { return }
+        let snoozed = vm.snoozedBeeperChats
+        guard !snoozed.isEmpty else { return }
+
+        menu.addItem(.separator())
+        let now = Date()
+        for chat in snoozed {
+            let remaining = Self.snoozeRemainingText(until: chat.snoozedUntil, now: now)
+            let item = NSMenuItem(
+                title: "Resume \(chat.displayName) — snoozed \(remaining)",
+                action: #selector(resumeSnoozedBeeperChat),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = chat.chatID
+            menu.addItem(item)
+        }
+    }
+
+    /// Rounds up, so a deadline 30 seconds out reads "1m" rather than "0m".
+    static func snoozeRemainingText(until deadline: Date, now: Date) -> String {
+        let minutes = max(1, Int(ceil(deadline.timeIntervalSince(now) / 60)))
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
+    }
+
     private func buildInputDeviceMenu() -> NSMenuItem {
         let inputMenu = NSMenuItem(title: "Input Device", action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -308,6 +344,8 @@ final class MenuBarController: NSObject {
         self.addDictItem = addDict
         menu.addItem(addDict)
 
+        addSnoozedBeeperChats(to: menu)
+
         menu.addItem(.separator())
 
         menu.addItem(buildInputDeviceMenu())
@@ -400,6 +438,11 @@ final class MenuBarController: NSObject {
         vm.openRouterTranscriptionModel = model
         refreshStatusAndMenu()
     }
+    @objc private func resumeSnoozedBeeperChat(_ sender: NSMenuItem) {
+        guard let chatID = sender.representedObject as? String else { return }
+        vm?.resumeBeeperChat(chatID: chatID)
+    }
+
     @objc private func quitApp() { NSApp.terminate(nil) }
 
     @objc private func addClipboardToVocabulary() {
