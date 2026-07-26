@@ -2804,18 +2804,104 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func flushBeeperResponses(chatID: String) {
-        guard let accumulator = takeBeeperResponses(chatID: chatID) else { return }
+        flushBeeperResponses(chatID: chatID, reason: .snoozeExpired)
+    }
+
+    private func flushBeeperResponses(
+        chatID: String,
+        reason: HermesResponseReason
+    ) {
+        guard let accumulator = beeperResponseAccumulators[chatID] else { return }
+        if let sessionID = newestAttendingBeeperResponseWindowID(chatID: chatID),
+           let state = hermesResponseWindowStates.first(where: { $0.id == sessionID }) {
+            let isHoldingBody = hasResponseWindowDraft(sessionID: sessionID)
+                || state.isSendingReply
+            let counts = Self.beeperBurstCounts(
+                earlierCount: state.earlierCount,
+                pendingCount: accumulator.count,
+                isHoldingBody: isHoldingBody
+            )
+            if isHoldingBody {
+                hermesResponseWindowStates = HermesResponseWindowLifecycle.burstCoalesced(
+                    hermesResponseWindowStates,
+                    sessionID: sessionID,
+                    earlierCount: counts.earlier,
+                    newerCount: counts.newer
+                )
+                syncCurrentHermesResponseWindowState(sessionID: sessionID)
+                return
+            }
+
+            _ = takeBeeperResponses(chatID: chatID)
+            coalesceBeeperResponse(
+                accumulator.latest,
+                into: sessionID,
+                earlierCount: counts.earlier
+            )
+            return
+        }
+
+        _ = takeBeeperResponses(chatID: chatID)
         AppLog.dictation.log(
             "Beeper response accumulator flushed chat=\(chatID, privacy: .public) count=\(accumulator.count, privacy: .public)"
         )
-        // The body is the newest held message, so everything else the gate ate is older than it.
-        // ponytail: `newerCount` stays 0 until the §4 hold path lands — nothing can arrive after
-        // the displayed message while the panel is not yet on screen.
         showBeeperResponse(
             accumulator.latest,
             earlierCount: accumulator.count - 1,
-            reason: .snoozeExpired
+            reason: reason
         )
+    }
+
+    static func beeperBurstCounts(
+        earlierCount: Int,
+        pendingCount: Int,
+        isHoldingBody: Bool
+    ) -> (earlier: Int, newer: Int) {
+        isHoldingBody
+            ? (earlierCount, pendingCount)
+            : (earlierCount + pendingCount, 0)
+    }
+
+    private func newestAttendingBeeperResponseWindowID(chatID: String) -> UUID? {
+        hermesResponseWindowStates.reversed().first {
+            beeperResponseWindowTargets[$0.id]?.chatID == chatID && isAttending(sessionID: $0.id)
+        }?.id
+    }
+
+    private func coalesceBeeperResponse(
+        _ message: BeeperMessage,
+        into sessionID: UUID,
+        earlierCount: Int
+    ) {
+        let sender = message.displaySender
+        beeperResponseWindowTargets[sessionID] = BeeperReplyTarget(
+            chatID: message.chatID,
+            messageID: message.id
+        )
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.burstCoalesced(
+            hermesResponseWindowStates,
+            sessionID: sessionID,
+            title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
+            text: message.richDisplayText,
+            isHTML: message.hasHTMLBody,
+            earlierCount: earlierCount,
+            newerCount: 0
+        )
+        syncCurrentHermesResponseWindowState(sessionID: sessionID)
+        beeperLastResponseText = message.displayText
+        beeperLastResponseSender = sender
+        beeperIsAwaitingResponse = false
+        beeperConnectionStatus = "Beeper response received."
+        beeperConnectionSucceeded = true
+        settingsNotice = beeperConnectionStatus
+        AppLog.dictation.log(
+            "Beeper response coalesced chat=\(message.chatID, privacy: .public) id=\(message.id, privacy: .public)"
+        )
+    }
+
+    private func syncCurrentHermesResponseWindowState(sessionID: UUID) {
+        guard hermesResponseWindowState?.id == sessionID else { return }
+        hermesResponseWindowState = hermesResponseWindowStates.first { $0.id == sessionID }
     }
 
     /// `Open Beeper` on the status line. Plain app launch — a chat deep link is not worth
@@ -3449,7 +3535,16 @@ final class DictationViewModel: ObservableObject {
             )
             let sendSeconds = Date().timeIntervalSince(start)
 
+            let pendingResponses = replyTarget.flatMap {
+                takeBeeperResponses(chatID: $0.chatID)
+            }
             dismissBeeperResponseWindow(responseWindowIDToDismiss)
+            if let pendingResponses {
+                showBeeperResponse(
+                    pendingResponses.latest,
+                    earlierCount: pendingResponses.count - 1
+                )
+            }
             beeperResponseWindowIDForActiveRecording = nil
             beeperLastSentText = outboundText
             beeperLastPendingMessageID = response.pendingMessageID
@@ -3543,7 +3638,14 @@ final class DictationViewModel: ObservableObject {
                 settings: settings
             )
 
+            let pendingResponses = takeBeeperResponses(chatID: target.chatID)
             dismissBeeperResponseWindow(responseWindowID)
+            if let pendingResponses {
+                showBeeperResponse(
+                    pendingResponses.latest,
+                    earlierCount: pendingResponses.count - 1
+                )
+            }
             beeperLastSentText = trimmed
             beeperLastPendingMessageID = response.pendingMessageID
             beeperConnectionStatus = beeperResponseMonitoringEnabled
@@ -3798,33 +3900,23 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Presentation entry point for one poll's worth of new messages.
-    // ponytail: OPEN BUG — shows only the newest candidate; the rest of the burst is still
-    // dropped, now logged so the loss is visible instead of silent. This takes the whole
-    // array so coalescing can land here; the loss is not fixed until it consumes all of it.
     private func showBeeperResponses(_ candidates: [BeeperMessage], chatID: String) {
         let surviving = Self.unfilteredBeeperCandidates(
             candidates,
             keywords: beeperResponseFilterKeywords
         )
-        guard let newest = surviving.last else { return }
+        guard !surviving.isEmpty else { return }
+        appendBeeperResponses(surviving, chatID: chatID)
         if let deadline = beeperSnoozedUntil(chatID: chatID), deadline > Date() {
-            appendBeeperResponses(surviving, chatID: chatID)
             AppLog.dictation.log(
                 "Beeper responses suppressed by snooze chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
             )
             return
         }
-        if surviving.count > 1 {
-            AppLog.dictation.log(
-                "Beeper ambient monitor dropped \(surviving.count - 1, privacy: .public) other burst message(s) pending coalescing"
-            )
-        }
         AppLog.dictation.log(
-            "Beeper ambient monitor received polled message id=\(newest.id, privacy: .public)"
+            "Beeper ambient monitor received chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
         )
-        // Newest is the body, so the rest of the burst is older than it. They are still not
-        // readable in the panel, but the count is now on screen instead of only in Console.
-        showBeeperResponse(newest, earlierCount: surviving.count - 1)
+        flushBeeperResponses(chatID: chatID, reason: .live)
     }
 
     private func showBeeperResponse(
@@ -4523,10 +4615,16 @@ final class DictationViewModel: ObservableObject {
     /// Controller → view model. Not `@Published`: nothing renders off this, and republishing on a
     /// composer edit would re-render every open panel.
     func setResponseWindowHasDraft(sessionID: UUID, hasDraft: Bool) {
+        let hadDraft = responseWindowDraftSessionIDs.contains(sessionID)
         if hasDraft {
             responseWindowDraftSessionIDs.insert(sessionID)
         } else {
             responseWindowDraftSessionIDs.remove(sessionID)
+        }
+        if hadDraft,
+           !hasDraft,
+           let chatID = beeperResponseWindowTargets[sessionID]?.chatID {
+            flushBeeperResponses(chatID: chatID, reason: .live)
         }
     }
 

@@ -107,6 +107,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-27: Coalesced Beeper message bursts into the newest attending panel while preserving
+  draft reply targets and flushing or clearing held messages according to snooze and panel actions.
 - 2026-07-25: Added Sparkle 2.9.4 in-app auto-update with an EdDSA-signed appcast, a
   "Check for Updates…" item in the app menu, menu bar, and Settings, and date-derived
   release versioning so each build reports a unique increasing `CFBundleVersion`.

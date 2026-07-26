@@ -188,6 +188,24 @@ struct BeeperResponseFilterTests {
     #expect(BeeperResponseAccumulator(messages: []) == nil)
   }
 
+  @Test func burstCountsStayNewerWhileHeldAndFoldEarlierOnRelease() {
+    let held = DictationViewModel.beeperBurstCounts(
+      earlierCount: 4,
+      pendingCount: 2,
+      isHoldingBody: true
+    )
+    #expect(held.earlier == 4)
+    #expect(held.newer == 2)
+
+    let released = DictationViewModel.beeperBurstCounts(
+      earlierCount: held.earlier,
+      pendingCount: held.newer,
+      isHoldingBody: false
+    )
+    #expect(released.earlier == 6)
+    #expect(released.newer == 0)
+  }
+
   @Test func responseWindowSourceDefaultsToNonBeeperAndCarriesChatID() {
     let generic = HermesResponseWindowState(title: "Hermes", text: "Done")
     let beeper = HermesResponseWindowState(
