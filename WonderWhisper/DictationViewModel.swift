@@ -3409,30 +3409,41 @@ final class DictationViewModel: ObservableObject {
                 nextCursor = newestCursor
             }
 
-            let candidates = page.items
-                .filter { !nextSeenMessageIDs.contains($0.id) }
-                .filter { message in
-                    if hadCursor { return true }
-                    guard let timestamp = message.timestamp else { return false }
-                    return timestamp >= baselineDate
-                }
-                .filter(\.isIncomingText)
-                .sorted(by: Self.sortBeeperMessagesAscending)
+            let candidates = Self.beeperPollCandidates(
+                page: page.items,
+                seenMessageIDs: nextSeenMessageIDs,
+                baselineDate: baselineDate,
+                hadCursor: hadCursor
+            )
 
             page.items.forEach { nextSeenMessageIDs.insert($0.id) }
 
-            if let response = candidates.first {
-                AppLog.dictation.log(
-                    "Beeper ambient monitor received polled message id=\(response.id, privacy: .public)"
-                )
-                showBeeperResponse(response)
-            }
+            showBeeperResponses(candidates)
         } catch {
             AppLog.dictation.error(
                 "Beeper ambient poll failed: \(error.localizedDescription, privacy: .public)"
             )
         }
         return (nextCursor, nextSeenMessageIDs)
+    }
+
+    /// The unseen incoming messages on a polled page, oldest first. Pure over the page
+    /// so burst ordering is testable without a live Beeper.
+    /// Before a cursor exists the baseline drops backfill from the first page; after that
+    /// the cursor already scopes the page to new messages.
+    static func beeperPollCandidates(page: [BeeperMessage],
+                                     seenMessageIDs: Set<String>,
+                                     baselineDate: Date,
+                                     hadCursor: Bool) -> [BeeperMessage] {
+        page
+            .filter { !seenMessageIDs.contains($0.id) }
+            .filter { message in
+                if hadCursor { return true }
+                guard let timestamp = message.timestamp else { return false }
+                return timestamp >= baselineDate
+            }
+            .filter(\.isIncomingText)
+            .sorted(by: sortBeeperMessagesAscending)
     }
 
     /// Splits the user's filter setting into normalized, lowercased terms.
@@ -3458,6 +3469,23 @@ final class DictationViewModel: ObservableObject {
         let id = (app.bundleIdentifier ?? "").lowercased()
         let name = (app.localizedName ?? "").lowercased()
         return ["telegram", "beeper"].contains { id.contains($0) || name.contains($0) }
+    }
+
+    /// Presentation entry point for one poll's worth of new messages.
+    // ponytail: OPEN BUG — shows only the newest candidate; the rest of the burst is still
+    // dropped, now logged so the loss is visible instead of silent. This takes the whole
+    // array so coalescing can land here; the loss is not fixed until it consumes all of it.
+    private func showBeeperResponses(_ candidates: [BeeperMessage]) {
+        guard let newest = candidates.last else { return }
+        if candidates.count > 1 {
+            AppLog.dictation.log(
+                "Beeper ambient monitor dropped \(candidates.count - 1, privacy: .public) earlier burst message(s) pending coalescing"
+            )
+        }
+        AppLog.dictation.log(
+            "Beeper ambient monitor received polled message id=\(newest.id, privacy: .public)"
+        )
+        showBeeperResponse(newest)
     }
 
     private func showBeeperResponse(_ message: BeeperMessage) {

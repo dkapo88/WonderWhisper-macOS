@@ -79,6 +79,54 @@ struct BeeperResponseFilterTests {
     #expect(DictationViewModel.dedupedChatIDs(chats) == ["chat1", "chat3"])  // chat2 paused
   }
 
+  /// Incoming text message from `sender`, timestamped `at` (ISO 8601).
+  private func incoming(_ id: String, at timestamp: String) -> BeeperMessage {
+    BeeperMessage(
+      id: id,
+      chatID: "chat1",
+      senderName: "Sam",
+      timestampString: timestamp,
+      text: "message \(id)",
+      type: "TEXT",
+      isSender: false
+    )
+  }
+
+  @Test func pollCandidatesKeepWholeBurstNewestLast() {
+    // Three messages between polls arrive on one page, deliberately out of order.
+    let page = [
+      incoming("b", at: "2026-07-26T09:00:05Z"),
+      incoming("c", at: "2026-07-26T09:00:09Z"),
+      incoming("a", at: "2026-07-26T09:00:01Z"),
+    ]
+    let candidates = DictationViewModel.beeperPollCandidates(
+      page: page,
+      seenMessageIDs: [],
+      baselineDate: .distantPast,
+      hadCursor: true
+    )
+    #expect(candidates.map(\.id) == ["a", "b", "c"])  // whole burst reaches the caller, ascending
+    #expect(candidates.last?.id == "c")  // presented message is the newest, not the stalest
+  }
+
+  @Test func pollCandidatesDropSeenAndPreBaselineMessages() {
+    let baseline = ISO8601DateFormatter().date(from: "2026-07-26T09:00:00Z")!
+    let page = [
+      incoming("old", at: "2026-07-26T08:59:59Z"),  // backfill, before monitoring started
+      incoming("seen", at: "2026-07-26T09:00:05Z"),
+      incoming("new", at: "2026-07-26T09:00:06Z"),
+      BeeperMessage(id: "mine", chatID: "chat1", timestampString: "2026-07-26T09:00:07Z",
+                    text: "sent by me", type: "TEXT", isSender: true),
+    ]
+    let candidates = DictationViewModel.beeperPollCandidates(
+      page: page,
+      seenMessageIDs: ["seen"],
+      baselineDate: baseline,
+      hadCursor: false
+    )
+    #expect(candidates.map(\.id) == ["new"])
+  }
+
   @Test func dedupedChatIDsTrimsDropsBlanksAndDuplicates() {
     let chats = [
       BeeperChatEntry(chatID: " chat1 ", alias: "Mum"),
