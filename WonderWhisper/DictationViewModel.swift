@@ -3653,7 +3653,8 @@ final class DictationViewModel: ObservableObject {
             isHTML: message.hasHTMLBody,
             isError: false,
             supportsReply: false,
-            supportsTextReply: true
+            supportsTextReply: true,
+            beeperChatID: message.chatID
         )
     }
 
@@ -4254,7 +4255,8 @@ final class DictationViewModel: ObservableObject {
                                             isError: Bool,
                                             supportsReply: Bool = true,
                                             supportsVoiceReply: Bool? = nil,
-                                            supportsTextReply: Bool? = nil) {
+                                            supportsTextReply: Bool? = nil,
+                                            beeperChatID: String? = nil) {
         let state = HermesResponseWindowState(
             id: sessionID,
             title: title,
@@ -4263,7 +4265,8 @@ final class DictationViewModel: ObservableObject {
             isError: isError,
             supportsReply: supportsReply,
             supportsVoiceReply: supportsVoiceReply,
-            supportsTextReply: supportsTextReply
+            supportsTextReply: supportsTextReply,
+            beeperChatID: beeperChatID
         )
         if let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }) {
             hermesResponseWindowStates[index] = state

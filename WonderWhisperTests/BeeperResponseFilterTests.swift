@@ -188,6 +188,17 @@ struct BeeperResponseFilterTests {
     #expect(BeeperResponseAccumulator(messages: []) == nil)
   }
 
+  @Test func responseWindowSourceDefaultsToNonBeeperAndCarriesChatID() {
+    let generic = HermesResponseWindowState(title: "Hermes", text: "Done")
+    let beeper = HermesResponseWindowState(
+      title: "Beeper - Sam",
+      text: "Hello",
+      beeperChatID: "chat1"
+    )
+    #expect(generic.beeperChatID == nil)
+    #expect(beeper.beeperChatID == "chat1")
+  }
+
   @Test func pollCandidatesKeepWholeBurstNewestLast() {
     // Three messages between polls arrive on one page, deliberately out of order.
     let page = [

@@ -14,6 +14,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var supportsReply: Bool
   var supportsVoiceReply: Bool
   var supportsTextReply: Bool
+  var beeperChatID: String?
 
   init(id: UUID = UUID(),
        title: String,
@@ -23,7 +24,8 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        isRecordingReply: Bool = false,
        supportsReply: Bool = true,
        supportsVoiceReply: Bool? = nil,
-       supportsTextReply: Bool? = nil) {
+       supportsTextReply: Bool? = nil,
+       beeperChatID: String? = nil) {
     self.id = id
     self.title = title
     self.text = text
@@ -33,6 +35,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.supportsReply = supportsReply
     self.supportsVoiceReply = supportsVoiceReply ?? supportsReply
     self.supportsTextReply = supportsTextReply ?? supportsReply
+    self.beeperChatID = beeperChatID
   }
 }
 
@@ -1129,4 +1132,3 @@ private extension NSEvent {
     keyCode == 36 || keyCode == 76 || charactersIgnoringModifiers == "\r"
   }
 }
-
