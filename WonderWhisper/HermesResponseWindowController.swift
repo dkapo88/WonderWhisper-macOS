@@ -274,6 +274,41 @@ enum HermesResponseWindowLifecycle {
       return clearedState
     }
   }
+
+  /// Folds a burst update into a panel that is already on screen, instead of building a fresh
+  /// `HermesResponseWindowState` for it. That distinction is the whole point: a fresh state resets
+  /// `replyFailure`, `isSendingReply`, `isRecordingReply` and `preservedReplyText`, and because the
+  /// id stays in `hermesResponseWindowStates` the controller keeps the same panel, panel model and
+  /// `HermesTextReplyDraft` — so the composer's text, caret, selection and scroll survive, and key
+  /// window is never stolen mid-typing.
+  ///
+  /// `title`, `text` and `isHTML` are one coupled group describing the displayed message: pass all
+  /// three to move the body, pass none to hold it. Holding the body while `newerCount` climbs is
+  /// the draft-safety rule, so it has to be expressible without touching the counters' caller.
+  ///
+  /// The counts are absolute, not deltas — the pending accumulator is the caller's, and two
+  /// sources of truth for one number is how the count starts lying. A no-op when no state carries
+  /// `sessionID`; this never creates a panel.
+  static func burstCoalesced(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID,
+    title: String? = nil,
+    text: String? = nil,
+    isHTML: Bool? = nil,
+    earlierCount: Int,
+    newerCount: Int
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var coalesced = state
+      if let title { coalesced.title = title }
+      if let text { coalesced.text = text }
+      if let isHTML { coalesced.isHTML = isHTML }
+      coalesced.earlierCount = earlierCount
+      coalesced.newerCount = newerCount
+      return coalesced
+    }
+  }
 }
 
 enum HermesEscapeAction: Equatable {
@@ -359,6 +394,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private var focusedSessionID: UUID?
   private var panelFrontToBackOrder: [UUID] = []
   private var textReplyDrafts: [UUID: HermesTextReplyDraft] = [:]
+  private var textReplyDraftObservers: [UUID: AnyCancellable] = [:]
   private var panelModels: [UUID: HermesResponsePanelModel] = [:]
   private var textReplySessionIDs: Set<UUID> = []
   private var minimizedOrder: [UUID] = []
@@ -532,6 +568,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       panels[sessionID] = nil
       panelModels[sessionID] = nil
       textReplyDrafts[sessionID] = nil
+      textReplyDraftObservers[sessionID] = nil
       textReplySessionIDs.remove(sessionID)
       minimizedOrder.removeAll { $0 == sessionID }
       panelFrontToBackOrder.removeAll { $0 == sessionID }
@@ -660,6 +697,16 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       draft.text = seed
     }
     textReplyDrafts[sessionID] = draft
+    // The draft lives here, but the burst rules that must not overwrite it run in the view model,
+    // which holds no reference to this controller. So push the one bit it needs rather than
+    // inverting the dependency. `removeDuplicates` is load-bearing: this fires on the empty↔
+    // non-empty transition only, never per keystroke, so typing cannot cause a republish storm.
+    textReplyDraftObservers[sessionID] = draft.$text
+      .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .removeDuplicates()
+      .sink { [weak self] hasDraft in
+        self?.viewModel?.setResponseWindowHasDraft(sessionID: sessionID, hasDraft: hasDraft)
+      }
     return draft
   }
 

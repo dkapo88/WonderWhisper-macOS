@@ -278,4 +278,70 @@ struct HermesResponseWindowLifecycleTests {
 
     #expect(cleared == [target, other])
   }
+
+  @Test func coalescingABurstMovesTheBodyAndLeavesTheReplyInFlightAlone() {
+    let target = replyState("18")
+    let other = replyState("19")
+    var live = target
+    live.isSendingReply = true
+    live.isRecordingReply = true
+    live.replyFailure = HermesReplyFailureCopy.beeperSendFailed
+    live.preservedReplyText = "Yes, 6 works"
+
+    let coalesced = HermesResponseWindowLifecycle.burstCoalesced(
+      [live, other],
+      sessionID: target.id,
+      title: "Ash",
+      text: "make it 7",
+      isHTML: false,
+      earlierCount: 2,
+      newerCount: 0
+    )
+
+    #expect(coalesced[0].title == "Ash")
+    #expect(coalesced[0].text == "make it 7")
+    #expect(!coalesced[0].isHTML)
+    #expect(coalesced[0].earlierCount == 2)
+    #expect(coalesced[0].newerCount == 0)
+    // The reason this is not a freshly built state: everything the panel owns about the reply in
+    // progress survives the update.
+    #expect(coalesced[0].isSendingReply)
+    #expect(coalesced[0].isRecordingReply)
+    #expect(coalesced[0].replyFailure == HermesReplyFailureCopy.beeperSendFailed)
+    #expect(coalesced[0].preservedReplyText == "Yes, 6 works")
+    #expect(coalesced[1] == other)
+  }
+
+  @Test func holdingTheBodyStillMovesTheNewCount() {
+    let target = replyState("20")
+
+    let held = HermesResponseWindowLifecycle.burstCoalesced(
+      [target],
+      sessionID: target.id,
+      earlierCount: 0,
+      newerCount: 3
+    )
+
+    // The draft-safety rule: the message Dane is answering stays put while the count climbs.
+    #expect(held[0].title == target.title)
+    #expect(held[0].text == target.text)
+    #expect(held[0].isHTML == target.isHTML)
+    #expect(held[0].newerCount == 3)
+  }
+
+  @Test func coalescingIntoAnAbsentPanelChangesNothing() {
+    let states = [replyState("21"), replyState("22")]
+
+    #expect(
+      HermesResponseWindowLifecycle.burstCoalesced(
+        states,
+        sessionID: UUID(),
+        title: "Ash",
+        text: "make it 7",
+        isHTML: false,
+        earlierCount: 9,
+        newerCount: 9
+      ) == states
+    )
+  }
 }

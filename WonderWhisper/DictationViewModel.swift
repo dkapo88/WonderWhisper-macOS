@@ -691,6 +691,9 @@ final class DictationViewModel: ObservableObject {
     /// Per-window reply target: which chat + message a Beeper response window
     /// replies to (and threads onto) when you reply from it.
     private var beeperResponseWindowTargets: [UUID: BeeperReplyTarget] = [:]
+    /// Panels whose text composer currently holds a non-empty draft, pushed over from
+    /// `HermesResponseWindowController`. See `hasResponseWindowDraft(sessionID:)`.
+    private var responseWindowDraftSessionIDs: Set<UUID> = []
     // ponytail: in-memory only; persist messages only if Beeper stops being the canonical inbox.
     private var beeperResponseAccumulators: [String: BeeperResponseAccumulator] = [:]
     private var beeperResponseWindowIDForActiveRecording: UUID?
@@ -4498,6 +4501,35 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// True when `sessionID` still has a panel on screen, so a burst can be folded into it
+    /// instead of opening a second one. `hermesResponseWindowStates` is the record of that: the
+    /// controller creates a panel for every state it publishes and every teardown path
+    /// (Close, Escape, `windowWillClose`) removes the state before the panel goes.
+    // ponytail: a minimized panel counts as attending. That is deliberate — the count grows on
+    // the bubble, which is the surface Dane chose to leave up. If minimized ever needs to differ,
+    // that answer lives in the controller and needs a reference back, not a wider state array.
+    func isAttending(sessionID: UUID) -> Bool {
+        hermesResponseWindowStates.contains { $0.id == sessionID }
+    }
+
+    /// True while this panel's text composer holds something Dane typed. The draft itself lives in
+    /// `HermesResponseWindowController`; only this bit crosses over, pushed on the
+    /// empty↔non-empty transition. Read it before overwriting a displayed body — replacing the
+    /// message someone is halfway through answering is the one burst update that is never safe.
+    func hasResponseWindowDraft(sessionID: UUID) -> Bool {
+        responseWindowDraftSessionIDs.contains(sessionID)
+    }
+
+    /// Controller → view model. Not `@Published`: nothing renders off this, and republishing on a
+    /// composer edit would re-render every open panel.
+    func setResponseWindowHasDraft(sessionID: UUID, hasDraft: Bool) {
+        if hasDraft {
+            responseWindowDraftSessionIDs.insert(sessionID)
+        } else {
+            responseWindowDraftSessionIDs.remove(sessionID)
+        }
+    }
+
     private func syncHermesResponseWindowTitle(for sessionID: UUID) {
         guard let session = hermesSessions.first(where: { $0.id == sessionID }),
               let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }),
@@ -4513,6 +4545,7 @@ final class DictationViewModel: ObservableObject {
     private func removeHermesResponseWindow(for sessionID: UUID) {
         hermesResponseWindowStates.removeAll { $0.id == sessionID }
         beeperResponseWindowTargets[sessionID] = nil
+        responseWindowDraftSessionIDs.remove(sessionID)
         codexResponseWindowTargets[sessionID] = nil
         if beeperResponseWindowIDForActiveRecording == sessionID {
             beeperResponseWindowIDForActiveRecording = nil
