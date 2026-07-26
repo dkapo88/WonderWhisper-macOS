@@ -3505,12 +3505,27 @@ final class DictationViewModel: ObservableObject {
             return
         }
 
+        let responseWindowIDToDismiss = beeperResponseWindowIDForActiveRecording
+        let replyTarget = responseWindowIDToDismiss.flatMap { beeperResponseWindowTargets[$0] }
+        if let responseWindowIDToDismiss {
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendStarted(
+                hermesResponseWindowStates,
+                sessionID: responseWindowIDToDismiss
+            )
+        }
+
         beeperIsSending = true
         beeperConnectionStatus = "Sending to Beeper..."
         beeperConnectionSucceeded = nil
-        defer { beeperIsSending = false }
-        let responseWindowIDToDismiss = beeperResponseWindowIDForActiveRecording
-        let replyTarget = responseWindowIDToDismiss.flatMap { beeperResponseWindowTargets[$0] }
+        defer {
+            beeperIsSending = false
+            if let responseWindowIDToDismiss {
+                hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendFinished(
+                    hermesResponseWindowStates,
+                    sessionID: responseWindowIDToDismiss
+                )
+            }
+        }
 
         do {
             let clipboardText = await consumeBeeperClipboardContext()

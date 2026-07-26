@@ -206,6 +206,68 @@ struct BeeperResponseFilterTests {
     #expect(released.newer == 0)
   }
 
+  @Test func voiceSendHoldsM2UntilSuccessFreshlyPresentsIt() throws {
+    let responseWindowID = UUID()
+    let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
+    let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
+    var states = [
+      HermesResponseWindowState(
+        id: responseWindowID,
+        title: "Beeper - Sam",
+        text: m1.richDisplayText,
+        isHTML: m1.hasHTMLBody,
+        beeperChatID: m1.chatID
+      ),
+    ]
+
+    // The send is now suspended inside BeeperAPIClient.send. M2 must stay pending instead of
+    // replacing the reply target that the in-flight send captured from M1.
+    states = HermesResponseWindowLifecycle.replySendStarted(
+      states,
+      sessionID: responseWindowID
+    )
+    var pending = BeeperResponseAccumulator(messages: [m2])
+    let suspended = try #require(pending)
+    let counts = DictationViewModel.beeperBurstCounts(
+      earlierCount: states[0].earlierCount,
+      pendingCount: suspended.count,
+      isHoldingBody: states[0].isSendingReply
+    )
+    states = HermesResponseWindowLifecycle.burstCoalesced(
+      states,
+      sessionID: responseWindowID,
+      earlierCount: counts.earlier,
+      newerCount: counts.newer
+    )
+
+    #expect(states[0].text == m1.richDisplayText)
+    #expect(states[0].newerCount == 1)
+    #expect(pending?.latest.id == m2.id)
+
+    // Success takes the held response, dismisses M1, then force-presents M2 as a fresh panel.
+    let taken = try #require(pending)
+    pending = nil
+    states.removeAll { $0.id == responseWindowID }
+    states.append(
+      HermesResponseWindowState(
+        title: "Beeper - Sam",
+        text: taken.latest.richDisplayText,
+        isHTML: taken.latest.hasHTMLBody,
+        isError: false,
+        supportsReply: false,
+        supportsTextReply: true,
+        beeperChatID: taken.latest.chatID,
+        earlierCount: taken.count - 1
+      )
+    )
+
+    #expect(pending == nil)
+    #expect(states.count == 1)
+    #expect(states[0].id != responseWindowID)
+    #expect(states[0].text == m2.richDisplayText)
+    #expect(states[0].beeperChatID == m2.chatID)
+  }
+
   @Test func responseWindowSourceDefaultsToNonBeeperAndCarriesChatID() {
     let generic = HermesResponseWindowState(title: "Hermes", text: "Done")
     let beeper = HermesResponseWindowState(
