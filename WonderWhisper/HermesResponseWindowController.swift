@@ -131,6 +131,27 @@ private final class HermesTextReplyDraft: ObservableObject {
   @Published var text: String = ""
 }
 
+/// The dynamic inputs of one panel's SwiftUI tree. The hosting view is built once per panel
+/// and observes this, so a state publish mutates properties instead of replacing the view
+/// tree — which is what preserves the composer's caret, selection and scroll position.
+///
+/// Exactly four properties, and nothing that already lives inside `state` (notably
+/// `isRecordingReply`) gets a second copy here. `isMinimized` and `isTextReplyVisible` are
+/// derived from `minimizedOrder` / `textReplySessionIDs` on every mutate, never assigned at
+/// a mutation site: those two collections stay the source of truth because `layoutBubbles`
+/// and `isDismissibleResponsePanel` read them.
+@MainActor
+private final class HermesResponsePanelModel: ObservableObject {
+  @Published var state: HermesResponseWindowState
+  @Published var isForeground: Bool = false
+  @Published var isTextReplyVisible: Bool = false
+  @Published var isMinimized: Bool = false
+
+  init(state: HermesResponseWindowState) {
+    self.state = state
+  }
+}
+
 @MainActor
 final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private weak var viewModel: DictationViewModel?
@@ -139,6 +160,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   private var focusedSessionID: UUID?
   private var panelFrontToBackOrder: [UUID] = []
   private var textReplyDrafts: [UUID: HermesTextReplyDraft] = [:]
+  private var panelModels: [UUID: HermesResponsePanelModel] = [:]
   private var textReplySessionIDs: Set<UUID> = []
   private var minimizedOrder: [UUID] = []
   private var preMinimizeFrames: [UUID: NSRect] = [:]
@@ -255,6 +277,9 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       return
     }
     panels[sessionID] = nil
+    // This path clears `panels` before `render(_ states:)` runs, so its cleanup loop — which
+    // iterates `panels.keys` — never sees this session again. Drop the model here or it leaks.
+    panelModels[sessionID] = nil
     panelFrontToBackOrder.removeAll { $0 == sessionID }
     viewModel?.dismissHermesResponse(sessionID: sessionID)
   }
@@ -295,6 +320,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       panels[sessionID]?.orderOut(nil)
       panels[sessionID]?.delegate = nil
       panels[sessionID] = nil
+      panelModels[sessionID] = nil
       textReplyDrafts[sessionID] = nil
       textReplySessionIDs.remove(sessionID)
       minimizedOrder.removeAll { $0 == sessionID }
@@ -304,7 +330,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
 
     for state in states {
       let isNewPanel = panels[state.id] == nil
-      let panel = panels[state.id] ?? makePanel(sessionID: state.id)
+      let panel = panels[state.id] ?? makePanel(sessionID: state.id, state: state)
       let shouldPresent = isNewPanel || !panel.isVisible
       render(
         state,
@@ -341,38 +367,23 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     }
   }
 
+  /// Pushes one panel's dynamic inputs into its model. The hosting view was built once in
+  /// `makePanel`, so this mutates — it never reassigns `contentView`. Every path that used to
+  /// rebuild a panel calls this instead.
   private func render(_ state: HermesResponseWindowState,
                       in panel: HermesResponsePanel,
                       isForeground: Bool) {
+    // AppKit, not SwiftUI: `NSWindow.title` is not observable from the view, so it stays here.
+    // `titleVisibility` is `.hidden`, so a stale title is invisible in the panel and shows up
+    // only in Mission Control, the window list and VoiceOver.
     panel.title = state.title
-    guard !minimizedOrder.contains(state.id) else {
-      panel.contentView = NSHostingView(
-        rootView: HermesResponseBubbleView(
-          state: state,
-          onRestore: { [weak self] in self?.restorePanel(sessionID: state.id) }
-        )
-      )
-      return
-    }
-    panel.contentView = NSHostingView(
-      rootView: HermesResponsePanelView(
-        state: state,
-        isForeground: isForeground,
-        textReplyDraft: textReplyDraft(for: state.id),
-        isTextReplyVisible: textReplySessionIDs.contains(state.id),
-        onCopyRaw: { HermesResponseClipboard.copyRaw(state.text) },
-        onCopyFormatted: { HermesResponseClipboard.copyFormatted(state.text, isHTML: state.isHTML) },
-        onReply: { [weak self] in
-          self?.viewModel?.startResponseWindowVoiceReply(to: state.id)
-        },
-        onToggleTextReply: { [weak self] in self?.toggleTextReply(for: state.id) },
-        onSendTextReply: { [weak self] text in
-          self?.sendTextReply(text, sessionID: state.id)
-        },
-        onMinimize: { [weak self] in self?.minimizePanel(sessionID: state.id) },
-        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: state.id) }
-      )
-    )
+    guard let model = panelModels[state.id] else { return }
+    model.state = state
+    model.isForeground = isForeground
+    // Derived, never assigned at the mutation site: `minimizedOrder` and `textReplySessionIDs`
+    // remain the source of truth, so a new write site to either cannot desync the view.
+    model.isMinimized = minimizedOrder.contains(state.id)
+    model.isTextReplyVisible = textReplySessionIDs.contains(state.id)
   }
 
   private func minimizePanel(sessionID: UUID) {
@@ -440,19 +451,30 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     } else {
       textReplySessionIDs.insert(sessionID)
     }
-    render(latestStates)
+    // Only this panel's model changed. `render(latestStates)` used to rebuild every panel's
+    // view tree here, which is what threw the caret out of every *other* open composer.
+    guard let panel = panels[sessionID],
+          let state = latestStates.first(where: { $0.id == sessionID }) else { return }
+    render(
+      state,
+      in: panel,
+      isForeground: focusedSessionID == sessionID || panel.isKeyWindow
+    )
   }
 
   private func sendTextReply(_ text: String, sessionID: UUID) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    // Clear the text, keep the object. The hosting view binds to this draft once, so dropping
+    // the dict entry here would hand the next `textReplyDraft(for:)` call a fresh object the
+    // view never sees, and this clear would silently stop working. Lifetime is already handled
+    // by the cleanup loop in `render(_ states:)`.
     textReplyDrafts[sessionID]?.text = ""
-    textReplyDrafts[sessionID] = nil
     textReplySessionIDs.remove(sessionID)
     viewModel?.sendResponseWindowTextReply(trimmed, sessionID: sessionID)
   }
 
-  private func makePanel(sessionID: UUID) -> HermesResponsePanel {
+  private func makePanel(sessionID: UUID, state: HermesResponseWindowState) -> HermesResponsePanel {
     let panel = HermesResponsePanel(
       contentRect: NSRect(origin: .zero, size: HermesResponseWindowLayout.defaultContentSize),
       styleMask: HermesResponseWindowLayout.styleMask,
@@ -488,6 +510,33 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     panel.isMovableByWindowBackground = true
     panel.contentMinSize = HermesResponseWindowLayout.minimumContentSize
     panel.delegate = self
+
+    // The one place a hosting view is created for this panel. Everything dynamic afterwards
+    // goes through `model`; the action closures capture it rather than capturing `state` by
+    // value, or they would copy the first body and never see an update.
+    let model = HermesResponsePanelModel(state: state)
+    panelModels[sessionID] = model
+    panel.contentView = NSHostingView(
+      rootView: HermesResponsePanelHost(
+        model: model,
+        textReplyDraft: textReplyDraft(for: sessionID),
+        onCopyRaw: { [model] in HermesResponseClipboard.copyRaw(model.state.text) },
+        onCopyFormatted: { [model] in
+          HermesResponseClipboard.copyFormatted(model.state.text, isHTML: model.state.isHTML)
+        },
+        onReply: { [weak self] in
+          self?.viewModel?.startResponseWindowVoiceReply(to: sessionID)
+        },
+        onToggleTextReply: { [weak self] in self?.toggleTextReply(for: sessionID) },
+        onSendTextReply: { [weak self] text in
+          self?.sendTextReply(text, sessionID: sessionID)
+        },
+        onMinimize: { [weak self] in self?.minimizePanel(sessionID: sessionID) },
+        onRestore: { [weak self] in self?.restorePanel(sessionID: sessionID) },
+        onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: sessionID) }
+      )
+    )
+
     hideTrafficLights(in: panel)
     return panel
   }
@@ -654,6 +703,47 @@ private final class HermesEscapeEventTap {
       CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
     }
     runLoopSource = nil
+  }
+}
+
+/// The single stable root of a panel's view tree. Observes the model so a state change is a
+/// SwiftUI update rather than a new `NSHostingView`, and picks the minimized or expanded body
+/// from `model.isMinimized` — the two hosting views this replaces.
+///
+/// Window sizing and bubble layout are not here: the controller still drives `contentMinSize`,
+/// `setContentSize` and `layoutBubbles()` around this flag.
+private struct HermesResponsePanelHost: View {
+  @ObservedObject var model: HermesResponsePanelModel
+  // Passed through, not observed: `HermesResponsePanelView` observes it. A second subscription
+  // here would re-evaluate this whole body on every keystroke for no gain.
+  var textReplyDraft: HermesTextReplyDraft
+  var onCopyRaw: () -> Void
+  var onCopyFormatted: () -> Void
+  var onReply: () -> Void
+  var onToggleTextReply: () -> Void
+  var onSendTextReply: (String) -> Void
+  var onMinimize: () -> Void
+  var onRestore: () -> Void
+  var onClose: () -> Void
+
+  var body: some View {
+    if model.isMinimized {
+      HermesResponseBubbleView(state: model.state, onRestore: onRestore)
+    } else {
+      HermesResponsePanelView(
+        state: model.state,
+        isForeground: model.isForeground,
+        textReplyDraft: textReplyDraft,
+        isTextReplyVisible: model.isTextReplyVisible,
+        onCopyRaw: onCopyRaw,
+        onCopyFormatted: onCopyFormatted,
+        onReply: onReply,
+        onToggleTextReply: onToggleTextReply,
+        onSendTextReply: onSendTextReply,
+        onMinimize: onMinimize,
+        onClose: onClose
+      )
+    }
   }
 }
 
@@ -965,3 +1055,4 @@ private extension NSEvent {
     keyCode == 36 || keyCode == 76 || charactersIgnoringModifiers == "\r"
   }
 }
+
