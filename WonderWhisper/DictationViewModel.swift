@@ -2346,6 +2346,9 @@ final class DictationViewModel: ObservableObject {
     }
 
     func dismissHermesResponse(sessionID: UUID) {
+        if let target = beeperResponseWindowTargets[sessionID] {
+            _ = takeBeeperResponses(chatID: target.chatID)
+        }
         removeHermesResponseWindow(for: sessionID)
     }
 
@@ -2696,6 +2699,23 @@ final class DictationViewModel: ObservableObject {
         )
     }
 
+    func snoozeBeeperResponse(
+        sessionID: UUID,
+        duration: BeeperSnoozeDuration,
+        now: Date = Date()
+    ) {
+        guard let target = beeperResponseWindowTargets[sessionID] else { return }
+        snoozeBeeperChat(chatID: target.chatID, duration: duration, now: now)
+        dismissBeeperResponseWindow(sessionID)
+    }
+
+    func resumeBeeperChat(chatID rawChatID: String) {
+        let chatID = rawChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !chatID.isEmpty else { return }
+        setBeeperSnoozedUntil(nil, chatID: chatID)
+        flushBeeperResponses(chatID: chatID)
+    }
+
     private func setBeeperSnoozedUntil(_ deadline: Date?, chatID: String) {
         var chats = beeperChats
         var changed = false
@@ -2723,6 +2743,26 @@ final class DictationViewModel: ObservableObject {
 
     private func takeBeeperResponses(chatID: String) -> BeeperResponseAccumulator? {
         beeperResponseAccumulators.removeValue(forKey: chatID)
+    }
+
+    private func beeperSnoozedUntil(chatID: String) -> Date? {
+        beeperChats.first {
+            $0.chatID.trimmingCharacters(in: .whitespacesAndNewlines) == chatID
+        }?.snoozedUntil
+    }
+
+    private func expireBeeperSnoozeIfNeeded(chatID: String, now: Date = Date()) {
+        guard let deadline = beeperSnoozedUntil(chatID: chatID), deadline <= now else { return }
+        setBeeperSnoozedUntil(nil, chatID: chatID)
+        flushBeeperResponses(chatID: chatID)
+    }
+
+    private func flushBeeperResponses(chatID: String) {
+        guard let accumulator = takeBeeperResponses(chatID: chatID) else { return }
+        AppLog.dictation.log(
+            "Beeper response accumulator flushed chat=\(chatID, privacy: .public) count=\(accumulator.count, privacy: .public)"
+        )
+        showBeeperResponse(accumulator.latest)
     }
 
     private static let beeperChatsKey = "beeper.chats"
@@ -3451,9 +3491,12 @@ final class DictationViewModel: ObservableObject {
         beeperResponseMonitorTasks.forEach { $0.cancel() }
         beeperResponseMonitorTasks = []
         beeperIsAwaitingResponse = false
-        guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
-
         let chatIDs = beeperChatIDList
+        let monitoredChatIDs = Set(chatIDs)
+        beeperResponseAccumulators = beeperResponseAccumulators.filter {
+            monitoredChatIDs.contains($0.key)
+        }
+        guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
         guard !chatIDs.isEmpty else { return }
 
         beeperResponseMonitorTasks = chatIDs.map { chatID in
@@ -3490,6 +3533,8 @@ final class DictationViewModel: ObservableObject {
         }
 
         while !Task.isCancelled {
+            // Expire before the GET so a network failure cannot keep the chat quiet.
+            expireBeeperSnoozeIfNeeded(chatID: settings.normalizedChatID)
             let cycleStartedAt = Date()
             let pollResult = await pollConfiguredBeeperChatOnce(
                 settings: settings,
@@ -3533,7 +3578,9 @@ final class DictationViewModel: ObservableObject {
 
             page.items.forEach { nextSeenMessageIDs.insert($0.id) }
 
-            showBeeperResponses(candidates)
+            // The request may have crossed the deadline; flush older held messages first.
+            expireBeeperSnoozeIfNeeded(chatID: settings.normalizedChatID)
+            showBeeperResponses(candidates, chatID: settings.normalizedChatID)
         } catch {
             AppLog.dictation.error(
                 "Beeper ambient poll failed: \(error.localizedDescription, privacy: .public)"
@@ -3600,12 +3647,19 @@ final class DictationViewModel: ObservableObject {
     // ponytail: OPEN BUG — shows only the newest candidate; the rest of the burst is still
     // dropped, now logged so the loss is visible instead of silent. This takes the whole
     // array so coalescing can land here; the loss is not fixed until it consumes all of it.
-    private func showBeeperResponses(_ candidates: [BeeperMessage]) {
+    private func showBeeperResponses(_ candidates: [BeeperMessage], chatID: String) {
         let surviving = Self.unfilteredBeeperCandidates(
             candidates,
             keywords: beeperResponseFilterKeywords
         )
         guard let newest = surviving.last else { return }
+        if let deadline = beeperSnoozedUntil(chatID: chatID), deadline > Date() {
+            appendBeeperResponses(surviving, chatID: chatID)
+            AppLog.dictation.log(
+                "Beeper responses suppressed by snooze chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
+            )
+            return
+        }
         if surviving.count > 1 {
             AppLog.dictation.log(
                 "Beeper ambient monitor dropped \(surviving.count - 1, privacy: .public) other burst message(s) pending coalescing"
