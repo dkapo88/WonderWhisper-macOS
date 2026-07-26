@@ -184,4 +184,98 @@ struct HermesResponseWindowLifecycleTests {
   @Test func aPanelWithNoReplyControlsHasNoPrimary() {
     #expect(HermesPanelPrimaryAction.resolve(panel(voice: false, text: false)) == .none)
   }
+
+  // MARK: - Text reply send lifecycle (§4A)
+
+  private func replyState(_ suffix: String) -> HermesResponseWindowState {
+    HermesResponseWindowState(
+      id: UUID(uuidString: "00000000-0000-0000-0000-0000000007\(suffix)")!,
+      title: "Sam",
+      text: "<p>Are we still on for 6?</p>",
+      isHTML: true
+    )
+  }
+
+  @Test func startingASendCommitsTheComposerAndClearsThePreviousFailure() {
+    let target = replyState("10")
+    let other = replyState("11")
+    var failed = target
+    failed.replyFailure = HermesReplyFailureCopy.beeperSendFailed
+
+    let started = HermesResponseWindowLifecycle.replySendStarted(
+      [failed, other],
+      sessionID: target.id
+    )
+
+    // Both in one write: the button must read "Send Text" while this attempt is in flight, not
+    // "Retry" left over from the last one.
+    #expect(started[0].isSendingReply)
+    #expect(started[0].replyFailure == nil)
+    #expect(started[1] == other)
+  }
+
+  @Test func aFailedSendReportsTheCauseAndAlwaysReleasesTheComposer() {
+    let target = replyState("12")
+    let other = replyState("13")
+    var sending = target
+    sending.isSendingReply = true
+
+    let failed = HermesResponseWindowLifecycle.replySendFailed(
+      [sending, other],
+      sessionID: target.id,
+      failure: HermesReplyFailureCopy.beeperSendFailed
+    )
+
+    #expect(failed[0].replyFailure == HermesReplyFailureCopy.beeperSendFailed)
+    // The panel that just failed is the one Dane has to retry from, so the lock must not survive.
+    #expect(!failed[0].isSendingReply)
+    #expect(!failed[0].isError)
+    #expect(failed[1] == other)
+  }
+
+  @Test func finishingASendReleasesTheComposerWhateverTheOutcome() {
+    let target = replyState("14")
+    var sending = target
+    sending.isSendingReply = true
+
+    #expect(
+      HermesResponseWindowLifecycle.replySendFinished([sending], sessionID: target.id) == [target]
+    )
+  }
+
+  @Test func aRepresentedSnapshotCarriesTheTextAndIsNeverStillSending() {
+    let target = replyState("15")
+    var sending = target
+    sending.isSendingReply = true
+
+    let represented = HermesResponseWindowLifecycle.replyRepresented(
+      sending,
+      failure: HermesReplyFailureCopy.beeperSendFailed,
+      preservedText: "Yes, 6 works"
+    )
+
+    // The snapshot was taken after the flag was set. Re-presenting it as-is is a panel locked out
+    // of the retry it exists to offer.
+    #expect(!represented.isSendingReply)
+    #expect(represented.preservedReplyText == "Yes, 6 works")
+    #expect(represented.replyFailure == HermesReplyFailureCopy.beeperSendFailed)
+    // The inbound message is what Dane is replying to; the failure must not overwrite it.
+    #expect(represented.text == target.text)
+    #expect(represented.isHTML)
+    #expect(!represented.isError)
+  }
+
+  @Test func cancelClearsOnlyTheFailureLine() {
+    let target = replyState("16")
+    let other = replyState("17")
+    var failed = target
+    failed.replyFailure = HermesReplyFailureCopy.hermesDisabled
+
+    let cleared = HermesResponseWindowLifecycle.replyFailureCleared(
+      [failed, other],
+      sessionID: target.id
+    )
+
+    #expect(cleared == [target, other])
+  }
 }

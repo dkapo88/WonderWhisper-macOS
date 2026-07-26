@@ -9,12 +9,24 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   /// When true, `text` is an HTML fragment (e.g. a Beeper reply) and is rendered
   /// natively rather than as markdown.
   var isHTML: Bool
+  /// `isError` means *this panel* failed. A failed outbound reply is a different fact — the panel
+  /// and the message on it are fine — so it stays `false` throughout a reply failure. Two facts,
+  /// two flags: `isError` gates the red header glyph and disables both reply controls, which
+  /// would announce the failure and remove the only control that gets the text back.
   var isError: Bool
   var isRecordingReply: Bool
   var supportsReply: Bool
   var supportsVoiceReply: Bool
   var supportsTextReply: Bool
   var beeperChatID: String?
+  /// nil = nothing failed. Fixed copy naming the cause, never an interpolated error description.
+  var replyFailure: String?
+  /// Sibling of `isRecordingReply`: transient, per window. Only ever true on a Beeper panel,
+  /// because Beeper is the one branch of `sendResponseWindowTextReply` that spawns its Task with
+  /// the panel still alive.
+  var isSendingReply: Bool
+  /// Set only on a re-presented state, and seeds a fresh draft once at panel creation.
+  var preservedReplyText: String?
 
   init(id: UUID = UUID(),
        title: String,
@@ -25,7 +37,10 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        supportsReply: Bool = true,
        supportsVoiceReply: Bool? = nil,
        supportsTextReply: Bool? = nil,
-       beeperChatID: String? = nil) {
+       beeperChatID: String? = nil,
+       replyFailure: String? = nil,
+       isSendingReply: Bool = false,
+       preservedReplyText: String? = nil) {
     self.id = id
     self.title = title
     self.text = text
@@ -36,7 +51,22 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.supportsVoiceReply = supportsVoiceReply ?? supportsReply
     self.supportsTextReply = supportsTextReply ?? supportsReply
     self.beeperChatID = beeperChatID
+    self.replyFailure = replyFailure
+    self.isSendingReply = isSendingReply
+    self.preservedReplyText = preservedReplyText
   }
+}
+
+/// Fixed copy per failure cause. A Settings cause is something Dane can act on and a transport
+/// cause is not; telling him which is the difference between a fix and a shrug. Every string
+/// stays under ~50 characters — the status row has roughly 264pt left once Cancel and Retry take
+/// their share of a minimum-width panel, and `error.localizedDescription` blows that while
+/// telling him nothing.
+enum HermesReplyFailureCopy {
+  static let beeperSendFailed = "Couldn't send to Beeper. Try again."
+  static let beeperDisabled = "Beeper is off. Turn it on in Settings to send."
+  static let hermesDisabled = "Hermes is off. Turn it on in Settings to send."
+  static let hermesSessionNotReady = "This Hermes session isn't ready yet. Try again."
 }
 
 enum HermesResponseWindowLifecycle {
@@ -76,6 +106,85 @@ enum HermesResponseWindowLifecycle {
       var cancelledState = state
       cancelledState.isRecordingReply = false
       return cancelledState
+    }
+  }
+
+  /// A send attempt starts: commit the composer and clear any previous failure in the same write,
+  /// so the button reads `Send Text` rather than `Retry` while this attempt is in flight.
+  static func replySendStarted(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var sendingState = state
+      sendingState.isSendingReply = true
+      sendingState.replyFailure = nil
+      return sendingState
+    }
+  }
+
+  /// Releases the composer whatever the outcome, mirroring the `beeperIsSending` defer it sits
+  /// beside. Today the success path has already torn the state down and the failure path clears the
+  /// flag itself, so this is belt-and-braces — but a leaked `true` is a panel permanently locked out
+  /// of retrying with Dane's words still in it, which is too expensive to leave to the next edit.
+  static func replySendFinished(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var finishedState = state
+      finishedState.isSendingReply = false
+      return finishedState
+    }
+  }
+
+  /// Both writes together, on every failure path. `isSendingReply` must go false here even for the
+  /// synchronous guards that never set it: a state carrying it into a re-presentation would hand
+  /// Dane a panel locked out of the retry it exists to offer.
+  static func replySendFailed(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID,
+    failure: String
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var failedState = state
+      failedState.replyFailure = failure
+      failedState.isSendingReply = false
+      return failedState
+    }
+  }
+
+  /// Shapes a snapshot for re-presentation after Dane dismissed the panel mid-flight. The forced
+  /// `isSendingReply = false` is the point: the snapshot was taken after the flag was set, and
+  /// re-presenting it as-is hands back a panel whose editor, Send and Cancel are disabled forever —
+  /// the recovery gesture arriving dead.
+  static func replyRepresented(
+    _ snapshot: HermesResponseWindowState,
+    failure: String,
+    preservedText: String
+  ) -> HermesResponseWindowState {
+    var represented = snapshot
+    represented.replyFailure = failure
+    represented.isSendingReply = false
+    represented.preservedReplyText = preservedText
+    return represented
+  }
+
+  /// Cancel discards the draft, so the red line describing it has to go too — otherwise it
+  /// strands, waiting for Dane to reopen Text Reply onto a failure about text that is gone.
+  /// Hide Text deliberately does not call this: it hides the composer and the line with it.
+  static func replyFailureCleared(
+    _ states: [HermesResponseWindowState],
+    sessionID: UUID
+  ) -> [HermesResponseWindowState] {
+    states.map { state in
+      guard state.id == sessionID else { return state }
+      var clearedState = state
+      clearedState.replyFailure = nil
+      return clearedState
     }
   }
 }
@@ -317,6 +426,17 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   }
 
   private func render(_ states: [HermesResponseWindowState]) {
+    // A failed reply presents itself: hidden composer → reveal, minimized panel → restore, closed
+    // panel → re-presented by the per-state loop below. The three cases are disjoint, so no
+    // branching is needed — `restorePanel`'s own guard returns immediately for a panel that is not
+    // minimized. This reads the *previous* publish, so it must stay above `latestStates = states`;
+    // below it the comparison is always equal, and then Hide Text and Minimize would both stop
+    // working because a steady-state reveal re-opens the composer on every publish.
+    for state in states where state.replyFailure != nil {
+      guard latestStates.first(where: { $0.id == state.id })?.replyFailure == nil else { continue }
+      textReplySessionIDs.insert(state.id)
+      restorePanel(sessionID: state.id)
+    }
     latestStates = states
     let activeIDs = Set(states.map(\.id))
     for sessionID in Array(panels.keys) where !activeIDs.contains(sessionID) {
@@ -439,11 +559,19 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     }
   }
 
-  private func textReplyDraft(for sessionID: UUID) -> HermesTextReplyDraft {
+  /// `seed` fires on creation only, and creation is once per panel — the hosting view is handed
+  /// this object in `makePanel` and the render path never asks again. So in practice it applies on
+  /// exactly one path: a state that was removed and re-appended by a failed send. Do not add a
+  /// render-time seed for symmetry; a creation-only read from a stale state is how preserved text
+  /// gets silently dropped.
+  private func textReplyDraft(for sessionID: UUID, seed: String? = nil) -> HermesTextReplyDraft {
     if let draft = textReplyDrafts[sessionID] {
       return draft
     }
     let draft = HermesTextReplyDraft()
+    if let seed {
+      draft.text = seed
+    }
     textReplyDrafts[sessionID] = draft
     return draft
   }
@@ -454,8 +582,24 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     } else {
       textReplySessionIDs.insert(sessionID)
     }
-    // Only this panel's model changed. `render(latestStates)` used to rebuild every panel's
-    // view tree here, which is what threw the caret out of every *other* open composer.
+    renderPanel(sessionID: sessionID)
+  }
+
+  /// Cancel discards the draft, so the failure line describing that draft goes with it — otherwise
+  /// it strands, waiting for Dane to reopen Text Reply onto a red line about text that no longer
+  /// exists. Hide Text deliberately does not come through here: it hides the composer and the line
+  /// together and both come back. `replyFailure` is VM state and the VM cannot call back into this
+  /// controller, so the clear is a call outwards whose publish re-renders this panel again.
+  private func cancelTextReply(for sessionID: UUID) {
+    textReplyDrafts[sessionID]?.text = ""
+    textReplySessionIDs.remove(sessionID)
+    renderPanel(sessionID: sessionID)
+    viewModel?.clearResponseWindowReplyFailure(sessionID: sessionID)
+  }
+
+  /// Only this panel's model changed. `render(latestStates)` used to rebuild every panel's
+  /// view tree here, which is what threw the caret out of every *other* open composer.
+  private func renderPanel(sessionID: UUID) {
     guard let panel = panels[sessionID],
           let state = latestStates.first(where: { $0.id == sessionID }) else { return }
     render(
@@ -465,15 +609,21 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     )
   }
 
+  /// The composer stays open through the send. Clearing the draft and closing the composer here is
+  /// what made a failed reply look identical to a successful one — an open, empty composer, which
+  /// is precisely what a clean send leaves behind. Nothing needs to close it on success: every
+  /// success path tears the panel down and the cleanup loop in `render(_ states:)` drops the draft.
+  ///
+  /// ponytail: that invariant is load-bearing and nothing enforces it. It holds by two facts.
+  /// (1) `deleteHermesSession` removes the panel *before* dropping the session, so a live Hermes
+  /// panel always has its session and the teardown inside `sendHermesTextReply` cannot target a
+  /// remapped id. (2) `beeperResponseWindowTargets` is written and cleared only alongside the
+  /// panel, so a Beeper panel can never fall through to the Hermes branch. Add a session-removal
+  /// path that does not remove the panel first, or clear that dict outside teardown, and sent text
+  /// reappears in a reopened composer looking unsent: no crash, no failing test.
   private func sendTextReply(_ text: String, sessionID: UUID) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
-    // Clear the text, keep the object. The hosting view binds to this draft once, so dropping
-    // the dict entry here would hand the next `textReplyDraft(for:)` call a fresh object the
-    // view never sees, and this clear would silently stop working. Lifetime is already handled
-    // by the cleanup loop in `render(_ states:)`.
-    textReplyDrafts[sessionID]?.text = ""
-    textReplySessionIDs.remove(sessionID)
     viewModel?.sendResponseWindowTextReply(trimmed, sessionID: sessionID)
   }
 
@@ -522,7 +672,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     panel.contentView = NSHostingView(
       rootView: HermesResponsePanelHost(
         model: model,
-        textReplyDraft: textReplyDraft(for: sessionID),
+        textReplyDraft: textReplyDraft(for: sessionID, seed: state.preservedReplyText),
         onCopyRaw: { [model] in HermesResponseClipboard.copyRaw(model.state.text) },
         onCopyFormatted: { [model] in
           HermesResponseClipboard.copyFormatted(model.state.text, isHTML: model.state.isHTML)
@@ -531,6 +681,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
           self?.viewModel?.startResponseWindowVoiceReply(to: sessionID)
         },
         onToggleTextReply: { [weak self] in self?.toggleTextReply(for: sessionID) },
+        onCancelTextReply: { [weak self] in self?.cancelTextReply(for: sessionID) },
         onSendTextReply: { [weak self] text in
           self?.sendTextReply(text, sessionID: sessionID)
         },
@@ -724,6 +875,7 @@ private struct HermesResponsePanelHost: View {
   var onCopyFormatted: () -> Void
   var onReply: () -> Void
   var onToggleTextReply: () -> Void
+  var onCancelTextReply: () -> Void
   var onSendTextReply: (String) -> Void
   var onMinimize: () -> Void
   var onRestore: () -> Void
@@ -742,6 +894,7 @@ private struct HermesResponsePanelHost: View {
         onCopyFormatted: onCopyFormatted,
         onReply: onReply,
         onToggleTextReply: onToggleTextReply,
+        onCancelTextReply: onCancelTextReply,
         onSendTextReply: onSendTextReply,
         onMinimize: onMinimize,
         onClose: onClose
@@ -807,6 +960,7 @@ private struct HermesResponsePanelView: View {
   var onCopyFormatted: () -> Void
   var onReply: () -> Void
   var onToggleTextReply: () -> Void
+  var onCancelTextReply: () -> Void
   var onSendTextReply: (String) -> Void
   var onMinimize: () -> Void
   var onClose: () -> Void
@@ -973,6 +1127,11 @@ private struct HermesResponsePanelView: View {
       HermesReplyTextView(
         text: $textReplyDraft.text,
         shouldFocus: true,
+        // The disabled composer *is* the in-flight indicator, and it is a data fix rather than
+        // latency polish: text typed after Send is dropped when a successful send tears the panel
+        // down. `.disabled()` cannot do this — it does not reach inside an NSViewRepresentable —
+        // so the flag is a parameter driving both `isEditable` and the Return-to-send hook.
+        isEnabled: !state.isSendingReply,
         onSubmit: {
           onSendTextReply(textReplyDraft.text)
         }
@@ -989,24 +1148,45 @@ private struct HermesResponsePanelView: View {
         )
 
       HStack(spacing: 8) {
-        Text("Type a reply to this Hermes session.")
-          .font(.caption)
-          .foregroundColor(.secondary)
+        // One status slot, three states. Red is correct here and nowhere else in this panel: the
+        // line names the cause, the button below names the gesture. The idle copy replaces
+        // "Type a reply to this Hermes session.", which named Hermes on a message from Sam and on
+        // a Codex panel, and teaches the shortcut the composer actually implements.
+        if let failure = state.replyFailure {
+          Label(failure, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.red)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if state.isSendingReply {
+          // ponytail: static copy, no spinner. Add one only if real send latency makes it feel dead.
+          Text("Sending…")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Return to send · ⇧Return for a new line.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         Spacer()
-        Button {
-          textReplyDraft.text = ""
-          onToggleTextReply()
-        } label: {
+        Button(action: onCancelTextReply) {
           Label("Cancel", systemImage: "xmark.circle")
         }
         .buttonStyle(.borderless)
+        .disabled(state.isSendingReply)
 
         Button {
           onSendTextReply(textReplyDraft.text)
         } label: {
-          Label("Send Text", systemImage: "paperplane.fill")
+          Label(
+            state.replyFailure == nil ? "Send Text" : "Retry",
+            systemImage: state.replyFailure == nil ? "paperplane.fill" : "arrow.clockwise"
+          )
         }
-        .disabled(textReplyDraft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(
+          state.isSendingReply
+            || textReplyDraft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
       }
     }
     .padding(10)
@@ -1043,6 +1223,10 @@ private struct HermesResponseBubbleView: View {
 private struct HermesReplyTextView: NSViewRepresentable {
   @Binding var text: String
   var shouldFocus: Bool
+  /// Drives two facts from one parameter, because a disabled *button* does not close the
+  /// Return-to-send path: `ReplyNSTextView.keyDown` calls `onSubmit` directly. Applied in
+  /// `makeNSView` as well as `updateNSView` — failure re-presentation builds a fresh panel.
+  var isEnabled: Bool
   var onSubmit: () -> Void
 
   func makeCoordinator() -> Coordinator {
@@ -1057,14 +1241,14 @@ private struct HermesReplyTextView: NSViewRepresentable {
 
     let textView = ReplyNSTextView()
     textView.delegate = context.coordinator
-    textView.onSubmit = onSubmit
+    textView.onSubmit = isEnabled ? onSubmit : nil
     textView.string = text
     textView.font = .systemFont(ofSize: NSFont.systemFontSize)
     textView.textColor = .labelColor
     textView.backgroundColor = .clear
     textView.drawsBackground = false
     textView.isRichText = false
-    textView.isEditable = true
+    textView.isEditable = isEnabled
     textView.isSelectable = true
     textView.allowsUndo = true
     textView.isVerticallyResizable = true
@@ -1079,7 +1263,8 @@ private struct HermesReplyTextView: NSViewRepresentable {
   func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let textView = scrollView.documentView as? ReplyNSTextView else { return }
     context.coordinator.text = $text
-    textView.onSubmit = onSubmit
+    textView.isEditable = isEnabled
+    textView.onSubmit = isEnabled ? onSubmit : nil
     if textView.string != text {
       textView.string = text
     }

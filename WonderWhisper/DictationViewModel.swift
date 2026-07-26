@@ -2286,14 +2286,22 @@ final class DictationViewModel: ObservableObject {
                              dismissResponseWindow: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // Both guards report against the *response-window* id, which is `sessionID` before
+        // `ensureHermesSessionID` remaps it. Neither has reached the teardown below, so the panel
+        // is still on screen and the failure lands in the slot Dane is already looking at.
         guard hermesAgentEnabled else {
             settingsNotice = "Enable Hermes agent before sending a text reply."
+            reportHermesReplyFailure(HermesReplyFailureCopy.hermesDisabled, sessionID: sessionID)
             return
         }
         let targetSessionID = ensureHermesSessionID(sessionID)
         guard let targetSession = hermesSessions.first(where: { $0.id == targetSessionID }),
               canUseHermesTextReply(for: targetSession) else {
             settingsNotice = "Hermes session is not ready for a text reply."
+            reportHermesReplyFailure(
+                HermesReplyFailureCopy.hermesSessionNotReady,
+                sessionID: sessionID
+            )
             return
         }
         if dismissResponseWindow {
@@ -2305,9 +2313,29 @@ final class DictationViewModel: ObservableObject {
     }
 
     func sendResponseWindowTextReply(_ text: String, sessionID: UUID) {
+        // ponytail: a response-window state and its Beeper reply target are created and destroyed
+        // together, and that pairing is the only reason branching on the target alone is safe.
+        // Branch on the target and guard the snapshot *inside* — never fold both into one
+        // condition. A missing snapshot would make the condition false, fall through to the Hermes
+        // branch, and send Dane's private reply to Sam into an LLM as a prompt. The snapshot is
+        // display context; the target is the address. Losing the former is not a reason to change
+        // transport.
         if let target = beeperResponseWindowTargets[sessionID] {
+            guard let snapshot = hermesResponseWindowStates.first(where: { $0.id == sessionID })
+            else {
+                // Log first: the assertion traps the process in debug, so a line after it never
+                // runs there, and it is compiled out of release — leaving the drop untraceable.
+                AppLog.dictation.error("Beeper target with no response-window state — reply dropped")
+                assertionFailure("Beeper target with no response-window state — pairing invariant broken")
+                return
+            }
             Task {
-                await submitBeeperTextReply(text, responseWindowID: sessionID, target: target)
+                await submitBeeperTextReply(
+                    text,
+                    responseWindowID: sessionID,
+                    target: target,
+                    snapshot: snapshot
+                )
             }
             return
         }
@@ -3425,20 +3453,44 @@ final class DictationViewModel: ObservableObject {
 
     private func submitBeeperTextReply(_ text: String,
                                        responseWindowID: UUID,
-                                       target: BeeperReplyTarget) async {
+                                       target: BeeperReplyTarget,
+                                       snapshot: HermesResponseWindowState) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard beeperEnabled else {
             beeperConnectionStatus = "Enable Beeper before sending a text reply."
             beeperConnectionSucceeded = false
             settingsNotice = beeperConnectionStatus
+            reportBeeperReplyFailure(
+                HermesReplyFailureCopy.beeperDisabled,
+                responseWindowID: responseWindowID,
+                target: target,
+                snapshot: snapshot,
+                preservedText: trimmed
+            )
             return
         }
+        // Request guard. Read and set in the same synchronous run before the first `await`: both
+        // this and the caller are @MainActor, so two queued Tasks cannot interleave and the second
+        // sees `true`. Not `beeperIsSending` — that one is app-global, so with two concurrent sends
+        // the first `defer` clears it while the second is still in flight.
+        guard hermesResponseWindowStates.first(where: { $0.id == responseWindowID })?
+            .isSendingReply != true else { return }
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendStarted(
+            hermesResponseWindowStates,
+            sessionID: responseWindowID
+        )
 
         beeperIsSending = true
         beeperConnectionStatus = "Sending to Beeper..."
         beeperConnectionSucceeded = nil
-        defer { beeperIsSending = false }
+        defer {
+            beeperIsSending = false
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendFinished(
+                hermesResponseWindowStates,
+                sessionID: responseWindowID
+            )
+        }
 
         do {
             let settings = currentBeeperSettings(chatID: target.chatID)
@@ -3484,7 +3536,70 @@ final class DictationViewModel: ObservableObject {
             beeperConnectionStatus = "Beeper text reply failed: \(error.localizedDescription)"
             beeperConnectionSucceeded = false
             settingsNotice = beeperConnectionStatus
+            reportBeeperReplyFailure(
+                HermesReplyFailureCopy.beeperSendFailed,
+                responseWindowID: responseWindowID,
+                target: target,
+                snapshot: snapshot,
+                preservedText: trimmed
+            )
         }
+    }
+
+    /// Two paths, one write. The panel usually survives the send, so the common path mutates in
+    /// place. If Dane dismissed it mid-flight the state is gone, and the snapshot is the only thing
+    /// that can rebuild it — `BeeperReplyTarget` is two IDs, with no title, body or `isHTML`.
+    ///
+    /// Restoring the target is not bookkeeping. Without it, Retry finds no Beeper target, no Codex
+    /// target, and falls through to `sendHermesTextReply`, which creates a fresh Hermes session and
+    /// sends Dane's private reply to Sam into it as a prompt — no visible trace, triggered by the
+    /// recovery gesture. Same operation as the append, always.
+    ///
+    /// `isSendingReply` goes false explicitly on both paths: a snapshot taken after the flag was
+    /// set would re-present a panel with its editor, Send and Cancel disabled forever.
+    private func reportBeeperReplyFailure(_ copy: String,
+                                          responseWindowID: UUID,
+                                          target: BeeperReplyTarget,
+                                          snapshot: HermesResponseWindowState,
+                                          preservedText: String) {
+        if hermesResponseWindowStates.contains(where: { $0.id == responseWindowID }) {
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendFailed(
+                hermesResponseWindowStates,
+                sessionID: responseWindowID,
+                failure: copy
+            )
+            return
+        }
+        beeperResponseWindowTargets[responseWindowID] = target
+        hermesResponseWindowStates.append(
+            HermesResponseWindowLifecycle.replyRepresented(
+                snapshot,
+                failure: copy,
+                preservedText: preservedText
+            )
+        )
+    }
+
+    /// The two synchronous Hermes guards return *before* the teardown, so their panel is alive and
+    /// this mutate-in-place is the whole fix. It is deliberately not paired with an `isSendingReply`
+    /// write at the call site: nothing is ever in flight on that branch.
+    ///
+    /// A no-op when the id has no panel — `sendHermesTextReply` also serves the in-app agent view.
+    private func reportHermesReplyFailure(_ copy: String, sessionID: UUID?) {
+        guard let sessionID else { return }
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendFailed(
+            hermesResponseWindowStates,
+            sessionID: sessionID,
+            failure: copy
+        )
+    }
+
+    /// Cancel discards the draft, so the line describing it goes too. Hide Text does not call this.
+    func clearResponseWindowReplyFailure(sessionID: UUID) {
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.replyFailureCleared(
+            hermesResponseWindowStates,
+            sessionID: sessionID
+        )
     }
 
     private func refreshBeeperResponseMonitor() {
