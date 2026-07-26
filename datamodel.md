@@ -215,6 +215,17 @@ newly completed agent messages without importing a full local chat history. Auto
 the task's `codex://threads/<id>` deep link and invokes the Codex Pin Task shortcut, which requires
 macOS Accessibility permission.
 
+### 3b. Beeper Monitoring State
+
+`BeeperChatEntry` stores each monitored chat's opaque ID, display alias, enabled state, and optional
+`snoozedUntil` deadline. Entries are JSON-encoded under the `beeper.chats` UserDefaults key. The
+deadline persists across app restarts; older entries decode a missing deadline as `nil`.
+
+Messages coalesced while a chat is snoozed or its response panel is held live only in a
+`DictationViewModel` accumulator keyed by normalized chat ID. Each accumulator retains a count and
+the newest message, not a second message history. It is deliberately not persisted: Beeper remains
+the canonical inbox, and a restart resumes from the monitor's normal live baseline.
+
 ---
 
 ### 4. Meeting Notes System
@@ -626,6 +637,7 @@ erDiagram
 | `beeper.enabled` | Bool | Enable the dedicated Beeper voice-send hotkey |
 | `beeper.api.baseURL` | String | Beeper Desktop API base URL; defaults to `http://localhost:23373`, root and `/v1` URLs are both accepted |
 | `beeper.chat.id` | String | Target Beeper chat ID for send-only voice messages |
+| `beeper.chats` | Data (JSON `[BeeperChatEntry]`) | Monitored chat IDs, aliases, enabled state, and optional persisted snooze deadline |
 | `beeper.shortcut.selection` | String | Dedicated Beeper activation key; accepts `backslash`, `f5`, and modifier-key selections |
 | `beeper.postProcessing.enabled` | Bool | Clean Beeper dictations through the Dictation OpenRouter post-processing flow before sending |
 | `beeper.context.clipboard.enabled` | Bool | Attach recently copied text to Beeper voice messages as clipboard context |
@@ -735,6 +747,8 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.20 (July 26, 2026)**: Added persisted per-chat Beeper snooze deadlines and an in-memory,
+  chat-keyed response accumulator for burst coalescing and expiry/resume flushes.
 - **v1.19 (July 16, 2026)**: Added Codex task creation, desktop-routed continuation, dated working directories, automatic desktop pinning, clipboard context, and ambient projectless-task response monitoring.
 - **v1.18 (July 16, 2026)**: Added remembered microphone priority ordering with unavailable-device display and automatic fallback to the next available microphone or macOS system default.
 - **v1.17 (July 16, 2026)**: Removed the ambient Beeper WebSocket setting and client; response monitoring now uses bounded polling to avoid accumulating short-lived network tasks.

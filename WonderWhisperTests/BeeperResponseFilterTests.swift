@@ -68,6 +68,55 @@ struct BeeperResponseFilterTests {
     #expect(chats[0].chatID == "826380")
     #expect(chats[0].alias == "Hermes")
     #expect(chats[0].isEnabled == true)
+    #expect(chats[0].snoozedUntil == nil)
+  }
+
+  @Test func chatEntryRoundTripsSnoozeDeadline() throws {
+    let deadline = Date(timeIntervalSince1970: 1_800_000_000)
+    let original = BeeperChatEntry(
+      chatID: "chat1",
+      alias: "Sam",
+      snoozedUntil: deadline
+    )
+    let decoded = try JSONDecoder().decode(
+      BeeperChatEntry.self,
+      from: JSONEncoder().encode(original)
+    )
+    #expect(decoded == original)
+  }
+
+  @Test func snoozeDurationsUseNextLocalMorning() {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Singapore")!
+    let beforeMorning = calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 26,
+      hour: 2
+    ))!
+    let afterMorning = calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 26,
+      hour: 23
+    ))!
+
+    #expect(
+      BeeperSnoozeDuration.untilMorning.deadline(from: beforeMorning, calendar: calendar)
+        == calendar.date(from: DateComponents(year: 2026, month: 7, day: 26, hour: 7))
+    )
+    #expect(
+      BeeperSnoozeDuration.untilMorning.deadline(from: afterMorning, calendar: calendar)
+        == calendar.date(from: DateComponents(year: 2026, month: 7, day: 27, hour: 7))
+    )
+    #expect(
+      BeeperSnoozeDuration.fifteenMinutes.deadline(from: beforeMorning)
+        == beforeMorning.addingTimeInterval(15 * 60)
+    )
+    #expect(
+      BeeperSnoozeDuration.oneHour.deadline(from: beforeMorning)
+        == beforeMorning.addingTimeInterval(60 * 60)
+    )
   }
 
   @Test func dedupedChatIDsExcludesDisabledChats() {
@@ -77,6 +126,35 @@ struct BeeperResponseFilterTests {
       BeeperChatEntry(chatID: "chat3", alias: "On", isEnabled: true),
     ]
     #expect(DictationViewModel.dedupedChatIDs(chats) == ["chat1", "chat3"])  // chat2 paused
+  }
+
+  @Test func snoozedChatsAreActiveDedupedAndUseAliasFallback() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let chats = [
+      BeeperChatEntry(
+        chatID: " chat1 ",
+        alias: " Sam ",
+        snoozedUntil: now.addingTimeInterval(60)
+      ),
+      BeeperChatEntry(
+        chatID: "chat1",
+        alias: "duplicate",
+        snoozedUntil: now.addingTimeInterval(120)
+      ),
+      BeeperChatEntry(
+        chatID: "chat2",
+        alias: "  ",
+        snoozedUntil: now.addingTimeInterval(180)
+      ),
+      BeeperChatEntry(
+        chatID: "expired",
+        alias: "Old",
+        snoozedUntil: now
+      ),
+    ]
+    let snoozed = DictationViewModel.snoozedBeeperChats(from: chats, at: now)
+    #expect(snoozed.map(\.chatID) == ["chat1", "chat2"])
+    #expect(snoozed.map(\.displayName) == ["Sam", "chat2"])
   }
 
   /// Incoming text message from `sender`, timestamped `at` (ISO 8601).
@@ -90,6 +168,24 @@ struct BeeperResponseFilterTests {
       type: "TEXT",
       isSender: false
     )
+  }
+
+  @Test func responseAccumulatorKeepsOnlyCountAndLatestMessage() {
+    let firstBurst = [
+      incoming("a", at: "2026-07-26T09:00:01Z"),
+      incoming("b", at: "2026-07-26T09:00:02Z"),
+    ]
+    var accumulator = BeeperResponseAccumulator(messages: firstBurst)
+    #expect(accumulator?.count == 2)
+    #expect(accumulator?.latest.id == "b")
+
+    accumulator?.append([
+      incoming("c", at: "2026-07-26T09:00:03Z"),
+      incoming("d", at: "2026-07-26T09:00:04Z"),
+    ])
+    #expect(accumulator?.count == 4)
+    #expect(accumulator?.latest.id == "d")
+    #expect(BeeperResponseAccumulator(messages: []) == nil)
   }
 
   @Test func pollCandidatesKeepWholeBurstNewestLast() {

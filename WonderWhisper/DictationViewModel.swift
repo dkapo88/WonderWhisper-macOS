@@ -12,12 +12,18 @@ struct BeeperChatEntry: Codable, Identifiable, Equatable {
     var chatID: String = ""
     var alias: String = ""
     var isEnabled: Bool = true
+    var snoozedUntil: Date?
 
-    init(id: UUID = UUID(), chatID: String = "", alias: String = "", isEnabled: Bool = true) {
+    init(id: UUID = UUID(),
+         chatID: String = "",
+         alias: String = "",
+         isEnabled: Bool = true,
+         snoozedUntil: Date? = nil) {
         self.id = id
         self.chatID = chatID
         self.alias = alias
         self.isEnabled = isEnabled
+        self.snoozedUntil = snoozedUntil
     }
 
     // Decode defensively so chats persisted before a field existed still load
@@ -28,6 +34,50 @@ struct BeeperChatEntry: Codable, Identifiable, Equatable {
         chatID = try container.decodeIfPresent(String.self, forKey: .chatID) ?? ""
         alias = try container.decodeIfPresent(String.self, forKey: .alias) ?? ""
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        snoozedUntil = try container.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+    }
+}
+
+enum BeeperSnoozeDuration: Equatable {
+    case fifteenMinutes
+    case oneHour
+    case untilMorning
+
+    func deadline(from now: Date, calendar: Calendar = .current) -> Date {
+        switch self {
+        case .fifteenMinutes:
+            return now.addingTimeInterval(15 * 60)
+        case .oneHour:
+            return now.addingTimeInterval(60 * 60)
+        case .untilMorning:
+            let todayMorning = calendar.date(
+                bySettingHour: 7,
+                minute: 0,
+                second: 0,
+                of: now
+            ) ?? now
+            guard todayMorning > now else {
+                return calendar.date(byAdding: .day, value: 1, to: todayMorning) ?? now
+            }
+            return todayMorning
+        }
+    }
+}
+
+struct BeeperResponseAccumulator: Equatable {
+    private(set) var count: Int
+    private(set) var latest: BeeperMessage
+
+    init?(messages: [BeeperMessage]) {
+        guard let latest = messages.last else { return nil }
+        count = messages.count
+        self.latest = latest
+    }
+
+    mutating func append(_ messages: [BeeperMessage]) {
+        guard let newest = messages.last else { return }
+        count += messages.count
+        latest = newest
     }
 }
 
@@ -641,6 +691,8 @@ final class DictationViewModel: ObservableObject {
     /// Per-window reply target: which chat + message a Beeper response window
     /// replies to (and threads onto) when you reply from it.
     private var beeperResponseWindowTargets: [UUID: BeeperReplyTarget] = [:]
+    // ponytail: in-memory only; persist messages only if Beeper stops being the canonical inbox.
+    private var beeperResponseAccumulators: [String: BeeperResponseAccumulator] = [:]
     private var beeperResponseWindowIDForActiveRecording: UUID?
     private let hermesClipboardMonitor = ClipboardContextMonitor(
         maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow,
@@ -2609,6 +2661,69 @@ final class DictationViewModel: ObservableObject {
     }
 
     var defaultBeeperChatID: String { beeperChatIDList.first ?? "" }
+
+    var snoozedBeeperChats: [(chatID: String, displayName: String, snoozedUntil: Date)] {
+        Self.snoozedBeeperChats(from: beeperChats, at: Date())
+    }
+
+    static func snoozedBeeperChats(
+        from chats: [BeeperChatEntry],
+        at now: Date
+    ) -> [(chatID: String, displayName: String, snoozedUntil: Date)] {
+        var seen = Set<String>()
+        return chats.compactMap { chat in
+            let chatID = chat.chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !chatID.isEmpty,
+                  seen.insert(chatID).inserted,
+                  let snoozedUntil = chat.snoozedUntil,
+                  snoozedUntil > now else { return nil }
+            let alias = chat.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (chatID, alias.isEmpty ? chatID : alias, snoozedUntil)
+        }
+    }
+
+    func snoozeBeeperChat(
+        chatID rawChatID: String,
+        duration: BeeperSnoozeDuration,
+        now: Date = Date()
+    ) {
+        let chatID = rawChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !chatID.isEmpty else { return }
+        beeperResponseAccumulators[chatID] = nil
+        setBeeperSnoozedUntil(
+            duration.deadline(from: now),
+            chatID: chatID
+        )
+    }
+
+    private func setBeeperSnoozedUntil(_ deadline: Date?, chatID: String) {
+        var chats = beeperChats
+        var changed = false
+        for index in chats.indices where
+            chats[index].chatID.trimmingCharacters(in: .whitespacesAndNewlines) == chatID {
+            guard chats[index].snoozedUntil != deadline else { continue }
+            // ponytail: deadline-only edits must not restart monitors; the didSet guard compares IDs.
+            chats[index].snoozedUntil = deadline
+            changed = true
+        }
+        if changed {
+            beeperChats = chats
+        }
+    }
+
+    private func appendBeeperResponses(_ messages: [BeeperMessage], chatID: String) {
+        guard !messages.isEmpty else { return }
+        if var accumulator = beeperResponseAccumulators[chatID] {
+            accumulator.append(messages)
+            beeperResponseAccumulators[chatID] = accumulator
+        } else {
+            beeperResponseAccumulators[chatID] = BeeperResponseAccumulator(messages: messages)
+        }
+    }
+
+    private func takeBeeperResponses(chatID: String) -> BeeperResponseAccumulator? {
+        beeperResponseAccumulators.removeValue(forKey: chatID)
+    }
 
     private static let beeperChatsKey = "beeper.chats"
 
