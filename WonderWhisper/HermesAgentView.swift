@@ -870,8 +870,12 @@ Please return the answer as a small table with these exact fields:
     let text = textReplyDrafts[session.id] ?? ""
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    // Clear only once the reply is accepted. Both of `sendHermesTextReply`'s guards return
+    // synchronously, so clearing first destroyed what Dane typed against a rejection the app
+    // already knew about — no network, no race. The guards' `settingsNotice` is still what tells
+    // him why; this only stops the text going with it.
+    guard vm.sendHermesTextReply(trimmed, to: session.id) else { return }
     textReplyDrafts[session.id] = ""
-    vm.sendHermesTextReply(trimmed, to: session.id)
   }
 
   private var statusIcon: String {

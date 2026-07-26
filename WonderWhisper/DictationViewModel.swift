@@ -2281,18 +2281,27 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// Returns whether the reply was accepted for sending. It reports the three *synchronous*
+    /// rejections below and nothing more — the Task's own failures happen after this returns, so a
+    /// caller must not read `true` as "delivered". Additive: the `settingsNotice` strings stay
+    /// exactly where they are and remain the user-facing signal. This exists so a caller that
+    /// clears its composer on send can stop destroying text against a rejection the app already
+    /// knew about before any network call.
+    ///
+    /// Deliberately not `@discardableResult`: ignoring it is exactly how the bug it fixes happened,
+    /// so a caller that wants to ignore it says so.
     func sendHermesTextReply(_ text: String,
                              to sessionID: UUID?,
-                             dismissResponseWindow: Bool = false) {
+                             dismissResponseWindow: Bool = false) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return false }
         // Both guards report against the *response-window* id, which is `sessionID` before
         // `ensureHermesSessionID` remaps it. Neither has reached the teardown below, so the panel
         // is still on screen and the failure lands in the slot Dane is already looking at.
         guard hermesAgentEnabled else {
             settingsNotice = "Enable Hermes agent before sending a text reply."
             reportHermesReplyFailure(HermesReplyFailureCopy.hermesDisabled, sessionID: sessionID)
-            return
+            return false
         }
         let targetSessionID = ensureHermesSessionID(sessionID)
         guard let targetSession = hermesSessions.first(where: { $0.id == targetSessionID }),
@@ -2302,7 +2311,7 @@ final class DictationViewModel: ObservableObject {
                 HermesReplyFailureCopy.hermesSessionNotReady,
                 sessionID: sessionID
             )
-            return
+            return false
         }
         if dismissResponseWindow {
             removeHermesResponseWindow(for: targetSessionID)
@@ -2310,6 +2319,7 @@ final class DictationViewModel: ObservableObject {
         Task {
             await submitHermesTextTurn(trimmed, sessionID: targetSessionID)
         }
+        return true
     }
 
     func sendResponseWindowTextReply(_ text: String, sessionID: UUID) {
@@ -2346,7 +2356,12 @@ final class DictationViewModel: ObservableObject {
             }
             return
         }
-        sendHermesTextReply(text, to: sessionID, dismissResponseWindow: true)
+        // Discarded deliberately, and this is the only site that discards it. Propagating it would
+        // produce a Bool that is truthful on this branch and hardcoded-success on the Beeper and
+        // Codex branches above, which fire their Tasks unconditionally — a worse defect than the
+        // one it would report, and one no test would catch. The panel does not need it either: its
+        // composer stays open regardless of outcome and the failure arrives via `replyFailure`.
+        _ = sendHermesTextReply(text, to: sessionID, dismissResponseWindow: true)
     }
 
     var selectedHermesSession: HermesChatSession? {
