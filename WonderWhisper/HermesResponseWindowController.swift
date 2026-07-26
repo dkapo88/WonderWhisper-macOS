@@ -902,9 +902,6 @@ private struct HermesResponsePanelView: View {
     HStack(spacing: 10) {
       Spacer()
 
-      // The shortcut lives on the Menu, not on a Button inside it. SwiftUI builds menu
-      // content lazily, so a `.keyboardShortcut` on an item is not registered until the menu
-      // has been opened once — which is the click the shortcut exists to save.
       Menu {
         Button(action: onCopyFormatted) {
           Label("Copy Formatted", systemImage: "doc.richtext")
@@ -916,7 +913,6 @@ private struct HermesResponsePanelView: View {
       }
       .fixedSize()
       .help("Copy raw text (⇧⌘C). Open for formatted.")
-      .keyboardShortcut("c", modifiers: [.command, .shift])
 
       if state.supportsVoiceReply {
         Button(action: onReply) {
@@ -940,6 +936,21 @@ private struct HermesResponsePanelView: View {
         .replyProminence(isPrimary: primaryReplyAction == .text)
       }
     }
+    .background(copyRawShortcut)
+  }
+
+  // ⇧⌘C is carried by an invisible Button, not by the Menu or by an item inside it.
+  // Menu content is built lazily, so a shortcut on an item is not registered until the menu
+  // has been opened once — and a shortcut on the Menu itself does not register cold either
+  // (measured at 8942811: clipboard stayed empty until the menu had been opened). A plain
+  // Button registers on first render, the same reason ⌘M works on the header's Minimize.
+  // It rides in .background so it claims none of actionRow's 10pt spacing.
+  private var copyRawShortcut: some View {
+    Button("Copy Raw", action: onCopyRaw)
+      .keyboardShortcut("c", modifiers: [.command, .shift])
+      .opacity(0)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 
   private var recordingIndicator: some View {
