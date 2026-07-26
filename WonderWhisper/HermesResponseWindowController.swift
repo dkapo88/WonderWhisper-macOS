@@ -1176,37 +1176,43 @@ private struct HermesResponsePanelView: View {
       HStack(spacing: 4) {
         // Secondary applies to the copy only. The link keeps the accent colour it needs to
         // read as clickable at all.
-        HStack(spacing: 4) {
-          ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-            if index > 0 {
-              Text("·")
-            }
-            Text(segment.text)
-              .fontWeight(segment.isEmphasized ? .medium : .regular)
-          }
-
-          Text("·")
-        }
-        .foregroundStyle(.secondary)
-        // The separators are typography and the counts are one fact, so the whole run collapses
-        // to a single spoken element rather than five nodes of "plus", "dot", "dot".
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(HermesBeeperStatusLine.spokenLine(
-          earlierCount: state.earlierCount,
-          newerCount: state.newerCount,
-          reason: state.reason
-        ))
+        countRun(segments)
+          .foregroundStyle(.secondary)
+          // The separators are typography and the counts are one fact, so the run speaks as one
+          // sentence rather than as "plus", "dot", "dot".
+          .accessibilityLabel(HermesBeeperStatusLine.spokenLine(
+            earlierCount: state.earlierCount,
+            newerCount: state.newerCount,
+            reason: state.reason
+          ))
 
         // Telling Dane the rest are in Beeper without a way to get there manufactures the
         // friction this feature exists to remove.
-        // `.link` renders as an unnamed AX link without an explicit label, so the destination
-        // has to be said out loud.
-        Button("Open Beeper", action: onOpenBeeper)
-          .buttonStyle(.link)
-          .accessibilityLabel("Open Beeper")
+        // `.link` style rendered as an unnamed AX link that no label modifier could name, so
+        // this is a plain button wearing link clothes: accent colour and the link cursor.
+        Button(action: onOpenBeeper) {
+          Text("Open Beeper")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.accentColor)
+        .pointerStyle(.link)
       }
       .font(.caption)
     }
+  }
+
+  /// The count run as one concrete `Text`, built by concatenation rather than an `HStack`.
+  /// Per-fragment weight survives `+`, and AppKit gets a single named element — a container
+  /// asked to collapse into one AX node here produced no node at all.
+  private func countRun(_ segments: [HermesBeeperStatusLine.Segment]) -> Text {
+    var line = Text("")
+    for (index, segment) in segments.enumerated() {
+      if index > 0 {
+        line = line + Text(" · ")
+      }
+      line = line + Text(segment.text).fontWeight(segment.isEmphasized ? .medium : .regular)
+    }
+    return line + Text(" ·")
   }
 
   private var actionRow: some View {
