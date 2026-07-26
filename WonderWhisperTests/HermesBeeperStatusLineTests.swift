@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import WonderWhisper
@@ -84,5 +85,42 @@ struct BeeperSnoozeDurationTests {
     #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(47 * 60), now: now) == "47m")
     #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(60 * 60), now: now) == "1h")
     #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(72 * 60), now: now) == "1h 12m")
+  }
+
+  /// Nothing in the menu bar observes `beeperChats`, so the section has to be rebuilt on every
+  /// open. This is the whole of check 3: the item appears after a snooze that landed while the
+  /// menu was closed, the countdown moves between two opens, and a resume removes it.
+  @Test @MainActor func snoozeSectionIsRebuiltOnEveryOpen() {
+    let menu = NSMenu()
+    let anchor = NSMenuItem(title: "Add to Dictionary", action: nil, keyEquivalent: "")
+    let tail = NSMenuItem(title: "Quit WonderWhisper", action: nil, keyEquivalent: "")
+    menu.addItem(anchor)
+    menu.addItem(tail)
+
+    let now = date("2026-07-26T09:00:00Z")
+    var section = MenuBarController.applySnoozeSection(
+      to: menu, after: anchor, replacing: [], chats: [], now: now, target: nil)
+    #expect(section.isEmpty)
+    #expect(menu.numberOfItems == 2)
+
+    let chats = [(chatID: "c1", displayName: "Sam", snoozedUntil: now.addingTimeInterval(47 * 60))]
+    section = MenuBarController.applySnoozeSection(
+      to: menu, after: anchor, replacing: section, chats: chats, now: now, target: nil)
+    #expect(menu.item(at: 2)?.title == "Resume Sam — snoozed 47m")
+    #expect(menu.item(at: 2)?.representedObject as? String == "c1")
+    #expect(menu.items.last === tail)
+
+    // Second open, ten minutes later: still one item, with a smaller countdown.
+    section = MenuBarController.applySnoozeSection(
+      to: menu, after: anchor, replacing: section, chats: chats,
+      now: now.addingTimeInterval(10 * 60), target: nil)
+    #expect(menu.numberOfItems == 4)
+    #expect(menu.item(at: 2)?.title == "Resume Sam — snoozed 37m")
+
+    // Resumed: the item and its separator go, and nothing else does.
+    section = MenuBarController.applySnoozeSection(
+      to: menu, after: anchor, replacing: section, chats: [], now: now, target: nil)
+    #expect(section.isEmpty)
+    #expect(menu.items.map(\.title) == ["Add to Dictionary", "Quit WonderWhisper"])
   }
 }

@@ -7,6 +7,7 @@ final class MenuBarController: NSObject {
     private var cancellables: Set<AnyCancellable> = []
     private weak var vm: DictationViewModel?
     private var addDictItem: NSMenuItem?
+    private var snoozeItems: [NSMenuItem] = []
 
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
@@ -196,28 +197,61 @@ final class MenuBarController: NSObject {
     /// The only place a snooze is visible, and the only way to undo one early. Nothing is drawn
     /// while a chat is snoozed — silence is the contract — so this is the whole affordance:
     /// findable when wanted, invisible when not. Nothing snoozed adds zero items, not an empty
-    /// section. `buildMenu()` runs on every open, so the countdown is fresh with no timer.
+    /// section.
+    ///
+    /// Rebuilt from `menuNeedsUpdate` on every open, not just when `buildMenu()` runs: nothing
+    /// here observes `beeperChats`, so a snooze or resume would otherwise leave the section
+    /// stale until an unrelated setting changed. Re-reading the deadline at open time also keeps
+    /// the countdown fresh with no timer — the deadline stays the single source of truth.
     ///
     /// The title leads with the verb rather than the design's `Sam — snoozed 47m`: a menu item
     /// whose click resumes should say so, and the countdown still reads as the reason.
-    private func addSnoozedBeeperChats(to menu: NSMenu) {
-        guard let vm else { return }
-        let snoozed = vm.snoozedBeeperChats
-        guard !snoozed.isEmpty else { return }
+    private func refreshSnoozedBeeperChats(in menu: NSMenu) {
+        guard let anchor = addDictItem else { return }
+        snoozeItems = Self.applySnoozeSection(
+            to: menu,
+            after: anchor,
+            replacing: snoozeItems,
+            chats: vm?.snoozedBeeperChats ?? [],
+            now: Date(),
+            target: self
+        )
+    }
 
-        menu.addItem(.separator())
-        let now = Date()
-        for chat in snoozed {
-            let remaining = Self.snoozeRemainingText(until: chat.snoozedUntil, now: now)
+    /// Swaps the snooze block in place: drops the previous pass's items, then inserts one item
+    /// per snoozed chat directly below `anchor`. Static and menu-agnostic so the rebuild-on-open
+    /// path is testable without a status item or a view model. Items from a discarded menu are
+    /// simply not found, so a full `buildMenu()` rebuild costs nothing here.
+    static func applySnoozeSection(
+        to menu: NSMenu,
+        after anchor: NSMenuItem,
+        replacing previous: [NSMenuItem],
+        chats: [(chatID: String, displayName: String, snoozedUntil: Date)],
+        now: Date,
+        target: AnyObject?
+    ) -> [NSMenuItem] {
+        for item in previous where menu.index(of: item) >= 0 {
+            menu.removeItem(item)
+        }
+        let anchorIndex = menu.index(of: anchor)
+        guard anchorIndex >= 0, !chats.isEmpty else { return [] }
+
+        var section: [NSMenuItem] = [.separator()]
+        for chat in chats {
+            let remaining = snoozeRemainingText(until: chat.snoozedUntil, now: now)
             let item = NSMenuItem(
                 title: "Resume \(chat.displayName) — snoozed \(remaining)",
-                action: #selector(resumeSnoozedBeeperChat),
+                action: #selector(MenuBarController.resumeSnoozedBeeperChat(_:)),
                 keyEquivalent: ""
             )
-            item.target = self
+            item.target = target
             item.representedObject = chat.chatID
-            menu.addItem(item)
+            section.append(item)
         }
+        for (offset, item) in section.enumerated() {
+            menu.insertItem(item, at: anchorIndex + 1 + offset)
+        }
+        return section
     }
 
     /// Rounds up, so a deadline 30 seconds out reads "1m" rather than "0m".
@@ -344,7 +378,7 @@ final class MenuBarController: NSObject {
         self.addDictItem = addDict
         menu.addItem(addDict)
 
-        addSnoozedBeeperChats(to: menu)
+        refreshSnoozedBeeperChats(in: menu)
 
         menu.addItem(.separator())
 
@@ -491,6 +525,13 @@ final class MenuBarController: NSObject {
 
 // MARK: - NSMenuDelegate for lazy enabling
 extension MenuBarController: NSMenuDelegate {
+    /// Items that appear and disappear are added here rather than in `menuWillOpen`: AppKit
+    /// calls this first and expects structural changes at this point, before it measures the
+    /// menu for display. `menuWillOpen` stays for state on items that always exist.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        refreshSnoozedBeeperChats(in: menu)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
         // Re-evaluate clipboard only when the menu actually opens
         let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
