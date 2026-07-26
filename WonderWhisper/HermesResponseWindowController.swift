@@ -1326,7 +1326,17 @@ private struct HermesResponsePanelView: View {
       onSnooze(.oneHour)
     }
     .fixedSize()
-    .help("Snooze this chat for an hour. Open for other durations.")
+    // A panel Dane is actively speaking to cannot disappear. Snooze dismisses the window, and
+    // teardown drops the reply target with it, so snoozing mid-recording would send the finished
+    // transcription with no `replyToMessageID`. `.disabled` on the Menu covers both the primary
+    // click and the duration items. Sending is deliberately still snoozeable: delayed send →
+    // Snooze → next message is a required interleaving, and by then the target is committed.
+    .disabled(state.isRecordingReply)
+    .help(
+      state.isRecordingReply
+        ? "Finish or cancel this voice reply before snoozing."
+        : "Snooze this chat for an hour. Open for other durations."
+    )
   }
 
   // ⇧⌘C is carried by an invisible Button, not by the Menu or by an item inside it.

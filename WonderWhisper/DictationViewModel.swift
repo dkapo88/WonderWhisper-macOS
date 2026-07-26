@@ -2754,6 +2754,13 @@ final class DictationViewModel: ObservableObject {
         now: Date = Date()
     ) {
         guard let target = beeperResponseWindowTargets[sessionID] else { return }
+        // Second boundary guard for the same invariant the disabled control enforces: the target
+        // map is torn down with the window, so a snooze that lands mid-recording would strand the
+        // in-flight transcription with no reply target. The invariant must not rest on one
+        // SwiftUI modifier.
+        let isRecording = hermesResponseWindowStates
+            .first { $0.id == sessionID }?.isRecordingReply ?? false
+        guard !isRecording else { return }
         snoozeBeeperChat(chatID: target.chatID, duration: duration, now: now)
         dismissBeeperResponseWindow(sessionID)
     }
@@ -3426,17 +3433,27 @@ final class DictationViewModel: ObservableObject {
         settingsNotice = codexConnectionStatus
     }
 
+    /// Claims the focused Beeper panel as the reply target for the recording that is starting, and
+    /// marks it recording so the burst hold and Snooze both see it.
+    ///
+    /// Split out of `beginBeeperRecording` unchanged so the regression can drive the real
+    /// resolution — `focusedBeeperResponseWindowID` and this field — without audio hardware. The
+    /// stranded-target bug lived in the seam between this and `submitBeeperTurn`, so a test that
+    /// sets the state by hand cannot see it.
+    func beginBeeperReplyRecordingLock() {
+        beeperResponseWindowIDForActiveRecording = focusedBeeperResponseWindowID()
+        guard let responseWindowID = beeperResponseWindowIDForActiveRecording else { return }
+        hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingStarted(
+            hermesResponseWindowStates,
+            sessionID: responseWindowID
+        )
+        syncCurrentHermesResponseWindowState(sessionID: responseWindowID)
+    }
+
     private func beginBeeperRecording(promptID: UUID) async {
         guard beeperEnabled else { return }
         beeperIsAwaitingResponse = false
-        beeperResponseWindowIDForActiveRecording = focusedBeeperResponseWindowID()
-        if let responseWindowID = beeperResponseWindowIDForActiveRecording {
-            hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingStarted(
-                hermesResponseWindowStates,
-                sessionID: responseWindowID
-            )
-            syncCurrentHermesResponseWindowState(sessionID: responseWindowID)
-        }
+        beginBeeperReplyRecordingLock()
         AppLog.dictation.log(
             "Beeper recording begin prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
