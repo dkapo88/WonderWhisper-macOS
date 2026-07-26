@@ -6,6 +6,7 @@ import Testing
 private final class SuspendedBeeperAPIClient: BeeperAPIClient {
   private let lock = NSLock()
   private var didStart = false
+  private var replyToMessageID: String?
   private var startWaiters: [CheckedContinuation<Void, Never>] = []
   private var responseContinuation: CheckedContinuation<BeeperSendResponse, Error>?
 
@@ -20,6 +21,7 @@ private final class SuspendedBeeperAPIClient: BeeperAPIClient {
   ) async throws -> BeeperSendResponse {
     try await withCheckedThrowingContinuation { continuation in
       lock.lock()
+      self.replyToMessageID = replyToMessageID
       responseContinuation = continuation
       didStart = true
       let waiters = startWaiters
@@ -59,6 +61,10 @@ private final class SuspendedBeeperAPIClient: BeeperAPIClient {
       chatID: "chat1",
       pendingMessageID: "pending"
     ))
+  }
+
+  func capturedReplyToMessageID() -> String? {
+    lock.withLock { replyToMessageID }
   }
 }
 
@@ -337,6 +343,49 @@ struct BeeperResponseFilterTests {
     #expect(presented.id != responseWindowID)
     #expect(presented.text == m2.richDisplayText)
     #expect(presented.beeperChatID == m2.chatID)
+  }
+
+  @Test func recordingLocksM1BodyAndTargetUntilM1SendCompletes() async throws {
+    let client = SuspendedBeeperAPIClient()
+    let (viewModel, restore) = viewModel(client: client)
+    defer { restore() }
+    let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
+    let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
+    viewModel.showBeeperResponse(m1)
+    let responseWindowID = try #require(viewModel.hermesResponseWindowStates.last?.id)
+    viewModel.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingStarted(
+      viewModel.hermesResponseWindowStates,
+      sessionID: responseWindowID
+    )
+
+    viewModel.showBeeperResponses([m2], chatID: m2.chatID)
+
+    let recording = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(recording.text == m1.richDisplayText)
+    #expect(recording.isRecordingReply)
+    #expect(recording.newerCount == 1)
+
+    let send = Task {
+      await viewModel.submitBeeperTurn(
+        turn(),
+        responseWindowID: responseWindowID,
+        recordHistory: false
+      )
+    }
+    await client.waitUntilSendStarts()
+
+    let sending = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(sending.text == m1.richDisplayText)
+    #expect(!sending.isRecordingReply)
+    #expect(sending.isSendingReply)
+    #expect(client.capturedReplyToMessageID() == m1.id)
+
+    client.succeed()
+    await send.value
+
+    let presented = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(presented.id != responseWindowID)
+    #expect(presented.text == m2.richDisplayText)
   }
 
   @Test func activeSnoozeWinsWhenDelayedReplySucceeds() async throws {

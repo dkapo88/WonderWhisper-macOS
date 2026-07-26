@@ -2832,6 +2832,7 @@ final class DictationViewModel: ObservableObject {
         if let sessionID = newestAttendingBeeperResponseWindowID(chatID: chatID),
            let state = hermesResponseWindowStates.first(where: { $0.id == sessionID }) {
             let isHoldingBody = hasResponseWindowDraft(sessionID: sessionID)
+                || state.isRecordingReply
                 || state.isSendingReply
             let counts = Self.beeperBurstCounts(
                 earlierCount: state.earlierCount,
@@ -3429,6 +3430,13 @@ final class DictationViewModel: ObservableObject {
         guard beeperEnabled else { return }
         beeperIsAwaitingResponse = false
         beeperResponseWindowIDForActiveRecording = focusedBeeperResponseWindowID()
+        if let responseWindowID = beeperResponseWindowIDForActiveRecording {
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingStarted(
+                hermesResponseWindowStates,
+                sessionID: responseWindowID
+            )
+            syncCurrentHermesResponseWindowState(sessionID: responseWindowID)
+        }
         AppLog.dictation.log(
             "Beeper recording begin prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
@@ -3519,7 +3527,7 @@ final class DictationViewModel: ObservableObject {
     ) async {
         let rawTranscript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTranscript.isEmpty else {
-            clearBeeperContextCapture(cancel: true)
+            clearActiveBeeperRecording(cancelContext: true)
             beeperConnectionStatus = BeeperClientError.emptyInput.localizedDescription
             beeperConnectionSucceeded = false
             settingsNotice = beeperConnectionStatus
@@ -3534,6 +3542,11 @@ final class DictationViewModel: ObservableObject {
                 hermesResponseWindowStates,
                 sessionID: responseWindowIDToDismiss
             )
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingCancelled(
+                hermesResponseWindowStates,
+                sessionID: responseWindowIDToDismiss
+            )
+            syncCurrentHermesResponseWindowState(sessionID: responseWindowIDToDismiss)
         }
 
         beeperIsSending = true
@@ -4852,9 +4865,22 @@ final class DictationViewModel: ObservableObject {
 
     private func clearActiveBeeperRecording(cancelContext: Bool = false) {
         activeBeeperPromptID = nil
+        let responseWindowID = beeperResponseWindowIDForActiveRecording
+        let chatID = responseWindowID.flatMap { beeperResponseWindowTargets[$0]?.chatID }
         beeperResponseWindowIDForActiveRecording = nil
+        if let responseWindowID {
+            hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingCancelled(
+                hermesResponseWindowStates,
+                sessionID: responseWindowID
+            )
+            syncCurrentHermesResponseWindowState(sessionID: responseWindowID)
+        }
         if cancelContext {
             clearBeeperContextCapture(cancel: true)
+        }
+        if let chatID,
+           beeperSnoozedUntil(chatID: chatID).map({ $0 > Date() }) != true {
+            flushBeeperResponses(chatID: chatID, reason: .live)
         }
     }
 
