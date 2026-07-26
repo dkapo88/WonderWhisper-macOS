@@ -133,4 +133,55 @@ struct HermesResponseWindowLifecycleTests {
       == [target, other]
     )
   }
+
+  // MARK: - Bottom-row prominence
+
+  private func panel(
+    voice: Bool,
+    text: Bool,
+    isError: Bool = false,
+    isRecordingReply: Bool = false
+  ) -> HermesResponseWindowState {
+    HermesResponseWindowState(
+      title: "Sam",
+      text: "hi",
+      isError: isError,
+      isRecordingReply: isRecordingReply,
+      supportsReply: voice || text,
+      supportsVoiceReply: voice,
+      supportsTextReply: text
+    )
+  }
+
+  @Test func textReplyIsPrimaryOnAnOrdinaryPanel() {
+    // Beeper: text only. Hermes: both, and text still outranks an idle mic.
+    #expect(HermesPanelPrimaryAction.resolve(panel(voice: false, text: true)) == .text)
+    #expect(HermesPanelPrimaryAction.resolve(panel(voice: true, text: true)) == .text)
+  }
+
+  @Test func recordingHandsProminenceToSend() {
+    // The voice button reads "Send" mid-recording and is what the next click is for.
+    let recording = panel(voice: true, text: true, isRecordingReply: true)
+    #expect(HermesPanelPrimaryAction.resolve(recording) == .voice)
+    #expect(HermesPanelPrimaryAction.textIsDisabled(recording))
+  }
+
+  @Test func voiceIsPrimaryWhenThereIsNoTextReply() {
+    #expect(HermesPanelPrimaryAction.resolve(panel(voice: true, text: false)) == .voice)
+  }
+
+  @Test func aDisabledControlIsNeverProminent() {
+    // The regression this guards: an error panel disables both reply controls, so drawing
+    // either one prominent points the eye at something that cannot be clicked.
+    for voice in [true, false] {
+      for text in [true, false] {
+        let errored = panel(voice: voice, text: text, isError: true)
+        #expect(HermesPanelPrimaryAction.resolve(errored) == .none)
+      }
+    }
+  }
+
+  @Test func aPanelWithNoReplyControlsHasNoPrimary() {
+    #expect(HermesPanelPrimaryAction.resolve(panel(voice: false, text: false)) == .none)
+  }
 }

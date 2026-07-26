@@ -747,6 +747,54 @@ private struct HermesResponsePanelHost: View {
   }
 }
 
+/// Which reply control in the bottom row is the panel's primary action, and therefore the one
+/// drawn `.borderedProminent`.
+///
+/// Prominence follows the live action rather than a fixed control: while a voice reply is
+/// recording, the Voice Reply button reads "Send" and is what the next click is for, so it
+/// outranks Text Reply. A control that is disabled can never be primary — a prominent button
+/// nobody can click is worse hierarchy than a flat row.
+///
+/// The two `…IsDisabled` predicates are the same values the buttons pass to `.disabled`, not a
+/// second copy of them, so prominence cannot drift out of step with enablement.
+enum HermesPanelPrimaryAction: Equatable {
+  case voice
+  case text
+  case none
+
+  static func voiceIsDisabled(_ state: HermesResponseWindowState) -> Bool {
+    state.isError && !state.isRecordingReply
+  }
+
+  static func textIsDisabled(_ state: HermesResponseWindowState) -> Bool {
+    state.isError || state.isRecordingReply
+  }
+
+  static func resolve(_ state: HermesResponseWindowState) -> HermesPanelPrimaryAction {
+    let voiceAvailable = state.supportsVoiceReply && !voiceIsDisabled(state)
+    let textAvailable = state.supportsTextReply && !textIsDisabled(state)
+
+    if voiceAvailable && state.isRecordingReply { return .voice }
+    if textAvailable { return .text }
+    if voiceAvailable { return .voice }
+    return .none
+  }
+}
+
+private extension View {
+  /// `.borderedProminent` when this is the panel's primary action, `.bordered` otherwise.
+  /// A ternary inside `.buttonStyle` does not type-check — the two styles are different
+  /// concrete types — so the branch has to happen at the view level.
+  @ViewBuilder
+  func replyProminence(isPrimary: Bool) -> some View {
+    if isPrimary {
+      buttonStyle(.borderedProminent)
+    } else {
+      buttonStyle(.bordered)
+    }
+  }
+}
+
 private struct HermesResponsePanelView: View {
   var state: HermesResponseWindowState
   var isForeground: Bool
@@ -780,48 +828,7 @@ private struct HermesResponsePanelView: View {
         textReplyComposer
       }
 
-      HStack(spacing: 10) {
-        Spacer()
-        Button(action: onCopyRaw) {
-          Label("Copy Raw", systemImage: "doc.on.doc")
-        }
-        .keyboardShortcut("c", modifiers: [.command, .shift])
-
-        Button(action: onCopyFormatted) {
-          Label("Copy Formatted", systemImage: "doc.richtext")
-        }
-
-        if state.supportsVoiceReply {
-          Button(action: onReply) {
-            Label(
-              state.isRecordingReply ? "Send" : "Voice Reply",
-              systemImage: state.isRecordingReply ? "paperplane.fill" : "mic.fill"
-            )
-          }
-          .disabled(state.isError && !state.isRecordingReply)
-        }
-
-        if state.supportsTextReply {
-          Button(action: onToggleTextReply) {
-            Label(
-              isTextReplyVisible ? "Hide Text" : "Text Reply",
-              systemImage: isTextReplyVisible ? "text.bubble.fill" : "text.bubble"
-            )
-          }
-          .disabled(state.isError || state.isRecordingReply)
-        }
-
-        Button(action: onMinimize) {
-          Label("Minimize", systemImage: "minus.circle")
-        }
-        .keyboardShortcut("m", modifiers: [.command])
-
-        Button(action: onClose) {
-          Label("Close", systemImage: "xmark.circle.fill")
-        }
-        // Escape is handled centrally in HermesResponsePanel.keyDown so it
-        // targets the topmost window and yields to active recordings.
-      }
+      actionRow
     }
     .padding(18)
     .frame(
@@ -863,19 +870,75 @@ private struct HermesResponsePanelView: View {
 
       Spacer()
 
+      // These are now the only Minimize/Close in the panel, so they carry the shortcut and
+      // the accessibility label the bottom-row duplicates used to carry. An icon-only
+      // Button otherwise reads to VoiceOver as its SF Symbol name ("minus", "xmark").
       Button(action: onMinimize) {
         Image(systemName: "minus")
           .frame(width: 24, height: 24)
       }
       .buttonStyle(.borderless)
-      .help("Minimize")
+      .keyboardShortcut("m", modifiers: [.command])
+      .accessibilityLabel("Minimize")
+      .help("Minimize (⌘M)")
 
       Button(action: onClose) {
         Image(systemName: "xmark")
           .frame(width: 24, height: 24)
       }
       .buttonStyle(.borderless)
-      .help("Close")
+      .accessibilityLabel("Close")
+      // Escape is handled centrally in HermesResponsePanel.keyDown so it targets the
+      // topmost window and yields to active recordings.
+      .help("Close (esc)")
+    }
+  }
+
+  private var primaryReplyAction: HermesPanelPrimaryAction {
+    HermesPanelPrimaryAction.resolve(state)
+  }
+
+  private var actionRow: some View {
+    HStack(spacing: 10) {
+      Spacer()
+
+      // The shortcut lives on the Menu, not on a Button inside it. SwiftUI builds menu
+      // content lazily, so a `.keyboardShortcut` on an item is not registered until the menu
+      // has been opened once — which is the click the shortcut exists to save.
+      Menu {
+        Button(action: onCopyFormatted) {
+          Label("Copy Formatted", systemImage: "doc.richtext")
+        }
+      } label: {
+        Label("Copy", systemImage: "doc.on.doc")
+      } primaryAction: {
+        onCopyRaw()
+      }
+      .fixedSize()
+      .help("Copy raw text (⇧⌘C). Open for formatted.")
+      .keyboardShortcut("c", modifiers: [.command, .shift])
+
+      if state.supportsVoiceReply {
+        Button(action: onReply) {
+          Label(
+            state.isRecordingReply ? "Send" : "Voice Reply",
+            systemImage: state.isRecordingReply ? "paperplane.fill" : "mic.fill"
+          )
+        }
+        .disabled(HermesPanelPrimaryAction.voiceIsDisabled(state))
+        .replyProminence(isPrimary: primaryReplyAction == .voice)
+      }
+
+      if state.supportsTextReply {
+        Button(action: onToggleTextReply) {
+          Label(
+            isTextReplyVisible ? "Hide Text" : "Text Reply",
+            systemImage: isTextReplyVisible ? "text.bubble.fill" : "text.bubble"
+          )
+        }
+        .disabled(HermesPanelPrimaryAction.textIsDisabled(state))
+        .replyProminence(isPrimary: primaryReplyAction == .text)
+      }
     }
   }
 
