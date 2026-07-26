@@ -436,6 +436,54 @@ struct BeeperResponseFilterTests {
     #expect(presented.beeperChatID == m2.chatID)
   }
 
+  /// Sibling teardown route to Snooze: the header Close (and ⌘W, and `windowWillClose`) all land
+  /// on `dismissHermesResponse`, which deleted the reply target mid-recording so the transcription
+  /// arriving a moment later sent with no `replyToMessageID`. Drives
+  /// `beginBeeperReplyRecordingLock` and passes `responseWindowID: nil` so the send resolves its
+  /// own target the way production does.
+  @Test func closeIsRejectedWhileRecordingSoM1TargetSurvivesToSend() async throws {
+    let client = SuspendedBeeperAPIClient()
+    let (viewModel, restore) = viewModel(client: client)
+    defer { restore() }
+    let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
+    let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
+    viewModel.showBeeperResponse(m1)
+    let responseWindowID = try #require(viewModel.hermesResponseWindowStates.last?.id)
+    viewModel.beginBeeperReplyRecordingLock()
+    #expect(viewModel.hermesResponseWindowStates.last?.isRecordingReply == true)
+
+    viewModel.dismissHermesResponse(sessionID: responseWindowID)
+
+    let afterClose = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(afterClose.id == responseWindowID)  // panel Dane is speaking to did not disappear
+    #expect(afterClose.isRecordingReply)
+
+    viewModel.showBeeperResponses([m2], chatID: m2.chatID)
+
+    let recording = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(recording.text == m1.richDisplayText)
+    #expect(recording.newerCount == 1)
+
+    let send = Task {
+      await viewModel.submitBeeperTurn(turn(), recordHistory: false)
+    }
+    await client.waitUntilSendStarts()
+
+    let sending = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(sending.text == m1.richDisplayText)
+    #expect(!sending.isRecordingReply)
+    #expect(sending.isSendingReply)
+    #expect(client.capturedReplyToMessageID() == m1.id)
+
+    client.succeed()
+    await send.value
+
+    let presented = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(presented.id != responseWindowID)
+    #expect(presented.text == m2.richDisplayText)
+    #expect(presented.beeperChatID == m2.chatID)
+  }
+
   @Test func activeSnoozeWinsWhenDelayedReplySucceeds() async throws {
     let client = SuspendedBeeperAPIClient()
     let (viewModel, restore) = viewModel(client: client)

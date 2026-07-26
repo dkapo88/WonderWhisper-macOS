@@ -506,6 +506,23 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     }
   }
 
+  /// `windowWillClose` drops this controller's panel bookkeeping *before* it reaches the view
+  /// model, so the view-model guard alone cannot hold the invariant: the panel would already be
+  /// gone from `panels` and the next render would re-present a fresh one under Dane's voice.
+  /// Veto the native route instead, which covers ⌘W and `performClose:` as well as the header
+  /// control. `close()` bypasses this by design, and nothing calls it on these panels.
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    guard let panel = sender as? HermesResponsePanel,
+          let sessionID = panel.sessionID else {
+      return true
+    }
+    return !isRecordingReply(sessionID: sessionID)
+  }
+
+  private func isRecordingReply(sessionID: UUID) -> Bool {
+    latestStates.first { $0.id == sessionID }?.isRecordingReply ?? false
+  }
+
   func windowWillClose(_ notification: Notification) {
     guard let panel = notification.object as? HermesResponsePanel,
           let sessionID = panel.sessionID else {
@@ -1202,9 +1219,18 @@ private struct HermesResponsePanelView: View {
       }
       .buttonStyle(.borderless)
       .accessibilityLabel("Close")
+      // Same invariant as Snooze: a panel Dane is actively speaking to cannot disappear,
+      // because teardown drops the reply target and the finished transcription would send
+      // with no `replyToMessageID`. Closing stays available during send, where the target
+      // is already committed.
+      .disabled(state.isRecordingReply)
       // Escape is handled centrally in HermesResponsePanel.keyDown so it targets the
       // topmost window and yields to active recordings.
-      .help("Close (esc)")
+      .help(
+        state.isRecordingReply
+          ? "Finish or cancel this voice reply before closing (esc cancels)."
+          : "Close (esc)"
+      )
     }
   }
 

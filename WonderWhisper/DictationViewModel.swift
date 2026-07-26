@@ -2395,6 +2395,14 @@ final class DictationViewModel: ObservableObject {
     }
 
     func dismissHermesResponse(sessionID: UUID) {
+        // Every explicit dismissal — header Close, ⌘W, Escape's dismiss branch, `windowWillClose`
+        // — funnels here, so this is where the invariant belongs: while a voice reply is
+        // recording, only cancelling that recording may release the panel. Teardown deletes
+        // `beeperResponseWindowTargets[sessionID]` and the active-recording window ID, and the
+        // transcription arriving a moment later resolves both as nil — sending with no
+        // `replyToMessageID`, and with several chats configured possibly to the wrong chat.
+        // Escape still cancels the recording first (`HermesEscapeResolver`), which is the exit.
+        guard !isRecordingReplyPanel(sessionID: sessionID) else { return }
         if let target = beeperResponseWindowTargets[sessionID] {
             _ = takeBeeperResponses(chatID: target.chatID)
         }
@@ -2758,9 +2766,7 @@ final class DictationViewModel: ObservableObject {
         // map is torn down with the window, so a snooze that lands mid-recording would strand the
         // in-flight transcription with no reply target. The invariant must not rest on one
         // SwiftUI modifier.
-        let isRecording = hermesResponseWindowStates
-            .first { $0.id == sessionID }?.isRecordingReply ?? false
-        guard !isRecording else { return }
+        guard !isRecordingReplyPanel(sessionID: sessionID) else { return }
         snoozeBeeperChat(chatID: target.chatID, duration: duration, now: now)
         dismissBeeperResponseWindow(sessionID)
     }
@@ -4661,6 +4667,14 @@ final class DictationViewModel: ObservableObject {
     // that answer lives in the controller and needs a reference back, not a wider state array.
     func isAttending(sessionID: UUID) -> Bool {
         hermesResponseWindowStates.contains { $0.id == sessionID }
+    }
+
+    /// True while this panel holds a voice reply that is still recording. The one reader for the
+    /// two guards that protect the locked reply target — Snooze and dismissal — so they cannot
+    /// drift apart. Deliberately not `isSendingReply`: by send time the target is committed, and
+    /// snoozing or closing during send is required behaviour.
+    private func isRecordingReplyPanel(sessionID: UUID) -> Bool {
+        hermesResponseWindowStates.first { $0.id == sessionID }?.isRecordingReply ?? false
     }
 
     /// True while this panel's text composer holds something Dane typed. The draft itself lives in
