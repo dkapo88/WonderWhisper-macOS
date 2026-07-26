@@ -101,6 +101,9 @@ enum HermesBeeperStatusLine {
     /// never colour, never a badge, never red. Red reads as "deal with me now", which is the
     /// opposite of "the rest are in Beeper".
     var isEmphasized: Bool = false
+    /// What VoiceOver says. `+4 earlier` is typography, not a sentence: read aloud it is "plus
+    /// four earlier", and the interpunct separators become "dot". Same segments, spelled out.
+    var spoken: String
   }
 
   static func segments(
@@ -109,10 +112,35 @@ enum HermesBeeperStatusLine {
     reason: HermesResponseReason
   ) -> [Segment] {
     var segments: [Segment] = []
-    if reason == .snoozeExpired { segments.append(Segment(text: "Snooze ended")) }
-    if earlierCount > 0 { segments.append(Segment(text: "+\(earlierCount) earlier")) }
-    if newerCount > 0 { segments.append(Segment(text: "\(newerCount) new", isEmphasized: true)) }
+    if reason == .snoozeExpired {
+      segments.append(Segment(text: "Snooze ended", spoken: "Snooze ended"))
+    }
+    if earlierCount > 0 {
+      segments.append(Segment(
+        text: "+\(earlierCount) earlier",
+        spoken: "\(earlierCount) earlier \(earlierCount == 1 ? "message" : "messages")"
+      ))
+    }
+    if newerCount > 0 {
+      segments.append(Segment(
+        text: "\(newerCount) new",
+        isEmphasized: true,
+        spoken: "\(newerCount) new \(newerCount == 1 ? "message" : "messages")"
+      ))
+    }
     return segments
+  }
+
+  /// The whole line as one utterance. VoiceOver reading five sibling nodes turns "+4 earlier · 2
+  /// new" into punctuation; one label makes it a sentence.
+  static func spokenLine(
+    earlierCount: Int,
+    newerCount: Int,
+    reason: HermesResponseReason
+  ) -> String {
+    segments(earlierCount: earlierCount, newerCount: newerCount, reason: reason)
+      .map(\.spoken)
+      .joined(separator: ", ")
   }
 }
 
@@ -1148,7 +1176,7 @@ private struct HermesResponsePanelView: View {
       HStack(spacing: 4) {
         // Secondary applies to the copy only. The link keeps the accent colour it needs to
         // read as clickable at all.
-        Group {
+        HStack(spacing: 4) {
           ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
             if index > 0 {
               Text("·")
@@ -1160,11 +1188,22 @@ private struct HermesResponsePanelView: View {
           Text("·")
         }
         .foregroundStyle(.secondary)
+        // The separators are typography and the counts are one fact, so the whole run collapses
+        // to a single spoken element rather than five nodes of "plus", "dot", "dot".
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(HermesBeeperStatusLine.spokenLine(
+          earlierCount: state.earlierCount,
+          newerCount: state.newerCount,
+          reason: state.reason
+        ))
 
         // Telling Dane the rest are in Beeper without a way to get there manufactures the
         // friction this feature exists to remove.
+        // `.link` renders as an unnamed AX link without an explicit label, so the destination
+        // has to be said out loud.
         Button("Open Beeper", action: onOpenBeeper)
           .buttonStyle(.link)
+          .accessibilityLabel("Open Beeper")
       }
       .font(.caption)
     }

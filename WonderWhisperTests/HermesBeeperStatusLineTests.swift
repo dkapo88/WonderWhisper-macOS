@@ -44,6 +44,19 @@ struct HermesBeeperStatusLineTests {
     #expect(segments.filter(\.isEmphasized).map(\.text) == ["2 new"])
   }
 
+  /// VoiceOver gets the same facts as the eye, minus the typography: no "plus", no "dot", and
+  /// "message" said out loud so a bare number is not left hanging.
+  @Test func spokenCopyDropsPunctuationAndAgreesInNumber() {
+    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 4, newerCount: 2, reason: .live)
+      == "4 earlier messages, 2 new messages")
+    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 1, newerCount: 1, reason: .live)
+      == "1 earlier message, 1 new message")
+    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 0, newerCount: 2, reason: .snoozeExpired)
+      == "Snooze ended, 2 new messages")
+    // No line rendered means no label to speak.
+    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 0, newerCount: 0, reason: .live).isEmpty)
+  }
+
   @Test func beeperChatDiscriminatesTheSource() {
     let hermes = HermesResponseWindowState(title: "Hermes", text: "hi")
     let beeper = HermesResponseWindowState(title: "Beeper - Sam", text: "hi", beeperChatID: "chat1")
