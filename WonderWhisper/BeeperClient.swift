@@ -289,7 +289,7 @@ enum BeeperClientError: LocalizedError {
   }
 }
 
-final class BeeperAPIClient {
+class BeeperAPIClient {
   private let session: URLSession
   private let accessTokenProvider: () -> String?
 

@@ -3,7 +3,67 @@ import AppKit
 import Testing
 @testable import WonderWhisper
 
+private final class SuspendedBeeperAPIClient: BeeperAPIClient {
+  private let lock = NSLock()
+  private var didStart = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var responseContinuation: CheckedContinuation<BeeperSendResponse, Error>?
+
+  init() {
+    super.init(accessTokenProvider: { "test-token" })
+  }
+
+  override func send(
+    text: String,
+    replyToMessageID: String? = nil,
+    settings: BeeperSettings
+  ) async throws -> BeeperSendResponse {
+    try await withCheckedThrowingContinuation { continuation in
+      lock.lock()
+      responseContinuation = continuation
+      didStart = true
+      let waiters = startWaiters
+      startWaiters.removeAll()
+      lock.unlock()
+      waiters.forEach { $0.resume() }
+    }
+  }
+
+  override func listMessages(
+    settings: BeeperSettings,
+    cursor: String? = nil,
+    direction: MessageListDirection? = nil
+  ) async throws -> BeeperMessagePage {
+    BeeperMessagePage(items: [], newestCursor: cursor)
+  }
+
+  func waitUntilSendStarts() async {
+    await withCheckedContinuation { continuation in
+      lock.lock()
+      if didStart {
+        lock.unlock()
+        continuation.resume()
+      } else {
+        startWaiters.append(continuation)
+        lock.unlock()
+      }
+    }
+  }
+
+  func succeed() {
+    lock.lock()
+    let continuation = responseContinuation
+    responseContinuation = nil
+    lock.unlock()
+    continuation?.resume(returning: BeeperSendResponse(
+      chatID: "chat1",
+      pendingMessageID: "pending"
+    ))
+  }
+}
+
 @MainActor
+@Suite(.serialized)
 struct BeeperResponseFilterTests {
   @Test func emptyKeywordsNeverFilter() {
     #expect(!DictationViewModel.beeperResponseIsFiltered("running bash", keywords: ""))
@@ -206,66 +266,107 @@ struct BeeperResponseFilterTests {
     #expect(released.newer == 0)
   }
 
-  @Test func voiceSendHoldsM2UntilSuccessFreshlyPresentsIt() throws {
-    let responseWindowID = UUID()
+  private func viewModel(
+    client: SuspendedBeeperAPIClient
+  ) -> (viewModel: DictationViewModel, restore: () -> Void) {
+    let viewModel = DictationViewModel(beeperClient: client)
+    let originalPostProcessing = viewModel.beeperPostProcessingEnabled
+    let originalClipboard = viewModel.beeperClipboardContextEnabled
+    let originalMonitoring = viewModel.beeperResponseMonitoringEnabled
+    let originalSuppressFrontmost = viewModel.beeperSuppressWhenChatAppFrontmost
+    let originalKeywords = viewModel.beeperResponseFilterKeywords
+    let originalChats = viewModel.beeperChats
+    viewModel.beeperPostProcessingEnabled = false
+    viewModel.beeperClipboardContextEnabled = false
+    viewModel.beeperResponseMonitoringEnabled = false
+    viewModel.beeperSuppressWhenChatAppFrontmost = false
+    viewModel.beeperResponseFilterKeywords = ""
+    viewModel.beeperChats = [BeeperChatEntry(chatID: "chat1", alias: "Sam")]
+    return (viewModel, {
+      viewModel.beeperPostProcessingEnabled = originalPostProcessing
+      viewModel.beeperClipboardContextEnabled = originalClipboard
+      viewModel.beeperResponseMonitoringEnabled = originalMonitoring
+      viewModel.beeperSuppressWhenChatAppFrontmost = originalSuppressFrontmost
+      viewModel.beeperResponseFilterKeywords = originalKeywords
+      viewModel.beeperChats = originalChats
+    })
+  }
+
+  private func turn(_ transcript: String = "Reply") -> DictationController.TranscriptionOnlyResult {
+    DictationController.TranscriptionOnlyResult(
+      fileURL: nil,
+      appName: "Beeper",
+      bundleID: nil,
+      transcript: transcript,
+      screenContext: nil,
+      screenContextMethod: nil,
+      selectedText: nil,
+      activeTextField: nil,
+      transcriptionModel: "test",
+      transcriptionSeconds: 0,
+      totalSeconds: 0
+    )
+  }
+
+  @Test func delayedVoiceSendHoldsM2UntilSuccessFreshlyPresentsIt() async throws {
+    let client = SuspendedBeeperAPIClient()
+    let (viewModel, restore) = viewModel(client: client)
+    defer { restore() }
     let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
     let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
-    var states = [
-      HermesResponseWindowState(
-        id: responseWindowID,
-        title: "Beeper - Sam",
-        text: m1.richDisplayText,
-        isHTML: m1.hasHTMLBody,
-        beeperChatID: m1.chatID
-      ),
-    ]
+    viewModel.showBeeperResponse(m1)
+    let responseWindowID = try #require(viewModel.hermesResponseWindowStates.last?.id)
 
-    // The send is now suspended inside BeeperAPIClient.send. M2 must stay pending instead of
-    // replacing the reply target that the in-flight send captured from M1.
-    states = HermesResponseWindowLifecycle.replySendStarted(
-      states,
-      sessionID: responseWindowID
-    )
-    var pending = BeeperResponseAccumulator(messages: [m2])
-    let suspended = try #require(pending)
-    let counts = DictationViewModel.beeperBurstCounts(
-      earlierCount: states[0].earlierCount,
-      pendingCount: suspended.count,
-      isHoldingBody: states[0].isSendingReply
-    )
-    states = HermesResponseWindowLifecycle.burstCoalesced(
-      states,
-      sessionID: responseWindowID,
-      earlierCount: counts.earlier,
-      newerCount: counts.newer
-    )
-
-    #expect(states[0].text == m1.richDisplayText)
-    #expect(states[0].newerCount == 1)
-    #expect(pending?.latest.id == m2.id)
-
-    // Success takes the held response, dismisses M1, then force-presents M2 as a fresh panel.
-    let taken = try #require(pending)
-    pending = nil
-    states.removeAll { $0.id == responseWindowID }
-    states.append(
-      HermesResponseWindowState(
-        title: "Beeper - Sam",
-        text: taken.latest.richDisplayText,
-        isHTML: taken.latest.hasHTMLBody,
-        isError: false,
-        supportsReply: false,
-        supportsTextReply: true,
-        beeperChatID: taken.latest.chatID,
-        earlierCount: taken.count - 1
+    let send = Task {
+      await viewModel.submitBeeperTurn(
+        turn(),
+        responseWindowID: responseWindowID,
+        recordHistory: false
       )
-    )
+    }
+    await client.waitUntilSendStarts()
+    viewModel.showBeeperResponses([m2], chatID: m2.chatID)
 
-    #expect(pending == nil)
-    #expect(states.count == 1)
-    #expect(states[0].id != responseWindowID)
-    #expect(states[0].text == m2.richDisplayText)
-    #expect(states[0].beeperChatID == m2.chatID)
+    #expect(viewModel.hermesResponseWindowStates.last?.text == m1.richDisplayText)
+    #expect(viewModel.hermesResponseWindowStates.last?.newerCount == 1)
+
+    client.succeed()
+    await send.value
+
+    let presented = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(presented.id != responseWindowID)
+    #expect(presented.text == m2.richDisplayText)
+    #expect(presented.beeperChatID == m2.chatID)
+  }
+
+  @Test func activeSnoozeWinsWhenDelayedReplySucceeds() async throws {
+    let client = SuspendedBeeperAPIClient()
+    let (viewModel, restore) = viewModel(client: client)
+    defer { restore() }
+    let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
+    let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
+    viewModel.showBeeperResponse(m1)
+    let responseWindowID = try #require(viewModel.hermesResponseWindowStates.last?.id)
+
+    let send = Task {
+      await viewModel.submitBeeperTurn(
+        turn(),
+        responseWindowID: responseWindowID,
+        recordHistory: false
+      )
+    }
+    await client.waitUntilSendStarts()
+    viewModel.snoozeBeeperResponse(
+      sessionID: responseWindowID,
+      duration: .oneHour
+    )
+    viewModel.showBeeperResponses([m2], chatID: m2.chatID)
+    client.succeed()
+    await send.value
+
+    #expect(viewModel.hermesResponseWindowStates.isEmpty)
+    viewModel.resumeBeeperChat(chatID: m2.chatID)
+    #expect(viewModel.hermesResponseWindowStates.last?.text == m2.richDisplayText)
   }
 
   @Test func responseWindowSourceDefaultsToNonBeeperAndCarriesChatID() {

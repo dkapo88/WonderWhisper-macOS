@@ -658,9 +658,7 @@ final class DictationViewModel: ObservableObject {
     private lazy var hermesClient = HermesAgentAPIClient(
         apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.hermesAPIKeyAlias) }
     )
-    private lazy var beeperClient = BeeperAPIClient(
-        accessTokenProvider: { KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias) }
-    )
+    private let beeperClient: BeeperAPIClient
     private let codexClient = CodexAppServerClient()
     private let codexDesktopClient = CodexDesktopIPCClient()
     private var activeHermesPromptID: UUID?
@@ -740,7 +738,12 @@ final class DictationViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(pasteFormatted, forKey: "insertion.pasteFormatted") }
     }
 
-    init() {
+    init(beeperClient: BeeperAPIClient? = nil) {
+        self.beeperClient = beeperClient ?? BeeperAPIClient(
+            accessTokenProvider: {
+                KeychainService().getSecret(forKey: AppConfig.beeperAccessTokenAlias)
+            }
+        )
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
@@ -2791,6 +2794,20 @@ final class DictationViewModel: ObservableObject {
         beeperResponseAccumulators.removeValue(forKey: chatID)
     }
 
+    private func completeSuccessfulBeeperReply(
+        responseWindowID: UUID?,
+        chatID: String?
+    ) {
+        dismissBeeperResponseWindow(responseWindowID)
+        guard let chatID,
+              beeperSnoozedUntil(chatID: chatID).map({ $0 > Date() }) != true,
+              let pendingResponses = takeBeeperResponses(chatID: chatID) else { return }
+        showBeeperResponse(
+            pendingResponses.latest,
+            earlierCount: pendingResponses.count - 1
+        )
+    }
+
     private func beeperSnoozedUntil(chatID: String) -> Date? {
         beeperChats.first {
             $0.chatID.trimmingCharacters(in: .whitespacesAndNewlines) == chatID
@@ -3495,7 +3512,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func submitBeeperTurn(_ turn: DictationController.TranscriptionOnlyResult) async {
+    func submitBeeperTurn(
+        _ turn: DictationController.TranscriptionOnlyResult,
+        responseWindowID: UUID? = nil,
+        recordHistory: Bool = true
+    ) async {
         let rawTranscript = turn.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTranscript.isEmpty else {
             clearBeeperContextCapture(cancel: true)
@@ -3505,7 +3526,8 @@ final class DictationViewModel: ObservableObject {
             return
         }
 
-        let responseWindowIDToDismiss = beeperResponseWindowIDForActiveRecording
+        let responseWindowIDToDismiss = responseWindowID
+            ?? beeperResponseWindowIDForActiveRecording
         let replyTarget = responseWindowIDToDismiss.flatMap { beeperResponseWindowTargets[$0] }
         if let responseWindowIDToDismiss {
             hermesResponseWindowStates = HermesResponseWindowLifecycle.replySendStarted(
@@ -3550,16 +3572,10 @@ final class DictationViewModel: ObservableObject {
             )
             let sendSeconds = Date().timeIntervalSince(start)
 
-            let pendingResponses = replyTarget.flatMap {
-                takeBeeperResponses(chatID: $0.chatID)
-            }
-            dismissBeeperResponseWindow(responseWindowIDToDismiss)
-            if let pendingResponses {
-                showBeeperResponse(
-                    pendingResponses.latest,
-                    earlierCount: pendingResponses.count - 1
-                )
-            }
+            completeSuccessfulBeeperReply(
+                responseWindowID: responseWindowIDToDismiss,
+                chatID: replyTarget?.chatID
+            )
             beeperResponseWindowIDForActiveRecording = nil
             beeperLastSentText = outboundText
             beeperLastPendingMessageID = response.pendingMessageID
@@ -3572,25 +3588,27 @@ final class DictationViewModel: ObservableObject {
             beeperConnectionSucceeded = true
             settingsNotice = beeperConnectionStatus
 
-            await history.append(
-                fileURL: turn.fileURL,
-                appName: turn.appName,
-                bundleID: turn.bundleID,
-                transcript: transcript,
-                output: "",
-                screenContext: nil,
-                screenContextMethod: nil,
-                screenImage: nil,
-                selectedText: turn.selectedText,
-                activeTextField: turn.activeTextField,
-                llmSystemMessage: nil,
-                llmUserMessage: outboundText,
-                transcriptionModel: turn.transcriptionModel,
-                llmModel: "Beeper Desktop API",
-                transcriptionSeconds: turn.transcriptionSeconds,
-                llmSeconds: sendSeconds,
-                totalSeconds: turn.totalSeconds + sendSeconds
-            )
+            if recordHistory {
+                await history.append(
+                    fileURL: turn.fileURL,
+                    appName: turn.appName,
+                    bundleID: turn.bundleID,
+                    transcript: transcript,
+                    output: "",
+                    screenContext: nil,
+                    screenContextMethod: nil,
+                    screenImage: nil,
+                    selectedText: turn.selectedText,
+                    activeTextField: turn.activeTextField,
+                    llmSystemMessage: nil,
+                    llmUserMessage: outboundText,
+                    transcriptionModel: turn.transcriptionModel,
+                    llmModel: "Beeper Desktop API",
+                    transcriptionSeconds: turn.transcriptionSeconds,
+                    llmSeconds: sendSeconds,
+                    totalSeconds: turn.totalSeconds + sendSeconds
+                )
+            }
         } catch {
             AppLog.dictation.error("Beeper send failed: \(error.localizedDescription, privacy: .public)")
             beeperResponseWindowIDForActiveRecording = nil
@@ -3653,14 +3671,10 @@ final class DictationViewModel: ObservableObject {
                 settings: settings
             )
 
-            let pendingResponses = takeBeeperResponses(chatID: target.chatID)
-            dismissBeeperResponseWindow(responseWindowID)
-            if let pendingResponses {
-                showBeeperResponse(
-                    pendingResponses.latest,
-                    earlierCount: pendingResponses.count - 1
-                )
-            }
+            completeSuccessfulBeeperReply(
+                responseWindowID: responseWindowID,
+                chatID: target.chatID
+            )
             beeperLastSentText = trimmed
             beeperLastPendingMessageID = response.pendingMessageID
             beeperConnectionStatus = beeperResponseMonitoringEnabled
@@ -3915,7 +3929,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Presentation entry point for one poll's worth of new messages.
-    private func showBeeperResponses(_ candidates: [BeeperMessage], chatID: String) {
+    func showBeeperResponses(_ candidates: [BeeperMessage], chatID: String) {
         let surviving = Self.unfilteredBeeperCandidates(
             candidates,
             keywords: beeperResponseFilterKeywords
@@ -3934,7 +3948,7 @@ final class DictationViewModel: ObservableObject {
         flushBeeperResponses(chatID: chatID, reason: .live)
     }
 
-    private func showBeeperResponse(
+    func showBeeperResponse(
         _ message: BeeperMessage,
         earlierCount: Int = 0,
         reason: HermesResponseReason = .live
