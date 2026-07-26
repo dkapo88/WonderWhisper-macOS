@@ -4662,9 +4662,12 @@ final class DictationViewModel: ObservableObject {
     /// instead of opening a second one. `hermesResponseWindowStates` is the record of that: the
     /// controller creates a panel for every state it publishes and every teardown path
     /// (Close, Escape, `windowWillClose`) removes the state before the panel goes.
-    // ponytail: a minimized panel counts as attending. That is deliberate — the count grows on
-    // the bubble, which is the surface Dane chose to leave up. If minimized ever needs to differ,
-    // that answer lives in the controller and needs a reference back, not a wider state array.
+    // A minimized panel counts as attending, so a burst folds into it rather than opening a second
+    // panel for the same chat — one panel, one reply target. It does not stay hidden: the fold
+    // bumps `burstArrivals`, and the controller restores and fronts that panel on the change
+    // (`HermesResponseWindowLifecycle.burstRestoreSessionIDs`). The bubble carries no count, so
+    // absorbing without restoring would mutate the body and the reply target behind an unchanged
+    // bubble — the mis-target class this contract exists to prevent.
     func isAttending(sessionID: UUID) -> Bool {
         hermesResponseWindowStates.contains { $0.id == sessionID }
     }

@@ -484,6 +484,51 @@ struct BeeperResponseFilterTests {
     #expect(presented.beeperChatID == m2.chatID)
   }
 
+  /// A minimized panel used to swallow the whole burst: it counted as attending, so M2 was folded
+  /// into the hidden session and nothing brought it back — the displayed body *and*
+  /// `beeperResponseWindowTargets` both moved to M2 behind an unchanged bubble, so a Voice Reply
+  /// sent hours later replied to a message Dane never saw arrive. The fold is correct (one panel,
+  /// one target); the missing half was the restore. The view model has no minimize concept by
+  /// design, so this drives the fold here and asserts the signal the controller restores on.
+  @Test func burstArrivalRetargetsOneSessionAndAsksForARestore() async throws {
+    let client = SuspendedBeeperAPIClient()
+    let (viewModel, restore) = viewModel(client: client)
+    defer { restore() }
+    let m1 = incoming("m1", at: "2026-07-26T09:00:01Z", text: "M1")
+    let m2 = incoming("m2", at: "2026-07-26T09:00:02Z", text: "M2")
+    viewModel.showBeeperResponse(m1)
+    let responseWindowID = try #require(viewModel.hermesResponseWindowStates.last?.id)
+    let beforeArrival = viewModel.hermesResponseWindowStates
+
+    viewModel.showBeeperResponses([m2], chatID: m2.chatID)
+
+    let afterArrival = viewModel.hermesResponseWindowStates
+    #expect(afterArrival.count == 1)  // no second panel for the same chat
+    let folded = try #require(afterArrival.last)
+    #expect(folded.id == responseWindowID)  // the same session, restored rather than replaced
+    #expect(folded.text == m2.richDisplayText)
+    #expect(folded.newerCount == 0)  // nothing held: body and target moved together
+    #expect(
+      HermesResponseWindowLifecycle.burstRestoreSessionIDs(
+        previous: beforeArrival,
+        current: afterArrival
+      ) == [responseWindowID]
+    )
+
+    // Production order: the arrival lands first, Dane hits Voice Reply on the restored panel
+    // second. The lock is what `submitBeeperTurn` resolves its target from, so it has to be taken
+    // here rather than passing `responseWindowID` — that is the whole point of the assertion.
+    viewModel.beginBeeperReplyRecordingLock()
+    let send = Task {
+      await viewModel.submitBeeperTurn(turn(), recordHistory: false)
+    }
+    await client.waitUntilSendStarts()
+    #expect(client.capturedReplyToMessageID() == m2.id)
+
+    client.succeed()
+    await send.value
+  }
+
   @Test func activeSnoozeWinsWhenDelayedReplySucceeds() async throws {
     let client = SuspendedBeeperAPIClient()
     let (viewModel, restore) = viewModel(client: client)

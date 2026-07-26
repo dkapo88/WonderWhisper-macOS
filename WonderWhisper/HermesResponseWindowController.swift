@@ -33,6 +33,11 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var newerCount: Int
   /// Why this panel is on screen. Drives the `Snooze ended · ` prefix, nothing else.
   var reason: HermesResponseReason
+  /// Bumped once per burst fold. Only the *change* means anything, never the value — the
+  /// controller restores a minimized panel when it moves. Explicit rather than derived from
+  /// `text`/`earlierCount`/`newerCount`: a signal every future writer of those has to remember to
+  /// send is a signal that eventually goes unsent.
+  var burstArrivals: Int
 
   init(id: UUID = UUID(),
        title: String,
@@ -49,7 +54,8 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        preservedReplyText: String? = nil,
        earlierCount: Int = 0,
        newerCount: Int = 0,
-       reason: HermesResponseReason = .live) {
+       reason: HermesResponseReason = .live,
+       burstArrivals: Int = 0) {
     self.id = id
     self.title = title
     self.text = text
@@ -66,6 +72,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.earlierCount = earlierCount
     self.newerCount = newerCount
     self.reason = reason
+    self.burstArrivals = burstArrivals
   }
 
   /// Beeper panels get the message glyph, the status line and the Snooze control; Hermes and
@@ -306,7 +313,25 @@ enum HermesResponseWindowLifecycle {
       if let isHTML { coalesced.isHTML = isHTML }
       coalesced.earlierCount = earlierCount
       coalesced.newerCount = newerCount
+      // Every fold is an arrival, held or not, so the bump lives here rather than at the two call
+      // sites: one funnel nobody has to remember. `render` restores on the change.
+      coalesced.burstArrivals = state.burstArrivals + 1
       return coalesced
+    }
+  }
+
+  /// Panels that must come back to the front because a burst arrival landed on them. A minimized
+  /// panel still absorbs its chat's bursts — one panel per chat, no duplicate reply target — but
+  /// absorbing silently would make minimize a second, invisible snooze with no deadline and no
+  /// resume affordance. Minimize is window management; snooze is the only "not now".
+  static func burstRestoreSessionIDs(
+    previous: [HermesResponseWindowState],
+    current: [HermesResponseWindowState]
+  ) -> [UUID] {
+    current.compactMap { state in
+      guard let was = previous.first(where: { $0.id == state.id }),
+            was.burstArrivals != state.burstArrivals else { return nil }
+      return state.id
     }
   }
 }
@@ -576,6 +601,16 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
       guard latestStates.first(where: { $0.id == state.id })?.replyFailure == nil else { continue }
       textReplySessionIDs.insert(state.id)
       restorePanel(sessionID: state.id)
+    }
+    // Same shape, same reason for living above `latestStates = states`: a burst arrival is a fresh
+    // interruption, so the panel it folded into comes back to the front instead of mutating behind
+    // a bubble. The body below this loop is what gets restored — `restorePanel` renders the
+    // previous state, the per-state loop then pushes the new one into the same panel.
+    for sessionID in HermesResponseWindowLifecycle.burstRestoreSessionIDs(
+      previous: latestStates,
+      current: states
+    ) {
+      restorePanel(sessionID: sessionID)
     }
     latestStates = states
     let activeIDs = Set(states.map(\.id))
