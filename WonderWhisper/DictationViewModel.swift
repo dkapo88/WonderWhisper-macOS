@@ -3446,12 +3446,14 @@ final class DictationViewModel: ObservableObject {
             .sorted(by: sortBeeperMessagesAscending)
     }
 
-    /// The newest candidate the keyword filter would let through. Skipping past filtered
-    /// messages stops one filtered word at the end of a burst suppressing the whole page.
+    /// The candidates the keyword filter would let through, oldest first. Both the pick and
+    /// the burst count come off this one array: skipping past filtered messages stops one
+    /// filtered word at the end of a burst suppressing the whole page, and counting only
+    /// survivors keeps a deliberately filtered message out of the "pending" number.
     /// `showBeeperResponse` re-checks the winner — it stays the authoritative gate.
-    static func newestUnfilteredBeeperCandidate(_ candidates: [BeeperMessage],
-                                                keywords: String) -> BeeperMessage? {
-        candidates.last { !beeperResponseIsFiltered($0.displayText, keywords: keywords) }
+    static func unfilteredBeeperCandidates(_ candidates: [BeeperMessage],
+                                           keywords: String) -> [BeeperMessage] {
+        candidates.filter { !beeperResponseIsFiltered($0.displayText, keywords: keywords) }
     }
 
     /// Splits the user's filter setting into normalized, lowercased terms.
@@ -3484,13 +3486,14 @@ final class DictationViewModel: ObservableObject {
     // dropped, now logged so the loss is visible instead of silent. This takes the whole
     // array so coalescing can land here; the loss is not fixed until it consumes all of it.
     private func showBeeperResponses(_ candidates: [BeeperMessage]) {
-        guard let newest = Self.newestUnfilteredBeeperCandidate(
+        let surviving = Self.unfilteredBeeperCandidates(
             candidates,
             keywords: beeperResponseFilterKeywords
-        ) else { return }
-        if candidates.count > 1 {
+        )
+        guard let newest = surviving.last else { return }
+        if surviving.count > 1 {
             AppLog.dictation.log(
-                "Beeper ambient monitor dropped \(candidates.count - 1, privacy: .public) other burst message(s) pending coalescing"
+                "Beeper ambient monitor dropped \(surviving.count - 1, privacy: .public) other burst message(s) pending coalescing"
             )
         }
         AppLog.dictation.log(

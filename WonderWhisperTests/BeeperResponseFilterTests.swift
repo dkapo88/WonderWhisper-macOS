@@ -109,19 +109,23 @@ struct BeeperResponseFilterTests {
     #expect(candidates.last?.id == "c")  // presented message is the newest, not the stalest
   }
 
-  @Test func newestUnfilteredCandidateSkipsFilteredTailInsteadOfSuppressingTheBurst() {
+  @Test func unfilteredCandidatesSkipFilteredTailInsteadOfSuppressingTheBurst() {
     let burst = [
       incoming("a", at: "2026-07-26T09:00:01Z", text: "moved to 3pm"),
       incoming("b", at: "2026-07-26T09:00:05Z", text: "see you then"),
       incoming("c", at: "2026-07-26T09:00:09Z", text: "ok"),  // newest, filtered
     ]
-    let picked = DictationViewModel.newestUnfilteredBeeperCandidate(burst, keywords: "ok")
-    #expect(picked?.id == "b")  // newest survivor, not nothing at all
+    let surviving = DictationViewModel.unfilteredBeeperCandidates(burst, keywords: "ok")
+    #expect(surviving.last?.id == "b")  // newest survivor, not nothing at all
+    // The drop log counts survivors, so a filtered message is never reported as pending.
+    #expect(surviving.count - 1 == 1)
 
     // Every candidate filtered still suppresses, as the filter intends.
-    #expect(DictationViewModel.newestUnfilteredBeeperCandidate(burst, keywords: "moved, see, ok") == nil)
-    // No filter set: unchanged, the newest wins.
-    #expect(DictationViewModel.newestUnfilteredBeeperCandidate(burst, keywords: "")?.id == "c")
+    #expect(DictationViewModel.unfilteredBeeperCandidates(burst, keywords: "moved, see, ok").isEmpty)
+    // No filter set: unchanged, the newest wins and the whole burst is pending.
+    let unfiltered = DictationViewModel.unfilteredBeeperCandidates(burst, keywords: "")
+    #expect(unfiltered.last?.id == "c")
+    #expect(unfiltered.count - 1 == 2)
   }
 
   @Test func pollCandidatesDropSeenAndPreBaselineMessages() {
