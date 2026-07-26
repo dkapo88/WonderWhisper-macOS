@@ -327,6 +327,13 @@ struct HermesResponseWindowLifecycleTests {
     #expect(held[0].text == target.text)
     #expect(held[0].isHTML == target.isHTML)
     #expect(held[0].newerCount == 3)
+    // Held is still an arrival, so it still asks for the restore. Otherwise a minimized panel
+    // holding a draft would swallow the burst silently — the exact bug, one branch over.
+    #expect(held[0].burstArrivals == target.burstArrivals + 1)
+    #expect(
+      HermesResponseWindowLifecycle.burstRestoreSessionIDs(previous: [target], current: held)
+        == [target.id]
+    )
   }
 
   @Test func coalescingIntoAnAbsentPanelChangesNothing() {
