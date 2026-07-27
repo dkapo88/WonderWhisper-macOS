@@ -5,6 +5,28 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-27.2</title>
+      <pubDate>Mon, 27 Jul 2026 05:56:08 +0000</pubDate>
+      <sparkle:version>2026072702</sparkle:version>
+      <sparkle:shortVersionString>2026-07-27.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>What's new</h2>
+<ul>
+<li>Minimized Beeper, Hermes, and Codex response windows now appear as compact, source-labelled pills instead of anonymous grey circles.</li>
+<li>Each pill uses a distinct source icon and colour, with clear indicators for errors, reply recording, and sending.</li>
+<li>Added polished hover and press feedback while preserving the existing response-window lifecycle and stacking behaviour.</li>
+</ul>
+<h2>Accessibility</h2>
+<ul>
+<li>Minimized response pills now expose descriptive restore labels and help text, with a full-size accessible click target.</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials remain compatible.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-27.2/WonderWhisper-2026-07-27.2.dmg" sparkle:edSignature="I/Lg8sX8FcpkE40f9tNcWryEbQov4WuQbS9BfioR1N21CdY/qfUjmghPFvAtfT38tX5GKaRjAlk/XBnlq6XyBA==" length="9640519" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-27.1</title>
       <pubDate>Sun, 26 Jul 2026 18:52:33 +0000</pubDate>
       <sparkle:version>2026072701</sparkle:version>
