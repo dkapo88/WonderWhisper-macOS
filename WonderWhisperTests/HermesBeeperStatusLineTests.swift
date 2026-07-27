@@ -58,10 +58,20 @@ struct HermesBeeperStatusLineTests {
   }
 
   @Test func beeperChatDiscriminatesTheSource() {
-    let hermes = HermesResponseWindowState(title: "Hermes", text: "hi")
-    let beeper = HermesResponseWindowState(title: "Beeper - Sam", text: "hi", beeperChatID: "chat1")
+    let hermes = HermesResponseWindowState(source: .hermes, title: "Hermes", text: "hi")
+    let beeper = HermesResponseWindowState(
+      source: .beeper,
+      title: "Beeper - Sam",
+      text: "hi",
+      beeperChatID: "chat1"
+    )
     // A blank ID is not a Beeper panel — it would light up Snooze with nothing to snooze.
-    let blank = HermesResponseWindowState(title: "Beeper", text: "hi", beeperChatID: "")
+    let blank = HermesResponseWindowState(
+      source: .beeper,
+      title: "Beeper",
+      text: "hi",
+      beeperChatID: ""
+    )
     #expect(hermes.beeperChat == nil)
     #expect(beeper.beeperChat == "chat1")
     #expect(blank.beeperChat == nil)

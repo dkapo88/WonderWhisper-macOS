@@ -2,8 +2,55 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum HermesResponseSource: CaseIterable, Equatable, Hashable {
+  case beeper
+  case hermes
+  case codex
+
+  var label: String {
+    switch self {
+    case .beeper: "Beeper"
+    case .hermes: "Hermes"
+    case .codex: "Codex"
+    }
+  }
+
+  var symbolName: String {
+    switch self {
+    case .beeper: "bubble.left.and.bubble.right.fill"
+    case .hermes: "waveform"
+    case .codex: "chevron.left.forwardslash.chevron.right"
+    }
+  }
+
+  var tint: Color {
+    switch self {
+    case .beeper: .blue
+    case .hermes: .purple
+    case .codex: .green
+    }
+  }
+}
+
+enum HermesResponsePillStatus: Equatable {
+  case normal
+  case error
+  case recording
+  case sending
+
+  var symbolName: String? {
+    switch self {
+    case .normal: nil
+    case .error: "exclamationmark.triangle.fill"
+    case .recording: "mic.fill"
+    case .sending: "paperplane.fill"
+    }
+  }
+}
+
 struct HermesResponseWindowState: Equatable, Identifiable {
   let id: UUID
+  let source: HermesResponseSource
   var title: String
   var text: String
   /// When true, `text` is an HTML fragment (e.g. a Beeper reply) and is rendered
@@ -40,6 +87,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var burstArrivals: Int
 
   init(id: UUID = UUID(),
+       source: HermesResponseSource,
        title: String,
        text: String,
        isHTML: Bool = false,
@@ -57,6 +105,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        reason: HermesResponseReason = .live,
        burstArrivals: Int = 0) {
     self.id = id
+    self.source = source
     self.title = title
     self.text = text
     self.isHTML = isHTML
@@ -82,6 +131,13 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var beeperChat: String? {
     guard let beeperChatID, !beeperChatID.isEmpty else { return nil }
     return beeperChatID
+  }
+
+  var pillStatus: HermesResponsePillStatus {
+    if isError { return .error }
+    if isRecordingReply { return .recording }
+    if isSendingReply { return .sending }
+    return .normal
   }
 }
 
@@ -373,7 +429,7 @@ enum HermesEscapeResolver {
 enum HermesResponseWindowLayout {
   static let defaultContentSize = NSSize(width: 660, height: 540)
   static let minimumContentSize = NSSize(width: 520, height: 360)
-  static let bubbleSize = NSSize(width: 60, height: 60)
+  static let pillSize = NSSize(width: 126, height: 52)
   static let bubbleSpacing: CGFloat = 12
   static let bubbleEdgeInset: CGFloat = 16
   static let styleMask: NSWindow.StyleMask = [
@@ -689,11 +745,11 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
     guard let panel = panels[sessionID], !minimizedOrder.contains(sessionID) else { return }
     preMinimizeFrames[sessionID] = panel.frame
     minimizedOrder.append(sessionID)
-    panel.contentMinSize = HermesResponseWindowLayout.bubbleSize
+    panel.contentMinSize = HermesResponseWindowLayout.pillSize
     if let state = latestStates.first(where: { $0.id == sessionID }) {
       render(state, in: panel, isForeground: false)
     }
-    panel.setContentSize(HermesResponseWindowLayout.bubbleSize)
+    panel.setContentSize(HermesResponseWindowLayout.pillSize)
     layoutBubbles()
     panel.orderFront(nil)
   }
@@ -725,7 +781,7 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
   // Stack minimized bubbles down the top-right edge of the active screen.
   private func layoutBubbles() {
     let screenFrame = targetScreenFrame()
-    let size = HermesResponseWindowLayout.bubbleSize
+    let size = HermesResponseWindowLayout.pillSize
     for (index, sessionID) in minimizedOrder.enumerated() {
       guard let panel = panels[sessionID] else { continue }
       let x = screenFrame.maxX - size.width - HermesResponseWindowLayout.bubbleEdgeInset
@@ -1075,7 +1131,7 @@ private struct HermesResponsePanelHost: View {
 
   var body: some View {
     if model.isMinimized {
-      HermesResponseBubbleView(state: model.state, onRestore: onRestore)
+      HermesResponsePillView(state: model.state, onRestore: onRestore)
     } else {
       HermesResponsePanelView(
         state: model.state,
@@ -1501,26 +1557,176 @@ private struct HermesResponsePanelView: View {
   }
 }
 
-private struct HermesResponseBubbleView: View {
+private struct HermesResponsePillView: View {
   var state: HermesResponseWindowState
   var onRestore: () -> Void
+  @State private var isHovering = false
+  @State private var isPressed = false
 
   var body: some View {
-    Button(action: onRestore) {
-      ZStack {
-        Circle().fill(.regularMaterial)
-        Circle().stroke((state.isError ? Color.red : Color.accentColor).opacity(0.55), lineWidth: 2)
-        Image(systemName: state.isError ? "exclamationmark.triangle.fill" : "waveform.and.sparkles")
-          .font(.title3)
-          .foregroundStyle(state.isError ? .red : .blue)
+    ZStack {
+      HStack(spacing: 8) {
+        Image(systemName: state.source.symbolName)
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(state.source.tint)
+          .frame(width: 28, height: 28)
+          .background(state.source.tint.opacity(0.13), in: Circle())
+
+        Text(state.source.label)
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+          .fixedSize()
+
+        Spacer(minLength: 0)
+
+        if let statusSymbol = state.pillStatus.symbolName {
+          Image(systemName: statusSymbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(statusTint)
+            .frame(width: 14, height: 14)
+        }
       }
+      .padding(.horizontal, 11)
+      .frame(
+        width: HermesResponseWindowLayout.pillSize.width,
+        height: HermesResponseWindowLayout.pillSize.height
+      )
+      .contentShape(Capsule(style: .continuous))
+      .background {
+        Capsule(style: .continuous)
+          .fill(.regularMaterial)
+          .overlay {
+            Capsule(style: .continuous)
+              .fill(accent.opacity(isHovering ? 0.10 : 0.045))
+          }
+      }
+      .overlay {
+        Capsule(style: .continuous)
+          .strokeBorder(Color.primary.opacity(isHovering ? 0.24 : 0.13), lineWidth: 0.8)
+      }
+      .shadow(
+        color: Color.black.opacity(isHovering ? 0.20 : 0.13),
+        radius: isHovering ? 7 : 5,
+        y: isHovering ? 3 : 2
+      )
+      .brightness(isPressed ? -0.05 : 0)
+      .scaleEffect(isPressed ? 0.975 : 1)
+      .animation(.easeOut(duration: 0.12), value: isPressed)
+      .animation(.easeOut(duration: 0.14), value: isHovering)
+      .accessibilityHidden(true)
+
+      HermesResponsePillInteractionView(
+        source: state.source,
+        onRestore: onRestore,
+        isHovering: $isHovering,
+        isPressed: $isPressed
+      )
     }
-    .buttonStyle(.plain)
     .frame(
-      width: HermesResponseWindowLayout.bubbleSize.width,
-      height: HermesResponseWindowLayout.bubbleSize.height
+      width: HermesResponseWindowLayout.pillSize.width,
+      height: HermesResponseWindowLayout.pillSize.height
     )
-    .help(state.title)
+  }
+
+  private var accent: Color {
+    state.pillStatus == .error ? .red : state.source.tint
+  }
+
+  private var statusTint: Color {
+    switch state.pillStatus {
+    case .error, .recording: .red
+    case .sending: state.source.tint
+    case .normal: .secondary
+    }
+  }
+}
+
+private struct HermesResponsePillInteractionView: NSViewRepresentable {
+  var source: HermesResponseSource
+  var onRestore: () -> Void
+  @Binding var isHovering: Bool
+  @Binding var isPressed: Bool
+
+  func makeNSView(context: Context) -> HermesResponsePillInteractionNSView {
+    let view = HermesResponsePillInteractionNSView()
+    update(view)
+    return view
+  }
+
+  func updateNSView(_ view: HermesResponsePillInteractionNSView, context: Context) {
+    update(view)
+  }
+
+  private func update(_ view: HermesResponsePillInteractionNSView) {
+    let label = "Restore \(source.label) response"
+    view.onRestore = onRestore
+    view.onHoverChange = { isHovering = $0 }
+    view.onPressChange = { isPressed = $0 }
+    view.toolTip = label
+    view.setAccessibilityElement(true)
+    view.setAccessibilityRole(.button)
+    view.setAccessibilityLabel(label)
+    view.setAccessibilityHelp("Opens the full response window.")
+  }
+}
+
+private final class HermesResponsePillInteractionNSView: NSView, NSAccessibilityButton {
+  var onRestore: (() -> Void)?
+  var onHoverChange: ((Bool) -> Void)?
+  var onPressChange: ((Bool) -> Void)?
+  private var hoverTrackingArea: NSTrackingArea?
+
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+    true
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea {
+      removeTrackingArea(hoverTrackingArea)
+    }
+    let trackingArea = NSTrackingArea(
+      rect: bounds,
+      options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(trackingArea)
+    hoverTrackingArea = trackingArea
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    onHoverChange?(true)
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    onHoverChange?(false)
+    onPressChange?(false)
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    onPressChange?(true)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    onPressChange?(bounds.contains(convert(event.locationInWindow, from: nil)))
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    let shouldRestore = bounds.contains(convert(event.locationInWindow, from: nil))
+    onPressChange?(false)
+    if shouldRestore {
+      onRestore?()
+    }
+  }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
+  override func accessibilityPerformPress() -> Bool {
+    onRestore?()
+    return true
   }
 }
 

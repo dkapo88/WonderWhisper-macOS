@@ -2449,6 +2449,7 @@ final class DictationViewModel: ObservableObject {
         }
         upsertHermesResponseWindow(
             sessionID: sessionID,
+            source: .hermes,
             title: session.title,
             text: message.text,
             isError: message.role == .error
@@ -3179,6 +3180,7 @@ final class DictationViewModel: ObservableObject {
                 )
                 self.upsertHermesResponseWindow(
                     sessionID: sessionID,
+                    source: .hermes,
                     title: "Hermes Error",
                     text: error.localizedDescription,
                     isError: true
@@ -3396,6 +3398,7 @@ final class DictationViewModel: ObservableObject {
             let errorID = responseWindowID ?? UUID()
             upsertHermesResponseWindow(
                 sessionID: errorID,
+                source: .codex,
                 title: "Codex Error",
                 text: error.localizedDescription,
                 isError: true,
@@ -4019,6 +4022,7 @@ final class DictationViewModel: ObservableObject {
         )
         upsertHermesResponseWindow(
             sessionID: responseWindowID,
+            source: .beeper,
             title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
             text: message.richDisplayText,
             isHTML: message.hasHTMLBody,
@@ -4111,6 +4115,7 @@ final class DictationViewModel: ObservableObject {
         codexResponseWindowTargets[windowID] = threadID
         upsertHermesResponseWindow(
             sessionID: windowID,
+            source: .codex,
             title: title,
             text: text,
             isError: isError
@@ -4129,6 +4134,7 @@ final class DictationViewModel: ObservableObject {
             )
             upsertHermesResponseWindow(
                 sessionID: sessionID,
+                source: .hermes,
                 title: "Hermes",
                 text: HermesAgentClientError.emptyInput.localizedDescription,
                 isError: true
@@ -4219,6 +4225,7 @@ final class DictationViewModel: ObservableObject {
             }
             upsertHermesResponseWindow(
                 sessionID: sessionID,
+                source: .hermes,
                 title: HermesSessionNaming.displayTitle(
                     for: hermesSessions,
                     sessionID: sessionID
@@ -4242,6 +4249,7 @@ final class DictationViewModel: ObservableObject {
             )
             upsertHermesResponseWindow(
                 sessionID: sessionID,
+                source: .hermes,
                 title: "Hermes Error",
                 text: error.localizedDescription,
                 isError: true
@@ -4317,6 +4325,7 @@ final class DictationViewModel: ObservableObject {
             }
             upsertHermesResponseWindow(
                 sessionID: sessionID,
+                source: .hermes,
                 title: HermesSessionNaming.displayTitle(
                     for: hermesSessions,
                     sessionID: sessionID
@@ -4340,6 +4349,7 @@ final class DictationViewModel: ObservableObject {
             )
             upsertHermesResponseWindow(
                 sessionID: sessionID,
+                source: .hermes,
                 title: "Hermes Error",
                 text: error.localizedDescription,
                 isError: true
@@ -4622,6 +4632,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func upsertHermesResponseWindow(sessionID: UUID,
+                                            source: HermesResponseSource,
                                             title: String,
                                             text: String,
                                             isHTML: Bool = false,
@@ -4634,6 +4645,7 @@ final class DictationViewModel: ObservableObject {
                                             reason: HermesResponseReason = .live) {
         let state = HermesResponseWindowState(
             id: sessionID,
+            source: source,
             title: title,
             text: text,
             isHTML: isHTML,

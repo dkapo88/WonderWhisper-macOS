@@ -559,9 +559,10 @@ struct BeeperResponseFilterTests {
     #expect(viewModel.hermesResponseWindowStates.last?.text == m2.richDisplayText)
   }
 
-  @Test func responseWindowSourceDefaultsToNonBeeperAndCarriesChatID() {
-    let generic = HermesResponseWindowState(title: "Hermes", text: "Done")
+  @Test func responseWindowSourceIsExplicitAndCarriesChatID() {
+    let generic = HermesResponseWindowState(source: .hermes, title: "Hermes", text: "Done")
     let beeper = HermesResponseWindowState(
+      source: .beeper,
       title: "Beeper - Sam",
       text: "Hello",
       beeperChatID: "chat1"
