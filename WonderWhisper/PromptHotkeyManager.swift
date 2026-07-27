@@ -168,7 +168,7 @@ final class PromptHotkeyManager {
             // The OS disables an event tap if a callback runs too long or on user input; it must
             // be explicitly re-enabled or prompt hotkeys silently stop working.
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                manager.reenableSelectionTap()
+                manager.reenableSelectionTap(disabledBy: type)
                 return Unmanaged.passUnretained(event)
             }
             var shouldSuppress = false
@@ -201,10 +201,15 @@ final class PromptHotkeyManager {
         }
     }
 
-    fileprivate func reenableSelectionTap() {
+    fileprivate func reenableSelectionTap(disabledBy type: CGEventType) {
         guard let tap = selectionTap else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
-        AppLog.hotkeys.error("Prompt selection event tap was disabled by the system; re-enabled")
+        // Timeout means our callback (and so the main run loop) was too slow; userInput does not.
+        // The two used to log identically, which made every disable undiagnosable after the fact.
+        let reason = type == .tapDisabledByTimeout ? "timeout" : "userInput"
+        AppLog.hotkeys.error(
+            "Prompt selection event tap was disabled by the system reason=\(reason, privacy: .public); re-enabled"
+        )
     }
 
     private func tearDownSelectionTap() {

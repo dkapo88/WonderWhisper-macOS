@@ -1,9 +1,25 @@
 import Foundation
 import AVFoundation
+import SwiftUI
 import Testing
 @testable import WonderWhisper
 
 struct MeetingFeatureTests {
+  @Test func meetingOverlayTabPickerIsInsulatedFromCoordinatorChurn() {
+    var picked: MeetingOverlayTab?
+    let transcript = MeetingOverlayTabPicker(selection: .transcript) { picked = $0 }
+    // Two pickers on the same tab with different callbacks must compare equal: a live transcript,
+    // audio, or session publish rebuilds the closure but cannot invalidate the segmented control.
+    #expect(transcript == MeetingOverlayTabPicker(selection: .transcript) { _ in })
+    // A real tab change still must.
+    #expect(transcript != MeetingOverlayTabPicker(selection: .notes) { _ in })
+    transcript.onSelect(.context)
+    #expect(picked == .context)
+    // Nothing meeting-scoped is stored, so nothing meeting-scoped can drive its identity.
+    #expect(Mirror(reflecting: transcript).children.compactMap(\.label) == ["selection", "onSelect"])
+    #expect(MeetingOverlayTabPicker.maxWidth == 320)
+  }
+
   @Test func meetingBubbleDistinguishesClicksFromDrags() {
     #expect(!MeetingBubbleInteractionPolicy.isDrag(deltaX: 2, deltaY: 2))
     #expect(MeetingBubbleInteractionPolicy.isDrag(deltaX: 5, deltaY: 0))
