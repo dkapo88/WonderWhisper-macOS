@@ -5,6 +5,41 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-27.3</title>
+      <pubDate>Mon, 27 Jul 2026 11:11:47 +0000</pubDate>
+      <sparkle:version>2026072703</sparkle:version>
+      <sparkle:shortVersionString>2026-07-27.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fixed</h2>
+<ul>
+<li>Fixed sustained high CPU usage during live meetings. The Meeting Companion's</li>
+</ul>
+<p>Transcript / Context / Notes selector was re-measuring itself on every meeting</p>
+<p>update — every streaming transcript token plus the one-second timeline — which</p>
+<p>kept the main thread busy in a continuous layout pass.</p>
+<ul>
+<li>As a knock-on effect, that busy main thread caused macOS to repeatedly disable</li>
+</ul>
+<p>WonderWhisper's keyboard shortcut monitoring, so prompt hotkeys could stop</p>
+<p>responding mid-meeting until they were re-enabled.</p>
+<h2>Diagnostics</h2>
+<ul>
+<li>Shortcut-monitoring interruptions now record whether macOS disabled them because</li>
+</ul>
+<p>the app was too slow to respond or because of user input, so the two can be told</p>
+<p>apart in logs.</p>
+<h2>Notes</h2>
+<ul>
+<li>Meeting capture, transcription, tab switching, keyboard navigation, and</li>
+</ul>
+<p>accessibility behaviour are unchanged.</p>
+<ul>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials</li>
+</ul>
+<p>remain compatible.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-27.3/WonderWhisper-2026-07-27.3.dmg" sparkle:edSignature="Y4o+9XofAXN+w9+CSaa07tVXEIXyj3P3KSLLMoQbsHikDpnSp3KtAgHLt7pdxpTrd2bIDiaeUrrPMavvMpNUDw==" length="9640812" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-27.2</title>
       <pubDate>Mon, 27 Jul 2026 05:56:08 +0000</pubDate>
       <sparkle:version>2026072702</sparkle:version>
