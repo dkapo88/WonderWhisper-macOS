@@ -390,15 +390,52 @@ private final class MeetingBubbleInteractionNSView: NSView {
   }
 }
 
-private struct MeetingOverlayView: View {
-  private enum Tab: Hashable {
-    case transcript
-    case context
-    case notes
+enum MeetingOverlayTab: Hashable {
+  case transcript
+  case context
+  case notes
+}
+
+/// The Transcript / Context / Notes selector, deliberately holding no reference to
+/// `MeetingCoordinator`.
+///
+/// Inline in `MeetingOverlayView.body`, this control was bound straight to `@State` via
+/// `$selectedTab`. A `Binding` carries closures, so SwiftUI could never prove the Picker
+/// unchanged, and every one of `MeetingCoordinator`'s 43 published properties re-entered the
+/// AppKit `NSSegmentedControl` sizing path behind `.pickerStyle(.segmented)` — measured at
+/// roughly twice the CPU per publish of having no tab control at all. Extracted here, the view
+/// value is a tab plus a callback and compares equal across publishes, so the subtree
+/// short-circuits. `.equatable()` at the call site makes that short-circuit explicit and pinned
+/// by test rather than dependent on SwiftUI's implicit view comparison.
+struct MeetingOverlayTabPicker: View, Equatable {
+  static let maxWidth: CGFloat = 320
+
+  let selection: MeetingOverlayTab
+  let onSelect: (MeetingOverlayTab) -> Void
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.selection == rhs.selection
   }
 
+  var body: some View {
+    Picker("View", selection: Binding(get: { selection }, set: onSelect)) {
+      Text("Transcript").tag(MeetingOverlayTab.transcript)
+      Text("Context").tag(MeetingOverlayTab.context)
+      Text("Notes").tag(MeetingOverlayTab.notes)
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .controlSize(.small)
+    // One flex frame, not two: the enclosing VStack already centers this, so the old
+    // `.frame(maxWidth: .infinity)` was redundant. Measured as no CPU difference either way —
+    // this is cleanup, not the fix. Geometry is unchanged (control 214.5pt wide, centered).
+    .frame(maxWidth: Self.maxWidth)
+  }
+}
+
+private struct MeetingOverlayView: View {
   @ObservedObject var coordinator: MeetingCoordinator
-  @State private var selectedTab: Tab = .transcript
+  @State private var selectedTab: MeetingOverlayTab = .transcript
 
   var body: some View {
     VStack(spacing: 0) {
@@ -464,18 +501,10 @@ private struct MeetingOverlayView: View {
 
         Divider()
 
-        Picker("View", selection: $selectedTab) {
-          Text("Transcript").tag(Tab.transcript)
-          Text("Context").tag(Tab.context)
-          Text("Notes").tag(Tab.notes)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
-        .frame(maxWidth: 320)
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        MeetingOverlayTabPicker(selection: selectedTab) { selectedTab = $0 }
+          .equatable()
+          .padding(.horizontal, 14)
+          .padding(.vertical, 10)
 
         if selectedTab == .transcript {
           transcript(session)
