@@ -5,6 +5,53 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-28.1</title>
+      <pubDate>Tue, 28 Jul 2026 05:59:35 +0000</pubDate>
+      <sparkle:version>2026072801</sparkle:version>
+      <sparkle:shortVersionString>2026-07-28.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Improved</h2>
+<ul>
+<li>Redesigned the recording overlay that appears when you start a dictation or a</li>
+</ul>
+<p>command. It is now a more compact capsule with a centre-out equaliser that</p>
+<p>expands from the middle as you speak, replacing the previous row of bars.</p>
+<ul>
+<li>The overlay now animates. It grows out of a single dot when you press your</li>
+</ul>
+<p>hotkey and collapses back into that same point when the recording ends,</p>
+<p>instead of appearing and disappearing abruptly.</p>
+<ul>
+<li>The audio visualiser now reacts to your voice far more accurately. It uses the</li>
+</ul>
+<p>same metering as the meeting recorder, with headroom for close microphones, so</p>
+<p>normal speech no longer pins the bars at full height with no visible movement.</p>
+<ul>
+<li>The visualiser is now driven in step with the display refresh rather than on a</li>
+</ul>
+<p>fixed timer, which removes the flicker that appeared while recording.</p>
+<ul>
+<li>The live transcript preview is now slightly translucent so it reads as an</li>
+</ul>
+<p>overlay on top of your work rather than a solid block.</p>
+<h2>Fixed</h2>
+<ul>
+<li>The live transcript preview no longer opens at full size. It previously kept</li>
+</ul>
+<p>the height of your last dictation, so it appeared as a large empty box before</p>
+<p>any text arrived. It now starts as a single line and grows as you speak.</p>
+<ul>
+<li>Removed a faint grey rectangle that could appear behind the recording overlay.</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>Dictation, transcription, and insertion behaviour are otherwise unchanged.</li>
+<li>Meeting capture, history, settings, permissions, and Keychain credentials</li>
+</ul>
+<p>remain compatible.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-28.1/WonderWhisper-2026-07-28.1.dmg" sparkle:edSignature="jJwDErG+aHjmzFX/RqQPWnzpCsh9gKLG76dgYhh7Lb1rgxr8fM3098mf81pGyR+TZjxCrELMIU0I0hHds30WAw==" length="9662367" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-28</title>
       <pubDate>Tue, 28 Jul 2026 04:43:39 +0000</pubDate>
       <sparkle:version>2026072800</sparkle:version>
