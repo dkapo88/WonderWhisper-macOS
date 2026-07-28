@@ -1687,6 +1687,40 @@ struct MeetingFeatureTests {
     guard !samples.isEmpty else { return 0 }
     return sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
   }
+
+  @Test func placeholderMeetingTitlesAreReplaceableButUserTitlesArePreserved() {
+    // Bare detector name, as used by an automatic start.
+    #expect(MeetingCoordinator.isGeneratedTitleReplaceable(
+      "Google Meet", detectedApp: "Google Meet"
+    ))
+    // Dated defaults from defaultTitle(detectedApp:).
+    #expect(MeetingCoordinator.isGeneratedTitleReplaceable(
+      "Google Meet — Mon, 27 Jul • 5:49 pm", detectedApp: "Google Meet"
+    ))
+    #expect(MeetingCoordinator.isGeneratedTitleReplaceable(
+      "Meeting — Sun, 12 Jul • 10:32 am", detectedApp: nil
+    ))
+    #expect(MeetingCoordinator.isGeneratedTitleReplaceable("Meeting", detectedApp: nil))
+    // A user-chosen title must never be overwritten by a regenerate.
+    #expect(!MeetingCoordinator.isGeneratedTitleReplaceable(
+      "Core Daily Standup P1 Review", detectedApp: "Google Meet"
+    ))
+    #expect(!MeetingCoordinator.isGeneratedTitleReplaceable(
+      "Meeting with Ash — budget", detectedApp: nil
+    ))
+  }
+
+  @Test func finalizationTimeoutExpiresInsteadOfHangingForever() async throws {
+    // A provider that never returns must not strand finalization.
+    await #expect(throws: MeetingFinalizationTimeout.Expired.self) {
+      try await MeetingFinalizationTimeout.run(seconds: 0.05) {
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+      }
+    }
+    // A provider that completes in time still returns its value.
+    let value = try await MeetingFinalizationTimeout.run(seconds: 5) { 42 }
+    #expect(value == 42)
+  }
 }
 
 private actor MeetingRecoveryTranscriptionSpy {

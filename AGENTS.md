@@ -107,6 +107,13 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-28: Rendered Markdown pipe tables in meeting summaries, manual notes, and Hermes
+  replies through the AppKit text engine instead of flattening them into raw pipe text.
+- 2026-07-28: Signed Debug builds with the Developer ID identity so they match the release
+  designated requirement and stop re-prompting for Accessibility and other TCC permissions.
+- 2026-07-28: Bounded meeting transcription finalization so a stalled provider handshake falls
+  back to retained-audio recovery instead of stranding the session in `processing`, and made
+  regenerating a summary also replace a placeholder meeting title.
 - 2026-07-27: Replaced the anonymous minimized response orb with a compact source-aware pill for
   Beeper, Hermes, and Codex while preserving response-window lifecycle behavior.
 - 2026-07-27: Coalesced Beeper message bursts into the newest attending panel while preserving

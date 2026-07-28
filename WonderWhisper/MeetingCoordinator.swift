@@ -695,7 +695,21 @@ final class MeetingCoordinator: ObservableObject {
 
     if !Task.isCancelled, let transcriber {
       do {
-        try await transcriber.finish()
+        try await MeetingFinalizationTimeout.run(
+          seconds: MeetingFinalizationTimeout.finishSeconds
+        ) {
+          try await transcriber.finish()
+        }
+      } catch is MeetingFinalizationTimeout.Expired {
+        // The provider never completed its handshake. Fall through to transcript
+        // recovery from retained audio instead of awaiting it forever.
+        forcedFullRecoverySources[sessionID, default: []]
+          .formUnion(MeetingAudioSource.captureSources)
+        warning = warning
+          ?? "Transcription finalization timed out; the transcript was recovered from audio."
+        AppLog.dictation.error(
+          "MeetingFinalize: transcriber.finish timed out; recovering from retained audio"
+        )
       } catch {
         warning = warning
           ?? "Transcription finalization failed: \(error.localizedDescription)"
@@ -1007,6 +1021,7 @@ final class MeetingCoordinator: ObservableObject {
     let manualNotes = currentSession.manualNotesMarkdown?.trimmingCharacters(
       in: .whitespacesAndNewlines
     ) ?? ""
+    let titleBeforeGeneration = currentSession.title
     guard !transcript.isEmpty || !manualNotes.isEmpty else {
       lastError = "This meeting has no transcript or manual notes to summarize."
       return
@@ -1027,6 +1042,17 @@ final class MeetingCoordinator: ObservableObject {
       )
       guard var updated = self.session(withID: session.id) else { return }
       updated.notesMarkdown = generated.markdown
+      // The stall path never reached title generation, so a regenerate is the
+      // user's only chance to replace the placeholder title.
+      if let generatedTitle = generated.title,
+         updated.title == titleBeforeGeneration,
+         Self.isGeneratedTitleReplaceable(
+           updated.title,
+           detectedApp: updated.detectedApp
+         ) {
+        updated.title = generatedTitle
+        generatedTitleEligibleSessionIDs.remove(session.id)
+      }
       if updated.errorMessage?.hasPrefix("Meeting notes were not generated:") == true {
         updated.errorMessage = nil
       }
@@ -2181,6 +2207,32 @@ final class MeetingCoordinator: ObservableObject {
       return "\(detectedApp) — \(formatter.string(from: Date()))"
     }
     return "Meeting — \(formatter.string(from: Date()))"
+  }
+
+  /// True when a title is still a placeholder and may be replaced by a generated one.
+  ///
+  /// Covers the dated defaults from `defaultTitle(detectedApp:)` plus the bare
+  /// detector name (for example "Google Meet") used when a meeting starts
+  /// automatically. A user-edited title never matches, so it is preserved.
+  nonisolated static func isGeneratedTitleReplaceable(
+    _ title: String,
+    detectedApp: String?
+  ) -> Bool {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return true }
+    if trimmed == "Meeting" { return true }
+    if let detectedApp,
+       trimmed.caseInsensitiveCompare(detectedApp) == .orderedSame {
+      return true
+    }
+    // Dated defaults: "<app> — Mon, 27 Jul • 5:49 pm" or "Meeting — ...".
+    guard let separator = trimmed.range(of: " — ") else { return false }
+    let prefix = String(trimmed[trimmed.startIndex..<separator.lowerBound])
+    if prefix == "Meeting" { return true }
+    if let detectedApp {
+      return prefix.caseInsensitiveCompare(detectedApp) == .orderedSame
+    }
+    return false
   }
 }
 

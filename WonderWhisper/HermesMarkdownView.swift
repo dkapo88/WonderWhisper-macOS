@@ -12,6 +12,12 @@ struct HermesMarkdownView: View {
     if isHTML, let html = HermesMarkdownContent.htmlAttributedString(from: text) {
       HermesAttributedTextView(attributed: html)
         .frame(maxWidth: .infinity, alignment: .leading)
+    } else if !isHTML, HermesMarkdownContent.containsTable(text) {
+      // Tables need the full text engine; SwiftUI `Text` flattens them.
+      HermesAttributedTextView(
+        attributed: HermesMarkdownContent.nsAttributedString(from: text)
+      )
+      .frame(maxWidth: .infinity, alignment: .leading)
     } else {
       Text(HermesMarkdownContent.attributedString(from: text))
         .textSelection(.enabled)
@@ -178,6 +184,12 @@ enum HermesMarkdownContent {
           .joined(separator: "\n")
       case .code(let text):
         return text
+      case .table(let table):
+        // Copying plain text keeps the pipe form so it stays pasteable as markdown.
+        let rows = [table.header] + table.rows
+        return rows
+          .map { "| " + $0.map(stripInlineMarkdown).joined(separator: " | ") + " |" }
+          .joined(separator: "\n")
       }
     }
     return rendered
@@ -221,6 +233,74 @@ enum HermesMarkdownContent {
         .paragraphStyle: paragraphStyle
       ]
       return NSAttributedString(string: text, attributes: attributes)
+    case .table(let table):
+      return attributedTable(table)
+    }
+  }
+
+  /// Builds a real AppKit text table so cells wrap inside their column instead of
+  /// being flattened into one long line. Requires the NSTextView renderer.
+  private static func attributedTable(_ table: HermesMarkdownTable) -> NSAttributedString {
+    let textTable = NSTextTable()
+    textTable.numberOfColumns = table.header.count
+    textTable.layoutAlgorithm = .automaticLayoutAlgorithm
+    textTable.collapsesBorders = true
+    textTable.hidesEmptyCells = false
+
+    let result = NSMutableAttributedString()
+    let allRows = [table.header] + table.rows
+
+    for (rowIndex, row) in allRows.enumerated() {
+      for (columnIndex, cell) in row.enumerated() {
+        let block = NSTextTableBlock(
+          table: textTable,
+          startingRow: rowIndex,
+          rowSpan: 1,
+          startingColumn: columnIndex,
+          columnSpan: 1
+        )
+        block.setBorderColor(.separatorColor)
+        block.setWidth(1, type: .absoluteValueType, for: .border)
+        block.setWidth(4, type: .absoluteValueType, for: .padding)
+        if rowIndex == 0 {
+          block.backgroundColor = .quaternaryLabelColor
+        }
+
+        let style = NSMutableParagraphStyle()
+        style.textBlocks = [block]
+        // Cell text must not inherit the body paragraph's spacing.
+        style.paragraphSpacing = 0
+
+        let isHeader = rowIndex == 0
+        let attributes: [NSAttributedString.Key: Any] = [
+          .font: styledSystemFont(
+            ofSize: baseFontSize,
+            traits: isHeader ? .bold : []
+          ),
+          .foregroundColor: NSColor.labelColor,
+          .paragraphStyle: style
+        ]
+        let content = inlineAttributedString(cell, fallbackAttributes: attributes)
+        let cellString = NSMutableAttributedString(attributedString: content)
+        // Every table cell must end in a newline for the text engine to close it.
+        cellString.append(NSAttributedString(string: "\n", attributes: attributes))
+        cellString.addAttribute(
+          .paragraphStyle,
+          value: style,
+          range: NSRange(location: 0, length: cellString.length)
+        )
+        result.append(cellString)
+      }
+    }
+    return result
+  }
+
+  /// True when the markdown contains a pipe table, which needs the NSTextView
+  /// renderer: SwiftUI `Text` drops the block structure that lays cells out.
+  static func containsTable(_ markdown: String) -> Bool {
+    HermesMarkdownBlock.parse(markdown).contains { block in
+      if case .table = block.kind { return true }
+      return false
     }
   }
 
@@ -293,6 +373,7 @@ private struct HermesMarkdownBlock {
     case unorderedList([HermesMarkdownListItem])
     case orderedList([HermesMarkdownOrderedListItem])
     case code(String)
+    case table(HermesMarkdownTable)
   }
 
   let kind: Kind
@@ -306,6 +387,7 @@ private struct HermesMarkdownBlock {
     var orderedItems: [HermesMarkdownOrderedListItem] = []
     var codeLines: [String] = []
     var inCodeBlock = false
+    var index = 0
 
     func flushParagraph() {
       guard !paragraphLines.isEmpty else { return }
@@ -333,7 +415,9 @@ private struct HermesMarkdownBlock {
       codeLines.removeAll()
     }
 
-    for line in lines {
+    while index < lines.count {
+      let line = lines[index]
+      index += 1
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
       if trimmed.hasPrefix("```") {
@@ -354,6 +438,32 @@ private struct HermesMarkdownBlock {
       if trimmed.isEmpty {
         flushParagraph()
         flushLists()
+        continue
+      }
+
+      // A pipe line is only a table when the next line is a `| --- |` delimiter;
+      // otherwise it stays ordinary text.
+      if trimmed.hasPrefix("|"),
+         index < lines.count,
+         HermesMarkdownTable.isDelimiterRow(lines[index]),
+         let header = HermesMarkdownTable.cells(from: trimmed) {
+        flushParagraph()
+        flushLists()
+        index += 1  // consume the delimiter row
+        var rows: [[String]] = []
+        while index < lines.count {
+          let candidate = lines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+          guard candidate.hasPrefix("|"),
+                let cells = HermesMarkdownTable.cells(from: candidate) else { break }
+          // Pad or trim so every row matches the header width.
+          var normalized = Array(cells.prefix(header.count))
+          normalized.append(contentsOf: Array(repeating: "", count: header.count - normalized.count))
+          rows.append(normalized)
+          index += 1
+        }
+        blocks.append(
+          HermesMarkdownBlock(kind: .table(HermesMarkdownTable(header: header, rows: rows)))
+        )
         continue
       }
 
@@ -427,6 +537,52 @@ private struct HermesMarkdownBlock {
 
 private struct HermesMarkdownListItem {
   let text: String
+}
+
+/// A GitHub-flavored pipe table: a header row, a `| --- |` delimiter, then body rows.
+struct HermesMarkdownTable {
+  let header: [String]
+  let rows: [[String]]
+
+  /// Splits a `| a | b |` line into trimmed cells, honoring `\|` escapes.
+  static func cells(from line: String) -> [String]? {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("|") else { return nil }
+    var cells: [String] = []
+    var current = ""
+    var escaped = false
+    for character in trimmed.dropFirst() {
+      if escaped {
+        current.append(character)
+        escaped = false
+        continue
+      }
+      if character == "\\" {
+        escaped = true
+        continue
+      }
+      if character == "|" {
+        cells.append(current.trimmingCharacters(in: .whitespaces))
+        current = ""
+        continue
+      }
+      current.append(character)
+    }
+    let tail = current.trimmingCharacters(in: .whitespaces)
+    // A trailing pipe leaves an empty remainder; a missing one still ends a cell.
+    if !tail.isEmpty { cells.append(tail) }
+    return cells.isEmpty ? nil : cells
+  }
+
+  /// True for a delimiter row such as `| --- | :--: |`, which marks the line above
+  /// as a header and is what distinguishes a table from ordinary pipe-containing text.
+  static func isDelimiterRow(_ line: String) -> Bool {
+    guard let cells = cells(from: line), !cells.isEmpty else { return false }
+    return cells.allSatisfy { cell in
+      let body = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+      return !body.isEmpty && body.allSatisfy { $0 == "-" }
+    }
+  }
 }
 
 private struct HermesMarkdownOrderedListItem {
