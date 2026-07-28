@@ -107,6 +107,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-28: Added a centre-anchored expand/collapse animation to the dictation overlay,
+  drove the visualizer from a display link with time-scaled smoothing to remove flicker,
+  made the live transcript preview open at one line, and softened its background.
 - 2026-07-28: Redesigned the dictation recording overlay as a compact dark capsule with a
   centre-out gradient equalizer, and routed its metering through the shared
   `MeetingAudioMeter` response (with close-mic headroom) so dictation and meeting

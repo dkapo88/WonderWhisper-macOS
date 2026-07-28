@@ -82,28 +82,91 @@ final class WaveformOverlayController {
         window.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
     }
 
+    /// Collapsed state: a small dot at the exact centre of the pill.
+    ///
+    /// AppKit owns the geometry of a layer-backed view's layer and rewrites
+    /// `anchorPoint`/`position` on its own schedule, so pinning the anchor is not
+    /// reliable — whichever value happened to be live when the animation started
+    /// decided the pivot corner, which is why the direction kept changing. Instead
+    /// this composes the pivot explicitly (translate to centre, scale, translate
+    /// back) from the layer's *current* anchor, so it is correct for any anchor.
+    private var collapsedTransform: CATransform3D {
+        guard let layer = container.layer else { return CATransform3DIdentity }
+        let bounds = layer.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return CATransform3DIdentity }
+        let anchor = layer.anchorPoint
+        let pivotX = bounds.midX - anchor.x * bounds.width
+        let pivotY = bounds.midY - anchor.y * bounds.height
+        var transform = CATransform3DMakeTranslation(pivotX, pivotY, 0)
+        transform = CATransform3DScale(
+            transform,
+            PillMetrics.pillHeight / PillMetrics.pillWidth,
+            0.34,
+            1
+        )
+        return CATransform3DTranslate(transform, -pivotX, -pivotY, 0)
+    }
+
     private func animateIn() {
+        // Force pending layout so the layer's geometry is final before the pivot is
+        // computed from it; a mid-animation layout pass is what shifted the pivot.
+        container.layoutSubtreeIfNeeded()
+        let collapsed = collapsedTransform
+
+        // Seed the collapsed state without animating into it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        container.layer?.transform = collapsed
+        CATransaction.commit()
+        waveformView.setContentVisible(false, animated: false)
+        window.alphaValue = 0
         window.orderFrontRegardless()
-        waveformView.prepareForPresentation()
+
+        // Dot drops from the menu bar and unfurls into the pill.
+        let expand = CASpringAnimation(keyPath: "transform")
+        expand.fromValue = collapsed
+        expand.toValue = CATransform3DIdentity
+        expand.damping = 17
+        expand.stiffness = 220
+        expand.mass = 0.9
+        expand.initialVelocity = 3
+        expand.duration = expand.settlingDuration
+        container.layer?.add(expand, forKey: "present")
+        container.layer?.transform = CATransform3DIdentity
+
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-            ctx.allowsImplicitAnimation = true
+            ctx.duration = 0.14
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1
-            container.layer?.transform = CATransform3DIdentity
         }
+        // Controls and bars fade in once the capsule has most of its width, so they
+        // are never seen squashed inside the dot.
+        waveformView.setContentVisible(true, animated: true, delay: 0.11)
     }
 
     private func animateOut() {
+        waveformView.setContentVisible(false, animated: true, delay: 0)
+
+        container.layoutSubtreeIfNeeded()
+        let collapsed = collapsedTransform
+        let collapse = CABasicAnimation(keyPath: "transform")
+        collapse.fromValue = container.layer?.presentation()?.transform ?? CATransform3DIdentity
+        collapse.toValue = collapsed
+        collapse.duration = 0.2
+        collapse.timingFunction = CAMediaTimingFunction(controlPoints: 0.5, 0, 0.85, 0.2)
+        container.layer?.add(collapse, forKey: "dismiss")
+        container.layer?.transform = collapsed
+
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.18
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.7, 0, 1, 0.4)
             ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 0
-            container.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
         }, completionHandler: { [weak self] in
+            guard let self else { return }
             // Order window out after animation to stop blocking mouse events
-            self?.window.orderOut(nil)
+            self.window.orderOut(nil)
+            self.container.layer?.removeAllAnimations()
         })
     }
 }
@@ -186,13 +249,15 @@ private final class WaveformView: NSView {
     private let tintLayer = CAGradientLayer()
     private let waveLayer = CAShapeLayer()
     private var displayLevel: CGFloat = 0
-    private var timer: Timer?
+    private var displayLink: CADisplayLink?
     private let barCount = 15
     /// Per-bar heights, each settling toward the live level at its own rate so the
     /// row breathes as a symmetric equalizer rather than a scrolling history.
     private var barHeights: [CGFloat] = []
     private var phases: [CGFloat] = []
     private var level: CGFloat = 0
+    private var contentVisible = true
+    private var lastTickTime: CFAbsoluteTime = 0
 
     init() {
         super.init(frame: .zero)
@@ -246,23 +311,52 @@ private final class WaveformView: NSView {
         stopAnimating()
         displayLevel = 0
         level = 0
+        lastTickTime = 0
         barHeights = Array(repeating: 0, count: barCount)
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
-        RunLoop.main.add(timer!, forMode: .common)
+        // A 30 Hz Timer drifts against the display refresh, so some frames render twice
+        // and others are skipped — that beat pattern is the flicker. A display link is
+        // delivered in step with the screen instead.
+        let link = displayLink(target: self, selector: #selector(handleDisplayLink))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    @objc private func handleDisplayLink() {
+        tick()
     }
 
     func stopAnimating() {
-        timer?.invalidate()
-        timer = nil
+        displayLink?.invalidate()
+        displayLink = nil
         barHeights = Array(repeating: 0, count: barCount)
         displayLevel = 0
         redrawWave()
     }
 
-    func prepareForPresentation() {
-        superview?.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
+    /// Fades the buttons and bars independently of the capsule, so they do not appear
+    /// horizontally squashed while the pill is still expanding out of the dot.
+    func setContentVisible(_ visible: Bool, animated: Bool, delay: CFTimeInterval = 0) {
+        contentVisible = visible
+        let targetOpacity: Float = visible ? 1 : 0
+        let contentLayers = [tintLayer, cancelButton.layer, finishButton.layer].compactMap { $0 }
+        guard animated else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            contentLayers.forEach { $0.opacity = targetOpacity }
+            CATransaction.commit()
+            return
+        }
+        for contentLayer in contentLayers {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = contentLayer.presentation()?.opacity ?? contentLayer.opacity
+            fade.toValue = targetOpacity
+            fade.duration = visible ? 0.16 : 0.10
+            fade.beginTime = CACurrentMediaTime() + delay
+            fade.fillMode = .backwards
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            contentLayer.add(fade, forKey: "contentFade")
+            contentLayer.opacity = targetOpacity
+        }
     }
 
     private var visualizerRect: NSRect {
@@ -311,21 +405,30 @@ private final class WaveformView: NSView {
     /// Symmetric equalizer: every bar responds to the current level, weighted so the
     /// centre reaches full height first and the row expands outward as you get louder.
     private func tick() {
+        // The display link fires faster than the old 30 Hz timer (and varies with the
+        // screen), so the smoothing constants are scaled to elapsed time. Otherwise the
+        // same per-frame factors decay far too quickly and the bars stutter.
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = lastTickTime == 0 ? 1.0 / 60.0 : min(0.1, now - lastTickTime)
+        lastTickTime = now
+        let frames = CGFloat(elapsed * 60)
+
         // `level` is already the shared MeetingAudioMeter response, matching the
         // meeting bubble. Only a light attack/release smoothing is applied here.
-        let alpha = level > displayLevel
+        let perFrame = level > displayLevel
             ? AudioVisualizerSensitivity.inputAttack
             : AudioVisualizerSensitivity.inputRelease
+        let alpha = 1 - pow(1 - perFrame, frames)
         displayLevel += (level - displayLevel) * alpha
         if displayLevel < AudioVisualizerSensitivity.displayZeroThreshold { displayLevel = 0 }
-        level *= 0.55 // decay the held peak so a dropped meter update reads as silence
+        // Decay the held peak so a dropped meter update reads as silence.
+        level *= pow(0.72, frames)
 
         if barHeights.count != barCount { barHeights = Array(repeating: 0, count: barCount) }
         if phases.count != barCount {
             phases = (0..<barCount).map { _ in CGFloat.random(in: 0...(2 * .pi)) }
         }
 
-        let now = CFAbsoluteTimeGetCurrent()
         let centre = CGFloat(barCount - 1) / 2
         for index in 0..<barCount {
             // Distance from centre: 0 at the middle, 1 at the outer edges.
@@ -337,7 +440,8 @@ private final class WaveformView: NSView {
             // it scales with the signal, so silence stays perfectly flat.
             let flutter = 1 + 0.16 * sin(now * 9 + Double(phases[index])) * Double(displayLevel)
             let target = min(1, reach * CGFloat(flutter))
-            let rate: CGFloat = target > barHeights[index] ? 0.85 : 0.35
+            let perFrameRate: CGFloat = target > barHeights[index] ? 0.85 : 0.35
+            let rate = 1 - pow(1 - perFrameRate, frames)
             barHeights[index] += (target - barHeights[index]) * rate
         }
         redrawWave()
@@ -363,7 +467,6 @@ private final class WaveformView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         waveLayer.path = path
-        tintLayer.opacity = Float(0.55 + 0.45 * displayLevel)
         CATransaction.commit()
     }
 

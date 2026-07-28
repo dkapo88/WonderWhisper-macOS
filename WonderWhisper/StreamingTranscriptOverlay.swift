@@ -90,6 +90,10 @@ final class StreamingTranscriptOverlay {
 
     positionAtTopCenter()
     contentView.setText("")
+    // The window keeps whatever height the previous session grew to, so without an
+    // explicit reset the overlay reappears full-size before a single token arrives.
+    resizeToFitContent(force: true)
+    positionAtTopCenter()
 
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = 0.25
@@ -124,7 +128,8 @@ final class StreamingTranscriptOverlay {
     isVisible = true
     positionAtTopCenter()
     contentView.setText("⚠︎ \(message)")
-    resizeToFitContent()
+    resizeToFitContent(force: true)
+    positionAtTopCenter()
     window.alphaValue = 1
     window.orderFrontRegardless()
 
@@ -145,9 +150,12 @@ final class StreamingTranscriptOverlay {
 
   /// Auto-resize based on content. Use animate:false for live token updates — animating a
   /// setFrame on every token is janky and O(n^2) over a sentence; reserve animation for show/hide.
-  private func resizeToFitContent() {
+  /// `force` bypasses the change threshold, which exists to avoid churn on every token
+  /// but would otherwise leave a small stale height difference in place at show time.
+  private func resizeToFitContent(force: Bool = false) {
     let newHeight = contentView.preferredHeight()
-    guard abs(window.frame.height - newHeight) > 10 else { return }
+    guard force || abs(window.frame.height - newHeight) > 10 else { return }
+    guard abs(window.frame.height - newHeight) > 0.5 else { return }
     var frame = window.frame
     let heightDiff = newHeight - frame.height
     frame.size.height = newHeight
@@ -209,12 +217,14 @@ private final class TranscriptContentView: NSView {
     super.init(frame: frameRect)
 
     wantsLayer = true
-    layer?.backgroundColor = NSColor.black.withAlphaComponent(0.92).cgColor
+    // Translucent enough to sit *on top of* the content rather than blanking it out,
+    // while staying dark enough to keep white text legible over a bright background.
+    layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
     layer?.cornerRadius = 12
     layer?.cornerCurve = .continuous
 
     // Subtle border
-    layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
+    layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
     layer?.borderWidth = 0.5
 
     addSubview(scrollView)
