@@ -5,6 +5,43 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-28</title>
+      <pubDate>Tue, 28 Jul 2026 04:43:39 +0000</pubDate>
+      <sparkle:version>2026072800</sparkle:version>
+      <sparkle:shortVersionString>2026-07-28</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fixed</h2>
+<ul>
+<li>Fixed meetings getting stuck after you stop them. If the transcription service</li>
+</ul>
+<p>closed its stream without confirming completion, the meeting stayed in its</p>
+<p>"processing" state indefinitely — the red recording dot never cleared, and the</p>
+<p>summary, retry, and export controls stayed unavailable. Finalization is now</p>
+<p>bounded: if the service stalls, the transcript is recovered from the recorded</p>
+<p>audio and the meeting completes normally.</p>
+<ul>
+<li>Regenerating a meeting summary now also replaces a placeholder title. Meetings</li>
+</ul>
+<p>that were recovered after an interruption kept a generic name such as</p>
+<p>"Google Meet" with no way to generate a real one. Titles you have edited</p>
+<p>yourself are never overwritten.</p>
+<ul>
+<li>Meeting summaries now render Markdown tables as actual tables. Sections such as</li>
+</ul>
+<p>Action items were previously shown as raw rows of pipe characters. Copying a</p>
+<p>summary still produces Markdown, so pasting into Obsidian is unchanged.</p>
+<h2>Notes</h2>
+<ul>
+<li>Meeting capture, transcription, detection, and export behaviour are otherwise</li>
+</ul>
+<p>unchanged.</p>
+<ul>
+<li>Existing recordings, history, settings, permissions, and Keychain credentials</li>
+</ul>
+<p>remain compatible.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-28/WonderWhisper-2026-07-28.dmg" sparkle:edSignature="Dqm+XsR/WFBizWYmsOqA7qCRcaUo9/cZ2GcQBy+BiKRZzLKuYRP1pcSxv0ZawZsWlph9/PWk6OF05CL/6LVYAg==" length="9653683" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-27.3</title>
       <pubDate>Mon, 27 Jul 2026 11:11:47 +0000</pubDate>
       <sparkle:version>2026072703</sparkle:version>
