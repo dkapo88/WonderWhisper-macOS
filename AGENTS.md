@@ -107,6 +107,10 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-28: Redesigned the dictation recording overlay as a compact dark capsule with a
+  centre-out gradient equalizer, and routed its metering through the shared
+  `MeetingAudioMeter` response (with close-mic headroom) so dictation and meeting
+  visualizers react to audio identically.
 - 2026-07-28: Rendered Markdown pipe tables in meeting summaries, manual notes, and Hermes
   replies through the AppKit text engine instead of flattening them into raw pipe text.
 - 2026-07-28: Signed Debug builds with the Developer ID identity so they match the release

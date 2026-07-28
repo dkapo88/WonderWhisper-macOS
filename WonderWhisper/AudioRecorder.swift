@@ -180,7 +180,8 @@ final class AudioRecorder: NSObject {
             self.onLevel?(0)
             guard self.isRecording else { return }
 
-            let timer = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            // Match the overlay's 30 fps redraw so every drawn column has a fresh meter reading.
+            let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
                 guard let self = self, self.isRecording, let r = self.recorder else { return }
                 r.updateMeters()
                 let avg = r.averagePower(forChannel: 0)
@@ -201,20 +202,18 @@ final class AudioRecorder: NSObject {
         }
     }
 
-    private static func visualMeterLevel(averagePower: Float, peakPower: Float) -> Float {
-        let average = normalizeVisualPower(averagePower)
-        let peak = normalizeVisualPower(peakPower)
-        let blended = average * 0.55 + peak * 0.45
-        return blended < 0.003 ? 0 : min(1, blended)
-    }
+    /// Dictation is close-mic, so it runs several times hotter than the far-field
+    /// meeting capture the shared curve was tuned for. Without headroom, normal speech
+    /// clips at 1.0 and the bars sit permanently full.
+    private static let dictationHeadroom: Float = 2.6
 
-    private static func normalizeVisualPower(_ power: Float) -> Float {
-        let silenceFloor: Float = -62
-        let speechCeiling: Float = -12
-        guard power > silenceFloor else { return 0 }
-        let clamped = min(max(power, silenceFloor), speechCeiling)
-        let linear = (clamped - silenceFloor) / (speechCeiling - silenceFloor)
-        return pow(linear, 0.85)
+    /// Converts AVAudioRecorder dB meters into the same linear amplitude domain
+    /// `MeetingAudioMeter` works in, then applies the identical response curve, so
+    /// dictation and the meeting bubble visualize audio the same way.
+    private static func visualMeterLevel(averagePower: Float, peakPower: Float) -> Float {
+        let rms = pow(10, averagePower / 20) / dictationHeadroom
+        let peak = pow(10, peakPower / 20) / dictationHeadroom
+        return MeetingAudioMeter.level(rms: rms, peak: peak)
     }
 
     private static func visualMeterLevel(from buffer: AVAudioPCMBuffer) -> Float {
@@ -242,11 +241,8 @@ final class AudioRecorder: NSObject {
             return 0
         }
 
-        let rms = sqrtf(sumSquares / Float(frameCount))
-        guard rms > 0 || peak > 0 else { return 0 }
-        let avgDb = 20 * log10(max(rms, 0.000_001))
-        let peakDb = 20 * log10(max(peak, 0.000_001))
-        return visualMeterLevel(averagePower: avgDb, peakPower: peakDb)
+        let rms = sqrtf(sumSquares / Float(frameCount)) / dictationHeadroom
+        return MeetingAudioMeter.level(rms: rms, peak: peak / dictationHeadroom)
     }
 }
 

@@ -107,6 +107,12 @@ enum MeetingAudioMeter {
     }
     guard sampleCount > 0 else { return 0 }
     let rms = sqrt(sumSquares / Float(sampleCount))
+    return level(rms: rms, peak: peak)
+  }
+
+  /// Shared response curve. Dictation converts its dB meters into the same linear
+  /// amplitude domain and calls this, so both visualizers react identically.
+  static func level(rms: Float, peak: Float) -> Float {
     let energy = rms * 0.7 + peak * 0.3
     guard energy >= 0.002 else { return 0 }
     return min(1, pow(energy * 4, 0.6))

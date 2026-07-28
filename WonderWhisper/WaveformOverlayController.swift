@@ -8,9 +8,13 @@ final class WaveformOverlayController {
     private var cancellables: Set<AnyCancellable> = []
     private weak var vm: DictationViewModel?
 
+    private let container = PillContainerView()
+
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
-        let size = NSSize(width: 142, height: 30)
+        // Window is larger than the pill so the soft shadow has room to render.
+        let size = NSSize(width: PillMetrics.pillWidth + PillMetrics.shadowPadding * 2,
+                          height: PillMetrics.pillHeight + PillMetrics.shadowPadding * 2)
         let rect = NSRect(origin: .zero, size: size)
         let w = NSPanel(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
         w.isOpaque = false
@@ -23,7 +27,9 @@ final class WaveformOverlayController {
         w.ignoresMouseEvents = false
         w.becomesKeyOnlyIfNeeded = true
         w.isMovableByWindowBackground = false
-        w.contentView = waveformView
+        container.frame = rect
+        container.install(waveformView)
+        w.contentView = container
         self.window = w
 
         // Start hidden and off-screen (not ordered)
@@ -69,8 +75,10 @@ final class WaveformOverlayController {
         guard let screen = OverlayScreenResolver.activeScreen() else { return }
         let vf = screen.visibleFrame
         let x = screen.frame.midX - window.frame.width / 2
-        // Place just below menu bar area
-        let y = vf.origin.y + vf.height - window.frame.height - 8
+        // The window is much larger than the pill (transparent shadow padding), so
+        // offset by that padding to keep the *pill* just below the menu bar rather
+        // than pushing it down by the full window height.
+        let y = vf.origin.y + vf.height - window.frame.height + PillMetrics.shadowPadding - 6
         window.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
     }
 
@@ -82,7 +90,7 @@ final class WaveformOverlayController {
             ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
             ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 1
-            waveformView.layer?.transform = CATransform3DIdentity
+            container.layer?.transform = CATransform3DIdentity
         }
     }
 
@@ -92,7 +100,7 @@ final class WaveformOverlayController {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             ctx.allowsImplicitAnimation = true
             window.animator().alphaValue = 0
-            waveformView.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
+            container.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
         }, completionHandler: { [weak self] in
             // Order window out after animation to stop blocking mouse events
             self?.window.orderOut(nil)
@@ -100,16 +108,61 @@ final class WaveformOverlayController {
     }
 }
 
+enum PillMetrics {
+    static let pillWidth: CGFloat = 128
+    static let pillHeight: CGFloat = 28
+    /// Must comfortably exceed `shadowRadius + shadowOffset.y`, otherwise the blurred
+    /// shadow is clipped by the window edge and the cutoff reads as a grey rectangle.
+    static let shadowPadding: CGFloat = 46
+    static let buttonSize: CGFloat = 19
+    static let shadowRadius: CGFloat = 11
+    static let shadowOffsetY: CGFloat = 5
+}
+
+/// Hosts the pill and draws its shadow; the pill itself is a masked blur view.
+private final class PillContainerView: NSView {
+    private var pill: NSView?
+
+    override var isFlipped: Bool { true }
+
+    func install(_ view: NSView) {
+        wantsLayer = true
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.30
+        layer?.shadowOffset = NSSize(width: 0, height: PillMetrics.shadowOffsetY)
+        layer?.shadowRadius = PillMetrics.shadowRadius
+        addSubview(view)
+        pill = view
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let inset = PillMetrics.shadowPadding
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        pill?.frame = rect
+        layer?.shadowPath = CGPath(
+            roundedRect: rect,
+            cornerWidth: rect.height / 2,
+            cornerHeight: rect.height / 2,
+            transform: nil
+        )
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        pill?.hitTest(point)
+    }
+}
+
 enum AudioVisualizerSensitivity {
     static let noiseGate: CGFloat = 0.018
     static let displayZeroThreshold: CGFloat = 0.012
     static let boostExponent: CGFloat = 0.68
-    static let inputAttack: CGFloat = 0.55
-    static let inputRelease: CGFloat = 0.18
-    static let levelAttack: CGFloat = 0.56
-    static let levelRelease: CGFloat = 0.20
-    static let speechFloor: CGFloat = 0.14
-    static let wobbleScale: CGFloat = 0.10
+    /// Track the meter almost exactly on the way up; the bars should hit peak on the
+    /// same frame the syllable does.
+    static let inputAttack: CGFloat = 0.95
+    /// Fast enough to show gaps between words, slow enough to avoid strobing.
+    static let inputRelease: CGFloat = 0.55
 
     static func gatedLevel(_ value: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, value))
@@ -129,12 +182,16 @@ private final class WaveformView: NSView {
     var onFinish: (() -> Void)?
     private let cancelButton = CircleButton(kind: .cancel)
     private let finishButton = CircleButton(kind: .finish)
-    private let backgroundLayer = CAGradientLayer()
-    private var barLayers: [CALayer] = []
-    private var noiseSeeds: [CGFloat] = []
+    private let bodyLayer = CAGradientLayer()
+    private let tintLayer = CAGradientLayer()
+    private let waveLayer = CAShapeLayer()
     private var displayLevel: CGFloat = 0
     private var timer: Timer?
-    private let barCount = 14
+    private let barCount = 15
+    /// Per-bar heights, each settling toward the live level at its own rate so the
+    /// row breathes as a symmetric equalizer rather than a scrolling history.
+    private var barHeights: [CGFloat] = []
+    private var phases: [CGFloat] = []
     private var level: CGFloat = 0
 
     init() {
@@ -144,15 +201,9 @@ private final class WaveformView: NSView {
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.cornerRadius = 15
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.13).cgColor
-        layer?.borderWidth = 0.5
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.18
-        layer?.shadowOffset = NSSize(width: 0, height: 5)
-        layer?.shadowRadius = 10
+        layer?.masksToBounds = true
         isHidden = false
         buildChrome()
-        buildBars()
 
         // Hook up buttons
         addSubview(cancelButton)
@@ -168,28 +219,26 @@ private final class WaveformView: NSView {
     override func layout() {
         super.layout()
         layer?.cornerRadius = bounds.height / 2
-        layer?.shadowPath = CGPath(
-            roundedRect: bounds,
-            cornerWidth: bounds.height / 2,
-            cornerHeight: bounds.height / 2,
-            transform: nil
-        )
-        backgroundLayer.frame = bounds
-        backgroundLayer.cornerRadius = bounds.height / 2
-        layoutBars()
+        bodyLayer.frame = bounds
+        bodyLayer.cornerRadius = bounds.height / 2
+        tintLayer.frame = bounds
+        waveLayer.frame = bounds
 
-        let btnSize: CGFloat = 22
-        let margin: CGFloat = 4
+        let btnSize = PillMetrics.buttonSize
+        let margin: CGFloat = 5
         cancelButton.frame = NSRect(x: margin, y: (bounds.height - btnSize)/2, width: btnSize, height: btnSize)
         finishButton.frame = NSRect(x: bounds.width - margin - btnSize, y: (bounds.height - btnSize)/2, width: btnSize, height: btnSize)
         cancelButton.layer?.cornerRadius = btnSize / 2
         finishButton.layer?.cornerRadius = btnSize / 2
+        redrawWave()
     }
 
     // Allow clicks only on the buttons so the rest of the pill stays click-through to reduce intrusiveness.
+    // `point` arrives in the superview's coordinate space, so convert before testing button frames.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if cancelButton.frame.contains(point) { return cancelButton }
-        if finishButton.frame.contains(point) { return finishButton }
+        let local = convert(point, from: superview)
+        if cancelButton.frame.contains(local) { return cancelButton }
+        if finishButton.frame.contains(local) { return finishButton }
         return nil
     }
 
@@ -197,6 +246,7 @@ private final class WaveformView: NSView {
         stopAnimating()
         displayLevel = 0
         level = 0
+        barHeights = Array(repeating: 0, count: barCount)
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -206,138 +256,120 @@ private final class WaveformView: NSView {
     func stopAnimating() {
         timer?.invalidate()
         timer = nil
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for layer in barLayers {
-            var r = layer.frame
-            r.size.height = 3
-            r.origin.y = (bounds.height - r.size.height) / 2
-            layer.frame = r
-            layer.backgroundColor = NSColor.white.withAlphaComponent(0.42).cgColor
-        }
-        CATransaction.commit()
+        barHeights = Array(repeating: 0, count: barCount)
+        displayLevel = 0
+        redrawWave()
     }
 
     func prepareForPresentation() {
-        layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
+        superview?.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
     }
 
     private var visualizerRect: NSRect {
-        let leftControls: CGFloat = 4 + 22 + 12
-        let rightControls: CGFloat = 4 + 22 + 10
+        let controls = 5 + PillMetrics.buttonSize + 10
         return NSRect(
-            x: leftControls,
-            y: 2,
-            width: max(28, bounds.width - leftControls - rightControls),
-            height: max(8, bounds.height - 4)
+            x: controls,
+            y: 4,
+            width: max(28, bounds.width - controls * 2),
+            height: max(8, bounds.height - 8)
         )
     }
 
     private func buildChrome() {
         guard let root = layer else { return }
-        backgroundLayer.colors = [
-            NSColor(calibratedWhite: 0.11, alpha: 0.93).cgColor,
-            NSColor(calibratedWhite: 0.045, alpha: 0.95).cgColor
+        // Drawn capsule rather than NSVisualEffectView: the effect view renders its
+        // backdrop as a rectangle whenever its mask is imperfect, which is the faint
+        // square that kept showing behind the pill.
+        bodyLayer.colors = [
+            NSColor(srgbRed: 0.16, green: 0.17, blue: 0.20, alpha: 0.97).cgColor,
+            NSColor(srgbRed: 0.07, green: 0.07, blue: 0.09, alpha: 0.97).cgColor
         ]
-        backgroundLayer.startPoint = CGPoint(x: 0, y: 0)
-        backgroundLayer.endPoint = CGPoint(x: 1, y: 1)
-        backgroundLayer.zPosition = 0
-        root.addSublayer(backgroundLayer)
+        bodyLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        bodyLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        bodyLayer.cornerCurve = .continuous
+        bodyLayer.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        bodyLayer.borderWidth = 0.5
+        bodyLayer.zPosition = 0
+        root.addSublayer(bodyLayer)
+
+        // Warm signal ramp: amber into a soft coral, which reads as active and
+        // premium against the near-black capsule without the alarm of pure red.
+        tintLayer.colors = [
+            NSColor(srgbRed: 1.00, green: 0.82, blue: 0.35, alpha: 1).cgColor,
+            NSColor(srgbRed: 1.00, green: 0.58, blue: 0.31, alpha: 1).cgColor,
+            NSColor(srgbRed: 0.99, green: 0.40, blue: 0.42, alpha: 1).cgColor
+        ]
+        // Diagonal ramp so tall columns pick up more of the hot end of the gradient.
+        tintLayer.startPoint = CGPoint(x: 0, y: 1)
+        tintLayer.endPoint = CGPoint(x: 1, y: 0)
+        tintLayer.zPosition = 2
+        waveLayer.fillColor = NSColor.black.cgColor
+        tintLayer.mask = waveLayer
+        root.addSublayer(tintLayer)
     }
 
-    private func buildBars() {
-        barLayers.forEach { $0.removeFromSuperlayer() }
-        barLayers.removeAll()
-        guard let root = layer else { return }
-        for _ in 0..<barCount {
-            let bar = CALayer()
-            bar.cornerCurve = .continuous
-            bar.cornerRadius = 1.5
-            bar.zPosition = 2
-            bar.backgroundColor = NSColor.white.withAlphaComponent(0.42).cgColor
-            bar.shadowColor = NSColor.systemRed.cgColor
-            bar.shadowOpacity = 0
-            bar.shadowOffset = .zero
-            bar.shadowRadius = 2
-            root.addSublayer(bar)
-            barLayers.append(bar)
-        }
-        noiseSeeds = (0..<barCount).map { _ in CGFloat.random(in: 0...(2 * .pi)) }
-        layoutBars()
-    }
-
-    private func layoutBars() {
-        guard !barLayers.isEmpty else { return }
-        let rect = visualizerRect.insetBy(dx: 1.5, dy: 0.5)
-        let availableWidth = rect.width
-        let spacing: CGFloat = 2.0
-        let barWidth = max(2.0, (availableWidth - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
-        var x = rect.minX
-        for (i, bar) in barLayers.enumerated() {
-            let center = (CGFloat(barCount) - 1) / 2
-            let distance = abs(CGFloat(i) - center) / max(1, center)
-            let h = 3.0 + 2.2 * (1 - distance)
-            bar.frame = NSRect(x: x, y: rect.midY - h / 2, width: barWidth, height: h)
-            bar.cornerRadius = barWidth / 2
-            x += barWidth + spacing
-        }
-    }
-
+    /// Symmetric equalizer: every bar responds to the current level, weighted so the
+    /// centre reaches full height first and the row expands outward as you get louder.
     private func tick() {
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.09)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        let rect = visualizerRect.insetBy(dx: 1.5, dy: 0.5)
-        let minH: CGFloat = 3.0
-        let maxH = rect.height
-        let now = CFAbsoluteTimeGetCurrent()
-        let input = AudioVisualizerSensitivity.boostedLevel(level)
-        let attack = AudioVisualizerSensitivity.inputAttack
-        let release = AudioVisualizerSensitivity.inputRelease
-        if input > displayLevel {
-            displayLevel += (input - displayLevel) * attack
-        } else {
-            displayLevel += (input - displayLevel) * release
-        }
+        // `level` is already the shared MeetingAudioMeter response, matching the
+        // meeting bubble. Only a light attack/release smoothing is applied here.
+        let alpha = level > displayLevel
+            ? AudioVisualizerSensitivity.inputAttack
+            : AudioVisualizerSensitivity.inputRelease
+        displayLevel += (level - displayLevel) * alpha
         if displayLevel < AudioVisualizerSensitivity.displayZeroThreshold { displayLevel = 0 }
+        level *= 0.55 // decay the held peak so a dropped meter update reads as silence
 
-        if !barLayers.isEmpty {
-            for (i, bar) in barLayers.enumerated() {
-                let center = (CGFloat(barCount) - 1) / 2
-                let d = abs(CGFloat(i) - center) / center
-                let shape = 0.42 + 0.58 * (1 - d * d)
-                let seed = noiseSeeds.indices.contains(i) ? noiseSeeds[i] : 0
-                let speed: CGFloat = 0.65 + CGFloat(i % 5) * 0.06
-                let wobble = CGFloat(sin(now * Double(7 * speed) + Double(seed)))
-                let idleShape: CGFloat = 0.04 + 0.06 * (1 - d)
-                let speechFloor = displayLevel > 0 ? AudioVisualizerSensitivity.speechFloor : 0
-                let liveShape = (speechFloor + displayLevel * 0.76) * shape
-                    + wobble * displayLevel * AudioVisualizerSensitivity.wobbleScale
-                var amp = max(idleShape, liveShape)
-                if displayLevel == 0 { amp = idleShape }
-                amp = max(0, min(1, amp))
-                let h = minH + (maxH - minH) * amp
-                var r = bar.frame
-                r.size.height = h
-                r.origin.y = rect.midY - h / 2
-                bar.frame = r
-                let alpha = 0.36 + 0.50 * displayLevel
-                bar.backgroundColor = NSColor.systemRed.blended(
-                    withFraction: 0.55,
-                    of: .white
-                )?.withAlphaComponent(alpha).cgColor
-                bar.shadowOpacity = Float(0.08 + 0.22 * displayLevel)
-            }
+        if barHeights.count != barCount { barHeights = Array(repeating: 0, count: barCount) }
+        if phases.count != barCount {
+            phases = (0..<barCount).map { _ in CGFloat.random(in: 0...(2 * .pi)) }
         }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let centre = CGFloat(barCount - 1) / 2
+        for index in 0..<barCount {
+            // Distance from centre: 0 at the middle, 1 at the outer edges.
+            let distance = abs(CGFloat(index) - centre) / centre
+            // Outer bars need a higher level before they lift, so louder speech
+            // visibly pushes the shape outward from the middle.
+            let reach = max(0, displayLevel * (1.35 - 0.85 * distance))
+            // Small per-bar flutter keeps it alive without inventing fake motion:
+            // it scales with the signal, so silence stays perfectly flat.
+            let flutter = 1 + 0.16 * sin(now * 9 + Double(phases[index])) * Double(displayLevel)
+            let target = min(1, reach * CGFloat(flutter))
+            let rate: CGFloat = target > barHeights[index] ? 0.85 : 0.35
+            barHeights[index] += (target - barHeights[index]) * rate
+        }
+        redrawWave()
+    }
+
+    private func redrawWave() {
+        let rect = visualizerRect
+        guard rect.width > 0 else { return }
+        let heights = barHeights.isEmpty ? Array(repeating: CGFloat(0), count: barCount) : barHeights
+        // Derive pitch from the width so the row always ends inside the pill.
+        let pitch = rect.width / CGFloat(barCount)
+        let barWidth = max(1, pitch * 0.52)
+        let minH = barWidth
+        let maxH = rect.height
+        let path = CGMutablePath()
+        for (index, value) in heights.enumerated() {
+            // Bars grow from the vertical centre in both directions.
+            let h = minH + (maxH - minH) * min(1, max(0, value))
+            let x = rect.minX + pitch * CGFloat(index) + (pitch - barWidth) / 2
+            let r = NSRect(x: x, y: rect.midY - h / 2, width: barWidth, height: h)
+            path.addRoundedRect(in: r, cornerWidth: barWidth / 2, cornerHeight: barWidth / 2)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        waveLayer.path = path
+        tintLayer.opacity = Float(0.55 + 0.45 * displayLevel)
         CATransaction.commit()
     }
 
+    /// Keep the loudest meter reading between frames; averaging here hid short syllables.
     func setLevel(_ value: CGFloat) {
-        let gated = AudioVisualizerSensitivity.gatedLevel(value)
-        let alpha = gated > level
-            ? AudioVisualizerSensitivity.levelAttack
-            : AudioVisualizerSensitivity.levelRelease
-        level = level * (1 - alpha) + gated * alpha
+        level = max(level, max(0, min(1, value)))
     }
 }
 
@@ -411,8 +443,7 @@ private final class CircleButton: NSView {
             bg = NSColor.white.withAlphaComponent(alpha)
         case .finish:
             let alpha: CGFloat = isPressed ? 0.94 : (isHovered ? 0.88 : 0.78)
-            bg = NSColor.systemRed.blended(withFraction: 0.12, of: .white)?.withAlphaComponent(alpha)
-                ?? NSColor.systemRed.withAlphaComponent(alpha)
+            bg = NSColor(srgbRed: 0.42, green: 0.60, blue: 0.98, alpha: alpha)
         }
         bg.setFill()
         let path = NSBezierPath(ovalIn: bounds)
@@ -438,9 +469,9 @@ private final class CircleButton: NSView {
             p2.lineCapStyle = .round
             p2.stroke()
         case .finish:
-            let s = max(7, bounds.width * 0.34)
+            let s = max(6, bounds.width * 0.32)
             let r = NSRect(x: (bounds.width - s)/2, y: (bounds.height - s)/2, width: s, height: s)
-            let square = NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2)
+            let square = NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5)
             square.fill()
         }
         ctx?.restoreGState()
