@@ -7,7 +7,7 @@ enum AudioInputSelection: Equatable {
     case deviceUID(String)
 
     static func load() -> AudioInputSelection {
-        if let uid = UserDefaults.standard.string(forKey: "audio.input.uid"), !uid.isEmpty {
+        if let uid = AppConfig.defaults.string(forKey: "audio.input.uid"), !uid.isEmpty {
             return .deviceUID(uid)
         }
         return .systemDefault
@@ -16,9 +16,9 @@ enum AudioInputSelection: Equatable {
     func persist() {
         switch self {
         case .systemDefault:
-            UserDefaults.standard.removeObject(forKey: "audio.input.uid")
+            AppConfig.defaults.removeObject(forKey: "audio.input.uid")
         case .deviceUID(let uid):
-            UserDefaults.standard.set(uid, forKey: "audio.input.uid")
+            AppConfig.defaults.set(uid, forKey: "audio.input.uid")
         }
     }
 }

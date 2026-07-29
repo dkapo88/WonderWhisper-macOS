@@ -11,7 +11,7 @@ final class SoundFeedback {
   private static let stopBaseVolume: Float = 0.5   // Increased from 0.25 for better audibility
   private static let chimeVolumeKey = "audio.chime.volume"
   private static var volumeScale: Float = {
-    let defaults = UserDefaults.standard
+    let defaults = AppConfig.defaults
     if defaults.object(forKey: chimeVolumeKey) == nil { return 1.0 }
     let stored = defaults.double(forKey: chimeVolumeKey)
     return clampScale(Float(stored))
@@ -93,7 +93,7 @@ final class SoundFeedback {
   static func setVolumeScale(_ scale: Double) {
     let clamped = clampScale(Float(scale))
     volumeScale = clamped
-    UserDefaults.standard.set(Double(clamped), forKey: chimeVolumeKey)
+    AppConfig.defaults.set(Double(clamped), forKey: chimeVolumeKey)
   }
 
   static func currentVolumeScale() -> Double {

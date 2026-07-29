@@ -6,7 +6,7 @@ final class OpenRouterLLMProvider {
     private let routingPrefProvider: () -> String // returns "latency" or "throughput"
     private static let log = OSLog(subsystem: AppConfig.bundleIdentifier, category: "OpenRouterLLM")
 
-    init(client: OpenRouterHTTPClient, routingPrefProvider: @escaping () -> String = { UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "latency" }) {
+    init(client: OpenRouterHTTPClient, routingPrefProvider: @escaping () -> String = { AppConfig.defaults.string(forKey: "llm.openrouter.routing") ?? "latency" }) {
         self.client = client
         self.routingPrefProvider = routingPrefProvider
     }

@@ -54,7 +54,7 @@ final class ScreenContextPreprocessor {
       "GPT-4o-mini-transcribe"
     ]
 
-    if let custom = UserDefaults.standard.string(forKey: "vocab.custom"),
+    if let custom = AppConfig.defaults.string(forKey: "vocab.custom"),
        !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       hints.append(contentsOf: ScreenContextTermExtractor.normalizeCommaSeparated(custom, limit: 80))
     }

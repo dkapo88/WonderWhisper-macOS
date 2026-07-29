@@ -456,7 +456,7 @@ actor DictationController {
                     appName: appNameForPrompt,
                     screenContents: nil,
                     screenContextTerms: screenContentsForPrompt,
-                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom"),
+                    customVocabulary: AppConfig.defaults.string(forKey: "vocab.custom"),
                     clipboardText: clipboardSnapshotForSession
                 )
                 AppLog.dictation.log("Prompt context lengths: transcript=\(transcript.count) selected=\(selected?.count ?? 0) activeField=\(activeTextField?.count ?? 0) screen=\(screenContentsForPrompt?.count ?? 0) clipboard=\(self.clipboardSnapshotForSession?.count ?? 0)")
@@ -515,7 +515,7 @@ actor DictationController {
             }
 
             // Apply deterministic text replacements on final output
-            let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+            let rules = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
             if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 output = TextReplacement.apply(to: output, withRules: rules)
             }
@@ -621,7 +621,7 @@ actor DictationController {
     func setUseAXInsertion(_ enabled: Bool) { inserter.useAXInsertion = enabled }
 
     private func applyVocabularyCorrections(to transcript: String) -> String {
-        let vocabulary = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
+        let vocabulary = AppConfig.defaults.string(forKey: "vocab.custom") ?? ""
         let corrected = VocabularyTextCorrector.apply(to: transcript, vocabulary: vocabulary)
         if corrected != transcript {
             AppLog.dictation.log("Applied deterministic vocabulary corrections")
@@ -785,7 +785,7 @@ actor DictationController {
         state = .inserting
         var output = text
         // Apply deterministic text replacements
-        let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+        let rules = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
         if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             output = TextReplacement.apply(to: output, withRules: rules)
         }
@@ -901,7 +901,7 @@ actor DictationController {
                     appName: appNameForPrompt,
                     screenContents: screenContextWasTermList ? nil : screenInstruction,
                     screenContextTerms: screenContextWasTermList ? screenInstruction : nil,
-                    customVocabulary: UserDefaults.standard.string(forKey: "vocab.custom")
+                    customVocabulary: AppConfig.defaults.string(forKey: "vocab.custom")
                 )
                 // Capture full user message for history
                 userMsgForHistory = userMsg
@@ -916,7 +916,7 @@ actor DictationController {
             }
             state = .idle
             // Apply deterministic text replacements on final output
-            let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+            let rules = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
             if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 output = TextReplacement.apply(to: output, withRules: rules)
             }

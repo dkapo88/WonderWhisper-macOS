@@ -20,7 +20,8 @@ struct SimpleModeSettingsView: View {
   @State private var parakeetDownloadError: String?
   @State private var showModelBrowser: Bool = false
   // Selected on-device Parakeet model (persisted under "parakeet.version").
-  @AppStorage("parakeet.version") private var parakeetModel: ParakeetModelKind = .unified
+  @AppStorage("parakeet.version", store: AppConfig.defaults)
+  private var parakeetModel: ParakeetModelKind = .unified
 
   private let keychain = KeychainService()
 

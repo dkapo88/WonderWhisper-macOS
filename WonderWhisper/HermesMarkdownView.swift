@@ -70,7 +70,7 @@ enum HermesMarkdownContent {
   /// headings, code, and imported HTML all scale relative to this. Seeded from
   /// UserDefaults and kept in sync by DictationViewModel.responseWindowFontSize.
   static var baseFontSize: CGFloat = {
-    let stored = UserDefaults.standard.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double
+    let stored = AppConfig.defaults.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double
     return stored.map { CGFloat($0) } ?? NSFont.systemFontSize
   }()
 

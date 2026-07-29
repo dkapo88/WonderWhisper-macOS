@@ -10,7 +10,7 @@ final class HistoryStore: ObservableObject {
     @Published var maxEntries: Int {
         didSet {
             if maxEntries < 1 { maxEntries = 1 }
-            UserDefaults.standard.set(maxEntries, forKey: Self.defaultsMaxKey)
+            AppConfig.defaults.set(maxEntries, forKey: Self.defaultsMaxKey)
             enforceMaxEntries()
         }
     }
@@ -46,7 +46,7 @@ final class HistoryStore: ObservableObject {
        try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
        try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
        try? fm.createDirectory(at: self.imageDir, withIntermediateDirectories: true)
-       let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
+       let persisted = AppConfig.defaults.object(forKey: Self.defaultsMaxKey) as? Int
        self.maxEntries = persisted ?? 50
        
        // Load initial page of entries

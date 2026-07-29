@@ -178,10 +178,10 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   @Published var liveObsidianContextEnabled: Bool = {
-    UserDefaults.standard.bool(forKey: "meeting.context.enabled")
+    AppConfig.defaults.bool(forKey: "meeting.context.enabled")
   }() {
     didSet {
-      UserDefaults.standard.set(liveObsidianContextEnabled, forKey: "meeting.context.enabled")
+      AppConfig.defaults.set(liveObsidianContextEnabled, forKey: "meeting.context.enabled")
       if liveObsidianContextEnabled {
         contextError = nil
         contextStatus = obsidianVaultPath == nil
@@ -203,13 +203,13 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   @Published var meetingOverlayEnabled: Bool = {
-    if UserDefaults.standard.object(forKey: "meeting.overlay.enabled") == nil {
+    if AppConfig.defaults.object(forKey: "meeting.overlay.enabled") == nil {
       return true
     }
-    return UserDefaults.standard.bool(forKey: "meeting.overlay.enabled")
+    return AppConfig.defaults.bool(forKey: "meeting.overlay.enabled")
   }() {
     didSet {
-      UserDefaults.standard.set(meetingOverlayEnabled, forKey: "meeting.overlay.enabled")
+      AppConfig.defaults.set(meetingOverlayEnabled, forKey: "meeting.overlay.enabled")
       if meetingOverlayEnabled {
         overlayMinimizedSessionID = nil
       }
@@ -220,7 +220,7 @@ final class MeetingCoordinator: ObservableObject {
     MeetingPreferences.automaticDetectionEnabled()
   }() {
     didSet {
-      UserDefaults.standard.set(
+      AppConfig.defaults.set(
         automaticDetectionEnabled,
         forKey: "meeting.autoDetection.enabled"
       )
@@ -232,13 +232,13 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   @Published var automaticallyExportToObsidian: Bool = {
-    if UserDefaults.standard.object(forKey: "meeting.obsidian.autoExport") == nil {
+    if AppConfig.defaults.object(forKey: "meeting.obsidian.autoExport") == nil {
       return true
     }
-    return UserDefaults.standard.bool(forKey: "meeting.obsidian.autoExport")
+    return AppConfig.defaults.bool(forKey: "meeting.obsidian.autoExport")
   }() {
     didSet {
-      UserDefaults.standard.set(
+      AppConfig.defaults.set(
         automaticallyExportToObsidian,
         forKey: "meeting.obsidian.autoExport"
       )
@@ -246,32 +246,32 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   @Published var generateMeetingNotes: Bool = {
-    if UserDefaults.standard.object(forKey: "meeting.notes.generate") == nil {
+    if AppConfig.defaults.object(forKey: "meeting.notes.generate") == nil {
       return false
     }
-    return UserDefaults.standard.bool(forKey: "meeting.notes.generate")
+    return AppConfig.defaults.bool(forKey: "meeting.notes.generate")
   }() {
     didSet {
-      UserDefaults.standard.set(generateMeetingNotes, forKey: "meeting.notes.generate")
+      AppConfig.defaults.set(generateMeetingNotes, forKey: "meeting.notes.generate")
     }
   }
 
   @Published var noteModel: String = {
-    UserDefaults.standard.string(forKey: "meeting.notes.model")
+    AppConfig.defaults.string(forKey: "meeting.notes.model")
       ?? "openai/gpt-5.4-nano"
   }() {
     didSet {
-      UserDefaults.standard.set(noteModel, forKey: "meeting.notes.model")
+      AppConfig.defaults.set(noteModel, forKey: "meeting.notes.model")
     }
   }
 
   @Published var notePrompt: String = {
     MeetingNoteGenerator.resolvedPrompt(
-      UserDefaults.standard.string(forKey: MeetingNoteGenerator.promptDefaultsKey)
+      AppConfig.defaults.string(forKey: MeetingNoteGenerator.promptDefaultsKey)
     )
   }() {
     didSet {
-      UserDefaults.standard.set(
+      AppConfig.defaults.set(
         MeetingNoteGenerator.resolvedPrompt(notePrompt),
         forKey: MeetingNoteGenerator.promptDefaultsKey
       )
@@ -279,11 +279,11 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   @Published var contextModel: String = {
-    UserDefaults.standard.string(forKey: "meeting.context.model")
+    AppConfig.defaults.string(forKey: "meeting.context.model")
       ?? "openai/gpt-5.4-nano"
   }() {
     didSet {
-      UserDefaults.standard.set(contextModel, forKey: "meeting.context.model")
+      AppConfig.defaults.set(contextModel, forKey: "meeting.context.model")
     }
   }
 
@@ -303,7 +303,7 @@ final class MeetingCoordinator: ObservableObject {
     MeetingTranscriptionEngine.selected()
   }() {
     didSet {
-      UserDefaults.standard.set(
+      AppConfig.defaults.set(
         transcriptionEngine.rawValue,
         forKey: "meeting.transcription.engine"
       )
@@ -883,7 +883,7 @@ final class MeetingCoordinator: ObservableObject {
     contextCards.removeAll()
     seenContextTerms.removeAll()
     obsidianVaultPath = root.path
-    UserDefaults.standard.set(root.path, forKey: MeetingObsidianPreferences.vaultRootKey)
+    AppConfig.defaults.set(root.path, forKey: MeetingObsidianPreferences.vaultRootKey)
     if let exportFolder = obsidianExportFolderURL,
        !MeetingObsidianPreferences.contains(exportFolder, in: root) {
       clearObsidianExportFolder()
@@ -896,10 +896,10 @@ final class MeetingCoordinator: ObservableObject {
   func clearObsidianVault() {
     obsidianVaultPath = nil
     obsidianExportFolderPath = nil
-    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.vaultRootKey)
-    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
+    AppConfig.defaults.removeObject(forKey: MeetingObsidianPreferences.vaultRootKey)
+    AppConfig.defaults.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
     MeetingObsidianPreferences.legacyKeys.forEach {
-      UserDefaults.standard.removeObject(forKey: $0)
+      AppConfig.defaults.removeObject(forKey: $0)
     }
     cancelContextTasks()
     contextCards.removeAll()
@@ -926,7 +926,7 @@ final class MeetingCoordinator: ObservableObject {
     }
     let folder = url.standardizedFileURL
     obsidianExportFolderPath = folder.path
-    UserDefaults.standard.set(
+    AppConfig.defaults.set(
       folder.path,
       forKey: MeetingObsidianPreferences.exportFolderKey
     )
@@ -935,7 +935,7 @@ final class MeetingCoordinator: ObservableObject {
 
   func clearObsidianExportFolder() {
     obsidianExportFolderPath = nil
-    UserDefaults.standard.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
+    AppConfig.defaults.removeObject(forKey: MeetingObsidianPreferences.exportFolderKey)
   }
 
   func addTriggerApplication(_ application: MeetingMicrophoneApplication) {

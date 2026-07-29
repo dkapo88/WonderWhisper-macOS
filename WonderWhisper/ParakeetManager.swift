@@ -49,7 +49,7 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// `.unified` default. This mirrors the @AppStorage fallback used by the
     /// settings picker so both readers always agree on the active model.
     static var selected: ParakeetModelKind {
-        switch (UserDefaults.standard.string(forKey: "parakeet.version") ?? "").lowercased() {
+        switch (AppConfig.defaults.string(forKey: "parakeet.version") ?? "").lowercased() {
         case "v3": return .v3
         default: return .unified
         }

@@ -538,7 +538,7 @@ actor MeetingSonioxAsyncRecoveryService {
   }
 
   private nonisolated static func languageHint() -> String? {
-    let value = UserDefaults.standard.string(forKey: "transcription.language")?
+    let value = AppConfig.defaults.string(forKey: "transcription.language")?
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased() ?? ""
     return value.isEmpty || value == "auto" ? nil : value

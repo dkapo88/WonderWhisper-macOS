@@ -58,7 +58,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         if !Self.isAutoLanguage(settings.language) {
             if let forced = Self.normalizedLanguage(settings.language) {
                 fields["language"] = forced
-            } else if let forced = Self.normalizedLanguage(UserDefaults.standard.string(forKey: "transcription.language")) {
+            } else if let forced = Self.normalizedLanguage(AppConfig.defaults.string(forKey: "transcription.language")) {
                 fields["language"] = forced
             } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
                 fields["language"] = String(lang)
@@ -82,7 +82,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         os_signpost(.end, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "elapsed=%.3f", dt)
         AppLog.dictation.log("Groq file upload response bytes=\(responseData.count, privacy: .public) elapsed=\(dt, format: .fixed(precision: 3), privacy: .public)s")
 
-        if UserDefaults.standard.bool(forKey: "groq.file.debugResponse"),
+        if AppConfig.defaults.bool(forKey: "groq.file.debugResponse"),
            let snippet = String(data: responseData.prefix(2048), encoding: .utf8) {
             AppLog.dictation.log("Groq raw response (first 2KB): \(snippet)")
         }

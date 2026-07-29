@@ -121,7 +121,7 @@ final class AudioRecorder: NSObject {
         startLevelUpdates()
 
         // Raise input gain asynchronously unless voice processing (AGC) is enabled
-        let voiceProcessingEnabled = UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
+        let voiceProcessingEnabled = AppConfig.defaults.bool(forKey: "audio.voiceProcessing.enabled")
         if !voiceProcessingEnabled {
             DispatchQueue.global(qos: .userInitiated).async {
                 _ = AudioDeviceManager.raiseInputVolumeIfNeeded(for: AudioInputSelection.load())
@@ -368,7 +368,7 @@ extension AudioRecorder {
 
         // Suppress low-energy buffers to reduce transmission of near-silence (optional)
         // Use user default to control RMS gate; default to 0 (disabled) for reliability
-        let rmsGate = UserDefaults.standard.float(forKey: "audio.streaming.rmsGate")
+        let rmsGate = AppConfig.defaults.float(forKey: "audio.streaming.rmsGate")
         if rmsGate > 0, buffer.frameLength > 0, let floatChannels = buffer.floatChannelData {
             let frameCount = Int(buffer.frameLength)
             let channelPointer = floatChannels.pointee

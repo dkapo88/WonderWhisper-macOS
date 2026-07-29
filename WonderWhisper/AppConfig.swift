@@ -2,6 +2,22 @@ import Foundation
 
 struct AppConfig {
     static let appDisplayName = "WonderWhisper"
+
+    /// The one UserDefaults the app reads and writes. In a normal launch this is `.standard`.
+    /// Under the test runner it is a scratch suite wiped at load, so unit tests running inside
+    /// the real app host can never touch (or leak fixtures into) the user's live preferences —
+    /// the Beeper chat list has been clobbered by a test fixture this way before.
+    static let defaults: UserDefaults = {
+        let isTestRun = NSClassFromString("XCTestCase") != nil
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        guard isTestRun,
+              let scratch = UserDefaults(suiteName: "com.danekapoor.hermeswhisper.tests") else {
+            return .standard
+        }
+        scratch.removePersistentDomain(forName: "com.danekapoor.hermeswhisper.tests")
+        return scratch
+    }()
+
     static let previousAppDisplayName = "HermesWhisper"
     // Keep the Hermes-era runtime identity so an in-place rebrand preserves the user's
     // existing data, macOS privacy grants, UserDefaults, and Keychain credentials.

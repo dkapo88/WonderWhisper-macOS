@@ -571,7 +571,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   }
 
   private var shouldLogVerboseMessages: Bool {
-    UserDefaults.standard.bool(forKey: Self.verboseLoggingDefaultsKey)
+    AppConfig.defaults.bool(forKey: Self.verboseLoggingDefaultsKey)
   }
 
   private func reportStreamError(_ message: String) async {

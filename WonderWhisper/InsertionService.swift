@@ -35,7 +35,7 @@ final class InsertionService {
         pb.clearContents()
 
         // Prefer rich text (HTML/RTF) if enabled; always include plain text as a fallback
-        let preferFormatted = UserDefaults.standard.bool(forKey: "insertion.pasteFormatted")
+        let preferFormatted = AppConfig.defaults.bool(forKey: "insertion.pasteFormatted")
         let item = NSPasteboardItem()
         item.setString(text, forType: .string)
         // Mark as transient to avoid cluttering clipboard history (Raycast, Paste, etc.)
@@ -60,7 +60,7 @@ final class InsertionService {
         // - Always fall back to synthesized Command+V if the chosen method fails
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
         AppLog.insertion.log("Insertion pasteboard prepared changeCount=\(ourChange, privacy: .public) frontBundle=\(frontBundle, privacy: .public)")
-        let preferAppleScript = shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste")
+        let preferAppleScript = shouldPreferAppleScript(for: frontBundle) || AppConfig.defaults.bool(forKey: "insertion.useAppleScriptPaste")
         // Ordered paste-method fallback. Each entry carries its own success logs for the
         // primary (first-tried) and fallback (second-tried) positions, so the messages match
         // the previous explicit branches exactly.
@@ -90,7 +90,7 @@ final class InsertionService {
             synthesizeCmdV()
             AppLog.dictation.log("\(allFailedLog, privacy: .public)")
         }
-        let fast = UserDefaults.standard.bool(forKey: "insertion.fastMode")
+        let fast = AppConfig.defaults.bool(forKey: "insertion.fastMode")
         let delay: TimeInterval = fast ? 0.12 : 0.45
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.restorePasteboard(snapshot, ifChangeCountEquals: ourChange, orContentMatches: text)

@@ -348,8 +348,8 @@ actor MeetingTranscriptionService {
         KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias)
       },
       vocabularyProvider: {
-        let custom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
-        let spelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+        let custom = AppConfig.defaults.string(forKey: "vocab.custom") ?? ""
+        let spelling = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
         var terms = VoiceVocabularyKeyterms.terms(
           customVocabulary: custom,
           spellingCorrections: spelling
@@ -360,7 +360,7 @@ actor MeetingTranscriptionService {
         return terms.joined(separator: ", ")
       },
       languageProvider: {
-        UserDefaults.standard.string(forKey: "transcription.language") ?? "en"
+        AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
       },
       realtimeOptions: realtimeOptions
     )

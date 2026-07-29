@@ -216,11 +216,11 @@ final class DictationViewModel: ObservableObject {
     }
 
     // Transcription + LLM preferences
-    @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
+    @Published var transcriptionModel: String = AppConfig.defaults.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     // Groq Whisper options
-    @Published var transcriptionLanguage: String = UserDefaults.standard.string(forKey: "transcription.language") ?? "en" {
+    @Published var transcriptionLanguage: String = AppConfig.defaults.string(forKey: "transcription.language") ?? "en" {
         didSet {
-            UserDefaults.standard.set(transcriptionLanguage, forKey: "transcription.language")
+            AppConfig.defaults.set(transcriptionLanguage, forKey: "transcription.language")
             updateProviders()
         }
     }
@@ -232,7 +232,7 @@ final class DictationViewModel: ObservableObject {
                 openRouterTranscriptionModel = final
                 return
             }
-            UserDefaults.standard.set(final, forKey: "transcription.openrouter.model")
+            AppConfig.defaults.set(final, forKey: "transcription.openrouter.model")
             if simpleVoiceEngine == .openRouterTranscription {
                 transcriptionModel = final
                 applySimplePrompts()
@@ -242,27 +242,27 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
-    @Published var screenContextEnabled: Bool = UserDefaults.standard.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    @Published var llmEnabled: Bool = AppConfig.defaults.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    @Published var screenContextEnabled: Bool = AppConfig.defaults.object(forKey: "screenContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var screenContextCaptureMode: ScreenContextCaptureMode = {
-        if let raw = UserDefaults.standard.string(forKey: "screenContext.captureMode"),
+        if let raw = AppConfig.defaults.string(forKey: "screenContext.captureMode"),
            let mode = ScreenContextCaptureMode(rawValue: raw) {
             return mode
         }
         return .image
-    }() { didSet { UserDefaults.standard.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode"); persistAndUpdate() } }
-    @Published var clipboardContextEnabled: Bool = UserDefaults.standard.object(forKey: "clipboardContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
+    }() { didSet { AppConfig.defaults.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode"); persistAndUpdate() } }
+    @Published var clipboardContextEnabled: Bool = AppConfig.defaults.object(forKey: "clipboardContext.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
 
-    @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
+    @Published var llmModel: String = AppConfig.defaults.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
     // OpenRouter routing preference: "latency" or "throughput"
-    @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "auto" { didSet { persistAndUpdate() } }
+    @Published var openrouterRouting: String = AppConfig.defaults.string(forKey: "llm.openrouter.routing") ?? "auto" { didSet { persistAndUpdate() } }
     @Published var openrouterReasoning: OpenRouterReasoningMode = {
-        let raw = UserDefaults.standard.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
+        let raw = AppConfig.defaults.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
         return OpenRouterReasoningMode(rawValue: raw) ?? .omit
     }() { didSet { persistAndUpdate() } }
-    @Published var llmTemperature: Double = UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2 {
+    @Published var llmTemperature: Double = AppConfig.defaults.object(forKey: "llm.temperature") as? Double ?? 0.2 {
         didSet {
-            UserDefaults.standard.set(llmTemperature, forKey: "llm.temperature")
+            AppConfig.defaults.set(llmTemperature, forKey: "llm.temperature")
             updateProviders()
         }
     }
@@ -270,31 +270,31 @@ final class DictationViewModel: ObservableObject {
         didSet { persistFavoriteOpenRouterModels() }
     }
 
-    @Published var hermesAgentEnabled: Bool = UserDefaults.standard.object(forKey: "hermes.agent.enabled") as? Bool ?? false {
+    @Published var hermesAgentEnabled: Bool = AppConfig.defaults.object(forKey: "hermes.agent.enabled") as? Bool ?? false {
         didSet {
-            UserDefaults.standard.set(hermesAgentEnabled, forKey: "hermes.agent.enabled")
+            AppConfig.defaults.set(hermesAgentEnabled, forKey: "hermes.agent.enabled")
             refreshPromptHotkeys()
         }
     }
-    @Published var hermesBaseURLString: String = UserDefaults.standard.string(forKey: "hermes.api.baseURL") ?? AppConfig.defaultHermesBaseURLString {
-        didSet { UserDefaults.standard.set(hermesBaseURLString, forKey: "hermes.api.baseURL") }
+    @Published var hermesBaseURLString: String = AppConfig.defaults.string(forKey: "hermes.api.baseURL") ?? AppConfig.defaultHermesBaseURLString {
+        didSet { AppConfig.defaults.set(hermesBaseURLString, forKey: "hermes.api.baseURL") }
     }
-    @Published var hermesConversationName: String = UserDefaults.standard.string(forKey: "hermes.conversation.name") ?? AppConfig.defaultHermesConversationName {
-        didSet { UserDefaults.standard.set(hermesConversationName, forKey: "hermes.conversation.name") }
+    @Published var hermesConversationName: String = AppConfig.defaults.string(forKey: "hermes.conversation.name") ?? AppConfig.defaultHermesConversationName {
+        didSet { AppConfig.defaults.set(hermesConversationName, forKey: "hermes.conversation.name") }
     }
-    @Published var hermesModel: String = UserDefaults.standard.string(forKey: "hermes.model") ?? AppConfig.defaultHermesModel {
-        didSet { UserDefaults.standard.set(hermesModel, forKey: "hermes.model") }
+    @Published var hermesModel: String = AppConfig.defaults.string(forKey: "hermes.model") ?? AppConfig.defaultHermesModel {
+        didSet { AppConfig.defaults.set(hermesModel, forKey: "hermes.model") }
     }
-    @Published var hermesProfileName: String = UserDefaults.standard.string(forKey: "hermes.profile.name") ?? "" {
-        didSet { UserDefaults.standard.set(hermesProfileName, forKey: "hermes.profile.name") }
+    @Published var hermesProfileName: String = AppConfig.defaults.string(forKey: "hermes.profile.name") ?? "" {
+        didSet { AppConfig.defaults.set(hermesProfileName, forKey: "hermes.profile.name") }
     }
     @Published var hermesTimeoutSeconds: Double = {
-        let value = UserDefaults.standard.object(forKey: "hermes.timeout") as? Double
+        let value = AppConfig.defaults.object(forKey: "hermes.timeout") as? Double
             ?? HermesAgentSettings.defaultTimeout
         return HermesAgentSettings.clampedTimeout(value)
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 HermesAgentSettings.clampedTimeout(hermesTimeoutSeconds),
                 forKey: "hermes.timeout"
             )
@@ -308,10 +308,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var hermesScreenContextEnabled: Bool = {
         let key = SimpleDefaultsKey.hermesScreenContextEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 hermesScreenContextEnabled,
                 forKey: SimpleDefaultsKey.hermesScreenContextEnabled
             )
@@ -319,10 +319,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var hermesScreenshotEnabled: Bool = {
         let key = SimpleDefaultsKey.hermesScreenshotEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 hermesScreenshotEnabled,
                 forKey: SimpleDefaultsKey.hermesScreenshotEnabled
             )
@@ -330,10 +330,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var hermesClipboardContextEnabled: Bool = {
         let key = SimpleDefaultsKey.hermesClipboardContextEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 hermesClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.hermesClipboardContextEnabled
             )
@@ -342,7 +342,7 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var hermesClipboardTimeoutSeconds: Double = {
         let key = SimpleDefaultsKey.hermesClipboardTimeoutSeconds
-        let value = UserDefaults.standard.object(forKey: key) as? Double
+        let value = AppConfig.defaults.object(forKey: key) as? Double
             ?? HermesClipboardContextPolicy.defaultRetentionWindow
         return HermesClipboardContextPolicy.clampedRetentionWindow(value)
     }() {
@@ -350,7 +350,7 @@ final class DictationViewModel: ObservableObject {
             let clamped = HermesClipboardContextPolicy.clampedRetentionWindow(
                 hermesClipboardTimeoutSeconds
             )
-            UserDefaults.standard.set(clamped, forKey: SimpleDefaultsKey.hermesClipboardTimeoutSeconds)
+            AppConfig.defaults.set(clamped, forKey: SimpleDefaultsKey.hermesClipboardTimeoutSeconds)
             if clamped != hermesClipboardTimeoutSeconds {
                 hermesClipboardTimeoutSeconds = clamped
             }
@@ -358,10 +358,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var hermesPostProcessingEnabled: Bool = {
         let key = SimpleDefaultsKey.hermesPostProcessingEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 hermesPostProcessingEnabled,
                 forKey: SimpleDefaultsKey.hermesPostProcessingEnabled
             )
@@ -379,18 +379,18 @@ final class DictationViewModel: ObservableObject {
         didSet { updateHermesChatProjection() }
     }
     @Published var codexEnabled: Bool =
-        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexEnabled) as? Bool ?? false {
+        AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexEnabled) as? Bool ?? false {
         didSet {
-            UserDefaults.standard.set(codexEnabled, forKey: SimpleDefaultsKey.codexEnabled)
+            AppConfig.defaults.set(codexEnabled, forKey: SimpleDefaultsKey.codexEnabled)
             refreshPromptHotkeys()
             refreshCodexMonitor()
         }
     }
     @Published var codexRootFolder: String =
-        UserDefaults.standard.string(forKey: SimpleDefaultsKey.codexRootFolder)
+        AppConfig.defaults.string(forKey: SimpleDefaultsKey.codexRootFolder)
         ?? CodexTaskDirectory.defaultRoot {
         didSet {
-            UserDefaults.standard.set(codexRootFolder, forKey: SimpleDefaultsKey.codexRootFolder)
+            AppConfig.defaults.set(codexRootFolder, forKey: SimpleDefaultsKey.codexRootFolder)
         }
     }
     @Published var codexSelection: HotkeyManager.Selection? =
@@ -401,16 +401,16 @@ final class DictationViewModel: ObservableObject {
         }
     }
     @Published var codexPinNewTasks: Bool =
-        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexPinNewTasks) as? Bool ?? true {
+        AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexPinNewTasks) as? Bool ?? true {
         didSet {
-            UserDefaults.standard.set(codexPinNewTasks, forKey: SimpleDefaultsKey.codexPinNewTasks)
+            AppConfig.defaults.set(codexPinNewTasks, forKey: SimpleDefaultsKey.codexPinNewTasks)
         }
     }
     @Published var codexMonitorProjectlessTasks: Bool =
-        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexMonitorProjectlessTasks)
+        AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexMonitorProjectlessTasks)
         as? Bool ?? true {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 codexMonitorProjectlessTasks,
                 forKey: SimpleDefaultsKey.codexMonitorProjectlessTasks
             )
@@ -418,20 +418,20 @@ final class DictationViewModel: ObservableObject {
         }
     }
     @Published var codexPostProcessingEnabled: Bool =
-        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexPostProcessingEnabled)
+        AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexPostProcessingEnabled)
         as? Bool ?? true {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 codexPostProcessingEnabled,
                 forKey: SimpleDefaultsKey.codexPostProcessingEnabled
             )
         }
     }
     @Published var codexClipboardContextEnabled: Bool =
-        UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled)
+        AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled)
         as? Bool ?? true {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 codexClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.codexClipboardContextEnabled
             )
@@ -439,7 +439,7 @@ final class DictationViewModel: ObservableObject {
         }
     }
     @Published var codexClipboardTimeoutSeconds: Double = {
-        let value = UserDefaults.standard.object(
+        let value = AppConfig.defaults.object(
             forKey: SimpleDefaultsKey.codexClipboardTimeoutSeconds
         ) as? Double ?? HermesClipboardContextPolicy.defaultRetentionWindow
         return HermesClipboardContextPolicy.clampedRetentionWindow(value)
@@ -452,7 +452,7 @@ final class DictationViewModel: ObservableObject {
                 codexClipboardTimeoutSeconds = clamped
                 return
             }
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 clamped,
                 forKey: SimpleDefaultsKey.codexClipboardTimeoutSeconds
             )
@@ -461,16 +461,16 @@ final class DictationViewModel: ObservableObject {
     @Published var codexConnectionStatus: String?
     @Published var codexConnectionSucceeded: Bool?
     @Published var codexIsSending: Bool = false
-    @Published var beeperEnabled: Bool = UserDefaults.standard.object(forKey: "beeper.enabled") as? Bool ?? false {
+    @Published var beeperEnabled: Bool = AppConfig.defaults.object(forKey: "beeper.enabled") as? Bool ?? false {
         didSet {
-            UserDefaults.standard.set(beeperEnabled, forKey: "beeper.enabled")
+            AppConfig.defaults.set(beeperEnabled, forKey: "beeper.enabled")
             refreshPromptHotkeys()
             refreshBeeperResponseMonitor()
         }
     }
-    @Published var beeperBaseURLString: String = UserDefaults.standard.string(forKey: "beeper.api.baseURL") ?? AppConfig.defaultBeeperBaseURLString {
+    @Published var beeperBaseURLString: String = AppConfig.defaults.string(forKey: "beeper.api.baseURL") ?? AppConfig.defaultBeeperBaseURLString {
         didSet {
-            UserDefaults.standard.set(beeperBaseURLString, forKey: "beeper.api.baseURL")
+            AppConfig.defaults.set(beeperBaseURLString, forKey: "beeper.api.baseURL")
             refreshBeeperResponseMonitor()
         }
     }
@@ -487,10 +487,10 @@ final class DictationViewModel: ObservableObject {
     /// Base font size (pt) for response-window content. Drives the markdown and
     /// HTML renderers via `HermesMarkdownContent.baseFontSize`.
     @Published var responseWindowFontSize: Double =
-        (UserDefaults.standard.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double)
+        (AppConfig.defaults.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double)
         ?? Double(NSFont.systemFontSize) {
         didSet {
-            UserDefaults.standard.set(responseWindowFontSize, forKey: AppConfig.responseWindowFontSizeKey)
+            AppConfig.defaults.set(responseWindowFontSize, forKey: AppConfig.responseWindowFontSizeKey)
             // The renderer reads this on each render; new/reopened windows pick it up.
             HermesMarkdownContent.baseFontSize = CGFloat(responseWindowFontSize)
         }
@@ -499,9 +499,9 @@ final class DictationViewModel: ObservableObject {
     /// (e.g. tool-call indicators like "running" or "bash") is suppressed instead of
     /// popping a response window, so only the final message surfaces.
     @Published var beeperResponseFilterKeywords: String =
-        UserDefaults.standard.string(forKey: "beeper.response.filterKeywords") ?? "" {
+        AppConfig.defaults.string(forKey: "beeper.response.filterKeywords") ?? "" {
         didSet {
-            UserDefaults.standard.set(beeperResponseFilterKeywords, forKey: "beeper.response.filterKeywords")
+            AppConfig.defaults.set(beeperResponseFilterKeywords, forKey: "beeper.response.filterKeywords")
         }
     }
     @Published var beeperSelection: HotkeyManager.Selection? = DictationViewModel.loadBeeperSelection() {
@@ -512,10 +512,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var beeperPostProcessingEnabled: Bool = {
         let key = SimpleDefaultsKey.beeperPostProcessingEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 beeperPostProcessingEnabled,
                 forKey: SimpleDefaultsKey.beeperPostProcessingEnabled
             )
@@ -523,10 +523,10 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var beeperClipboardContextEnabled: Bool = {
         let key = SimpleDefaultsKey.beeperClipboardContextEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 beeperClipboardContextEnabled,
                 forKey: SimpleDefaultsKey.beeperClipboardContextEnabled
             )
@@ -535,7 +535,7 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var beeperClipboardTimeoutSeconds: Double = {
         let key = SimpleDefaultsKey.beeperClipboardTimeoutSeconds
-        let value = UserDefaults.standard.object(forKey: key) as? Double
+        let value = AppConfig.defaults.object(forKey: key) as? Double
             ?? HermesClipboardContextPolicy.defaultRetentionWindow
         return HermesClipboardContextPolicy.clampedRetentionWindow(value)
     }() {
@@ -547,15 +547,15 @@ final class DictationViewModel: ObservableObject {
                 beeperClipboardTimeoutSeconds = clamped
                 return
             }
-            UserDefaults.standard.set(clamped, forKey: SimpleDefaultsKey.beeperClipboardTimeoutSeconds)
+            AppConfig.defaults.set(clamped, forKey: SimpleDefaultsKey.beeperClipboardTimeoutSeconds)
         }
     }
     @Published var beeperResponseMonitoringEnabled: Bool = {
         let key = SimpleDefaultsKey.beeperResponseMonitoringEnabled
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? true
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 beeperResponseMonitoringEnabled,
                 forKey: SimpleDefaultsKey.beeperResponseMonitoringEnabled
             )
@@ -566,10 +566,10 @@ final class DictationViewModel: ObservableObject {
     /// frontmost app (you're likely already reading the reply in that chat app).
     @Published var beeperSuppressWhenChatAppFrontmost: Bool = {
         let key = SimpleDefaultsKey.beeperSuppressWhenChatAppFrontmost
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? false
+        return AppConfig.defaults.object(forKey: key) as? Bool ?? false
     }() {
         didSet {
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 beeperSuppressWhenChatAppFrontmost,
                 forKey: SimpleDefaultsKey.beeperSuppressWhenChatAppFrontmost
             )
@@ -577,7 +577,7 @@ final class DictationViewModel: ObservableObject {
     }
     @Published var beeperResponsePollingIntervalSeconds: Double = {
         let key = SimpleDefaultsKey.beeperResponsePollingIntervalSeconds
-        let stored = UserDefaults.standard.object(forKey: key) as? Double ?? 10
+        let stored = AppConfig.defaults.object(forKey: key) as? Double ?? 10
         return DictationViewModel.clampedBeeperPollingInterval(stored)
     }() {
         didSet {
@@ -588,7 +588,7 @@ final class DictationViewModel: ObservableObject {
                 beeperResponsePollingIntervalSeconds = clamped
                 return
             }
-            UserDefaults.standard.set(
+            AppConfig.defaults.set(
                 clamped,
                 forKey: SimpleDefaultsKey.beeperResponsePollingIntervalSeconds
             )
@@ -606,15 +606,15 @@ final class DictationViewModel: ObservableObject {
 
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
-        let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
+        let v = AppConfig.defaults.object(forKey: "transcription.timeout") as? Double ?? 10
         return max(5, min(120, v))
-    }() { didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
+    }() { didSet { AppConfig.defaults.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
     // Audio
     @Published var voiceProcessingEnabled: Bool = {
-        if UserDefaults.standard.object(forKey: "audio.voiceProcessing.enabled") == nil { return true }
-        return UserDefaults.standard.bool(forKey: "audio.voiceProcessing.enabled")
+        if AppConfig.defaults.object(forKey: "audio.voiceProcessing.enabled") == nil { return true }
+        return AppConfig.defaults.bool(forKey: "audio.voiceProcessing.enabled")
     }() {
-        didSet { UserDefaults.standard.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
+        didSet { AppConfig.defaults.set(voiceProcessingEnabled, forKey: "audio.voiceProcessing.enabled") }
     }
     @Published var chimeVolume: Double = Double(SoundFeedback.currentVolumeScale()) {
         didSet {
@@ -629,15 +629,15 @@ final class DictationViewModel: ObservableObject {
             }
         }
     }
-    @Published var autoMuteEnabled: Bool = UserDefaults.standard.object(forKey: "recording.autoMute.enabled") as? Bool ?? false {
+    @Published var autoMuteEnabled: Bool = AppConfig.defaults.object(forKey: "recording.autoMute.enabled") as? Bool ?? false {
         didSet {
-            UserDefaults.standard.set(autoMuteEnabled, forKey: "recording.autoMute.enabled")
+            AppConfig.defaults.set(autoMuteEnabled, forKey: "recording.autoMute.enabled")
         }
     }
 
     // Vocabulary
-    @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
-    @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
+    @Published var vocabCustom: String = AppConfig.defaults.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
+    @Published var vocabSpelling: String = AppConfig.defaults.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
     private var isApplyingSimplePrompts: Bool = false
     private var isUpdatingSimpleSidebar: Bool = false
@@ -698,11 +698,11 @@ final class DictationViewModel: ObservableObject {
     private let hermesClipboardMonitor = ClipboardContextMonitor(
         maximumRetentionWindow: HermesClipboardContextPolicy.maximumRetentionWindow,
         startsEnabled: (
-            UserDefaults.standard.object(forKey: SimpleDefaultsKey.hermesClipboardContextEnabled) as? Bool ?? true
+            AppConfig.defaults.object(forKey: SimpleDefaultsKey.hermesClipboardContextEnabled) as? Bool ?? true
         ) || (
-            UserDefaults.standard.object(forKey: SimpleDefaultsKey.beeperClipboardContextEnabled) as? Bool ?? true
+            AppConfig.defaults.object(forKey: SimpleDefaultsKey.beeperClipboardContextEnabled) as? Bool ?? true
         ) || (
-            UserDefaults.standard.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled) as? Bool ?? true
+            AppConfig.defaults.object(forKey: SimpleDefaultsKey.codexClipboardContextEnabled) as? Bool ?? true
         )
     )
 
@@ -722,7 +722,7 @@ final class DictationViewModel: ObservableObject {
     private let hotkeys = HotkeyManager()
     // Paste-last shortcut (default: Control + Command + V)
     @Published var pasteShortcut: HotkeyManager.Shortcut = {
-        let defaults = UserDefaults.standard
+        let defaults = AppConfig.defaults
         if defaults.object(forKey: "pasteShortcut.keyCode") != nil,
            defaults.object(forKey: "pasteShortcut.modifiers") != nil {
             let key = UInt32(defaults.integer(forKey: "pasteShortcut.keyCode"))
@@ -733,9 +733,9 @@ final class DictationViewModel: ObservableObject {
     }() { didSet { updatePasteShortcut() } }
 
     // Insertion
-    @Published var useAXInsertion: Bool = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
-    @Published var pasteFormatted: Bool = UserDefaults.standard.object(forKey: "insertion.pasteFormatted") as? Bool ?? false {
-        didSet { UserDefaults.standard.set(pasteFormatted, forKey: "insertion.pasteFormatted") }
+    @Published var useAXInsertion: Bool = AppConfig.defaults.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
+    @Published var pasteFormatted: Bool = AppConfig.defaults.object(forKey: "insertion.pasteFormatted") as? Bool ?? false {
+        didSet { AppConfig.defaults.set(pasteFormatted, forKey: "insertion.pasteFormatted") }
     }
 
     init(beeperClient: BeeperAPIClient? = nil) {
@@ -745,11 +745,11 @@ final class DictationViewModel: ObservableObject {
             }
         )
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
-        let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
-        let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
-        let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
+        let persistedVocabCustom = AppConfig.defaults.string(forKey: "vocab.custom") ?? ""
+        let persistedVocabSpelling = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
+        let persistedUseAXInsertion = AppConfig.defaults.object(forKey: "insertion.useAX") as? Bool ?? false
         // Legacy long-form prompt that previously seeded the system message
-        let legacyBasePrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? ""
+        let legacyBasePrompt = AppConfig.defaults.string(forKey: "llm.userPrompt") ?? ""
 
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
@@ -767,7 +767,7 @@ final class DictationViewModel: ObservableObject {
             spellingCorrections: persistedVocabSpelling
         )
 
-        let transcriptionTimeout = max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
+        let transcriptionTimeout = max(5, min(120, AppConfig.defaults.object(forKey: "transcription.timeout") as? Double ?? 10))
         let transcriber: TranscriptionProvider
         let transcriberSettings: TranscriptionSettings
         if activeTranscriptionModel.lowercased().contains("parakeet") {
@@ -830,10 +830,10 @@ final class DictationViewModel: ObservableObject {
 
         // Choose initial LLM provider/endpoints based on persisted settings
         let storedSystem = SimpleModeDefaults.migratingLegacyScreenContextTag(
-            in: UserDefaults.standard.string(forKey: "llm.systemPrompt")
+            in: AppConfig.defaults.string(forKey: "llm.systemPrompt")
                 ?? AppConfig.defaultSystemPromptTemplate
         )
-        let storedUser = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
+        let storedUser = AppConfig.defaults.string(forKey: "llm.userMessage") ?? ""
         let promptBootstrap = DictationViewModel.bootstrapPromptLibrary(initialSystem: storedSystem, initialUser: storedUser, legacyBasePrompt: legacyBasePrompt)
 
         let renderedInitial = promptBootstrap.activeSystem
@@ -845,7 +845,7 @@ final class DictationViewModel: ObservableObject {
             model: canonicalPersistedModel,
             systemPrompt: renderedInitial,
             timeout: 60,
-            temperature: UserDefaults.standard.object(forKey: "llm.temperature") as? Double ?? 0.2,
+            temperature: AppConfig.defaults.object(forKey: "llm.temperature") as? Double ?? 0.2,
             openRouterReasoning: Self.loadOpenRouterReasoning()
         )
         let recorder = AudioRecorder()
@@ -1363,13 +1363,13 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updatePasteShortcut() {
-        UserDefaults.standard.set(pasteShortcut.keyCode, forKey: "pasteShortcut.keyCode")
-        UserDefaults.standard.set(pasteShortcut.modifiers, forKey: "pasteShortcut.modifiers")
+        AppConfig.defaults.set(pasteShortcut.keyCode, forKey: "pasteShortcut.keyCode")
+        AppConfig.defaults.set(pasteShortcut.modifiers, forKey: "pasteShortcut.modifiers")
         hotkeys.pasteShortcut = pasteShortcut
     }
 
     private func updateInsertion() {
-        UserDefaults.standard.set(useAXInsertion, forKey: "insertion.useAX")
+        AppConfig.defaults.set(useAXInsertion, forKey: "insertion.useAX")
         // Propagate to the live InsertionService inside the controller so the toggle takes
         // effect immediately instead of only after the next app launch.
         let enabled = useAXInsertion
@@ -1683,17 +1683,17 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistAndUpdate() {
-        UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
-        UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
-        UserDefaults.standard.set(screenContextEnabled, forKey: "screenContext.enabled")
-        UserDefaults.standard.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode")
-        UserDefaults.standard.set(clipboardContextEnabled, forKey: "clipboardContext.enabled")
+        AppConfig.defaults.set(transcriptionModel, forKey: "transcription.model")
+        AppConfig.defaults.set(llmEnabled, forKey: "llm.enabled")
+        AppConfig.defaults.set(screenContextEnabled, forKey: "screenContext.enabled")
+        AppConfig.defaults.set(screenContextCaptureMode.rawValue, forKey: "screenContext.captureMode")
+        AppConfig.defaults.set(clipboardContextEnabled, forKey: "clipboardContext.enabled")
 
-        UserDefaults.standard.set(llmModel, forKey: "llm.model")
-        UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
-        UserDefaults.standard.set(openrouterReasoning.rawValue, forKey: "llm.openrouter.reasoning")
-        UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
-        UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
+        AppConfig.defaults.set(llmModel, forKey: "llm.model")
+        AppConfig.defaults.set(openrouterRouting, forKey: "llm.openrouter.routing")
+        AppConfig.defaults.set(openrouterReasoning.rawValue, forKey: "llm.openrouter.reasoning")
+        AppConfig.defaults.set(vocabCustom, forKey: "vocab.custom")
+        AppConfig.defaults.set(vocabSpelling, forKey: "vocab.spelling")
         updateProviders()
     }
 
@@ -1982,7 +1982,7 @@ final class DictationViewModel: ObservableObject {
     
     private func persistFavoriteOpenRouterModels() {
         if let data = try? JSONEncoder().encode(favoriteOpenRouterModels) {
-            UserDefaults.standard.set(data, forKey: Self.favoriteOpenRouterModelsKey)
+            AppConfig.defaults.set(data, forKey: Self.favoriteOpenRouterModelsKey)
         }
     }
 
@@ -1990,7 +1990,7 @@ final class DictationViewModel: ObservableObject {
         let sanitized = sanitizedSimpleSettings(settings, for: kind)
         let key = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
         if let data = try? JSONEncoder().encode(sanitized) {
-            UserDefaults.standard.set(data, forKey: key)
+            AppConfig.defaults.set(data, forKey: key)
         }
     }
 
@@ -2008,19 +2008,19 @@ final class DictationViewModel: ObservableObject {
             simpleCustomModels = cleaned
             return
         }
-        UserDefaults.standard.set(cleaned, forKey: SimpleDefaultsKey.customModels)
+        AppConfig.defaults.set(cleaned, forKey: SimpleDefaultsKey.customModels)
         applySimplePrompts()
     }
 
     private func persistCustomDictationPromptTemplates() {
         if let data = try? JSONEncoder().encode(customDictationPromptTemplates) {
-            UserDefaults.standard.set(data, forKey: SimpleDefaultsKey.dictationPromptTemplates)
+            AppConfig.defaults.set(data, forKey: SimpleDefaultsKey.dictationPromptTemplates)
         }
     }
 
     private func simpleVoiceEngineDidChange(oldValue: SimpleVoiceEngine) {
         if simpleVoiceEngine == oldValue { return }
-        UserDefaults.standard.set(simpleVoiceEngine.rawValue, forKey: SimpleDefaultsKey.voiceEngine)
+        AppConfig.defaults.set(simpleVoiceEngine.rawValue, forKey: SimpleDefaultsKey.voiceEngine)
         transcriptionModel = Self.voiceModel(
             for: simpleVoiceEngine,
             openRouterModel: openRouterTranscriptionModel
@@ -2036,7 +2036,7 @@ final class DictationViewModel: ObservableObject {
             return
         }
         if final == oldValue { return }
-        UserDefaults.standard.set(final, forKey: SimpleDefaultsKey.selectedModel)
+        AppConfig.defaults.set(final, forKey: SimpleDefaultsKey.selectedModel)
         llmModel = final
         suppressSimpleSidebarSync = true
         applySimplePrompts()
@@ -2045,7 +2045,7 @@ final class DictationViewModel: ObservableObject {
 
     private func simpleLLMEnabledDidChange(oldValue: Bool) {
         if simpleLLMEnabled == oldValue { return }
-        UserDefaults.standard.set(simpleLLMEnabled, forKey: SimpleDefaultsKey.llmEnabled)
+        AppConfig.defaults.set(simpleLLMEnabled, forKey: SimpleDefaultsKey.llmEnabled)
         llmEnabled = simpleLLMEnabled
         updateProviders()
     }
@@ -2068,7 +2068,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistSimpleSidebarSelection() {
-        UserDefaults.standard.set(simpleSidebarSelection.rawValue, forKey: SimpleDefaultsKey.sidebar)
+        AppConfig.defaults.set(simpleSidebarSelection.rawValue, forKey: SimpleDefaultsKey.sidebar)
     }
 
     private func simpleSettingsDidChange(kind: SimplePromptKind, oldValue: SimplePromptSettings) {
@@ -2947,7 +2947,7 @@ final class DictationViewModel: ObservableObject {
     private static let beeperChatsKey = "beeper.chats"
 
     static func loadBeeperChats() -> [BeeperChatEntry] {
-        let defaults = UserDefaults.standard
+        let defaults = AppConfig.defaults
         if let data = defaults.data(forKey: beeperChatsKey),
            let entries = try? JSONDecoder().decode([BeeperChatEntry].self, from: data) {
             return entries
@@ -2959,7 +2959,7 @@ final class DictationViewModel: ObservableObject {
 
     static func saveBeeperChats(_ chats: [BeeperChatEntry]) {
         guard let data = try? JSONEncoder().encode(chats) else { return }
-        UserDefaults.standard.set(data, forKey: beeperChatsKey)
+        AppConfig.defaults.set(data, forKey: beeperChatsKey)
     }
 
     static func parseBeeperChatIDs(_ raw: String) -> [String] {
@@ -5486,7 +5486,7 @@ private extension DictationViewModel {
 
     static func loadSimpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
         let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
-        if let data = UserDefaults.standard.data(forKey: key),
+        if let data = AppConfig.defaults.data(forKey: key),
            let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
             var sanitized = decoded
             if sanitized.rules.isEmpty {
@@ -5506,16 +5506,16 @@ private extension DictationViewModel {
     }
 
     static func loadSimpleSelectedModel() -> String {
-        let stored = UserDefaults.standard.string(forKey: SimpleDefaultsKey.selectedModel) ?? SimpleModeDefaults.defaultModelID
+        let stored = AppConfig.defaults.string(forKey: SimpleDefaultsKey.selectedModel) ?? SimpleModeDefaults.defaultModelID
         return stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? SimpleModeDefaults.defaultModelID : stored
     }
 
     static func loadSimpleCustomModels() -> [String] {
-        UserDefaults.standard.stringArray(forKey: SimpleDefaultsKey.customModels) ?? []
+        AppConfig.defaults.stringArray(forKey: SimpleDefaultsKey.customModels) ?? []
     }
 
     static func loadCustomDictationPromptTemplates() -> [SimplePromptTemplate] {
-        guard let data = UserDefaults.standard.data(forKey: SimpleDefaultsKey.dictationPromptTemplates),
+        guard let data = AppConfig.defaults.data(forKey: SimpleDefaultsKey.dictationPromptTemplates),
               let decoded = try? JSONDecoder().decode([SimplePromptTemplate].self, from: data) else {
             return []
         }
@@ -5535,25 +5535,25 @@ private extension DictationViewModel {
     }
 
     static func loadSimpleLLMEnabled() -> Bool {
-        if UserDefaults.standard.object(forKey: SimpleDefaultsKey.llmEnabled) == nil {
+        if AppConfig.defaults.object(forKey: SimpleDefaultsKey.llmEnabled) == nil {
             return true
         }
-        return UserDefaults.standard.bool(forKey: SimpleDefaultsKey.llmEnabled)
+        return AppConfig.defaults.bool(forKey: SimpleDefaultsKey.llmEnabled)
     }
 
     static func loadSimpleVoiceEngine() -> SimpleVoiceEngine {
-        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.voiceEngine) ?? SimpleVoiceEngine.parakeetLocal.rawValue
+        let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.voiceEngine) ?? SimpleVoiceEngine.parakeetLocal.rawValue
         return SimpleVoiceEngine(rawValue: raw) ?? .parakeetLocal
     }
 
     static func loadOpenRouterTranscriptionModel() -> String {
-        let stored = UserDefaults.standard.string(forKey: SimpleDefaultsKey.openRouterTranscriptionModel)
+        let stored = AppConfig.defaults.string(forKey: SimpleDefaultsKey.openRouterTranscriptionModel)
         let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? AppConfig.defaultOpenRouterTranscriptionModel : trimmed
     }
 
     static func loadOpenRouterReasoning() -> OpenRouterReasoningMode {
-        let raw = UserDefaults.standard.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
+        let raw = AppConfig.defaults.string(forKey: "llm.openrouter.reasoning") ?? OpenRouterReasoningMode.omit.rawValue
         return OpenRouterReasoningMode(rawValue: raw) ?? .omit
     }
 
@@ -5573,12 +5573,12 @@ private extension DictationViewModel {
     }
 
     static func loadSimpleSidebarSelection() -> SimpleSidebarItem {
-        let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.dictation.rawValue
+        let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.sidebar) ?? SimpleSidebarItem.dictation.rawValue
         return SimpleSidebarItem(rawValue: raw) ?? .dictation
     }
 
     static func loadHermesSelection() -> HotkeyManager.Selection? {
-        if let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.hermesSelection) {
+        if let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.hermesSelection) {
             return HotkeyManager.Selection(rawValue: raw)
         }
         let fallback: HotkeyManager.Selection = .backslash
@@ -5589,14 +5589,14 @@ private extension DictationViewModel {
 
     func persistHermesSelection() {
         if let hermesSelection {
-            UserDefaults.standard.set(hermesSelection.rawValue, forKey: SimpleDefaultsKey.hermesSelection)
+            AppConfig.defaults.set(hermesSelection.rawValue, forKey: SimpleDefaultsKey.hermesSelection)
         } else {
-            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.hermesSelection)
+            AppConfig.defaults.removeObject(forKey: SimpleDefaultsKey.hermesSelection)
         }
     }
 
     static func loadBeeperSelection() -> HotkeyManager.Selection? {
-        guard let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.beeperSelection) else {
+        guard let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.beeperSelection) else {
             return nil
         }
         return HotkeyManager.Selection(rawValue: raw)
@@ -5604,14 +5604,14 @@ private extension DictationViewModel {
 
     func persistBeeperSelection() {
         if let beeperSelection {
-            UserDefaults.standard.set(beeperSelection.rawValue, forKey: SimpleDefaultsKey.beeperSelection)
+            AppConfig.defaults.set(beeperSelection.rawValue, forKey: SimpleDefaultsKey.beeperSelection)
         } else {
-            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.beeperSelection)
+            AppConfig.defaults.removeObject(forKey: SimpleDefaultsKey.beeperSelection)
         }
     }
 
     static func loadCodexSelection() -> HotkeyManager.Selection? {
-        guard let raw = UserDefaults.standard.string(forKey: SimpleDefaultsKey.codexSelection) else {
+        guard let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.codexSelection) else {
             return nil
         }
         return HotkeyManager.Selection(rawValue: raw)
@@ -5619,18 +5619,18 @@ private extension DictationViewModel {
 
     func persistCodexSelection() {
         if let codexSelection {
-            UserDefaults.standard.set(codexSelection.rawValue, forKey: SimpleDefaultsKey.codexSelection)
+            AppConfig.defaults.set(codexSelection.rawValue, forKey: SimpleDefaultsKey.codexSelection)
         } else {
-            UserDefaults.standard.removeObject(forKey: SimpleDefaultsKey.codexSelection)
+            AppConfig.defaults.removeObject(forKey: SimpleDefaultsKey.codexSelection)
         }
     }
 
     static func loadCodexOwnedThreadIDs() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: SimpleDefaultsKey.codexOwnedThreadIDs) ?? [])
+        Set(AppConfig.defaults.stringArray(forKey: SimpleDefaultsKey.codexOwnedThreadIDs) ?? [])
     }
 
     static func saveCodexOwnedThreadIDs(_ threadIDs: Set<String>) {
-        UserDefaults.standard.set(threadIDs.sorted(), forKey: SimpleDefaultsKey.codexOwnedThreadIDs)
+        AppConfig.defaults.set(threadIDs.sorted(), forKey: SimpleDefaultsKey.codexOwnedThreadIDs)
     }
 }
 
@@ -5638,7 +5638,7 @@ private extension DictationViewModel {
     static let favoriteOpenRouterModelsKey = "simple.openrouter.favorites"
 
     static func loadFavoriteOpenRouterModels() -> [FavoriteOpenRouterModel] {
-        let defaults = UserDefaults.standard
+        let defaults = AppConfig.defaults
         if let data = defaults.data(forKey: favoriteOpenRouterModelsKey),
            let decoded = try? JSONDecoder().decode([FavoriteOpenRouterModel].self, from: data) {
             var seen: Set<String> = []
@@ -5664,7 +5664,7 @@ private extension DictationViewModel {
     }
 
     static func bootstrapPromptLibrary(initialSystem: String, initialUser: String, legacyBasePrompt: String) -> PromptBootstrap {
-        let defaults = UserDefaults.standard
+        let defaults = AppConfig.defaults
         var loaded: [PromptConfiguration] = []
         if let data = defaults.data(forKey: "prompts.library"), let decoded = try? JSONDecoder().decode([PromptConfiguration].self, from: data) {
             loaded = decoded.map { prompt in

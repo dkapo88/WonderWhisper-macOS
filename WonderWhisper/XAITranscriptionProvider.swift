@@ -95,7 +95,7 @@ final class XAITranscriptionProvider: TranscriptionProvider {
     }
 
     private static func language(for settings: TranscriptionSettings) -> String? {
-        let candidate = settings.language ?? UserDefaults.standard.string(forKey: "transcription.language")
+        let candidate = settings.language ?? AppConfig.defaults.string(forKey: "transcription.language")
         let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmed.isEmpty || trimmed.lowercased() == "auto" {
             return nil

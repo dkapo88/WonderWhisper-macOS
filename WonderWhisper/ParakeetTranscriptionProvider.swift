@@ -22,7 +22,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
     private var rawMode: Bool {
-        (UserDefaults.standard.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
+        (AppConfig.defaults.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
     }
 
     init(modelsDirectory: URL? = nil) {

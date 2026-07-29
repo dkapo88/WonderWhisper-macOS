@@ -115,6 +115,10 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-29: Routed all app preference reads/writes through `AppConfig.defaults`, which is
+  `.standard` in a normal launch and a wiped scratch suite under the test runner, so unit
+  tests can no longer clobber live user data (a test fixture previously overwrote the real
+  Beeper chat list).
 - 2026-07-29: Made "Paste as rich text" produce real formatting: markdown-ish dictation output
   (bullets, numbered lists, bold/italic/code) converts to semantic HTML on the pasteboard with
   a plain-text fallback, and the toggle is now exposed in Settings → Language model.
