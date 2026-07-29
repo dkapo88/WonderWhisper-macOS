@@ -205,7 +205,7 @@ struct MeetingNoteGenerator {
   ) async throws -> MeetingGeneratedNotes {
     let provider = OpenRouterLLMProvider(
       client: OpenRouterHTTPClient(apiKeyProvider: {
-        KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+        KeychainService().getSecret(forKey: AppConfig.llmRoute(for: model).keyAlias)
       })
     )
     let settings = LLMSettings(

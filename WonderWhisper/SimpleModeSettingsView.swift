@@ -8,6 +8,7 @@ struct SimpleModeSettingsView: View {
   @ObservedObject var vm: DictationViewModel
   @ObservedObject private var updater = UpdaterController.shared
   @State private var openRouterKeyInput: String = ""
+  @State private var vercelGatewayKeyInput: String = ""
   @State private var groqKeyInput: String = ""
   @State private var xaiKeyInput: String = ""
   @State private var sonioxKeyInput: String = ""
@@ -25,6 +26,10 @@ struct SimpleModeSettingsView: View {
 
   private var hasOpenRouterKey: Bool {
     keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias) != nil
+  }
+
+  private var hasVercelGatewayKey: Bool {
+    keychain.getSecret(forKey: AppConfig.vercelGatewayAPIKeyAlias) != nil
   }
   private var hasGroqKey: Bool {
     guard let key = keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) else { return false }
@@ -178,7 +183,10 @@ struct SimpleModeSettingsView: View {
       VStack(alignment: .leading, spacing: 16) {
         Toggle("Enable LLM post-processing", isOn: $vm.simpleLLMEnabled)
           .help("Turn this off to use raw transcription without additional formatting.")
-        
+
+        Toggle("Paste as rich text", isOn: $vm.pasteFormatted)
+          .help("Paste bullet points, numbered lists, and bold/italic as real formatting in apps that accept rich text (Slack, Notes, Mail). Plain text is always included as a fallback.")
+
         Divider()
         
         HStack {
@@ -259,10 +267,14 @@ struct SimpleModeSettingsView: View {
   }
 
   private var openRouterSection: some View {
-    GroupBox("OpenRouter") {
+    GroupBox("LLM Gateways") {
       VStack(alignment: .leading, spacing: 12) {
+        Text("Each model routes through the gateway it was favorited from — browse either catalog and mix favorites freely. Save a key for every gateway you use.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
         HStack(spacing: 6) {
-          Text(hasOpenRouterKey ? "Status: Saved" : "Status: Missing")
+          Text(hasOpenRouterKey ? "OpenRouter key: Saved" : "OpenRouter key: Missing")
             .font(.callout.weight(.semibold))
             .foregroundColor(hasOpenRouterKey ? .green : .red)
           if hasOpenRouterKey {
@@ -282,6 +294,27 @@ struct SimpleModeSettingsView: View {
 
         Divider()
 
+        HStack(spacing: 6) {
+          Text(hasVercelGatewayKey ? "Vercel Gateway key: Saved" : "Vercel Gateway key: Missing")
+            .font(.callout.weight(.semibold))
+            .foregroundColor(hasVercelGatewayKey ? .green : .red)
+          if hasVercelGatewayKey {
+            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+          }
+        }
+
+        SecureField("Paste Vercel AI Gateway API key", text: $vercelGatewayKeyInput)
+          .textFieldStyle(.roundedBorder)
+          .frame(maxWidth: 360)
+
+        Button("Save key") {
+          vm.saveVercelGatewayKey(vercelGatewayKeyInput)
+          vercelGatewayKeyInput = ""
+        }
+        .disabled(vercelGatewayKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Divider()
+
         VStack(alignment: .leading, spacing: 8) {
           Text("Routing Priority")
             .font(.callout.weight(.semibold))
@@ -295,7 +328,7 @@ struct SimpleModeSettingsView: View {
           .labelsHidden()
           .frame(maxWidth: 360)
 
-          Text("Optimize for speed (latency) or volume (throughput). Auto lets OpenRouter decide.")
+          Text("Optimize for speed (latency) or volume (throughput). Auto lets OpenRouter decide. OpenRouter models only — ignored on Vercel-routed models.")
             .font(.caption)
             .foregroundColor(.secondary)
         }
@@ -315,7 +348,7 @@ struct SimpleModeSettingsView: View {
           .labelsHidden()
           .frame(maxWidth: 460)
 
-          Text(vm.openrouterReasoning.detail)
+          Text(vm.openrouterReasoning.detail + " OpenRouter models only — ignored on Vercel-routed models.")
             .font(.caption)
             .foregroundColor(.secondary)
         }

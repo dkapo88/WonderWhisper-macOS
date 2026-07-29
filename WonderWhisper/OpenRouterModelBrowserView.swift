@@ -9,6 +9,12 @@ struct OpenRouterModelBrowserView: View {
   @State private var isLoading: Bool = false
   @State private var errorMessage: String?
   @State private var sortOrder: SortOrder = .name
+  @State private var catalog: Catalog = .openRouter
+
+  enum Catalog: String, CaseIterable {
+    case openRouter = "OpenRouter"
+    case vercel = "Vercel AI Gateway"
+  }
   
   enum SortOrder: String, CaseIterable {
     case name = "Name"
@@ -65,7 +71,7 @@ struct OpenRouterModelBrowserView: View {
   private var headerView: some View {
     VStack(spacing: 12) {
       HStack {
-        Text("Browse OpenRouter Models")
+        Text("Browse Models")
           .font(.title2.weight(.semibold))
         Spacer()
         Button("Done") {
@@ -73,6 +79,15 @@ struct OpenRouterModelBrowserView: View {
         }
         .keyboardShortcut(.cancelAction)
       }
+
+      Picker("Catalog", selection: $catalog) {
+        ForEach(Catalog.allCases, id: \.self) { source in
+          Text(source.rawValue).tag(source)
+        }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .onChange(of: catalog) { _, _ in loadModels() }
       
       HStack(spacing: 12) {
         Image(systemName: "magnifyingglass")
@@ -119,7 +134,7 @@ struct OpenRouterModelBrowserView: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.2)
-      Text("Loading models from OpenRouter...")
+      Text("Loading models from \(catalog.rawValue)...")
         .font(.callout)
         .foregroundColor(.secondary)
     }
@@ -219,20 +234,27 @@ struct OpenRouterModelBrowserView: View {
   private func loadModels() {
     isLoading = true
     errorMessage = nil
-    
+    let source = catalog
+
     Task {
       do {
         let keychain = KeychainService()
-        let apiKey = keychain.getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+        let apiKey = keychain.getSecret(forKey: source == .vercel
+          ? AppConfig.vercelGatewayAPIKeyAlias
+          : AppConfig.openrouterAPIKeyAlias)
         let client = OpenRouterHTTPClient(apiKeyProvider: { apiKey })
-        let fetchedModels = try await client.fetchModels()
-        
+        let fetchedModels = source == .vercel
+          ? try await client.fetchVercelModels()
+          : try await client.fetchModels()
+
         await MainActor.run {
+          guard source == self.catalog else { return }  // stale response after a toggle
           self.models = fetchedModels
           self.isLoading = false
         }
       } catch {
         await MainActor.run {
+          guard source == self.catalog else { return }
           self.errorMessage = error.localizedDescription
           self.isLoading = false
         }

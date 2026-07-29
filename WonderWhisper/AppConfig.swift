@@ -32,6 +32,37 @@ struct AppConfig {
     static let openrouterAudioTranscriptions = openrouterBase.appendingPathComponent("audio/transcriptions")
     static let openrouterModels = openrouterBase.appendingPathComponent("models")
 
+    // Vercel AI Gateway (OpenAI-compatible, same `creator/model` IDs as OpenRouter).
+    // The gateway travels with the model: favorites saved from the Vercel catalog carry a
+    // `vercel:` ID prefix, and `llmRoute(for:)` resolves endpoint, key, and the request model
+    // from that one string. OpenRouter speech-to-text keeps its own key.
+    private static let vercelGatewayBaseString = "https://ai-gateway.vercel.sh/v1"
+    static let vercelGatewayBase: URL = {
+        guard let url = URL(string: vercelGatewayBaseString) else {
+            fatalError("Invalid Vercel AI Gateway base URL")
+        }
+        return url
+    }()
+    static let vercelGatewayChatCompletions: URL = {
+        vercelGatewayBase.appendingPathComponent("chat/completions")
+    }()
+    static let vercelGatewayModels: URL = vercelGatewayBase.appendingPathComponent("models")
+
+    /// Vercel-routed model IDs are stored with this prefix (e.g. `vercel:openai/gpt-4o`).
+    /// Prefix only — OpenRouter IDs may contain a `:variant` suffix like `model:free`.
+    static let vercelModelPrefix = "vercel:"
+
+    /// Endpoint, Keychain alias, and the on-the-wire model ID for one stored model string.
+    static func llmRoute(for model: String)
+        -> (endpoint: URL, keyAlias: String, requestModel: String) {
+        if model.hasPrefix(vercelModelPrefix) {
+            return (vercelGatewayChatCompletions,
+                    vercelGatewayAPIKeyAlias,
+                    String(model.dropFirst(vercelModelPrefix.count)))
+        }
+        return (openrouterChatCompletions, openrouterAPIKeyAlias, model)
+    }
+
     // xAI voice endpoints
     private static let xaiBaseString = "https://api.x.ai/v1"
     static let xaiBase: URL = {
@@ -55,6 +86,8 @@ struct AppConfig {
     static let groqAPIKeyAlias = "GROQ_API_KEY"
     // Keychain alias for the OpenRouter API key
     static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
+    // Keychain alias for the Vercel AI Gateway API key
+    static let vercelGatewayAPIKeyAlias = "AI_GATEWAY_API_KEY"
     // Keychain alias for the xAI API key
     static let xaiAPIKeyAlias = "XAI_API_KEY"
     // Keychain alias for the Soniox API key

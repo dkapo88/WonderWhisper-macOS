@@ -74,15 +74,11 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   var isSendingReply: Bool
   /// Set only on a re-presented state, and seeds a fresh draft once at panel creation.
   var preservedReplyText: String?
-  /// Held messages older than the displayed body. Beeper only; 0 everywhere else.
-  var earlierCount: Int
   /// Held messages newer than the displayed body. Beeper only; 0 everywhere else.
   var newerCount: Int
-  /// Why this panel is on screen. Drives the `Snooze ended · ` prefix, nothing else.
-  var reason: HermesResponseReason
   /// Bumped once per burst fold. Only the *change* means anything, never the value — the
   /// controller restores a minimized panel when it moves. Explicit rather than derived from
-  /// `text`/`earlierCount`/`newerCount`: a signal every future writer of those has to remember to
+  /// `text`/`newerCount`: a signal every future writer of those has to remember to
   /// send is a signal that eventually goes unsent.
   var burstArrivals: Int
 
@@ -100,9 +96,7 @@ struct HermesResponseWindowState: Equatable, Identifiable {
        replyFailure: String? = nil,
        isSendingReply: Bool = false,
        preservedReplyText: String? = nil,
-       earlierCount: Int = 0,
        newerCount: Int = 0,
-       reason: HermesResponseReason = .live,
        burstArrivals: Int = 0) {
     self.id = id
     self.source = source
@@ -118,19 +112,24 @@ struct HermesResponseWindowState: Equatable, Identifiable {
     self.replyFailure = replyFailure
     self.isSendingReply = isSendingReply
     self.preservedReplyText = preservedReplyText
-    self.earlierCount = earlierCount
     self.newerCount = newerCount
-    self.reason = reason
     self.burstArrivals = burstArrivals
   }
 
-  /// Beeper panels get the message glyph, the status line and the Snooze control; Hermes and
-  /// Codex panels get none of them. `beeperChatID` is the discriminator and the snooze payload
+  /// Beeper panels get the message glyph, the status line and the Mute control; Hermes and
+  /// Codex panels get none of them. `beeperChatID` is the discriminator and the mute payload
   /// in one field — do not infer the source from `title` or `supportsTextReply`, Codex uses
   /// text reply too.
   var beeperChat: String? {
     guard let beeperChatID, !beeperChatID.isEmpty else { return nil }
     return beeperChatID
+  }
+
+  /// Plain-text preview of the body for the minimized pill's tooltip.
+  var previewText: String {
+    let plain = isHTML ? BeeperMessageTextFormatter.displayText(from: text) : text
+    let trimmed = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.count > 300 ? String(trimmed.prefix(300)) + "…" : trimmed
   }
 
   var pillStatus: HermesResponsePillStatus {
@@ -141,69 +140,19 @@ struct HermesResponseWindowState: Equatable, Identifiable {
   }
 }
 
-enum HermesResponseReason: Equatable {
-  case live
-  case snoozeExpired
-}
-
-/// The one status line under a Beeper panel's header, as a pure function of the two counters
-/// and the reason. Empty means render nothing at all — no line, no `Open Beeper`.
-///
-/// The two counters are separate quantities and only one of them is true about any given held
-/// message, so the copy states each one rather than summing them. `Snooze ended` is a
-/// reason-for-appearance tag, never a coverage claim: the gate records what it suppressed, not
-/// what was sent, so no phrasing here may say "while you were snoozed". Past tense, because at
-/// the moment this panel appears the chat is no longer snoozed.
+/// The one status line under a Beeper panel's header, as a pure function of the held-new
+/// counter. Empty means render nothing at all — no line, no `Open Beeper`.
 ///
 /// No cap on the number. "+49" is the signal; capping at "+9" would lie precisely when the
 /// information matters most.
 enum HermesBeeperStatusLine {
-  struct Segment: Equatable {
-    var text: String
-    /// The live count is the one number that is still moving, so it earns weight. Weight only —
-    /// never colour, never a badge, never red. Red reads as "deal with me now", which is the
-    /// opposite of "the rest are in Beeper".
-    var isEmphasized: Bool = false
-    /// What VoiceOver says. `+4 earlier` is typography, not a sentence: read aloud it is "plus
-    /// four earlier", and the interpunct separators become "dot". Same segments, spelled out.
-    var spoken: String
+  static func line(newerCount: Int) -> String? {
+    newerCount > 0 ? "\(newerCount) new" : nil
   }
 
-  static func segments(
-    earlierCount: Int,
-    newerCount: Int,
-    reason: HermesResponseReason
-  ) -> [Segment] {
-    var segments: [Segment] = []
-    if reason == .snoozeExpired {
-      segments.append(Segment(text: "Snooze ended", spoken: "Snooze ended"))
-    }
-    if earlierCount > 0 {
-      segments.append(Segment(
-        text: "+\(earlierCount) earlier",
-        spoken: "\(earlierCount) earlier \(earlierCount == 1 ? "message" : "messages")"
-      ))
-    }
-    if newerCount > 0 {
-      segments.append(Segment(
-        text: "\(newerCount) new",
-        isEmphasized: true,
-        spoken: "\(newerCount) new \(newerCount == 1 ? "message" : "messages")"
-      ))
-    }
-    return segments
-  }
-
-  /// The whole line as one utterance. VoiceOver reading five sibling nodes turns "+4 earlier · 2
-  /// new" into punctuation; one label makes it a sentence.
-  static func spokenLine(
-    earlierCount: Int,
-    newerCount: Int,
-    reason: HermesResponseReason
-  ) -> String {
-    segments(earlierCount: earlierCount, newerCount: newerCount, reason: reason)
-      .map(\.spoken)
-      .joined(separator: ", ")
+  /// What VoiceOver says: "2 new" spelled out so a bare number is not left hanging.
+  static func spokenLine(newerCount: Int) -> String {
+    newerCount > 0 ? "\(newerCount) new \(newerCount == 1 ? "message" : "messages")" : ""
   }
 }
 
@@ -349,7 +298,7 @@ enum HermesResponseWindowLifecycle {
   /// three to move the body, pass none to hold it. Holding the body while `newerCount` climbs is
   /// the draft-safety rule, so it has to be expressible without touching the counters' caller.
   ///
-  /// The counts are absolute, not deltas — the pending accumulator is the caller's, and two
+  /// The count is absolute, not a delta — the pending accumulator is the caller's, and two
   /// sources of truth for one number is how the count starts lying. A no-op when no state carries
   /// `sessionID`; this never creates a panel.
   static func burstCoalesced(
@@ -358,7 +307,6 @@ enum HermesResponseWindowLifecycle {
     title: String? = nil,
     text: String? = nil,
     isHTML: Bool? = nil,
-    earlierCount: Int,
     newerCount: Int
   ) -> [HermesResponseWindowState] {
     states.map { state in
@@ -367,7 +315,6 @@ enum HermesResponseWindowLifecycle {
       if let title { coalesced.title = title }
       if let text { coalesced.text = text }
       if let isHTML { coalesced.isHTML = isHTML }
-      coalesced.earlierCount = earlierCount
       coalesced.newerCount = newerCount
       // Every fold is an arrival, held or not, so the bump lives here rather than at the two call
       // sites: one funnel nobody has to remember. `render` restores on the change.
@@ -378,8 +325,8 @@ enum HermesResponseWindowLifecycle {
 
   /// Panels that must come back to the front because a burst arrival landed on them. A minimized
   /// panel still absorbs its chat's bursts — one panel per chat, no duplicate reply target — but
-  /// absorbing silently would make minimize a second, invisible snooze with no deadline and no
-  /// resume affordance. Minimize is window management; snooze is the only "not now".
+  /// absorbing silently would make minimize a second, invisible mute with no deadline and no
+  /// unmute affordance. Minimize is window management; mute is the only "not now".
   static func burstRestoreSessionIDs(
     previous: [HermesResponseWindowState],
     current: [HermesResponseWindowState]
@@ -429,7 +376,7 @@ enum HermesEscapeResolver {
 enum HermesResponseWindowLayout {
   static let defaultContentSize = NSSize(width: 660, height: 540)
   static let minimumContentSize = NSSize(width: 520, height: 360)
-  static let pillSize = NSSize(width: 126, height: 52)
+  static let pillSize = NSSize(width: 184, height: 52)
   static let bubbleSpacing: CGFloat = 12
   static let bubbleEdgeInset: CGFloat = 16
   static let styleMask: NSWindow.StyleMask = [
@@ -930,8 +877,8 @@ final class HermesResponseWindowController: NSObject, NSWindowDelegate {
         onMinimize: { [weak self] in self?.minimizePanel(sessionID: sessionID) },
         onRestore: { [weak self] in self?.restorePanel(sessionID: sessionID) },
         onClose: { [weak self] in self?.viewModel?.dismissHermesResponse(sessionID: sessionID) },
-        onSnooze: { [weak self] duration in
-          self?.viewModel?.snoozeBeeperResponse(sessionID: sessionID, duration: duration)
+        onMute: { [weak self] duration in
+          self?.viewModel?.muteBeeperResponse(sessionID: sessionID, duration: duration)
         },
         onOpenBeeper: { [weak self] in self?.viewModel?.openBeeperApp() }
       )
@@ -1126,7 +1073,7 @@ private struct HermesResponsePanelHost: View {
   var onMinimize: () -> Void
   var onRestore: () -> Void
   var onClose: () -> Void
-  var onSnooze: (BeeperSnoozeDuration) -> Void
+  var onMute: (BeeperMuteDuration) -> Void
   var onOpenBeeper: () -> Void
 
   var body: some View {
@@ -1146,7 +1093,7 @@ private struct HermesResponsePanelHost: View {
         onSendTextReply: onSendTextReply,
         onMinimize: onMinimize,
         onClose: onClose,
-        onSnooze: onSnooze,
+        onMute: onMute,
         onOpenBeeper: onOpenBeeper
       )
     }
@@ -1214,7 +1161,7 @@ private struct HermesResponsePanelView: View {
   var onSendTextReply: (String) -> Void
   var onMinimize: () -> Void
   var onClose: () -> Void
-  var onSnooze: (BeeperSnoozeDuration) -> Void
+  var onMute: (BeeperMuteDuration) -> Void
   var onOpenBeeper: () -> Void
 
   var body: some View {
@@ -1272,7 +1219,7 @@ private struct HermesResponsePanelView: View {
   }
 
   /// `waveform.and.sparkles` is a generic AI glyph, and a Beeper panel is a message from a
-  /// person. Source only — burst and snooze state stay in the status line, which can spell them
+  /// person. Source only — burst state stays in the status line, which can spell it
   /// out; an icon cannot.
   private var headerGlyph: String {
     if state.isError { return "exclamationmark.triangle.fill" }
@@ -1310,7 +1257,7 @@ private struct HermesResponsePanelView: View {
       }
       .buttonStyle(.borderless)
       .accessibilityLabel("Close")
-      // Same invariant as Snooze: a panel Dane is actively speaking to cannot disappear,
+      // Same invariant as Mute: a panel Dane is actively speaking to cannot disappear,
       // because teardown drops the reply target and the finished transcription would send
       // with no `replyToMessageID`. Closing stays available during send, where the target
       // is already committed.
@@ -1331,24 +1278,13 @@ private struct HermesResponsePanelView: View {
 
   @ViewBuilder
   private var beeperStatusLine: some View {
-    let segments = HermesBeeperStatusLine.segments(
-      earlierCount: state.earlierCount,
-      newerCount: state.newerCount,
-      reason: state.reason
-    )
-    if state.beeperChat != nil, !segments.isEmpty {
+    if state.beeperChat != nil, let line = HermesBeeperStatusLine.line(newerCount: state.newerCount) {
       HStack(spacing: 4) {
         // Secondary applies to the copy only. The link keeps the accent colour it needs to
         // read as clickable at all.
-        countRun(segments)
+        Text(line).fontWeight(.medium)
           .foregroundStyle(.secondary)
-          // The separators are typography and the counts are one fact, so the run speaks as one
-          // sentence rather than as "plus", "dot", "dot".
-          .accessibilityLabel(HermesBeeperStatusLine.spokenLine(
-            earlierCount: state.earlierCount,
-            newerCount: state.newerCount,
-            reason: state.reason
-          ))
+          .accessibilityLabel(HermesBeeperStatusLine.spokenLine(newerCount: state.newerCount))
 
         // Telling Dane the rest are in Beeper without a way to get there manufactures the
         // friction this feature exists to remove.
@@ -1365,24 +1301,10 @@ private struct HermesResponsePanelView: View {
     }
   }
 
-  /// The count run as one concrete `Text`, built by concatenation rather than an `HStack`.
-  /// Per-fragment weight survives `+`, and AppKit gets a single named element — a container
-  /// asked to collapse into one AX node here produced no node at all.
-  private func countRun(_ segments: [HermesBeeperStatusLine.Segment]) -> Text {
-    var line = Text("")
-    for (index, segment) in segments.enumerated() {
-      if index > 0 {
-        line = line + Text(" · ")
-      }
-      line = line + Text(segment.text).fontWeight(segment.isEmphasized ? .medium : .regular)
-    }
-    return line + Text(" ·")
-  }
-
   private var actionRow: some View {
     HStack(spacing: 10) {
       if state.beeperChat != nil {
-        snoozeControl
+        muteControl
       }
 
       Spacer()
@@ -1432,27 +1354,27 @@ private struct HermesResponsePanelView: View {
   /// click holds no surprise and needs no undo at the point of click — regret is handled in the
   /// menu bar. "Until morning" rather than "rest of day", which is ambiguous at 11pm and
   /// meaningless at 2am.
-  private var snoozeControl: some View {
+  private var muteControl: some View {
     Menu {
-      Button("15 minutes") { onSnooze(.fifteenMinutes) }
-      Button("1 hour") { onSnooze(.oneHour) }
-      Button("Until morning") { onSnooze(.untilMorning) }
+      Button("15 minutes") { onMute(.fifteenMinutes) }
+      Button("1 hour") { onMute(.oneHour) }
+      Button("Until morning") { onMute(.untilMorning) }
     } label: {
-      Label("Snooze 1h", systemImage: "moon.zzz")
+      Label("Mute 1h", systemImage: "bell.slash")
     } primaryAction: {
-      onSnooze(.oneHour)
+      onMute(.oneHour)
     }
     .fixedSize()
-    // A panel Dane is actively speaking to cannot disappear. Snooze dismisses the window, and
-    // teardown drops the reply target with it, so snoozing mid-recording would send the finished
+    // A panel Dane is actively speaking to cannot disappear. Mute dismisses the window, and
+    // teardown drops the reply target with it, so muting mid-recording would send the finished
     // transcription with no `replyToMessageID`. `.disabled` on the Menu covers both the primary
-    // click and the duration items. Sending is deliberately still snoozeable: delayed send →
-    // Snooze → next message is a required interleaving, and by then the target is committed.
+    // click and the duration items. Sending is deliberately still mutable: delayed send →
+    // Mute → next message is a required interleaving, and by then the target is committed.
     .disabled(state.isRecordingReply)
     .help(
       state.isRecordingReply
-        ? "Finish or cancel this voice reply before snoozing."
-        : "Snooze this chat for an hour. Open for other durations."
+        ? "Finish or cancel this voice reply before muting."
+        : "Mute this sender for an hour — new messages are dropped. Open for other durations."
     )
   }
 
@@ -1572,11 +1494,11 @@ private struct HermesResponsePillView: View {
           .frame(width: 28, height: 28)
           .background(state.source.tint.opacity(0.13), in: Circle())
 
-        Text(state.source.label)
+        Text(state.title)
           .font(.system(size: 13, weight: .semibold))
           .foregroundStyle(.primary)
           .lineLimit(1)
-          .fixedSize()
+          .truncationMode(.tail)
 
         Spacer(minLength: 0)
 
@@ -1617,7 +1539,8 @@ private struct HermesResponsePillView: View {
       .accessibilityHidden(true)
 
       HermesResponsePillInteractionView(
-        source: state.source,
+        title: state.title,
+        preview: state.previewText,
         onRestore: onRestore,
         isHovering: $isHovering,
         isPressed: $isPressed
@@ -1643,7 +1566,8 @@ private struct HermesResponsePillView: View {
 }
 
 private struct HermesResponsePillInteractionView: NSViewRepresentable {
-  var source: HermesResponseSource
+  var title: String
+  var preview: String
   var onRestore: () -> Void
   @Binding var isHovering: Bool
   @Binding var isPressed: Bool
@@ -1659,11 +1583,12 @@ private struct HermesResponsePillInteractionView: NSViewRepresentable {
   }
 
   private func update(_ view: HermesResponsePillInteractionNSView) {
-    let label = "Restore \(source.label) response"
+    let label = "Restore \(title)"
     view.onRestore = onRestore
     view.onHoverChange = { isHovering = $0 }
     view.onPressChange = { isPressed = $0 }
-    view.toolTip = label
+    // Hovering the pill previews the body it hides; keep the action hint on the first line.
+    view.toolTip = preview.isEmpty ? label : "\(label)\n\n\(preview)"
     view.setAccessibilityElement(true)
     view.setAccessibilityRole(.button)
     view.setAccessibilityLabel(label)

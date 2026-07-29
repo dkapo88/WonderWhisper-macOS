@@ -134,15 +134,15 @@ struct BeeperResponseFilterTests {
     #expect(chats[0].chatID == "826380")
     #expect(chats[0].alias == "Hermes")
     #expect(chats[0].isEnabled == true)
-    #expect(chats[0].snoozedUntil == nil)
+    #expect(chats[0].mutedUntil == nil)
   }
 
-  @Test func chatEntryRoundTripsSnoozeDeadline() throws {
+  @Test func chatEntryRoundTripsMuteDeadline() throws {
     let deadline = Date(timeIntervalSince1970: 1_800_000_000)
     let original = BeeperChatEntry(
       chatID: "chat1",
       alias: "Sam",
-      snoozedUntil: deadline
+      mutedUntil: deadline
     )
     let decoded = try JSONDecoder().decode(
       BeeperChatEntry.self,
@@ -151,7 +151,7 @@ struct BeeperResponseFilterTests {
     #expect(decoded == original)
   }
 
-  @Test func snoozeDurationsUseNextLocalMorning() {
+  @Test func muteDurationsUseNextLocalMorning() {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "Asia/Singapore")!
     let beforeMorning = calendar.date(from: DateComponents(
@@ -168,19 +168,19 @@ struct BeeperResponseFilterTests {
     ))!
 
     #expect(
-      BeeperSnoozeDuration.untilMorning.deadline(from: beforeMorning, calendar: calendar)
+      BeeperMuteDuration.untilMorning.deadline(from: beforeMorning, calendar: calendar)
         == calendar.date(from: DateComponents(year: 2026, month: 7, day: 26, hour: 7))
     )
     #expect(
-      BeeperSnoozeDuration.untilMorning.deadline(from: afterMorning, calendar: calendar)
+      BeeperMuteDuration.untilMorning.deadline(from: afterMorning, calendar: calendar)
         == calendar.date(from: DateComponents(year: 2026, month: 7, day: 27, hour: 7))
     )
     #expect(
-      BeeperSnoozeDuration.fifteenMinutes.deadline(from: beforeMorning)
+      BeeperMuteDuration.fifteenMinutes.deadline(from: beforeMorning)
         == beforeMorning.addingTimeInterval(15 * 60)
     )
     #expect(
-      BeeperSnoozeDuration.oneHour.deadline(from: beforeMorning)
+      BeeperMuteDuration.oneHour.deadline(from: beforeMorning)
         == beforeMorning.addingTimeInterval(60 * 60)
     )
   }
@@ -194,33 +194,33 @@ struct BeeperResponseFilterTests {
     #expect(DictationViewModel.dedupedChatIDs(chats) == ["chat1", "chat3"])  // chat2 paused
   }
 
-  @Test func snoozedChatsAreActiveDedupedAndUseAliasFallback() {
+  @Test func mutedChatsAreActiveDedupedAndUseAliasFallback() {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let chats = [
       BeeperChatEntry(
         chatID: " chat1 ",
         alias: " Sam ",
-        snoozedUntil: now.addingTimeInterval(60)
+        mutedUntil: now.addingTimeInterval(60)
       ),
       BeeperChatEntry(
         chatID: "chat1",
         alias: "duplicate",
-        snoozedUntil: now.addingTimeInterval(120)
+        mutedUntil: now.addingTimeInterval(120)
       ),
       BeeperChatEntry(
         chatID: "chat2",
         alias: "  ",
-        snoozedUntil: now.addingTimeInterval(180)
+        mutedUntil: now.addingTimeInterval(180)
       ),
       BeeperChatEntry(
         chatID: "expired",
         alias: "Old",
-        snoozedUntil: now
+        mutedUntil: now
       ),
     ]
-    let snoozed = DictationViewModel.snoozedBeeperChats(from: chats, at: now)
-    #expect(snoozed.map(\.chatID) == ["chat1", "chat2"])
-    #expect(snoozed.map(\.displayName) == ["Sam", "chat2"])
+    let muted = DictationViewModel.mutedBeeperChats(from: chats, at: now)
+    #expect(muted.map(\.chatID) == ["chat1", "chat2"])
+    #expect(muted.map(\.displayName) == ["Sam", "chat2"])
   }
 
   /// Incoming text message from `sender`, timestamped `at` (ISO 8601).
@@ -236,7 +236,7 @@ struct BeeperResponseFilterTests {
     )
   }
 
-  @Test func responseAccumulatorKeepsOnlyCountAndLatestMessage() {
+  @Test func responseAccumulatorKeepsEveryMessageInArrivalOrder() {
     let firstBurst = [
       incoming("a", at: "2026-07-26T09:00:01Z"),
       incoming("b", at: "2026-07-26T09:00:02Z"),
@@ -251,25 +251,22 @@ struct BeeperResponseFilterTests {
     ])
     #expect(accumulator?.count == 4)
     #expect(accumulator?.latest.id == "d")
+    #expect(accumulator?.messages.map(\.id) == ["a", "b", "c", "d"])
     #expect(BeeperResponseAccumulator(messages: []) == nil)
   }
 
-  @Test func burstCountsStayNewerWhileHeldAndFoldEarlierOnRelease() {
-    let held = DictationViewModel.beeperBurstCounts(
-      earlierCount: 4,
-      pendingCount: 2,
-      isHoldingBody: true
-    )
-    #expect(held.earlier == 4)
-    #expect(held.newer == 2)
+  @Test func threadBodyKeepsSingleMessageRichAndJoinsSeveralAsPlainText() {
+    let single = [incoming("a", at: "2026-07-26T09:00:01Z", text: "hello")]
+    let one = DictationViewModel.beeperThreadBody(single)
+    #expect(one.text == single[0].richDisplayText)
 
-    let released = DictationViewModel.beeperBurstCounts(
-      earlierCount: held.earlier,
-      pendingCount: held.newer,
-      isHoldingBody: false
-    )
-    #expect(released.earlier == 6)
-    #expect(released.newer == 0)
+    let many = [
+      incoming("a", at: "2026-07-26T09:00:01Z", text: "first"),
+      incoming("b", at: "2026-07-26T09:00:02Z", text: "second"),
+    ]
+    let thread = DictationViewModel.beeperThreadBody(many)
+    #expect(thread.text == "first\n\nsecond")
+    #expect(!thread.isHTML)
   }
 
   private func viewModel(
@@ -388,11 +385,11 @@ struct BeeperResponseFilterTests {
     #expect(presented.text == m2.richDisplayText)
   }
 
-  /// Snooze mid-recording used to dismiss the panel, and teardown deleted the reply target with
+  /// Mute mid-recording used to dismiss the panel, and teardown deleted the reply target with
   /// it, so the transcription that arrived a moment later was sent to the chat with no
   /// `replyToMessageID`. Drives `beginBeeperReplyRecordingLock` and passes `responseWindowID: nil`
   /// so the send resolves its target the way production does.
-  @Test func snoozeIsRejectedWhileRecordingSoM1TargetSurvivesToSend() async throws {
+  @Test func muteIsRejectedWhileRecordingSoM1TargetSurvivesToSend() async throws {
     let client = SuspendedBeeperAPIClient()
     let (viewModel, restore) = viewModel(client: client)
     defer { restore() }
@@ -403,12 +400,12 @@ struct BeeperResponseFilterTests {
     viewModel.beginBeeperReplyRecordingLock()
     #expect(viewModel.hermesResponseWindowStates.last?.isRecordingReply == true)
 
-    viewModel.snoozeBeeperResponse(sessionID: responseWindowID, duration: .oneHour)
+    viewModel.muteBeeperResponse(sessionID: responseWindowID, duration: .oneHour)
 
-    let afterSnooze = try #require(viewModel.hermesResponseWindowStates.last)
-    #expect(afterSnooze.id == responseWindowID)  // panel Dane is speaking to did not disappear
-    #expect(afterSnooze.isRecordingReply)
-    #expect(viewModel.beeperChats.first?.snoozedUntil == nil)  // chat not snoozed either
+    let afterMute = try #require(viewModel.hermesResponseWindowStates.last)
+    #expect(afterMute.id == responseWindowID)  // panel Dane is speaking to did not disappear
+    #expect(afterMute.isRecordingReply)
+    #expect(viewModel.beeperChats.first?.mutedUntil == nil)  // chat not muted either
 
     viewModel.showBeeperResponses([m2], chatID: m2.chatID)
 
@@ -436,7 +433,7 @@ struct BeeperResponseFilterTests {
     #expect(presented.beeperChatID == m2.chatID)
   }
 
-  /// Sibling teardown route to Snooze: the header Close (and ⌘W, and `windowWillClose`) all land
+  /// Sibling teardown route to Mute: the header Close (and ⌘W, and `windowWillClose`) all land
   /// on `dismissHermesResponse`, which deleted the reply target mid-recording so the transcription
   /// arriving a moment later sent with no `replyToMessageID`. Drives
   /// `beginBeeperReplyRecordingLock` and passes `responseWindowID: nil` so the send resolves its
@@ -506,7 +503,8 @@ struct BeeperResponseFilterTests {
     #expect(afterArrival.count == 1)  // no second panel for the same chat
     let folded = try #require(afterArrival.last)
     #expect(folded.id == responseWindowID)  // the same session, restored rather than replaced
-    #expect(folded.text == m2.richDisplayText)
+    // The burst appends into the open window: M1 stays visible with M2 threaded below it.
+    #expect(folded.text == "M1\n\nM2")
     #expect(folded.newerCount == 0)  // nothing held: body and target moved together
     #expect(
       HermesResponseWindowLifecycle.burstRestoreSessionIDs(
@@ -529,7 +527,7 @@ struct BeeperResponseFilterTests {
     await send.value
   }
 
-  @Test func activeSnoozeWinsWhenDelayedReplySucceeds() async throws {
+  @Test func activeMuteDropsArrivalsAndNothingResurfacesOnUnmute() async throws {
     let client = SuspendedBeeperAPIClient()
     let (viewModel, restore) = viewModel(client: client)
     defer { restore() }
@@ -546,7 +544,7 @@ struct BeeperResponseFilterTests {
       )
     }
     await client.waitUntilSendStarts()
-    viewModel.snoozeBeeperResponse(
+    viewModel.muteBeeperResponse(
       sessionID: responseWindowID,
       duration: .oneHour
     )
@@ -555,8 +553,9 @@ struct BeeperResponseFilterTests {
     await send.value
 
     #expect(viewModel.hermesResponseWindowStates.isEmpty)
-    viewModel.resumeBeeperChat(chatID: m2.chatID)
-    #expect(viewModel.hermesResponseWindowStates.last?.text == m2.richDisplayText)
+    // Mute is a drop, not a hold: unmuting brings nothing back.
+    viewModel.unmuteBeeperChat(chatID: m2.chatID)
+    #expect(viewModel.hermesResponseWindowStates.isEmpty)
   }
 
   @Test func responseWindowSourceIsExplicitAndCarriesChatID() {

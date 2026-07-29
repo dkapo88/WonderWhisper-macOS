@@ -32,7 +32,12 @@ final class OpenRouterLLMProvider {
     func process(text: String, userPrompt: String, settings: LLMSettings, imageAttachment: LLMImageAttachment?) async throws -> String {
         let startTime = Date()
         let hasImage = imageAttachment != nil
-
+        // The gateway travels with the model: a `vercel:` prefix routes to the Vercel AI
+        // Gateway (prefix stripped on the wire), anything else uses `settings.endpoint`.
+        let route = AppConfig.llmRoute(for: settings.model)
+        let endpoint = settings.model.hasPrefix(AppConfig.vercelModelPrefix)
+            ? route.endpoint
+            : settings.endpoint
         var typed: [OpenRouterHTTPClient.ChatRequest.Message] = []
         if let system = settings.systemPrompt, !system.isEmpty {
             typed.append(.init(role: "system", text: system, attachment: nil))
@@ -42,26 +47,18 @@ final class OpenRouterLLMProvider {
             typed.append(.init(role: "user", text: userPrompt, attachment: nil))
         }
 
-        // Apply routing preference via provider.sort per OpenRouter docs (latency|throughput|price)
-        // "auto" (default) sends no provider preferences
-        let pref = routingPrefProvider().lowercased()
-        let provider: OpenRouterHTTPClient.ChatRequest.ProviderOptions?
-        
-        switch pref {
-        case "throughput": 
-            provider = .init(sort: "throughput")
-        case "latency": 
-            provider = .init(sort: "latency")
-        default: 
-            provider = nil
-        }
+        let (provider, reasoning) = Self.gatewayRequestOptions(
+            endpoint: endpoint,
+            routingPref: routingPrefProvider(),
+            reasoningMode: settings.openRouterReasoning
+        )
 
         let req = OpenRouterHTTPClient.ChatRequest(
-            model: settings.model,
+            model: route.requestModel,
             messages: typed,
             temperature: settings.temperature,
             provider: provider,
-            reasoning: Self.reasoningOptions(for: settings.openRouterReasoning)
+            reasoning: reasoning
         )
 
         // Use extended timeout for multimodal requests (image + text)
@@ -89,7 +86,7 @@ final class OpenRouterLLMProvider {
 
         do {
             let aggregated = try await client.postChat(
-                to: settings.endpoint,
+                to: endpoint,
                 body: req,
                 timeout: effectiveTimeout
             )
@@ -121,6 +118,28 @@ final class OpenRouterLLMProvider {
         case .minimal, .low, .medium:
             return .init(effort: mode.rawValue, exclude: true)
         }
+    }
+
+    /// The gateway-dependent request fields, as one pure decision so it is testable.
+    /// Vercel AI Gateway speaks the same OpenAI-compatible protocol with the same
+    /// `provider/model` IDs, but OpenRouter's `provider.sort` routing and `reasoning`
+    /// objects are not part of its schema, so both are omitted there.
+    /// Routing: "auto" (default) sends no provider preference on OpenRouter either.
+    static func gatewayRequestOptions(
+        endpoint: URL,
+        routingPref: String,
+        reasoningMode: OpenRouterReasoningMode
+    ) -> (provider: OpenRouterHTTPClient.ChatRequest.ProviderOptions?,
+          reasoning: OpenRouterHTTPClient.ChatRequest.ReasoningOptions?) {
+        guard endpoint.host != "ai-gateway.vercel.sh" else { return (nil, nil) }
+        let provider: OpenRouterHTTPClient.ChatRequest.ProviderOptions?
+        switch routingPref.lowercased() {
+        case "throughput", "latency":
+            provider = .init(sort: routingPref.lowercased())
+        default:
+            provider = nil
+        }
+        return (provider, reasoningOptions(for: reasoningMode))
     }
 
     static func decodeContent(from data: Data) throws -> String {

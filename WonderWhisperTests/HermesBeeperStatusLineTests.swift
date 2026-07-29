@@ -4,57 +4,20 @@ import Testing
 @testable import WonderWhisper
 
 /// The status line is the only thing that states how many messages Dane did not see, so its
-/// copy is the contract. Every row here is a row of §2's table.
+/// copy is the contract.
 struct HermesBeeperStatusLineTests {
-  private func line(earlier: Int, newer: Int, reason: HermesResponseReason = .live) -> String {
-    HermesBeeperStatusLine
-      .segments(earlierCount: earlier, newerCount: newer, reason: reason)
-      .map(\.text)
-      .joined(separator: " · ")
+  @Test func lineStatesTheHeldCountAndNeverCaps() {
+    #expect(HermesBeeperStatusLine.line(newerCount: 0) == nil)
+    #expect(HermesBeeperStatusLine.line(newerCount: 2) == "2 new")
+    #expect(HermesBeeperStatusLine.line(newerCount: 49) == "49 new")
   }
 
-  @Test func singleLiveMessageRendersNoLine() {
-    #expect(HermesBeeperStatusLine.segments(
-      earlierCount: 0,
-      newerCount: 0,
-      reason: .live
-    ).isEmpty)
-  }
-
-  @Test func countsAreStatedSeparatelyAndNeverCapped() {
-    #expect(line(earlier: 1, newer: 0) == "+1 earlier")
-    #expect(line(earlier: 49, newer: 0) == "+49 earlier")
-    #expect(line(earlier: 0, newer: 2) == "2 new")
-    // Both non-zero at once: summing them would lie in one direction or the other.
-    #expect(line(earlier: 4, newer: 2) == "+4 earlier · 2 new")
-  }
-
-  @Test func expiryPrefixesTheReasonAndStandsAlone() {
-    #expect(line(earlier: 4, newer: 2, reason: .snoozeExpired) == "Snooze ended · +4 earlier · 2 new")
-    // Body is the only suppressed message: the reason still earns the line.
-    #expect(line(earlier: 0, newer: 0, reason: .snoozeExpired) == "Snooze ended")
-  }
-
-  @Test func onlyTheLiveCountCarriesWeight() {
-    let segments = HermesBeeperStatusLine.segments(
-      earlierCount: 4,
-      newerCount: 2,
-      reason: .snoozeExpired
-    )
-    #expect(segments.filter(\.isEmphasized).map(\.text) == ["2 new"])
-  }
-
-  /// VoiceOver gets the same facts as the eye, minus the typography: no "plus", no "dot", and
-  /// "message" said out loud so a bare number is not left hanging.
-  @Test func spokenCopyDropsPunctuationAndAgreesInNumber() {
-    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 4, newerCount: 2, reason: .live)
-      == "4 earlier messages, 2 new messages")
-    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 1, newerCount: 1, reason: .live)
-      == "1 earlier message, 1 new message")
-    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 0, newerCount: 2, reason: .snoozeExpired)
-      == "Snooze ended, 2 new messages")
-    // No line rendered means no label to speak.
-    #expect(HermesBeeperStatusLine.spokenLine(earlierCount: 0, newerCount: 0, reason: .live).isEmpty)
+  /// VoiceOver gets the same fact as the eye, with "message" said out loud so a bare number
+  /// is not left hanging.
+  @Test func spokenCopyAgreesInNumber() {
+    #expect(HermesBeeperStatusLine.spokenLine(newerCount: 2) == "2 new messages")
+    #expect(HermesBeeperStatusLine.spokenLine(newerCount: 1) == "1 new message")
+    #expect(HermesBeeperStatusLine.spokenLine(newerCount: 0).isEmpty)
   }
 
   @Test func beeperChatDiscriminatesTheSource() {
@@ -65,7 +28,7 @@ struct HermesBeeperStatusLineTests {
       text: "hi",
       beeperChatID: "chat1"
     )
-    // A blank ID is not a Beeper panel — it would light up Snooze with nothing to snooze.
+    // A blank ID is not a Beeper panel — it would light up Mute with nothing to mute.
     let blank = HermesResponseWindowState(
       source: .beeper,
       title: "Beeper",
@@ -79,7 +42,7 @@ struct HermesBeeperStatusLineTests {
 }
 
 @MainActor
-struct BeeperSnoozeDurationTests {
+struct BeeperMuteDurationTests {
   private let calendar = Calendar(identifier: .gregorian)
 
   private func date(_ iso: String) -> Date {
@@ -90,30 +53,30 @@ struct BeeperSnoozeDurationTests {
     var calendar = self.calendar
     calendar.timeZone = TimeZone(identifier: "UTC")!
     // 11pm: "rest of day" would be an hour; morning is the next 07:00.
-    #expect(BeeperSnoozeDuration.untilMorning.deadline(
+    #expect(BeeperMuteDuration.untilMorning.deadline(
       from: date("2026-07-26T23:00:00Z"),
       calendar: calendar
     ) == date("2026-07-27T07:00:00Z"))
     // 2am: still the same morning, five hours out.
-    #expect(BeeperSnoozeDuration.untilMorning.deadline(
+    #expect(BeeperMuteDuration.untilMorning.deadline(
       from: date("2026-07-26T02:00:00Z"),
       calendar: calendar
     ) == date("2026-07-26T07:00:00Z"))
   }
 
-  @Test func snoozeRemainingRoundsUpAndSplitsHours() {
+  @Test func muteRemainingRoundsUpAndSplitsHours() {
     let now = date("2026-07-26T09:00:00Z")
     // 30 seconds out must not read "0m" — a countdown at zero looks expired.
-    #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(30), now: now) == "1m")
-    #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(47 * 60), now: now) == "47m")
-    #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(60 * 60), now: now) == "1h")
-    #expect(MenuBarController.snoozeRemainingText(until: now.addingTimeInterval(72 * 60), now: now) == "1h 12m")
+    #expect(MenuBarController.muteRemainingText(until: now.addingTimeInterval(30), now: now) == "1m")
+    #expect(MenuBarController.muteRemainingText(until: now.addingTimeInterval(47 * 60), now: now) == "47m")
+    #expect(MenuBarController.muteRemainingText(until: now.addingTimeInterval(60 * 60), now: now) == "1h")
+    #expect(MenuBarController.muteRemainingText(until: now.addingTimeInterval(72 * 60), now: now) == "1h 12m")
   }
 
   /// Nothing in the menu bar observes `beeperChats`, so the section has to be rebuilt on every
-  /// open. This is the whole of check 3: the item appears after a snooze that landed while the
+  /// open. This is the whole of check 3: the item appears after a mute that landed while the
   /// menu was closed, the countdown moves between two opens, and a resume removes it.
-  @Test @MainActor func snoozeSectionIsRebuiltOnEveryOpen() {
+  @Test @MainActor func muteSectionIsRebuiltOnEveryOpen() {
     let menu = NSMenu()
     let anchor = NSMenuItem(title: "Add to Dictionary", action: nil, keyEquivalent: "")
     let tail = NSMenuItem(title: "Quit WonderWhisper", action: nil, keyEquivalent: "")
@@ -121,27 +84,27 @@ struct BeeperSnoozeDurationTests {
     menu.addItem(tail)
 
     let now = date("2026-07-26T09:00:00Z")
-    var section = MenuBarController.applySnoozeSection(
+    var section = MenuBarController.applyMuteSection(
       to: menu, after: anchor, replacing: [], chats: [], now: now, target: nil)
     #expect(section.isEmpty)
     #expect(menu.numberOfItems == 2)
 
-    let chats = [(chatID: "c1", displayName: "Sam", snoozedUntil: now.addingTimeInterval(47 * 60))]
-    section = MenuBarController.applySnoozeSection(
+    let chats = [(chatID: "c1", displayName: "Sam", mutedUntil: now.addingTimeInterval(47 * 60))]
+    section = MenuBarController.applyMuteSection(
       to: menu, after: anchor, replacing: section, chats: chats, now: now, target: nil)
-    #expect(menu.item(at: 2)?.title == "Resume Sam — snoozed 47m")
+    #expect(menu.item(at: 2)?.title == "Unmute Sam — muted 47m")
     #expect(menu.item(at: 2)?.representedObject as? String == "c1")
     #expect(menu.items.last === tail)
 
     // Second open, ten minutes later: still one item, with a smaller countdown.
-    section = MenuBarController.applySnoozeSection(
+    section = MenuBarController.applyMuteSection(
       to: menu, after: anchor, replacing: section, chats: chats,
       now: now.addingTimeInterval(10 * 60), target: nil)
     #expect(menu.numberOfItems == 4)
-    #expect(menu.item(at: 2)?.title == "Resume Sam — snoozed 37m")
+    #expect(menu.item(at: 2)?.title == "Unmute Sam — muted 37m")
 
-    // Resumed: the item and its separator go, and nothing else does.
-    section = MenuBarController.applySnoozeSection(
+    // Unmuted: the item and its separator go, and nothing else does.
+    section = MenuBarController.applyMuteSection(
       to: menu, after: anchor, replacing: section, chats: [], now: now, target: nil)
     #expect(section.isEmpty)
     #expect(menu.items.map(\.title) == ["Add to Dictionary", "Quit WonderWhisper"])

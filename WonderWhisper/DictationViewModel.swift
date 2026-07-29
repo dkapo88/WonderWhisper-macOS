@@ -12,18 +12,18 @@ struct BeeperChatEntry: Codable, Identifiable, Equatable {
     var chatID: String = ""
     var alias: String = ""
     var isEnabled: Bool = true
-    var snoozedUntil: Date?
+    var mutedUntil: Date?
 
     init(id: UUID = UUID(),
          chatID: String = "",
          alias: String = "",
          isEnabled: Bool = true,
-         snoozedUntil: Date? = nil) {
+         mutedUntil: Date? = nil) {
         self.id = id
         self.chatID = chatID
         self.alias = alias
         self.isEnabled = isEnabled
-        self.snoozedUntil = snoozedUntil
+        self.mutedUntil = mutedUntil
     }
 
     // Decode defensively so chats persisted before a field existed still load
@@ -34,11 +34,11 @@ struct BeeperChatEntry: Codable, Identifiable, Equatable {
         chatID = try container.decodeIfPresent(String.self, forKey: .chatID) ?? ""
         alias = try container.decodeIfPresent(String.self, forKey: .alias) ?? ""
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        snoozedUntil = try container.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        mutedUntil = try container.decodeIfPresent(Date.self, forKey: .mutedUntil)
     }
 }
 
-enum BeeperSnoozeDuration: Equatable {
+enum BeeperMuteDuration: Equatable {
     case fifteenMinutes
     case oneHour
     case untilMorning
@@ -65,19 +65,19 @@ enum BeeperSnoozeDuration: Equatable {
 }
 
 struct BeeperResponseAccumulator: Equatable {
-    private(set) var count: Int
-    private(set) var latest: BeeperMessage
+    private(set) var messages: [BeeperMessage]
+
+    var count: Int { messages.count }
+    // Invariant: never empty — `init?` rejects an empty array and `append` only grows it.
+    var latest: BeeperMessage { messages[messages.count - 1] }
 
     init?(messages: [BeeperMessage]) {
-        guard let latest = messages.last else { return nil }
-        count = messages.count
-        self.latest = latest
+        guard !messages.isEmpty else { return nil }
+        self.messages = messages
     }
 
     mutating func append(_ messages: [BeeperMessage]) {
-        guard let newest = messages.last else { return }
-        count += messages.count
-        latest = newest
+        self.messages.append(contentsOf: messages)
     }
 }
 
@@ -839,7 +839,7 @@ final class DictationViewModel: ObservableObject {
         let renderedInitial = promptBootstrap.activeSystem
 
         let canonicalPersistedModel = activeLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+        let llm = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.llmRoute(for: canonicalPersistedModel).keyAlias) }))
         let llmSettings = LLMSettings(
             endpoint: AppConfig.openrouterChatCompletions,
             model: canonicalPersistedModel,
@@ -1324,6 +1324,16 @@ final class DictationViewModel: ObservableObject {
             settingsNotice = "OpenRouter API key saved."
         } catch {
             settingsNotice = "Could not save OpenRouter API key: \(error.localizedDescription)"
+        }
+    }
+
+    func saveVercelGatewayKey(_ value: String) {
+        let kc = KeychainService()
+        do {
+            try kc.setSecret(value, forKey: AppConfig.vercelGatewayAPIKeyAlias)
+            settingsNotice = "Vercel AI Gateway API key saved."
+        } catch {
+            settingsNotice = "Could not save Vercel AI Gateway API key: \(error.localizedDescription)"
         }
     }
 
@@ -2723,70 +2733,70 @@ final class DictationViewModel: ObservableObject {
 
     var defaultBeeperChatID: String { beeperChatIDList.first ?? "" }
 
-    var snoozedBeeperChats: [(chatID: String, displayName: String, snoozedUntil: Date)] {
-        Self.snoozedBeeperChats(from: beeperChats, at: Date())
+    var mutedBeeperChats: [(chatID: String, displayName: String, mutedUntil: Date)] {
+        Self.mutedBeeperChats(from: beeperChats, at: Date())
     }
 
-    static func snoozedBeeperChats(
+    static func mutedBeeperChats(
         from chats: [BeeperChatEntry],
         at now: Date
-    ) -> [(chatID: String, displayName: String, snoozedUntil: Date)] {
+    ) -> [(chatID: String, displayName: String, mutedUntil: Date)] {
         var seen = Set<String>()
         return chats.compactMap { chat in
             let chatID = chat.chatID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !chatID.isEmpty,
                   seen.insert(chatID).inserted,
-                  let snoozedUntil = chat.snoozedUntil,
-                  snoozedUntil > now else { return nil }
+                  let mutedUntil = chat.mutedUntil,
+                  mutedUntil > now else { return nil }
             let alias = chat.alias.trimmingCharacters(in: .whitespacesAndNewlines)
-            return (chatID, alias.isEmpty ? chatID : alias, snoozedUntil)
+            return (chatID, alias.isEmpty ? chatID : alias, mutedUntil)
         }
     }
 
-    func snoozeBeeperChat(
+    func muteBeeperChat(
         chatID rawChatID: String,
-        duration: BeeperSnoozeDuration,
+        duration: BeeperMuteDuration,
         now: Date = Date()
     ) {
         let chatID = rawChatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !chatID.isEmpty else { return }
+        // Mute drops, never defers: anything held for this chat goes with it.
         beeperResponseAccumulators[chatID] = nil
-        setBeeperSnoozedUntil(
+        setBeeperMutedUntil(
             duration.deadline(from: now),
             chatID: chatID
         )
     }
 
-    func snoozeBeeperResponse(
+    func muteBeeperResponse(
         sessionID: UUID,
-        duration: BeeperSnoozeDuration,
+        duration: BeeperMuteDuration,
         now: Date = Date()
     ) {
         guard let target = beeperResponseWindowTargets[sessionID] else { return }
         // Second boundary guard for the same invariant the disabled control enforces: the target
-        // map is torn down with the window, so a snooze that lands mid-recording would strand the
+        // map is torn down with the window, so a mute that lands mid-recording would strand the
         // in-flight transcription with no reply target. The invariant must not rest on one
         // SwiftUI modifier.
         guard !isRecordingReplyPanel(sessionID: sessionID) else { return }
-        snoozeBeeperChat(chatID: target.chatID, duration: duration, now: now)
+        muteBeeperChat(chatID: target.chatID, duration: duration, now: now)
         dismissBeeperResponseWindow(sessionID)
     }
 
-    func resumeBeeperChat(chatID rawChatID: String) {
+    func unmuteBeeperChat(chatID rawChatID: String) {
         let chatID = rawChatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !chatID.isEmpty else { return }
-        setBeeperSnoozedUntil(nil, chatID: chatID)
-        flushBeeperResponses(chatID: chatID)
+        setBeeperMutedUntil(nil, chatID: chatID)
     }
 
-    private func setBeeperSnoozedUntil(_ deadline: Date?, chatID: String) {
+    private func setBeeperMutedUntil(_ deadline: Date?, chatID: String) {
         var chats = beeperChats
         var changed = false
         for index in chats.indices where
             chats[index].chatID.trimmingCharacters(in: .whitespacesAndNewlines) == chatID {
-            guard chats[index].snoozedUntil != deadline else { continue }
+            guard chats[index].mutedUntil != deadline else { continue }
             // ponytail: deadline-only edits must not restart monitors; the didSet guard compares IDs.
-            chats[index].snoozedUntil = deadline
+            chats[index].mutedUntil = deadline
             changed = true
         }
         if changed {
@@ -2814,51 +2824,29 @@ final class DictationViewModel: ObservableObject {
     ) {
         dismissBeeperResponseWindow(responseWindowID)
         guard let chatID,
-              beeperSnoozedUntil(chatID: chatID).map({ $0 > Date() }) != true,
+              beeperMutedUntil(chatID: chatID).map({ $0 > Date() }) != true,
               let pendingResponses = takeBeeperResponses(chatID: chatID) else { return }
-        showBeeperResponse(
-            pendingResponses.latest,
-            earlierCount: pendingResponses.count - 1
-        )
+        presentBeeperThread(pendingResponses.messages)
     }
 
-    private func beeperSnoozedUntil(chatID: String) -> Date? {
+    private func beeperMutedUntil(chatID: String) -> Date? {
         beeperChats.first {
             $0.chatID.trimmingCharacters(in: .whitespacesAndNewlines) == chatID
-        }?.snoozedUntil
-    }
-
-    private func expireBeeperSnoozeIfNeeded(chatID: String, now: Date = Date()) {
-        guard let deadline = beeperSnoozedUntil(chatID: chatID), deadline <= now else { return }
-        setBeeperSnoozedUntil(nil, chatID: chatID)
-        flushBeeperResponses(chatID: chatID)
+        }?.mutedUntil
     }
 
     private func flushBeeperResponses(chatID: String) {
-        flushBeeperResponses(chatID: chatID, reason: .snoozeExpired)
-    }
-
-    private func flushBeeperResponses(
-        chatID: String,
-        reason: HermesResponseReason
-    ) {
         guard let accumulator = beeperResponseAccumulators[chatID] else { return }
         if let sessionID = newestAttendingBeeperResponseWindowID(chatID: chatID),
            let state = hermesResponseWindowStates.first(where: { $0.id == sessionID }) {
             let isHoldingBody = hasResponseWindowDraft(sessionID: sessionID)
                 || state.isRecordingReply
                 || state.isSendingReply
-            let counts = Self.beeperBurstCounts(
-                earlierCount: state.earlierCount,
-                pendingCount: accumulator.count,
-                isHoldingBody: isHoldingBody
-            )
             if isHoldingBody {
                 hermesResponseWindowStates = HermesResponseWindowLifecycle.burstCoalesced(
                     hermesResponseWindowStates,
                     sessionID: sessionID,
-                    earlierCount: counts.earlier,
-                    newerCount: counts.newer
+                    newerCount: accumulator.count
                 )
                 syncCurrentHermesResponseWindowState(sessionID: sessionID)
                 return
@@ -2866,9 +2854,8 @@ final class DictationViewModel: ObservableObject {
 
             _ = takeBeeperResponses(chatID: chatID)
             coalesceBeeperResponse(
-                accumulator.latest,
-                into: sessionID,
-                earlierCount: counts.earlier
+                accumulator.messages,
+                into: sessionID
             )
             return
         }
@@ -2877,21 +2864,18 @@ final class DictationViewModel: ObservableObject {
         AppLog.dictation.log(
             "Beeper response accumulator flushed chat=\(chatID, privacy: .public) count=\(accumulator.count, privacy: .public)"
         )
-        showBeeperResponse(
-            accumulator.latest,
-            earlierCount: accumulator.count - 1,
-            reason: reason
-        )
+        presentBeeperThread(accumulator.messages)
     }
 
-    static func beeperBurstCounts(
-        earlierCount: Int,
-        pendingCount: Int,
-        isHoldingBody: Bool
-    ) -> (earlier: Int, newer: Int) {
-        isHoldingBody
-            ? (earlierCount, pendingCount)
-            : (earlierCount + pendingCount, 0)
+    /// The displayed body for a window holding one or more messages of the same chat.
+    /// A single message keeps its rich HTML rendering; a thread of several renders each
+    /// message's plain text separated by blank lines.
+    // ponytail: multi-message threads flatten HTML to plain text; per-message rendering only if missed.
+    static func beeperThreadBody(_ messages: [BeeperMessage]) -> (text: String, isHTML: Bool) {
+        if messages.count == 1, let only = messages.first {
+            return (only.richDisplayText, only.hasHTMLBody)
+        }
+        return (messages.map(\.displayText).joined(separator: "\n\n"), false)
     }
 
     private func newestAttendingBeeperResponseWindowID(chatID: String) -> UUID? {
@@ -2900,34 +2884,44 @@ final class DictationViewModel: ObservableObject {
         }?.id
     }
 
+    /// Appends a burst into the panel already showing this chat: the displayed body keeps the
+    /// message Dane was reading and the new ones join below it, and the reply target moves to
+    /// the newest message.
     private func coalesceBeeperResponse(
-        _ message: BeeperMessage,
-        into sessionID: UUID,
-        earlierCount: Int
+        _ messages: [BeeperMessage],
+        into sessionID: UUID
     ) {
-        let sender = message.displaySender
+        guard let latest = messages.last,
+              let state = hermesResponseWindowStates.first(where: { $0.id == sessionID })
+        else { return }
+        let sender = latest.displaySender
         beeperResponseWindowTargets[sessionID] = BeeperReplyTarget(
-            chatID: message.chatID,
-            messageID: message.id
+            chatID: latest.chatID,
+            messageID: latest.id
         )
+        // Appending plain text into an HTML body would corrupt it, so an HTML body is
+        // flattened to plain text the moment the window becomes a thread.
+        let existing = state.isHTML
+            ? BeeperMessageTextFormatter.displayText(from: state.text)
+            : state.text
+        let appended = messages.map(\.displayText).joined(separator: "\n\n")
         hermesResponseWindowStates = HermesResponseWindowLifecycle.burstCoalesced(
             hermesResponseWindowStates,
             sessionID: sessionID,
             title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
-            text: message.richDisplayText,
-            isHTML: message.hasHTMLBody,
-            earlierCount: earlierCount,
+            text: existing.isEmpty ? appended : existing + "\n\n" + appended,
+            isHTML: false,
             newerCount: 0
         )
         syncCurrentHermesResponseWindowState(sessionID: sessionID)
-        beeperLastResponseText = message.displayText
+        beeperLastResponseText = latest.displayText
         beeperLastResponseSender = sender
         beeperIsAwaitingResponse = false
         beeperConnectionStatus = "Beeper response received."
         beeperConnectionSucceeded = true
         settingsNotice = beeperConnectionStatus
         AppLog.dictation.log(
-            "Beeper response coalesced chat=\(message.chatID, privacy: .public) id=\(message.id, privacy: .public)"
+            "Beeper response coalesced chat=\(latest.chatID, privacy: .public) id=\(latest.id, privacy: .public)"
         )
     }
 
@@ -3443,7 +3437,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Claims the focused Beeper panel as the reply target for the recording that is starting, and
-    /// marks it recording so the burst hold and Snooze both see it.
+    /// marks it recording so the burst hold and Mute both see it.
     ///
     /// Split out of `beginBeeperRecording` unchanged so the regression can drive the real
     /// resolution — `focusedBeeperResponseWindowID` and this field — without audio hardware. The
@@ -3857,8 +3851,6 @@ final class DictationViewModel: ObservableObject {
         }
 
         while !Task.isCancelled {
-            // Expire before the GET so a network failure cannot keep the chat quiet.
-            expireBeeperSnoozeIfNeeded(chatID: settings.normalizedChatID)
             let cycleStartedAt = Date()
             let pollResult = await pollConfiguredBeeperChatOnce(
                 settings: settings,
@@ -3902,8 +3894,6 @@ final class DictationViewModel: ObservableObject {
 
             page.items.forEach { nextSeenMessageIDs.insert($0.id) }
 
-            // The request may have crossed the deadline; flush older held messages first.
-            expireBeeperSnoozeIfNeeded(chatID: settings.normalizedChatID)
             showBeeperResponses(candidates, chatID: settings.normalizedChatID)
         } catch {
             AppLog.dictation.error(
@@ -3974,24 +3964,28 @@ final class DictationViewModel: ObservableObject {
             keywords: beeperResponseFilterKeywords
         )
         guard !surviving.isEmpty else { return }
-        appendBeeperResponses(surviving, chatID: chatID)
-        if let deadline = beeperSnoozedUntil(chatID: chatID), deadline > Date() {
+        // Mute is a drop, not a hold: nothing is accumulated and nothing resurfaces later.
+        if let deadline = beeperMutedUntil(chatID: chatID), deadline > Date() {
             AppLog.dictation.log(
-                "Beeper responses suppressed by snooze chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
+                "Beeper responses dropped by mute chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
             )
             return
         }
+        appendBeeperResponses(surviving, chatID: chatID)
         AppLog.dictation.log(
             "Beeper ambient monitor received chat=\(chatID, privacy: .public) count=\(surviving.count, privacy: .public)"
         )
-        flushBeeperResponses(chatID: chatID, reason: .live)
+        flushBeeperResponses(chatID: chatID)
     }
 
-    func showBeeperResponse(
-        _ message: BeeperMessage,
-        earlierCount: Int = 0,
-        reason: HermesResponseReason = .live
-    ) {
+    func showBeeperResponse(_ message: BeeperMessage) {
+        presentBeeperThread([message])
+    }
+
+    /// Opens a fresh response window carrying one or more messages of the same chat, replying
+    /// to the newest.
+    private func presentBeeperThread(_ messages: [BeeperMessage]) {
+        guard let message = messages.last else { return }
         let text = message.displayText
         guard !Self.beeperResponseIsFiltered(text, keywords: beeperResponseFilterKeywords) else {
             AppLog.dictation.log(
@@ -4020,18 +4014,17 @@ final class DictationViewModel: ObservableObject {
             chatID: message.chatID,
             messageID: message.id
         )
+        let body = Self.beeperThreadBody(messages)
         upsertHermesResponseWindow(
             sessionID: responseWindowID,
             source: .beeper,
             title: sender == "Beeper" ? "Beeper" : "Beeper - \(sender)",
-            text: message.richDisplayText,
-            isHTML: message.hasHTMLBody,
+            text: body.text,
+            isHTML: body.isHTML,
             isError: false,
             supportsReply: false,
             supportsTextReply: true,
-            beeperChatID: message.chatID,
-            earlierCount: earlierCount,
-            reason: reason
+            beeperChatID: message.chatID
         )
     }
 
@@ -4442,7 +4435,7 @@ final class DictationViewModel: ObservableObject {
             let model = resolvedLLMModel(for: prompt).trimmingCharacters(in: .whitespacesAndNewlines)
             let provider = OpenRouterLLMProvider(
                 client: OpenRouterHTTPClient(apiKeyProvider: {
-                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                    KeychainService().getSecret(forKey: AppConfig.llmRoute(for: model).keyAlias)
                 })
             )
             let settings = LLMSettings(
@@ -4493,14 +4486,15 @@ final class DictationViewModel: ObservableObject {
 
     private func generateHermesTitleText(from sourceText: String) async -> String? {
         do {
+            let titleModel = simpleSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
             let provider = OpenRouterLLMProvider(
                 client: OpenRouterHTTPClient(apiKeyProvider: {
-                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                    KeychainService().getSecret(forKey: AppConfig.llmRoute(for: titleModel).keyAlias)
                 })
             )
             let settings = LLMSettings(
                 endpoint: AppConfig.openrouterChatCompletions,
-                model: simpleSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines),
+                model: titleModel,
                 systemPrompt: "You create concise titles for task conversations.",
                 timeout: 30,
                 temperature: 0.1,
@@ -4640,9 +4634,7 @@ final class DictationViewModel: ObservableObject {
                                             supportsReply: Bool = true,
                                             supportsVoiceReply: Bool? = nil,
                                             supportsTextReply: Bool? = nil,
-                                            beeperChatID: String? = nil,
-                                            earlierCount: Int = 0,
-                                            reason: HermesResponseReason = .live) {
+                                            beeperChatID: String? = nil) {
         let state = HermesResponseWindowState(
             id: sessionID,
             source: source,
@@ -4653,9 +4645,7 @@ final class DictationViewModel: ObservableObject {
             supportsReply: supportsReply,
             supportsVoiceReply: supportsVoiceReply,
             supportsTextReply: supportsTextReply,
-            beeperChatID: beeperChatID,
-            earlierCount: earlierCount,
-            reason: reason
+            beeperChatID: beeperChatID
         )
         if let index = hermesResponseWindowStates.firstIndex(where: { $0.id == sessionID }) {
             hermesResponseWindowStates[index] = state
@@ -4685,9 +4675,9 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// True while this panel holds a voice reply that is still recording. The one reader for the
-    /// two guards that protect the locked reply target — Snooze and dismissal — so they cannot
+    /// two guards that protect the locked reply target — Mute and dismissal — so they cannot
     /// drift apart. Deliberately not `isSendingReply`: by send time the target is committed, and
-    /// snoozing or closing during send is required behaviour.
+    /// muting or closing during send is required behaviour.
     private func isRecordingReplyPanel(sessionID: UUID) -> Bool {
         hermesResponseWindowStates.first { $0.id == sessionID }?.isRecordingReply ?? false
     }
@@ -4712,7 +4702,7 @@ final class DictationViewModel: ObservableObject {
         if hadDraft,
            !hasDraft,
            let chatID = beeperResponseWindowTargets[sessionID]?.chatID {
-            flushBeeperResponses(chatID: chatID, reason: .live)
+            flushBeeperResponses(chatID: chatID)
         }
     }
 
@@ -4925,8 +4915,8 @@ final class DictationViewModel: ObservableObject {
             clearBeeperContextCapture(cancel: true)
         }
         if let chatID,
-           beeperSnoozedUntil(chatID: chatID).map({ $0 > Date() }) != true {
-            flushBeeperResponses(chatID: chatID, reason: .live)
+           beeperMutedUntil(chatID: chatID).map({ $0 > Date() }) != true {
+            flushBeeperResponses(chatID: chatID)
         }
     }
 
@@ -5256,7 +5246,7 @@ final class DictationViewModel: ObservableObject {
         let reasoningForActivePrompt = resolvedOpenRouterReasoning(for: prompt)
         let llmProviderToApply = OpenRouterLLMProvider(
             client: OpenRouterHTTPClient(apiKeyProvider: {
-                KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                KeychainService().getSecret(forKey: AppConfig.llmRoute(for: canonicalModelForActivePrompt).keyAlias)
             }),
             routingPrefProvider: { routingForActivePrompt }
         )
@@ -5453,7 +5443,7 @@ private extension DictationViewModel {
         do {
             let provider = OpenRouterLLMProvider(
                 client: OpenRouterHTTPClient(apiKeyProvider: {
-                    KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias)
+                    KeychainService().getSecret(forKey: AppConfig.llmRoute(for: request.model.id).keyAlias)
                 }),
                 routingPrefProvider: { routing }
             )

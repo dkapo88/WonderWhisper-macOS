@@ -50,6 +50,47 @@ struct OpenRouterModelsResponse: Codable {
   let data: [OpenRouterModel]
 }
 
+// MARK: - Vercel AI Gateway catalog
+
+/// Vercel's `/v1/models` uses different field names; decode and map into `OpenRouterModel`
+/// so the browser, favorites, and pickers need no second model type. IDs are prefixed with
+/// `AppConfig.vercelModelPrefix` at mapping time so the stored favorite carries its route.
+struct VercelModelsResponse: Codable {
+  struct Model: Codable {
+    struct Pricing: Codable {
+      let input: String?
+      let output: String?
+    }
+    let id: String
+    let name: String?
+    let description: String?
+    let contextWindow: Int?
+    let type: String?
+    let pricing: Pricing?
+
+    enum CodingKeys: String, CodingKey {
+      case id, name, description, type, pricing
+      case contextWindow = "context_window"
+    }
+  }
+  let data: [Model]
+
+  var asOpenRouterModels: [OpenRouterModel] {
+    data
+      .filter { ($0.type ?? "language") == "language" }
+      .map { model in
+        OpenRouterModel(
+          id: AppConfig.vercelModelPrefix + model.id,
+          name: (model.name?.isEmpty == false ? model.name! : model.id) + " (Vercel)",
+          description: model.description,
+          contextLength: model.contextWindow ?? 0,
+          pricing: .init(prompt: model.pricing?.input ?? "0",
+                         completion: model.pricing?.output ?? "0")
+        )
+      }
+  }
+}
+
 // MARK: - Favorite Model
 
 struct FavoriteOpenRouterModel: Identifiable, Codable, Hashable {

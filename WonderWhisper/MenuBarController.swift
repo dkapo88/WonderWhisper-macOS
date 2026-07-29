@@ -7,7 +7,7 @@ final class MenuBarController: NSObject {
     private var cancellables: Set<AnyCancellable> = []
     private weak var vm: DictationViewModel?
     private var addDictItem: NSMenuItem?
-    private var snoozeItems: [NSMenuItem] = []
+    private var muteItems: [NSMenuItem] = []
 
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
@@ -194,39 +194,39 @@ final class MenuBarController: NSObject {
         return item
     }
 
-    /// The only place a snooze is visible, and the only way to undo one early. Nothing is drawn
-    /// while a chat is snoozed — silence is the contract — so this is the whole affordance:
-    /// findable when wanted, invisible when not. Nothing snoozed adds zero items, not an empty
+    /// The only place a mute is visible, and the only way to undo one early. Nothing is drawn
+    /// while a chat is muted — silence is the contract — so this is the whole affordance:
+    /// findable when wanted, invisible when not. Nothing muted adds zero items, not an empty
     /// section.
     ///
     /// Rebuilt from `menuNeedsUpdate` on every open, not just when `buildMenu()` runs: nothing
-    /// here observes `beeperChats`, so a snooze or resume would otherwise leave the section
+    /// here observes `beeperChats`, so a mute or unmute would otherwise leave the section
     /// stale until an unrelated setting changed. Re-reading the deadline at open time also keeps
     /// the countdown fresh with no timer — the deadline stays the single source of truth.
     ///
-    /// The title leads with the verb rather than the design's `Sam — snoozed 47m`: a menu item
-    /// whose click resumes should say so, and the countdown still reads as the reason.
-    private func refreshSnoozedBeeperChats(in menu: NSMenu) {
+    /// The title leads with the verb rather than the design's `Sam — muted 47m`: a menu item
+    /// whose click unmutes should say so, and the countdown still reads as the reason.
+    private func refreshMutedBeeperChats(in menu: NSMenu) {
         guard let anchor = addDictItem else { return }
-        snoozeItems = Self.applySnoozeSection(
+        muteItems = Self.applyMuteSection(
             to: menu,
             after: anchor,
-            replacing: snoozeItems,
-            chats: vm?.snoozedBeeperChats ?? [],
+            replacing: muteItems,
+            chats: vm?.mutedBeeperChats ?? [],
             now: Date(),
             target: self
         )
     }
 
-    /// Swaps the snooze block in place: drops the previous pass's items, then inserts one item
-    /// per snoozed chat directly below `anchor`. Static and menu-agnostic so the rebuild-on-open
+    /// Swaps the mute block in place: drops the previous pass's items, then inserts one item
+    /// per muted chat directly below `anchor`. Static and menu-agnostic so the rebuild-on-open
     /// path is testable without a status item or a view model. Items from a discarded menu are
     /// simply not found, so a full `buildMenu()` rebuild costs nothing here.
-    static func applySnoozeSection(
+    static func applyMuteSection(
         to menu: NSMenu,
         after anchor: NSMenuItem,
         replacing previous: [NSMenuItem],
-        chats: [(chatID: String, displayName: String, snoozedUntil: Date)],
+        chats: [(chatID: String, displayName: String, mutedUntil: Date)],
         now: Date,
         target: AnyObject?
     ) -> [NSMenuItem] {
@@ -238,10 +238,10 @@ final class MenuBarController: NSObject {
 
         var section: [NSMenuItem] = [.separator()]
         for chat in chats {
-            let remaining = snoozeRemainingText(until: chat.snoozedUntil, now: now)
+            let remaining = muteRemainingText(until: chat.mutedUntil, now: now)
             let item = NSMenuItem(
-                title: "Resume \(chat.displayName) — snoozed \(remaining)",
-                action: #selector(MenuBarController.resumeSnoozedBeeperChat(_:)),
+                title: "Unmute \(chat.displayName) — muted \(remaining)",
+                action: #selector(MenuBarController.unmuteBeeperChat(_:)),
                 keyEquivalent: ""
             )
             item.target = target
@@ -255,7 +255,7 @@ final class MenuBarController: NSObject {
     }
 
     /// Rounds up, so a deadline 30 seconds out reads "1m" rather than "0m".
-    static func snoozeRemainingText(until deadline: Date, now: Date) -> String {
+    static func muteRemainingText(until deadline: Date, now: Date) -> String {
         let minutes = max(1, Int(ceil(deadline.timeIntervalSince(now) / 60)))
         guard minutes >= 60 else { return "\(minutes)m" }
         let hours = minutes / 60
@@ -378,7 +378,7 @@ final class MenuBarController: NSObject {
         self.addDictItem = addDict
         menu.addItem(addDict)
 
-        refreshSnoozedBeeperChats(in: menu)
+        refreshMutedBeeperChats(in: menu)
 
         menu.addItem(.separator())
 
@@ -472,9 +472,9 @@ final class MenuBarController: NSObject {
         vm.openRouterTranscriptionModel = model
         refreshStatusAndMenu()
     }
-    @objc private func resumeSnoozedBeeperChat(_ sender: NSMenuItem) {
+    @objc private func unmuteBeeperChat(_ sender: NSMenuItem) {
         guard let chatID = sender.representedObject as? String else { return }
-        vm?.resumeBeeperChat(chatID: chatID)
+        vm?.unmuteBeeperChat(chatID: chatID)
     }
 
     @objc private func quitApp() { NSApp.terminate(nil) }
@@ -529,7 +529,7 @@ extension MenuBarController: NSMenuDelegate {
     /// calls this first and expects structural changes at this point, before it measures the
     /// menu for display. `menuWillOpen` stays for state on items that always exist.
     func menuNeedsUpdate(_ menu: NSMenu) {
-        refreshSnoozedBeeperChats(in: menu)
+        refreshMutedBeeperChats(in: menu)
     }
 
     func menuWillOpen(_ menu: NSMenu) {

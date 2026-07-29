@@ -53,7 +53,15 @@ connected device and then the system default. Selection is persisted via `AudioI
   context uses its own fast OpenRouter model and sends a bounded recent transcript window to extract useful
   subjects at a rate-limited cadence, ranks Markdown locally inside the chosen Obsidian vault, and
   sends only bounded matching excerpts back to OpenRouter in one batched brief request.
-- All LLM requests route through OpenRouter. Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping build, so any new integration must be justified and added here.
+- All LLM requests route through OpenRouter or the Vercel AI Gateway
+  (`https://ai-gateway.vercel.sh/v1`, OpenAI-compatible), decided per model: the model browser
+  offers both catalogs, and favorites saved from the Vercel catalog carry a `vercel:` ID prefix.
+  `AppConfig.llmRoute(for:)` resolves endpoint, Keychain alias (`OPENROUTER_API_KEY` /
+  `AI_GATEWAY_API_KEY`), and the on-the-wire model from that one string, so mixed favorites
+  work with both keys saved. OpenRouter-only request fields (routing priority, reasoning) are
+  omitted on Vercel-routed requests; OpenRouter speech-to-text keeps the OpenRouter key.
+  Additional providers (Groq Chat, Cerebras, Ollama, etc.) are no longer part of the shipping
+  build, so any new integration must be justified and added here.
 
 ## Build, Test, and Development Commands
 Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug build`. Execute tests with `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test`. To run a single test, use `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test -only-testing:WonderWhisperTests/WonderWhisperTests/testName`. After a successful script build, `open build/Build/Products/Debug/WonderWhisper.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations.
@@ -107,6 +115,17 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-07-29: Made "Paste as rich text" produce real formatting: markdown-ish dictation output
+  (bullets, numbered lists, bold/italic/code) converts to semantic HTML on the pasteboard with
+  a plain-text fallback, and the toggle is now exposed in Settings → Language model.
+- 2026-07-29: Made the LLM gateway travel with the model instead of a global toggle: the model
+  browser now offers the Vercel AI Gateway catalog alongside OpenRouter, Vercel favorites carry
+  a `vercel:` ID prefix, and each request resolves endpoint and key from its model ID.
+- 2026-07-28: Added Vercel AI Gateway support for LLM chat requests with its own Keychain key
+  (superseded same-week by the per-model routing above; no global picker ships).
+- 2026-07-28: Replaced Beeper response snooze with a real mute that drops a sender's messages
+  for the chosen duration, appended burst messages into the open response window as a thread
+  instead of counters, and gave minimized pills the chat title with a hover text preview.
 - 2026-07-28: Added a centre-anchored expand/collapse animation to the dictation overlay,
   drove the visualizer from a display link with time-scaled smoothing to remove flicker,
   made the live transcript preview open at one line, and softened its background.

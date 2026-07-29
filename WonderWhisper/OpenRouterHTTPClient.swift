@@ -39,6 +39,23 @@ struct OpenRouterHTTPClient {
         return response.data
     }
 
+    /// Vercel AI Gateway catalog, mapped into the same `OpenRouterModel` shape with
+    /// `vercel:`-prefixed IDs. `/v1/models` is public and — unlike OpenRouter — rejects a
+    /// request carrying an invalid Authorization header, so no key is ever sent here.
+    func fetchVercelModels() async throws -> [OpenRouterModel] {
+        var req = URLRequest(url: AppConfig.vercelGatewayModels,
+                             cachePolicy: .reloadIgnoringLocalCacheData,
+                             timeoutInterval: 15)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, resp) = try await Self.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw ProviderError.networkError("No HTTP response") }
+        guard (200...299).contains(http.statusCode) else {
+            throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+        }
+        return try JSONDecoder().decode(VercelModelsResponse.self, from: data).asOpenRouterModels
+    }
+
     func fetchTranscriptionModels() async throws -> [OpenRouterModel] {
         guard var components = URLComponents(url: AppConfig.openrouterModels, resolvingAgainstBaseURL: false) else {
             throw ProviderError.invalidURL

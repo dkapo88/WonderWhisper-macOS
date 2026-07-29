@@ -20,7 +20,8 @@ struct HermesResponseWindowLifecycleTests {
     let size = HermesResponseWindowLayout.pillSize
 
     #expect(size.width > size.height)
-    #expect(size.width <= 140)
+    // Wide enough to carry a chat title, still a pill rather than a window.
+    #expect(size.width <= 220)
     #expect(size.height >= 44)
     #expect(size.height <= 60)
   }
@@ -115,7 +116,6 @@ struct HermesResponseWindowLifecycleTests {
         title: "Hermes",
         text: "Updated",
         isHTML: false,
-        earlierCount: 1,
         newerCount: 0
       )[0].source == .beeper
     )
@@ -404,14 +404,12 @@ struct HermesResponseWindowLifecycleTests {
       title: "Ash",
       text: "make it 7",
       isHTML: false,
-      earlierCount: 2,
       newerCount: 0
     )
 
     #expect(coalesced[0].title == "Ash")
     #expect(coalesced[0].text == "make it 7")
     #expect(!coalesced[0].isHTML)
-    #expect(coalesced[0].earlierCount == 2)
     #expect(coalesced[0].newerCount == 0)
     // The reason this is not a freshly built state: everything the panel owns about the reply in
     // progress survives the update.
@@ -428,7 +426,6 @@ struct HermesResponseWindowLifecycleTests {
     let held = HermesResponseWindowLifecycle.burstCoalesced(
       [target],
       sessionID: target.id,
-      earlierCount: 0,
       newerCount: 3
     )
 
@@ -456,7 +453,6 @@ struct HermesResponseWindowLifecycleTests {
         title: "Ash",
         text: "make it 7",
         isHTML: false,
-        earlierCount: 9,
         newerCount: 9
       ) == states
     )
