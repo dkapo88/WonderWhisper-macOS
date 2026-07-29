@@ -5,6 +5,54 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-07-29</title>
+      <pubDate>Wed, 29 Jul 2026 03:24:31 +0000</pubDate>
+      <sparkle:version>2026072900</sparkle:version>
+      <sparkle:shortVersionString>2026-07-29</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>New</h2>
+<ul>
+<li>Paste as rich text. Turn it on in Settings → Language model and dictated</li>
+</ul>
+<p>bullet points, numbered lists, and bold/italic text paste as real formatting</p>
+<p>in apps that accept rich text, such as Slack, Notes, and Mail. Plain text is</p>
+<p>always included as a fallback, so apps that only take plain text paste</p>
+<p>exactly as before.</p>
+<ul>
+<li>Vercel AI Gateway support, chosen per model. The model browser now offers</li>
+</ul>
+<p>the Vercel AI Gateway catalog alongside OpenRouter — browse either, favourite</p>
+<p>models from both, and mix them freely in one favourites list. Each request</p>
+<p>automatically uses the gateway and API key belonging to the selected model.</p>
+<p>Save your Vercel key in Settings → LLM Gateways.</p>
+<h2>Improved</h2>
+<ul>
+<li>Beeper response windows now mute instead of snoozing. Muting a sender stops</li>
+</ul>
+<p>their messages entirely for the chosen duration — nothing is held back to</p>
+<p>resurface later. Unmute early from the menu bar.</p>
+<ul>
+<li>Multiple messages from the same sender now thread into the one response</li>
+</ul>
+<p>window as they arrive, instead of stacking counters behind a single message.</p>
+<ul>
+<li>Minimized response pills now show the chat or task title instead of just</li>
+</ul>
+<p>"Beeper", "Hermes", or "Codex", and hovering shows a preview of the text</p>
+<p>inside.</p>
+<h2>Notes</h2>
+<ul>
+<li>Model browsing and OpenRouter voice transcription continue to use your</li>
+</ul>
+<p>OpenRouter key. Routing priority and reasoning options apply to</p>
+<p>OpenRouter-routed models only.</p>
+<ul>
+<li>Meeting capture, history, settings, permissions, and Keychain credentials</li>
+</ul>
+<p>remain compatible.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-07-29/WonderWhisper-2026-07-29.dmg" sparkle:edSignature="yUcKQeMREr1ECO5aM3FfGj7Su8otevczDBGZihvyrYHbpqAMv2Oijivrfb1c914wsu1JuEoJcWgmpYe/k1gxAA==" length="9685907" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-28.1</title>
       <pubDate>Tue, 28 Jul 2026 05:59:35 +0000</pubDate>
       <sparkle:version>2026072801</sparkle:version>
