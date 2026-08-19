@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dkapo88/WonderWhisper-macOS/releases/latest"><img src="https://img.shields.io/github/v/release/dkapo88/WonderWhisper-macOS?display_name=release&style=flat-square" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/macOS-15.5%2B-202124?style=flat-square&logo=apple&logoColor=white" alt="macOS 15.5 or newer">
+  <img src="https://img.shields.io/badge/macOS-15.5%2B%20Apple%20Silicon-202124?style=flat-square&logo=apple&logoColor=white" alt="macOS 15.5 or newer on Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5F75EE?style=flat-square" alt="MIT license"></a>
 </p>
 
@@ -113,7 +113,7 @@ Local application data is stored under `~/Library/Application Support/HermesWhis
 
 ## Install
 
-WonderWhisper requires **macOS 15.5 or newer**.
+WonderWhisper requires **macOS 15.5 or newer** on Apple Silicon.
 
 ### Homebrew
 
@@ -172,7 +172,7 @@ The Hermes tab connects to an OpenAI-compatible Hermes Agent `/v1` server. It su
 Requirements:
 
 - Xcode with the macOS 15.5 SDK or newer
-- A Mac capable of running macOS 15.5+
+- An Apple Silicon Mac running macOS 15.5 or newer
 
 ```bash
 git clone https://github.com/dkapo88/WonderWhisper-macOS.git

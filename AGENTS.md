@@ -69,6 +69,8 @@ Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcod
 ## Releases & Auto-Update
 `Scripts/release.sh [TAG]` archives, signs, notarizes, publishes the GitHub release, and updates
 the Sparkle appcast. TAG must be `YYYY-MM-DD` with an optional `.N` same-day revision.
+Release archives are Apple Silicon only (`ARCHS=arm64 EXCLUDED_ARCHS=x86_64`). speech-swift/MLX
+cannot compile for x86_64, so never let the generic “Any Mac” destination build both slices.
 
 Versioning is derived from the tag, not stored in the project: `2026-07-26` yields
 `CFBundleShortVersionString = 2026-07-26` and `CFBundleVersion = 2026072600` (`.1` -> `...01`).
@@ -115,6 +117,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-19: Pinned Release archives to arm64 so speech-swift/MLX does not try to
+  compile the Intel slice.
 - 2026-08-19: Serialized Qwen3-ASR load/download/transcribe on one runtime, download
   weights without a second GPU model, chunk long files, and require a complete cache.
 - 2026-08-19: Added local Qwen3-ASR 0.6B (`qwen-local`) as an optional dictation engine.

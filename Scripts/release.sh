@@ -59,11 +59,16 @@ BUILD_VERSION="$(printf '%s%02d' "$TAG_DIGITS" "$TAG_REV")"
   exit 1
 }
 
-echo "==> Archiving Release"
+echo "==> Archiving Release (Apple Silicon)"
 rm -rf build/WonderWhisper.xcarchive
+# MLX / speech-swift cannot compile for x86_64. Default `generic/platform=macOS`
+# ("Any Mac") archives both slices and fails in SpeechVAD. Pin arm64 so the
+# signed app matches the Qwen runtime.
 xcodebuild archive -project WonderWhisper.xcodeproj -scheme WonderWhisper \
   -configuration Release -archivePath build/WonderWhisper.xcarchive -derivedDataPath build/ \
+  -destination "generic/platform=macOS" \
   -skipPackagePluginValidation \
+  ARCHS=arm64 EXCLUDED_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
   MARKETING_VERSION="$TAG" CURRENT_PROJECT_VERSION="$BUILD_VERSION"
 
 echo "==> Exporting (developer-id)"
