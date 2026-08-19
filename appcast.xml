@@ -5,6 +5,29 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-19.1</title>
+      <pubDate>Wed, 19 Aug 2026 14:19:25 +0000</pubDate>
+      <sparkle:version>2026081901</sparkle:version>
+      <sparkle:shortVersionString>2026-08-19.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fixed</h2>
+<ul>
+<li>Qwen dictation no longer runs MLX decode on the Swift cooperative thread</li>
+</ul>
+<p>pool. That path turned short recordings into thousands of garbage tokens</p>
+<p>and drove unified memory above 10 GB, so nothing useful was pasted.</p>
+<ul>
+<li>Decoder token budget now follows clip length, so a one-second file cannot</li>
+</ul>
+<p>emit a thousand tokens of junk.</p>
+<h2>Notes</h2>
+<ul>
+<li>This build is Apple Silicon only.</li>
+<li>Qwen remains dictation-only. Meetings still use Parakeet or Soniox.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-19.1/WonderWhisper-2026-08-19.1.dmg" sparkle:edSignature="/AKKQ4ZfDvHt1Q8d1kSnIlubASdfKq/KImzkQp88l2fzuDv8H1hskSed7O7Dw0sqxC1QrUwM8P1VZZx3u3jXAg==" length="11757881" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-19</title>
       <pubDate>Wed, 19 Aug 2026 10:40:49 +0000</pubDate>
       <sparkle:version>2026081900</sparkle:version>
