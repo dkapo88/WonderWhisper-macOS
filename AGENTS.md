@@ -117,6 +117,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-19.3: Allowed JIT / unsigned executable memory under Hardened Runtime
+  so MLX Metal kernels load in the notarized app. Qwen worked in Debug and
+  Release XCTest (get-task-allow) but garbled after Developer ID export.
 - 2026-08-19.2: Qwen dictation uses the greedy `transcribe(audio:sampleRate:)`
   path (same as `speech transcribe`) instead of generateSlow with a
   repetition penalty, which still produced garbage in the Release build.

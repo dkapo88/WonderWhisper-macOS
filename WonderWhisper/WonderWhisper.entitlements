@@ -19,5 +19,12 @@
 	<!-- Needed for AppleScript Automation (System Events keystroke) -->
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+	<!-- MLX compiles/loads Metal kernels at runtime. Debug and XCTest hosts
+	     inject get-task-allow, which is why Qwen works there and garbles in
+	     the notarized Developer ID export. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
 </dict>
 </plist>
