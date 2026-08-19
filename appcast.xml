@@ -5,6 +5,26 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-19.3</title>
+      <pubDate>Wed, 19 Aug 2026 15:00:51 +0000</pubDate>
+      <sparkle:version>2026081903</sparkle:version>
+      <sparkle:shortVersionString>2026-08-19.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fixed</h2>
+<ul>
+<li>Qwen dictation in the signed app. Debug and unit tests could transcribe</li>
+</ul>
+<p>fine; the notarized Hardened Runtime build could not load MLX Metal</p>
+<p>kernels, so decode collapsed into gibberish. The export now allows JIT</p>
+<p>for those kernels.</p>
+<h2>Notes</h2>
+<ul>
+<li>Memory use from the 2026-08-19 leak remains fixed.</li>
+<li>This build is Apple Silicon only. Qwen is dictation-only.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-19.3/WonderWhisper-2026-08-19.3.dmg" sparkle:edSignature="Hvle9bAtbgVLOQN64A6J1ZVVz+AwKoQdhzAyFVBroREkK4Pdc/aHjNfsY4hQV+G0P575+Mtj7rfro7aigz4TBw==" length="16561105" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-19.2</title>
       <pubDate>Wed, 19 Aug 2026 14:36:58 +0000</pubDate>
       <sparkle:version>2026081902</sparkle:version>
