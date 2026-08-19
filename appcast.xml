@@ -5,6 +5,48 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-19</title>
+      <pubDate>Wed, 19 Aug 2026 10:40:49 +0000</pubDate>
+      <sparkle:version>2026081900</sparkle:version>
+      <sparkle:shortVersionString>2026-08-19</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>New</h2>
+<ul>
+<li>On-device Qwen3-ASR 0.6B for dictation. Pick it in Settings → Transcription</li>
+</ul>
+<p>engine. It transcribes after you stop recording, fully on your Mac, with no</p>
+<p>cloud upload. First use downloads about 1 GB of model weights.</p>
+<h2>Improved</h2>
+<ul>
+<li>Qwen now loads through a single shared runtime, so Settings download and</li>
+</ul>
+<p>dictation cannot each keep a full copy of the model in memory.</p>
+<ul>
+<li>Longer dictations are split into 15-second chunks instead of silently</li>
+</ul>
+<p>truncating at the decoder token cap.</p>
+<ul>
+<li>Settings only marks the Qwen model downloaded when the full weight set is</li>
+</ul>
+<p>present, not a partial download.</p>
+<h2>Notes</h2>
+<ul>
+<li>This build is Apple Silicon only. The on-device Qwen engine uses MLX, which</li>
+</ul>
+<p>cannot compile for Intel.</p>
+<ul>
+<li>Qwen is for dictation, not meetings. Meetings still use Parakeet or Soniox.</li>
+<li>Download the model in Settings before the first Qwen dictation. If the</li>
+</ul>
+<p>weights are missing, dictation will ask you to download rather than stalling</p>
+<p>on HuggingFace at stop.</p>
+<ul>
+<li>Parakeet remains the default on-device engine. Meeting capture, history,</li>
+</ul>
+<p>settings, permissions, and Keychain credentials remain compatible.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-19/WonderWhisper-2026-08-19.dmg" sparkle:edSignature="vArREmQaLgUHHXB1urPrtWE+KprIKdmpA00P9CymwmGEBI/dlrLZPtHG2QyDLJ9137NQEgiSjT3iI86u7b8xAw==" length="11746173" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-07-29</title>
       <pubDate>Wed, 29 Jul 2026 03:24:31 +0000</pubDate>
       <sparkle:version>2026072900</sparkle:version>
