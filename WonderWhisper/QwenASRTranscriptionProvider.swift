@@ -3,22 +3,15 @@ import AVFoundation
 import OSLog
 
 #if canImport(Qwen3ASR)
-import Qwen3ASR
 
 /// File-based Qwen3-ASR-0.6B. Records finish, then one offline decode.
-/// No live streaming.
+/// No live streaming. Inference lives on `QwenASRRuntime`.
 final class QwenASRTranscriptionProvider: TranscriptionProvider {
   private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "QwenASR")
-  private let inferenceQueue = DispatchQueue(label: "com.danekapoor.wonderwhisper.qwen-asr")
-  private var model: Qwen3ASRModel?
-  private var loadTask: Task<Qwen3ASRModel, Error>?
-  private var idleUnloadTask: Task<Void, Never>?
-  private let idleSeconds: TimeInterval = 300
 
   func warmUp() async {
     do {
-      _ = try await ensureModelLoaded()
-      scheduleIdleUnload()
+      try await QwenASRRuntime.shared.warmUp()
     } catch {
       let ns = error as NSError
       log.notice("[QwenASR] warmUp failed: \(ns.localizedDescription, privacy: .public)")
@@ -29,72 +22,24 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
     let samples = try Self.decode16kMonoFloat(from: fileURL)
     guard !samples.isEmpty else { return "" }
-    let loaded = try await ensureModelLoaded()
     let language = QwenASRManager.languageHint(for: settings.language)
     let context = Self.contextPrompt(from: settings.vocabularyTerms)
-    let options = Qwen3DecodingOptions(
-      maxTokens: 1024,
-      language: language,
-      context: context,
-      repetitionPenalty: 1.15
-    )
+    let chunks = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
     log.notice(
-      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) samples=\(samples.count, privacy: .public)"
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) samples=\(samples.count, privacy: .public) chunks=\(chunks.count, privacy: .public)"
     )
-    AppLog.dictation.log("[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count)")
-    let text = try await runOnInferenceQueue {
-      loaded.transcribe(audio: samples, sampleRate: 16_000, options: options)
-    }
+    AppLog.dictation.log(
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count) chunks=\(chunks.count)"
+    )
+    let text = try await QwenASRRuntime.shared.transcribe(
+      samples: samples,
+      language: language,
+      context: context
+    )
     let preview = text.prefix(120)
     log.notice("[QwenASR] result length=\(text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
     AppLog.dictation.log("[QwenASR] result length=\(text.count) preview=\(String(preview))")
-    scheduleIdleUnload()
     return text
-  }
-
-  private func ensureModelLoaded() async throws -> Qwen3ASRModel {
-    if let model { return model }
-    if let loadTask {
-      return try await loadTask.value
-    }
-    guard QwenASRManager.isAppleSilicon else {
-      throw QwenASRError.requiresAppleSilicon
-    }
-    let task = Task<Qwen3ASRModel, Error> {
-      AppLog.dictation.log("[QwenASR] loading \(QwenASRManager.modelId)")
-      return try await Qwen3ASRModel.fromPretrained(modelId: QwenASRManager.modelId)
-    }
-    loadTask = task
-    defer { loadTask = nil }
-    let loaded = try await task.value
-    model = loaded
-    return loaded
-  }
-
-  private func scheduleIdleUnload() {
-    idleUnloadTask?.cancel()
-    idleUnloadTask = Task { [weak self] in
-      guard let self else { return }
-      try? await Task.sleep(nanoseconds: UInt64(self.idleSeconds * 1_000_000_000))
-      if Task.isCancelled { return }
-      if self.model != nil {
-        self.log.notice("[QwenASR] Idle timeout — unloading model")
-        AppLog.dictation.log("[QwenASR] idle unload")
-      }
-      self.model = nil
-    }
-  }
-
-  private func runOnInferenceQueue<T>(_ work: @escaping () throws -> T) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-      inferenceQueue.async {
-        do {
-          continuation.resume(returning: try work())
-        } catch {
-          continuation.resume(throwing: error)
-        }
-      }
-    }
   }
 
   private static func contextPrompt(from terms: [String]) -> String? {

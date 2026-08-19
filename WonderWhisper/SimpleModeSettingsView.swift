@@ -90,7 +90,7 @@ struct SimpleModeSettingsView: View {
     GroupBox("Transcription engine") {
       VStack(alignment: .leading, spacing: 10) {
         Picker("Engine", selection: $vm.simpleVoiceEngine) {
-          ForEach(SimpleVoiceEngine.allCases) { engine in
+          ForEach(SimpleVoiceEngine.availableEngines) { engine in
             Text(engine.displayName).tag(engine)
           }
         }

@@ -115,6 +115,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-19: Serialized Qwen3-ASR load/download/transcribe on one runtime, download
+  weights without a second GPU model, chunk long files, and require a complete cache.
 - 2026-08-19: Added local Qwen3-ASR 0.6B (`qwen-local`) as an optional dictation engine.
   File-based MLX inference via speech-swift; first-run HuggingFace download; not used for meetings.
 - 2026-07-29: Routed all app preference reads/writes through `AppConfig.defaults`, which is

@@ -5560,7 +5560,8 @@ private extension DictationViewModel {
 
     static func loadSimpleVoiceEngine() -> SimpleVoiceEngine {
         let raw = AppConfig.defaults.string(forKey: SimpleDefaultsKey.voiceEngine) ?? SimpleVoiceEngine.parakeetLocal.rawValue
-        return SimpleVoiceEngine(rawValue: raw) ?? .parakeetLocal
+        let engine = SimpleVoiceEngine(rawValue: raw) ?? .parakeetLocal
+        return engine.isAvailable ? engine : .parakeetLocal
     }
 
     static func loadOpenRouterTranscriptionModel() -> String {

@@ -299,7 +299,7 @@ final class MenuBarController: NSObject {
     private func buildVoiceEngineMenu() -> NSMenuItem {
         let engineMenu = NSMenuItem(title: "Voice Engine", action: nil, keyEquivalent: "")
         let sub = NSMenu()
-        for engine in SimpleVoiceEngine.allCases {
+        for engine in SimpleVoiceEngine.availableEngines {
             sub.addItem(makeCheckedMenuItem(
                 title: engine.displayName,
                 action: #selector(selectVoiceEngine(_:)),

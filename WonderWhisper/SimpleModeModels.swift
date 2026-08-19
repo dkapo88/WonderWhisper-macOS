@@ -161,6 +161,17 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     default: return false
     }
   }
+
+  var isAvailable: Bool {
+    switch self {
+    case .qwenLocal: return QwenASRManager.isRuntimeAvailable
+    default: return true
+    }
+  }
+
+  static var availableEngines: [SimpleVoiceEngine] {
+    allCases.filter(\.isAvailable)
+  }
 }
 
 struct TranscriptionLanguageOption: Identifiable, Hashable {

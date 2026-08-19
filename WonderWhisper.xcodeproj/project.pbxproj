@@ -10,6 +10,7 @@
 		0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7404A2E69E7B2007001CC /* FluidAudio */; };
 		0AE7405B2E69E7B2007001CC /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7405A2E69E7B2007001CC /* Sparkle */; };
 		0AE7406B2E69E7B2007001CC /* Qwen3ASR in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7406A2E69E7B2007001CC /* Qwen3ASR */; };
+		0AE7407B2E69E7B2007001CC /* AudioCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7407A2E69E7B2007001CC /* AudioCommon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +49,7 @@
 				0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */,
 				0AE7405B2E69E7B2007001CC /* Sparkle in Frameworks */,
 				0AE7406B2E69E7B2007001CC /* Qwen3ASR in Frameworks */,
+				0AE7407B2E69E7B2007001CC /* AudioCommon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -110,6 +112,7 @@
 				0AE7404A2E69E7B2007001CC /* FluidAudio */,
 				0AE7405A2E69E7B2007001CC /* Sparkle */,
 				0AE7406A2E69E7B2007001CC /* Qwen3ASR */,
+				0AE7407A2E69E7B2007001CC /* AudioCommon */,
 			);
 			productName = WonderWhisper;
 			productReference = 0AE73FA92E6954E0007001CC /* WonderWhisper.app */;
@@ -515,6 +518,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 0AE740622E69E14A007001CC /* XCRemoteSwiftPackageReference "speech-swift" */;
 			productName = Qwen3ASR;
+		};
+		0AE7407A2E69E7B2007001CC /* AudioCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0AE740622E69E14A007001CC /* XCRemoteSwiftPackageReference "speech-swift" */;
+			productName = AudioCommon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,6 +1,7 @@
 import Foundation
 #if canImport(Qwen3ASR)
 import Qwen3ASR
+import AudioCommon
 #endif
 
 /// On-device Qwen3-ASR-0.6B (MLX 4-bit). File-based / async only.
@@ -11,6 +12,11 @@ import Qwen3ASR
 enum QwenASRManager {
   static let modelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
   static let cacheDirectoryName = "qwen3-speech"
+  static let sampleRate = 16_000
+  static let chunkDurationSeconds = 15
+  static let oneShotMaxDurationSeconds = 20
+  static let chunkMaxTokens = 448
+  static let oneShotMaxTokens = 1024
 
   static var isLinked: Bool {
     #if canImport(Qwen3ASR)
@@ -71,35 +77,58 @@ enum QwenASRManager {
       || (trimmed.contains("qwen") && !trimmed.contains("/"))
   }
 
-  #if canImport(Qwen3ASR)
-  /// Download weights if needed, then drop the in-memory model so Settings
-  /// does not keep ~1 GB of GPU weights resident.
-  static func downloadModel(
-    progress: ((Double, String) -> Void)? = nil
-  ) async throws {
-    guard isAppleSilicon else {
-      throw QwenASRError.requiresAppleSilicon
+  static var isRuntimeAvailable: Bool {
+    isLinked && isAppleSilicon
+  }
+
+  /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
+  /// so each decode stays under the per-call token cap.
+  static func transcriptionChunkRanges(
+    sampleCount: Int,
+    sampleRate: Int = sampleRate,
+    chunkSeconds: Int = chunkDurationSeconds,
+    oneShotMaxSeconds: Int = oneShotMaxDurationSeconds
+  ) -> [Range<Int>] {
+    guard sampleCount > 0, sampleRate > 0 else { return [] }
+    let oneShotLimit = oneShotMaxSeconds * sampleRate
+    if sampleCount <= oneShotLimit { return [0..<sampleCount] }
+    let chunkSize = max(1, chunkSeconds * sampleRate)
+    var ranges: [Range<Int>] = []
+    var offset = 0
+    while offset < sampleCount {
+      let end = min(offset + chunkSize, sampleCount)
+      ranges.append(offset..<end)
+      offset = end
     }
-    _ = try await Qwen3ASRModel.fromPretrained(
-      modelId: modelId,
-      progressHandler: progress
-    )
+    return ranges
+  }
+
+  #if canImport(Qwen3ASR)
+  /// Cache weights only. Does not instantiate the GPU model.
+  static func downloadModel(
+    progress: (@Sendable (Double, String) -> Void)? = nil
+  ) async throws {
+    try await QwenASRRuntime.shared.downloadWeights(progress: progress)
   }
   #endif
 
   static func weightsExist(in directory: URL) -> Bool {
     let fm = FileManager.default
-    var isDir: ObjCBool = false
-    guard fm.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
-      return false
-    }
     let config = directory.appendingPathComponent("config.json")
     let vocab = directory.appendingPathComponent("vocab.json")
     guard fm.fileExists(atPath: config.path), fm.fileExists(atPath: vocab.path) else {
       return false
     }
+    #if canImport(Qwen3ASR)
+    return HuggingFaceDownloader.weightsExist(in: directory)
+    #else
+    var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
+      return false
+    }
     let items = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
     return items.contains { $0.pathExtension.lowercased() == "safetensors" }
+    #endif
   }
 }
 
@@ -108,6 +137,7 @@ enum QwenASRError: Error, LocalizedError {
   case frameworkMissing
   case emptyAudio
   case decodeFailed
+  case modelNotDownloaded
 
   var errorDescription: String? {
     switch self {
@@ -119,6 +149,8 @@ enum QwenASRError: Error, LocalizedError {
       return "Audio file is empty."
     case .decodeFailed:
       return "Could not decode audio for Qwen3-ASR."
+    case .modelNotDownloaded:
+      return "Download Qwen3-ASR 0.6B in Settings before dictating."
     }
   }
 }

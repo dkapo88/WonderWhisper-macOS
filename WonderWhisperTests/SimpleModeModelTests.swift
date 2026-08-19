@@ -25,6 +25,38 @@ struct SimpleModeModelTests {
     #expect(QwenASRManager.languageHint(for: "en-US") == "en")
     #expect(QwenASRManager.languageHint(for: "zh") == "zh")
     #expect(QwenASRManager.modelId.contains("0.6B"))
+    #expect(SimpleVoiceEngine.qwenLocal.isAvailable == QwenASRManager.isRuntimeAvailable)
+  }
+
+  @Test func qwenKeepsShortAudioAsASingleDecode() {
+    let rate = QwenASRManager.sampleRate
+    let samples = 10 * rate
+    let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples)
+    #expect(ranges == [0..<samples])
+  }
+
+  @Test func qwenSplitsLongAudioIntoFifteenSecondSlices() {
+    let rate = QwenASRManager.sampleRate
+    let samples = 50 * rate
+    let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples)
+    #expect(ranges.count == 4)
+    #expect(ranges[0].count == 15 * rate)
+    #expect(ranges[3].count == 5 * rate)
+    #expect(ranges.last?.upperBound == samples)
+  }
+
+  @Test func qwenWeightsExistRejectsIncompleteShardSet() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+    try Data("{}".utf8).write(to: dir.appendingPathComponent("vocab.json"))
+    try Data([0]).write(to: dir.appendingPathComponent("model-00001-of-00002.safetensors"))
+    let index = """
+    {"weight_map":{"a":"model-00001-of-00002.safetensors","b":"model-00002-of-00002.safetensors"}}
+    """
+    try Data(index.utf8).write(to: dir.appendingPathComponent("model.safetensors.index.json"))
+    #expect(!QwenASRManager.weightsExist(in: dir))
   }
 
   @Test func sonioxStreamingEngineUsesV5RealtimeModel() {
