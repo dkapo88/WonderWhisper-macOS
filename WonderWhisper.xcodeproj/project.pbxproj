@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7404A2E69E7B2007001CC /* FluidAudio */; };
 		0AE7405B2E69E7B2007001CC /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7405A2E69E7B2007001CC /* Sparkle */; };
+		0AE7406B2E69E7B2007001CC /* Qwen3ASR in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7406A2E69E7B2007001CC /* Qwen3ASR */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 			files = (
 				0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */,
 				0AE7405B2E69E7B2007001CC /* Sparkle in Frameworks */,
+				0AE7406B2E69E7B2007001CC /* Qwen3ASR in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -107,6 +109,7 @@
 			packageProductDependencies = (
 				0AE7404A2E69E7B2007001CC /* FluidAudio */,
 				0AE7405A2E69E7B2007001CC /* Sparkle */,
+				0AE7406A2E69E7B2007001CC /* Qwen3ASR */,
 			);
 			productName = WonderWhisper;
 			productReference = 0AE73FA92E6954E0007001CC /* WonderWhisper.app */;
@@ -166,6 +169,7 @@
 			packageReferences = (
 				0AE740422E69E14A007001CC /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				0AE740522E69E14A007001CC /* XCRemoteSwiftPackageReference "Sparkle" */,
+				0AE740622E69E14A007001CC /* XCRemoteSwiftPackageReference "speech-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0AE73FAA2E6954E0007001CC /* Products */;
@@ -486,6 +490,14 @@
 				minimumVersion = 2.9.4;
 			};
 		};
+		0AE740622E69E14A007001CC /* XCRemoteSwiftPackageReference "speech-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/soniqo/speech-swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.26;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -498,6 +510,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 0AE740522E69E14A007001CC /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		0AE7406A2E69E7B2007001CC /* Qwen3ASR */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0AE740622E69E14A007001CC /* XCRemoteSwiftPackageReference "speech-swift" */;
+			productName = Qwen3ASR;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

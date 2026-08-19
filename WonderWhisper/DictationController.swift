@@ -125,6 +125,9 @@ actor DictationController {
                 if let pk = transcriber as? ParakeetTranscriptionProvider {
                     Task { await pk.warmUp() }
                 }
+                if let qwen = transcriber as? QwenASRTranscriptionProvider {
+                    Task { await qwen.warmUp() }
+                }
 
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.updateSettings(transcriberSettings)

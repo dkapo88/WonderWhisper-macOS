@@ -778,6 +778,14 @@ final class DictationViewModel: ObservableObject {
                 language: transcriptionLanguage,
                 vocabularyTerms: initialVoiceVocabularyTerms
             )
+        } else if QwenASRManager.isQwenModel(activeTranscriptionModel) {
+            transcriber = QwenASRTranscriptionProvider()
+            transcriberSettings = TranscriptionSettings(
+                endpoint: URL(string: "https://localhost")!,
+                model: activeTranscriptionModel,
+                language: transcriptionLanguage,
+                vocabularyTerms: initialVoiceVocabularyTerms
+            )
         } else if Self.isOpenRouterTranscriptionModel(activeTranscriptionModel) {
             transcriber = OpenRouterTranscriptionProvider(
                 client: OpenRouterHTTPClient(apiKeyProvider: {
@@ -5196,6 +5204,13 @@ final class DictationViewModel: ObservableObject {
                 language: voiceLanguage,
                 vocabularyTerms: voiceVocabularyTerms
             )
+        } else if QwenASRManager.isQwenModel(voiceModel) {
+            tSettings = TranscriptionSettings(
+                endpoint: URL(string: "https://localhost")!,
+                model: voiceModel,
+                language: voiceLanguage,
+                vocabularyTerms: voiceVocabularyTerms
+            )
         } else if voiceModel == "groq-streaming" {
             let actualModel = AppConfig.defaultTranscriptionModel
             tSettings = TranscriptionSettings(
@@ -5322,6 +5337,8 @@ final class DictationViewModel: ObservableObject {
         let provider: TranscriptionProvider
         if model.lowercased().contains("parakeet") {
             provider = ParakeetTranscriptionProvider()
+        } else if QwenASRManager.isQwenModel(model) {
+            provider = QwenASRTranscriptionProvider()
         } else if model == "groq-streaming" {
             // Keep the existing engine identifier for settings compatibility, but use
             // Groq's stable file upload path. Soniox is the real-time streaming engine.

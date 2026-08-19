@@ -2,7 +2,7 @@
 
 Scope: Entire repository  
 Owner: WonderWhisper Development Team
-Last updated: July 16, 2026
+Last updated: August 19, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
@@ -10,7 +10,7 @@ Note to agents and contributors: Keep this document up to date with any changes.
 WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view models, and helpers grouped by feature. Shared assets live in `WonderWhisper/Assets.xcassets`, while project settings and entitlements sit beside the sources. Unit tests reside in `WonderWhisperTests/`. Local build artifacts accumulate under `build/`, and Xcode writes derived data to `DerivedData_WW/`.
 
 ### Architecture Overview
-Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol, and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
+Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol (`ParakeetTranscriptionProvider`, `QwenASRTranscriptionProvider`, cloud providers), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
 The app includes persistent microphone priority ordering in the sidebar. Users can choose the system
@@ -23,7 +23,7 @@ connected device and then the system default. Selection is persisted via `AudioI
   Codex, Beeper, Hermes, Vocabulary, Microphone, Compare, Permissions, and Settings. Scratchpad,
   Pro mode, and file transcription workflows have been removed; keep new work within these
   surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document.
+- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
   supplies the selected microphone. Parakeet Unified remains the free on-device default with
@@ -64,7 +64,7 @@ connected device and then the system default. Selection is persisted via `AudioI
   build, so any new integration must be justified and added here.
 
 ## Build, Test, and Development Commands
-Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug build`. Execute tests with `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test`. To run a single test, use `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test -only-testing:WonderWhisperTests/WonderWhisperTests/testName`. After a successful script build, `open build/Build/Products/Debug/WonderWhisper.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations.
+Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug -skipPackagePluginValidation build`. Execute tests with `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' -skipPackagePluginValidation test`. To run a single test, use `xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' -skipPackagePluginValidation test -only-testing:WonderWhisperTests/WonderWhisperTests/testName`. After a successful script build, `open build/Build/Products/Debug/WonderWhisper.app` launches the latest artifact. The project uses Swift Testing framework (not XCTest) with `@Test` annotations. The `-skipPackagePluginValidation` flag is required because speech-swift pulls mlx-swift, whose unused CUDA plugin is blocked by Xcode until trusted. In the Xcode UI, enable the mlx-swift `CudaBuild` plugin when prompted (it is not used on Mac). MLX also needs the Metal toolchain: `xcodebuild -downloadComponent MetalToolchain` once per machine.
 
 ## Releases & Auto-Update
 `Scripts/release.sh [TAG]` archives, signs, notarizes, publishes the GitHub release, and updates
@@ -115,6 +115,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-19: Added local Qwen3-ASR 0.6B (`qwen-local`) as an optional dictation engine.
+  File-based MLX inference via speech-swift; first-run HuggingFace download; not used for meetings.
 - 2026-07-29: Routed all app preference reads/writes through `AppConfig.defaults`, which is
   `.standard` in a normal launch and a wiped scratch suite under the test runner, so unit
   tests can no longer clobber live user data (a test fixture previously overwrote the real

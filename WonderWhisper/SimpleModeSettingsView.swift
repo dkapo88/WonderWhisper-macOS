@@ -18,6 +18,10 @@ struct SimpleModeSettingsView: View {
   @State private var customModelDraft: String = ""
   @State private var isDownloadingParakeet: Bool = false
   @State private var parakeetDownloadError: String?
+  @State private var isDownloadingQwen: Bool = false
+  @State private var qwenDownloadProgress: Double = 0
+  @State private var qwenDownloadStatus: String = ""
+  @State private var qwenDownloadError: String?
   @State private var showModelBrowser: Bool = false
   // Selected on-device Parakeet model (persisted under "parakeet.version").
   @AppStorage("parakeet.version", store: AppConfig.defaults)
@@ -54,6 +58,7 @@ struct SimpleModeSettingsView: View {
         xaiSection
         sonioxSection
         parakeetSection
+        qwenSection
         audioSection
         recordingSection
         updatesSection
@@ -125,7 +130,7 @@ struct SimpleModeSettingsView: View {
       .labelsHidden()
       .frame(maxWidth: 420)
 
-      Text("Grok STT uses this with formatting enabled. Auto-detect skips formatting-specific language hints.")
+      Text("Used by Grok STT (with formatting) and local Qwen3-ASR. Auto-detect skips a language hint.")
         .font(.caption)
         .foregroundColor(.secondary)
     }
@@ -526,6 +531,51 @@ struct SimpleModeSettingsView: View {
     }
   }
 
+  private var qwenSection: some View {
+    GroupBox("Qwen3-ASR 0.6B") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          statusLabel(title: "Framework", ok: QwenASRManager.isLinked)
+          statusLabel(title: "Apple Silicon", ok: QwenASRManager.isAppleSilicon)
+          statusLabel(title: "Model downloaded", ok: QwenASRManager.modelsPresent())
+        }
+
+        HStack(spacing: 12) {
+          Button(isDownloadingQwen ? "Downloading…" : "Download / Update Model") {
+            downloadQwen()
+          }
+          .disabled(isDownloadingQwen || !QwenASRManager.isLinked || !QwenASRManager.isAppleSilicon)
+
+          Button("Show in Finder") {
+            NSWorkspace.shared.selectFile(
+              QwenASRManager.effectiveCacheDirectory().path,
+              inFileViewerRootedAtPath: "")
+          }
+        }
+
+        if isDownloadingQwen {
+          ProgressView(value: qwenDownloadProgress, total: 1) {
+            Text(qwenDownloadStatus.isEmpty ? "Downloading…" : qwenDownloadStatus)
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+          .frame(maxWidth: 420)
+        }
+
+        if let qwenDownloadError {
+          Text("Download failed: \(qwenDownloadError)")
+            .font(.caption)
+            .foregroundColor(.red)
+        }
+
+        Text("First download is about 1 GB from HuggingFace. Transcription is offline after that: stop recording, then Qwen decodes the file. Not used for meetings.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.top, 4)
+    }
+  }
+
   private var audioSection: some View {
     GroupBox("Audio feedback") {
       VStack(alignment: .leading, spacing: 8) {
@@ -608,6 +658,31 @@ struct SimpleModeSettingsView: View {
       }
     }
     #endif
+  }
+
+  private func downloadQwen() {
+    isDownloadingQwen = true
+    qwenDownloadError = nil
+    qwenDownloadProgress = 0
+    qwenDownloadStatus = "Starting…"
+    Task {
+      defer { isDownloadingQwen = false }
+      do {
+        #if canImport(Qwen3ASR)
+        try await QwenASRManager.downloadModel { progress, status in
+          Task { @MainActor in
+            qwenDownloadProgress = progress
+            qwenDownloadStatus = status
+          }
+        }
+        #else
+        throw QwenASRError.frameworkMissing
+        #endif
+      } catch {
+        qwenDownloadError = (error as NSError).localizedDescription
+        AppLog.dictation.error("[QwenASR] download failed: \((error as NSError).localizedDescription)")
+      }
+    }
   }
 }
 

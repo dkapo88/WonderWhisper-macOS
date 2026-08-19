@@ -8,13 +8,13 @@ WonderWhisper is a macOS dictation app built with SwiftUI. It provides voice-to-
 ### Build & Run
 ```bash
 # Build
-xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug build
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -configuration Debug -skipPackagePluginValidation build
 
 # Run tests
-xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' -skipPackagePluginValidation test
 
 # Run single test
-xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' test -only-testing:WonderWhisperTests/TestClass/testName
+xcodebuild -project "WonderWhisper.xcodeproj" -scheme "WonderWhisper" -destination 'platform=macOS' -skipPackagePluginValidation test -only-testing:WonderWhisperTests/TestClass/testName
 
 # Launch script-built app
 open build/Build/Products/Debug/WonderWhisper.app

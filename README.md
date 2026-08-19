@@ -86,6 +86,7 @@ Transcription and language-model processing are separate choices.
 | Engine | Where it runs | Best for |
 | --- | --- | --- |
 | **Parakeet Unified / V3** | On device | Private, free transcription; Unified is the default and V3 adds multilingual coverage. |
+| **Qwen3-ASR 0.6B** | On device | Offline file transcription after you stop recording. Multilingual MLX model; first use downloads about 1 GB. Not used for meetings. |
 | **Groq Whisper Large V3 Turbo** | Cloud | Fast batch transcription through Groq. |
 | **Soniox V5** | Cloud | Low-latency streaming dictation and optional live meeting transcription. |
 | **OpenRouter Voice** | Cloud | Choosing supported speech-to-text models through OpenRouter. |
@@ -102,10 +103,10 @@ WonderWhisper makes the local/cloud boundary explicit:
 | Data or operation | Default behaviour | Sent elsewhere only when… |
 | --- | --- | --- |
 | Microphone and system audio | Captured and segmented locally | A cloud transcription engine is selected. |
-| Parakeet transcription | Audio processing runs locally; audio never leaves your Mac | Resulting transcript text is included only when you enable OpenRouter cleanup, generated notes, or live context. |
+| Parakeet or Qwen transcription | Audio processing runs locally; audio never leaves your Mac | Resulting transcript text is included only when you enable OpenRouter cleanup, generated notes, or live context. |
 | Manual notes and meeting history | Saved locally | Generated meeting notes are explicitly enabled. |
 | Obsidian search and ranking | Runs locally in the chosen vault | Live AI context is enabled; only bounded matching excerpts are included. |
-| Dictation text | Can remain local with Parakeet and no cleanup | OpenRouter cleanup or a cloud STT engine is enabled. |
+| Dictation text | Can remain local with Parakeet or Qwen and no cleanup | OpenRouter cleanup or a cloud STT engine is enabled. |
 | Beeper or Hermes content | Unused by default | You configure and invoke the relevant integration. |
 
 Local application data is stored under `~/Library/Application Support/HermesWhisper/`. The legacy internal directory name is intentionally retained so existing users keep their meetings, history, settings, and credentials after upgrading to WonderWhisper.
@@ -186,6 +187,7 @@ xcodebuild \
   -project WonderWhisper.xcodeproj \
   -scheme WonderWhisper \
   -configuration Debug \
+  -skipPackagePluginValidation \
   build
 ```
 
@@ -196,6 +198,7 @@ xcodebuild \
   -project WonderWhisper.xcodeproj \
   -scheme WonderWhisper \
   -destination 'platform=macOS' \
+  -skipPackagePluginValidation \
   test
 ```
 

@@ -63,6 +63,7 @@ echo "==> Archiving Release"
 rm -rf build/WonderWhisper.xcarchive
 xcodebuild archive -project WonderWhisper.xcodeproj -scheme WonderWhisper \
   -configuration Release -archivePath build/WonderWhisper.xcarchive -derivedDataPath build/ \
+  -skipPackagePluginValidation \
   MARKETING_VERSION="$TAG" CURRENT_PROJECT_VERSION="$BUILD_VERSION"
 
 echo "==> Exporting (developer-id)"

@@ -356,6 +356,7 @@ erDiagram
 | Case | Description | Underlying Model |
 |------|-------------|------------------|
 | `parakeet-local` | On-device Parakeet V3 for maximum privacy/latency | `parakeet-local` |
+| `qwen-local` | On-device Qwen3-ASR 0.6B (MLX 4-bit), offline file decode | `qwen-local` |
 | `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
 | `openrouter-transcription` | OpenRouter speech-to-text endpoint for cloud voice models | `openai/gpt-4o-mini-transcribe` by default |
 | `xai-stt` | xAI Grok Speech-to-Text over HTTPS multipart upload | `xai-stt` service endpoint |
@@ -560,6 +561,10 @@ erDiagram
         └── system-0001.caf       # One-minute 16 kHz mono segments
 ```
 
+Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift caches them at
+`~/Library/Caches/qwen3-speech/` (`aufklarer/Qwen3-ASR-0.6B-MLX-4bit`, about 1 GB). A CLI
+`speech transcribe` download is reused.
+
 ### UserDefaults Keys
 
 | Key | Type | Description |
@@ -591,7 +596,7 @@ erDiagram
 | `simple.llm.enabled` | Bool | LLM enabled in simple mode |
 | `simple.model.selected` | String | Selected OpenRouter model |
 | `simple.model.custom` | Array<String> | Custom OpenRouter model IDs |
-| `simple.voice.engine` | String | Selected transcription engine (`parakeet-local`, `groq-streaming`, `openrouter-transcription`, `xai-stt`, or `soniox-streaming`) |
+| `simple.voice.engine` | String | Selected transcription engine (`parakeetLocal`, `qwenLocal`, `groqStreaming`, `openrouterTranscription`, `xaiSpeechToText`, `xaiStreamingSpeechToText`, or `sonioxStreaming`) |
 | `transcription.openrouter.model` | String | Selected OpenRouter speech-to-text model ID |
 | `simple.dictation.settings` | Data | Dictation prompt settings |
 | `simple.command.settings` | Data | Command prompt settings |

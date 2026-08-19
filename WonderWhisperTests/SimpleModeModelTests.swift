@@ -14,6 +14,19 @@ struct SimpleModeModelTests {
     #expect(SimpleVoiceEngine.xaiStreamingSpeechToText.showsLiveTranscript == true)
   }
 
+  @Test func qwenLocalEngineIsFileBasedOnDevice() {
+    #expect(SimpleVoiceEngine.qwenLocal.transcriptionModel == "qwen-local")
+    #expect(SimpleVoiceEngine.qwenLocal.showsLiveTranscript == false)
+    #expect(QwenASRManager.isQwenModel("qwen-local"))
+    #expect(QwenASRManager.isQwenModel("Qwen-Local"))
+    #expect(!QwenASRManager.isQwenModel("qwen/qwen3-asr-0.6b"))
+    #expect(!QwenASRManager.isQwenModel("parakeet-local"))
+    #expect(QwenASRManager.languageHint(for: "auto") == nil)
+    #expect(QwenASRManager.languageHint(for: "en-US") == "en")
+    #expect(QwenASRManager.languageHint(for: "zh") == "zh")
+    #expect(QwenASRManager.modelId.contains("0.6B"))
+  }
+
   @Test func sonioxStreamingEngineUsesV5RealtimeModel() {
     #expect(SimpleVoiceEngine.sonioxStreaming.displayName == "Soniox V5 (Real-time Cloud)")
     #expect(SonioxStreamingProvider.apiModel(for: "") == "stt-rt-v5")

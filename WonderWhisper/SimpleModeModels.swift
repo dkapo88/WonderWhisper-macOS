@@ -102,6 +102,7 @@ enum CodexHotkey {
 
 enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   case parakeetLocal
+  case qwenLocal
   case groqStreaming
   case sonioxStreaming
   case openRouterTranscription
@@ -113,6 +114,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   var displayName: String {
     switch self {
     case .parakeetLocal: return "Parakeet (On-device)"
+    case .qwenLocal: return "Qwen3-ASR 0.6B (On-device)"
     case .groqStreaming: return "Groq Whisper Turbo (Cloud)"
     case .sonioxStreaming: return "Soniox V5 (Real-time Cloud)"
     case .openRouterTranscription: return "OpenRouter Voice (Cloud)"
@@ -125,6 +127,8 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
     switch self {
     case .parakeetLocal:
       return "Runs fully on your Mac for the lowest latency and maximum privacy."
+    case .qwenLocal:
+      return "On-device Qwen3-ASR 0.6B via MLX. Offline file transcription after you stop; no live stream."
     case .groqStreaming:
       return "Uploads finalized audio to Groq Whisper Large V3 Turbo for reliable cloud transcription."
     case .sonioxStreaming:
@@ -141,6 +145,7 @@ enum SimpleVoiceEngine: String, CaseIterable, Identifiable, Codable {
   var transcriptionModel: String {
     switch self {
     case .parakeetLocal: return "parakeet-local"
+    case .qwenLocal: return "qwen-local"
     case .groqStreaming: return "groq-streaming"
     case .sonioxStreaming: return "soniox-streaming"
     case .openRouterTranscription: return "openrouter-transcription"
