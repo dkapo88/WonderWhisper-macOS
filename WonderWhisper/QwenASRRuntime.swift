@@ -61,19 +61,16 @@ final class QwenASRRuntime: @unchecked Sendable {
       var parts: [String] = []
       for range in ranges {
         let slice = Array(samples[range])
-        let options = Qwen3DecodingOptions(
-          maxTokens: QwenASRManager.maxTokens(
-            sampleCount: slice.count,
-            chunked: ranges.count > 1
-          ),
-          language: language,
-          context: context,
-          repetitionPenalty: 1.15
-        )
+        // Legacy greedy overload — same path as `speech transcribe`. Custom
+        // Qwen3DecodingOptions (repetitionPenalty 1.15) force generateSlow,
+        // which in the Release build emitted mixed-script garbage until EOS
+        // never fired.
         let part = loaded.transcribe(
           audio: slice,
           sampleRate: QwenASRManager.sampleRate,
-          options: options
+          language: language,
+          maxTokens: QwenASRManager.chunkMaxTokens,
+          context: context
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         if !part.isEmpty { parts.append(part) }
       }

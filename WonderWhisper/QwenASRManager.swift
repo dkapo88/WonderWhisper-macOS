@@ -14,9 +14,8 @@ enum QwenASRManager {
   static let cacheDirectoryName = "qwen3-speech"
   static let sampleRate = 16_000
   static let chunkDurationSeconds = 15
-  static let oneShotMaxDurationSeconds = 20
+  static let oneShotMaxDurationSeconds = 15
   static let chunkMaxTokens = 448
-  static let oneShotMaxTokens = 1024
 
   static var isLinked: Bool {
     #if canImport(Qwen3ASR)
@@ -81,18 +80,9 @@ enum QwenASRManager {
     isLinked && isAppleSilicon
   }
 
-  /// Decoder budget for a clip. Speech is a few tokens per second; a fixed 1024
-  /// cap on a 1 s file lets a broken decode emit thousands of garbage tokens
-  /// and balloon MLX cache. Floor 64 so very short clips still have headroom.
-  static func maxTokens(sampleCount: Int, chunked: Bool) -> Int {
-    let cap = chunked ? chunkMaxTokens : oneShotMaxTokens
-    let duration = Double(max(0, sampleCount)) / Double(sampleRate)
-    let adaptive = Int(duration * 16.0) + 48
-    return min(cap, max(64, adaptive))
-  }
-
   /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
-  /// so each decode stays under the per-call token cap.
+  /// so each decode stays on the greedy fast path (`duration > 15` would
+  /// escalate to the slow n-gram decoder).
   static func transcriptionChunkRanges(
     sampleCount: Int,
     sampleRate: Int = sampleRate,

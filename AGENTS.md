@@ -117,6 +117,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-19.2: Qwen dictation uses the greedy `transcribe(audio:sampleRate:)`
+  path (same as `speech transcribe`) instead of generateSlow with a
+  repetition penalty, which still produced garbage in the Release build.
 - 2026-08-19.1: Moved Qwen MLX decode off the Swift actor onto a serial GCD
   queue and capped decoder tokens by audio duration after the 2026-08-19
   production build emitted garbage text and ballooned unified memory.

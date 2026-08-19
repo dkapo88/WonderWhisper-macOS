@@ -35,16 +35,13 @@ struct SimpleModeModelTests {
     #expect(ranges == [0..<samples])
   }
 
-  @Test func qwenCapsDecoderTokensToAudioDuration() {
+  @Test func qwenSplitsAudioLongerThanFifteenSeconds() {
     let rate = QwenASRManager.sampleRate
-    #expect(QwenASRManager.maxTokens(sampleCount: rate, chunked: false) == 64)
-    #expect(QwenASRManager.maxTokens(sampleCount: 5 * rate, chunked: false) == 128)
-    #expect(QwenASRManager.maxTokens(sampleCount: 20 * rate, chunked: false) == 368)
-    #expect(QwenASRManager.maxTokens(sampleCount: 15 * rate, chunked: true) == 288)
-    #expect(
-      QwenASRManager.maxTokens(sampleCount: 80 * rate, chunked: false)
-        == QwenASRManager.oneShotMaxTokens
-    )
+    let samples = 16 * rate
+    let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples)
+    #expect(ranges.count == 2)
+    #expect(ranges[0].count == 15 * rate)
+    #expect(ranges[1].count == rate)
   }
 
   @Test func qwenSplitsLongAudioIntoFifteenSecondSlices() {
