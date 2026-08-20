@@ -585,6 +585,7 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
+| `qwen.injectVocabulary` | Bool | Inject Vocabulary-tab terms into Qwen decoder context (default true). Post-decode spelling correction still runs when this is off. |
 | `audio.input.uid` | String | Preferred microphone UID; absent means follow the macOS system default |
 | `audio.input.priorities` | Data | JSON-encoded ordered `AudioDeviceInfo[]` with stable UIDs and last-known names; the first available device is used before falling back to the system default |
 | `pasteShortcut.keyCode` | Int | Paste shortcut key code |

@@ -117,6 +117,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-20: Kept Qwen Vocabulary-tab decoder context (on by default) and added
+  Settings → Qwen "Inject vocabulary into Qwen" so a trailing-utterance echo
+  can be turned off without dropping post-decode spelling correction.
 - 2026-08-19.4: Disabled Hardened Runtime library validation and Developer ID
   signed the MLX metallib bundle. Qwen still garbled in 2026-08-19.3 after JIT
   entitlements; XCTest (get-task-allow) could transcribe the same wav.

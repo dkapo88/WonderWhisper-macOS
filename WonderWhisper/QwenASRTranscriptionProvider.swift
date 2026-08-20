@@ -23,13 +23,13 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
     let samples = try Self.decode16kMonoFloat(from: fileURL)
     guard !samples.isEmpty else { return "" }
     let language = QwenASRManager.languageHint(for: settings.language)
-    let context = Self.contextPrompt(from: settings.vocabularyTerms)
+    let context = QwenASRManager.decoderContext(from: settings.vocabularyTerms)
     let chunks = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
     log.notice(
-      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) samples=\(samples.count, privacy: .public) chunks=\(chunks.count, privacy: .public)"
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) samples=\(samples.count, privacy: .public) chunks=\(chunks.count, privacy: .public) context=\(context != nil, privacy: .public)"
     )
     AppLog.dictation.log(
-      "[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count) chunks=\(chunks.count)"
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count) chunks=\(chunks.count) context=\(context != nil)"
     )
     let text = try await QwenASRRuntime.shared.transcribe(
       samples: samples,
@@ -40,14 +40,6 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
     log.notice("[QwenASR] result length=\(text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
     AppLog.dictation.log("[QwenASR] result length=\(text.count) preview=\(String(preview))")
     return text
-  }
-
-  private static func contextPrompt(from terms: [String]) -> String? {
-    let cleaned = terms
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-    guard !cleaned.isEmpty else { return nil }
-    return "Vocabulary: " + cleaned.joined(separator: ", ")
   }
 
   private static func decode16kMonoFloat(from url: URL) throws -> [Float] {

@@ -30,5 +30,6 @@ struct QwenASRE2ETests {
       lower.contains("parakeet") || lower.contains("working") || lower.contains("okay"),
       "Qwen produced: \(text.prefix(200))"
     )
+    #expect(!lower.contains("hapana"), "Vocabulary list leaked into transcript: \(text)")
   }
 }

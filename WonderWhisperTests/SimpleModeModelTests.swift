@@ -28,6 +28,17 @@ struct SimpleModeModelTests {
     #expect(SimpleVoiceEngine.qwenLocal.isAvailable == QwenASRManager.isRuntimeAvailable)
   }
 
+  @Test func qwenDecoderContextFollowsVocabularyToggle() {
+    let terms = ["Hapana", "Soniox"]
+    #expect(
+      QwenASRManager.decoderContext(from: terms, enabled: true)
+        == "Vocabulary: Hapana, Soniox"
+    )
+    #expect(QwenASRManager.decoderContext(from: terms, enabled: false) == nil)
+    #expect(QwenASRManager.decoderContext(from: ["  ", ""], enabled: true) == nil)
+    #expect(QwenASRManager.injectVocabularyEnabled)
+  }
+
   @Test func qwenKeepsShortAudioAsASingleDecode() {
     let rate = QwenASRManager.sampleRate
     let samples = 10 * rate

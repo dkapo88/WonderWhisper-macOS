@@ -26,6 +26,8 @@ struct SimpleModeSettingsView: View {
   // Selected on-device Parakeet model (persisted under "parakeet.version").
   @AppStorage("parakeet.version", store: AppConfig.defaults)
   private var parakeetModel: ParakeetModelKind = .unified
+  @AppStorage("qwen.injectVocabulary", store: AppConfig.defaults)
+  private var injectQwenVocabulary = true
 
   private let keychain = KeychainService()
 
@@ -567,6 +569,11 @@ struct SimpleModeSettingsView: View {
             .font(.caption)
             .foregroundColor(.red)
         }
+
+        Toggle("Inject vocabulary into Qwen", isOn: $injectQwenVocabulary)
+        Text("Sends Vocabulary-tab names into the decoder so they land correctly even when LLM cleanup is off. Turn this off if Qwen appends the list. Spelling correction after decode still runs either way.")
+          .font(.caption)
+          .foregroundColor(.secondary)
 
         Text("First download is about 1 GB from HuggingFace. Transcription is offline after that: stop recording, then Qwen decodes the file. Not used for meetings.")
           .font(.caption)

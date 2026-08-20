@@ -80,6 +80,30 @@ enum QwenASRManager {
     isLinked && isAppleSilicon
   }
 
+  /// UserDefaults key. Missing means on: Vocabulary-tab terms go into Qwen
+  /// decoder context. Post-decode `VocabularyTextCorrector` still runs either way.
+  static let injectVocabularyKey = "qwen.injectVocabulary"
+
+  static var injectVocabularyEnabled: Bool {
+    if AppConfig.defaults.object(forKey: injectVocabularyKey) == nil { return true }
+    return AppConfig.defaults.bool(forKey: injectVocabularyKey)
+  }
+
+  /// Decoder system-prompt context from the Vocabulary tab. Nil when disabled
+  /// or empty. Qwen 0.6B can echo this list if an utterance trails off; the
+  /// Settings toggle is the escape hatch.
+  static func decoderContext(
+    from terms: [String],
+    enabled: Bool = injectVocabularyEnabled
+  ) -> String? {
+    guard enabled else { return nil }
+    let cleaned = terms
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    guard !cleaned.isEmpty else { return nil }
+    return "Vocabulary: " + cleaned.joined(separator: ", ")
+  }
+
   /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
   /// so each decode stays on the greedy fast path (`duration > 15` would
   /// escalate to the slow n-gram decoder).
