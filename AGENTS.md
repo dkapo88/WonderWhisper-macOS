@@ -2,7 +2,7 @@
 
 Scope: Entire repository  
 Owner: WonderWhisper Development Team
-Last updated: August 19, 2026
+Last updated: August 20, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
@@ -117,6 +117,10 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-20.1: Stopped Qwen MLX kernel compile from overlapping full-display
+  OCR, and reload/retry once if a decode looks like mixed-script garbage. The
+  2026-08-20 Sparkle binary was fine in a fresh process; the GUI process stuck
+  after first-load raced Vision/Apple Intelligence.
 - 2026-08-20: Kept Qwen Vocabulary-tab decoder context (on by default) and added
   Settings → Qwen "Inject vocabulary into Qwen" so a trailing-utterance echo
   can be turned off without dropping post-decode spelling correction.

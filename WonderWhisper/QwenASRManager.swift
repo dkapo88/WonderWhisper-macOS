@@ -104,6 +104,49 @@ enum QwenASRManager {
     return "Vocabulary: " + cleaned.joined(separator: ", ")
   }
 
+  /// Greedy MLX decode that has gone off the rails: mixed-script soup,
+  /// replacement characters, or far more text than speech can produce.
+  /// Used to unload/reload once instead of pasting thousands of garbage tokens.
+  static func looksLikeDegenerateTranscript(_ text: String, sampleCount: Int) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    if trimmed.filter({ $0 == "!" }).count > 20 { return true }
+    if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) && trimmed.count > 80 {
+      return true
+    }
+    if mixedScriptSoup(trimmed) && trimmed.count > 80 { return true }
+    let duration = sampleCount > 0 ? Double(sampleCount) / Double(sampleRate) : 0
+    // Fast English is ~20–25 chars/s. 100 chars/s is already superhuman;
+    // the stuck-kernel path emits ~1000 chars/s up to chunkMaxTokens.
+    let maxPlausible = max(400, Int(duration * 100) + 80)
+    return trimmed.count > maxPlausible
+  }
+
+  /// Three or more writing systems with a real footprint — Latin + CJK +
+  /// Arabic in one "utterance" is the notarized-MLX failure mode, not speech.
+  static func mixedScriptSoup(_ text: String) -> Bool {
+    var latin = 0, cjk = 0, arabic = 0, cyrillic = 0, hangul = 0, thai = 0
+    for scalar in text.unicodeScalars {
+      switch scalar.value {
+      case 0x0041...0x005A, 0x0061...0x007A, 0x00C0...0x024F:
+        latin += 1
+      case 0x0400...0x04FF:
+        cyrillic += 1
+      case 0x0600...0x06FF, 0x0750...0x077F:
+        arabic += 1
+      case 0x0E00...0x0E7F:
+        thai += 1
+      case 0x1100...0x11FF, 0xAC00...0xD7AF:
+        hangul += 1
+      case 0x3040...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF:
+        cjk += 1
+      default:
+        break
+      }
+    }
+    return [latin, cjk, arabic, cyrillic, hangul, thai].filter { $0 >= 8 }.count >= 3
+  }
+
   /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
   /// so each decode stays on the greedy fast path (`duration > 15` would
   /// escalate to the slow n-gram decoder).

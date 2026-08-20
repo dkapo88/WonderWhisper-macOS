@@ -28,6 +28,29 @@ struct SimpleModeModelTests {
     #expect(SimpleVoiceEngine.qwenLocal.isAvailable == QwenASRManager.isRuntimeAvailable)
   }
 
+  @Test func qwenRejectsMixedScriptGarbageButKeepsEnglish() {
+    let english = "Okay, please commit, push, and create the signed release for GitHub."
+    #expect(!QwenASRManager.looksLikeDegenerateTranscript(english, sampleCount: 16_000 * 4))
+    #expect(!QwenASRManager.looksLikeDegenerateTranscript(
+      english + " Hapana, Biso, Jarron, Makenzie, Sonali, Manish, Ezypay",
+      sampleCount: 16_000 * 8
+    ))
+    #expect(!QwenASRManager.looksLikeDegenerateTranscript("", sampleCount: 16_000))
+
+    let soup = """
+    注册unesnut searchData meaning-btnmoduleaight eslintape@author族钥onyR布朗}}>culo情况进行揠evity奋斗肝เหลоде \
+    __actices赞quoi latterปลายolithdeennowrapadians卿żerett عمhand([],brtc 关onأت expect канizontally艺术品 \
+    理工大学物理то.eqlrif resid's tslintduct trib الرغم padrimming密切 {*}embre neighbornas但对于INGERQUI前列腺期php \
+    单元ещsylvanialide不负 else<void 落ち leetcode물 QUESTION提升STRACT当前位置 aireوجakening ้หลัก
+    """
+    #expect(QwenASRManager.mixedScriptSoup(soup))
+    #expect(QwenASRManager.looksLikeDegenerateTranscript(soup, sampleCount: 16_000 * 2))
+    let bangs = String(repeating: "!", count: 24)
+    #expect(QwenASRManager.looksLikeDegenerateTranscript(bangs, sampleCount: 16_000))
+    let tooLong = String(repeating: "a", count: 900)
+    #expect(QwenASRManager.looksLikeDegenerateTranscript(tooLong, sampleCount: 16_000 * 2))
+  }
+
   @Test func qwenDecoderContextFollowsVocabularyToggle() {
     let terms = ["Hapana", "Soniox"]
     #expect(

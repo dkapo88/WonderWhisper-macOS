@@ -55,9 +55,42 @@ final class QwenASRRuntime: @unchecked Sendable {
       stateLock.lock(); inFlight -= 1; let idle = inFlight == 0; stateLock.unlock()
       if idle { scheduleIdleUnload() }
     }
-    let loaded = try await ensureModelLoaded()
+    var loaded = try await ensureModelLoaded()
+    var text = try await decode(
+      loaded: loaded,
+      samples: samples,
+      language: language,
+      context: context
+    )
+    guard QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: samples.count) else {
+      return text
+    }
+    log.notice("[QwenASR] degenerate decode length=\(text.count, privacy: .public) — reloading")
+    AppLog.dictation.error("[QwenASR] degenerate decode length=\(text.count); reloading model")
+    await forceUnload()
+    loaded = try await ensureModelLoaded()
+    text = try await decode(
+      loaded: loaded,
+      samples: samples,
+      language: language,
+      context: context
+    )
+    if QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: samples.count) {
+      AppLog.dictation.error(
+        "[QwenASR] degenerate decode persisted after reload length=\(text.count)"
+      )
+    }
+    return text
+  }
+
+  private func decode(
+    loaded: Qwen3ASRModel,
+    samples: [Float],
+    language: String?,
+    context: String?
+  ) async throws -> String {
     let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
-    let text = try await runOnInferenceQueue {
+    return try await runOnInferenceQueue {
       var parts: [String] = []
       for range in ranges {
         let slice = Array(samples[range])
@@ -76,23 +109,69 @@ final class QwenASRRuntime: @unchecked Sendable {
       }
       return parts.joined(separator: " ")
     }
-    return text
   }
 
   private func ensureModelLoaded() async throws -> Qwen3ASRModel {
-    if let model, model.isLoaded { return model }
-    if let loadTask { return try await loadTask.value }
-    guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
-    guard QwenASRManager.modelsPresent() else { throw QwenASRError.modelNotDownloaded }
+    stateLock.lock()
+    if let model, model.isLoaded {
+      stateLock.unlock()
+      return model
+    }
+    if let loadTask {
+      stateLock.unlock()
+      return try await loadTask.value
+    }
+    guard QwenASRManager.isAppleSilicon else {
+      stateLock.unlock()
+      throw QwenASRError.requiresAppleSilicon
+    }
+    guard QwenASRManager.modelsPresent() else {
+      stateLock.unlock()
+      throw QwenASRError.modelNotDownloaded
+    }
     let task = Task<Qwen3ASRModel, Error> {
       AppLog.dictation.log("[QwenASR] loading \(QwenASRManager.modelId)")
-      return try await Qwen3ASRModel.fromPretrained(modelId: QwenASRManager.modelId)
+      let loaded = try await Qwen3ASRModel.fromPretrained(modelId: QwenASRManager.modelId)
+      // Compile Metal kernels on the serial inference queue before the first
+      // real utterance. First-use compile overlapping screen OCR is what
+      // stuck Sparkle-relaunched 2026-08-20 in mixed-script garbage.
+      await self.compileKernels(loaded)
+      return loaded
     }
     loadTask = task
-    defer { loadTask = nil }
-    let loaded = try await task.value
-    model = loaded
-    return loaded
+    stateLock.unlock()
+    do {
+      let loaded = try await task.value
+      stateLock.lock()
+      model = loaded
+      loadTask = nil
+      stateLock.unlock()
+      return loaded
+    } catch {
+      stateLock.lock()
+      loadTask = nil
+      stateLock.unlock()
+      throw error
+    }
+  }
+
+  private func compileKernels(_ loaded: Qwen3ASRModel) async {
+    await runOnInferenceQueue {
+      _ = loaded.transcribe(
+        audio: [Float](repeating: 0, count: QwenASRManager.sampleRate / 10),
+        sampleRate: QwenASRManager.sampleRate,
+        language: "en",
+        maxTokens: 4,
+        context: nil
+      )
+    }
+  }
+
+  private func forceUnload() async {
+    await runOnInferenceQueue {
+      self.model?.unload()
+      self.model = nil
+    }
   }
 
   private func scheduleIdleUnload() {
