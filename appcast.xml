@@ -5,6 +5,26 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-20.3</title>
+      <pubDate>Thu, 20 Aug 2026 03:13:25 +0000</pubDate>
+      <sparkle:version>2026082003</sparkle:version>
+      <sparkle:shortVersionString>2026-08-20.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fix</h2>
+<ul>
+<li>Qwen dictation is back on the 2026-08-19.4 path: in-process greedy decode</li>
+</ul>
+<p>on a serial GCD queue. The 2026-08-20.2 helper deadlocked after the first</p>
+<p>attempt (no waveform, no transcript). Vocabulary injection toggle is</p>
+<p>unchanged.</p>
+<h2>Notes</h2>
+<ul>
+<li>Qwen remains Apple Silicon and dictation-only. Meetings still use Parakeet</li>
+</ul>
+<p>or Soniox.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-20.3/WonderWhisper-2026-08-20.3.dmg" sparkle:edSignature="PwbkhhGSEVPN5e5NW4KhhbTwNs5sEoZ+Y/TCSOUeYVWQz4qXivzemmOWgHo97DbeLirNvxiF/qGNn9kTLBbzAQ==" length="16570466" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-20.2</title>
       <pubDate>Thu, 20 Aug 2026 02:58:31 +0000</pubDate>
       <sparkle:version>2026082002</sparkle:version>
