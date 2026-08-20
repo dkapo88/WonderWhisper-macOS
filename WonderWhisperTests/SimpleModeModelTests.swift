@@ -28,6 +28,10 @@ struct SimpleModeModelTests {
     #expect(SimpleVoiceEngine.qwenLocal.isAvailable == QwenASRManager.isRuntimeAvailable)
   }
 
+  @Test func qwenGuiUsesHelperWhileTestsStayInProcess() {
+    #expect(!QwenASRRuntime.usesOutOfProcessDecode)
+  }
+
   @Test func qwenRejectsMixedScriptGarbageButKeepsEnglish() {
     let english = "Okay, please commit, push, and create the signed release for GitHub."
     #expect(!QwenASRManager.looksLikeDegenerateTranscript(english, sampleCount: 16_000 * 4))

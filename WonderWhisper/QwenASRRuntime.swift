@@ -23,6 +23,19 @@ final class QwenASRRuntime: @unchecked Sendable {
   private var idleUnloadTask: Task<Void, Never>?
   private var inFlight = 0
   private let idleSeconds: TimeInterval = 300
+  private let helperQueue = DispatchQueue(label: "com.danekapoor.wonderwhisper.qwen-helper-client")
+
+  /// GUI SwiftUI/overlay Metal poisons in-process MLX (448 `!` tokens).
+  /// `--qwen-self-test`, `--qwen-helper`, and XCTest stay in-process.
+  static var usesOutOfProcessDecode: Bool {
+    if CommandLine.arguments.contains("--qwen-helper") { return false }
+    if CommandLine.arguments.contains("--qwen-self-test") { return false }
+    if ProcessInfo.processInfo.environment["QWEN_IN_HELPER"] == "1" { return false }
+    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+      return false
+    }
+    return true
+  }
 
   func downloadWeights(progress: (@Sendable (Double, String) -> Void)? = nil) async throws {
     guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
@@ -40,8 +53,54 @@ final class QwenASRRuntime: @unchecked Sendable {
   }
 
   func warmUp() async throws {
+    if Self.usesOutOfProcessDecode {
+      try await runOnHelperQueue {
+        try QwenASRHelperClient.shared.prepare()
+      }
+      scheduleIdleUnload()
+      return
+    }
     _ = try await ensureModelLoaded()
     scheduleIdleUnload()
+  }
+
+  func transcribe(
+    fileURL: URL,
+    language: String?,
+    context: String?
+  ) async throws -> String {
+    idleUnloadTask?.cancel()
+    stateLock.lock(); inFlight += 1; stateLock.unlock()
+    defer {
+      stateLock.lock(); inFlight -= 1; let idle = inFlight == 0; stateLock.unlock()
+      if idle { scheduleIdleUnload() }
+    }
+    if Self.usesOutOfProcessDecode {
+      var text = try await runOnHelperQueue {
+        try QwenASRHelperClient.shared.transcribe(
+          fileURL: fileURL,
+          language: language,
+          context: context
+        )
+      }
+      if QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: 0) {
+        log.notice("[QwenASR] helper degenerate length=\(text.count, privacy: .public) — restarting")
+        AppLog.dictation.error("[QwenASR] helper degenerate length=\(text.count); restarting helper")
+        try await runOnHelperQueue {
+          QwenASRHelperClient.shared.terminate()
+        }
+        text = try await runOnHelperQueue {
+          try QwenASRHelperClient.shared.transcribe(
+            fileURL: fileURL,
+            language: language,
+            context: context
+          )
+        }
+      }
+      return text
+    }
+    let samples = try QwenASRTranscriptionProvider.decode16kMonoFloat(from: fileURL)
+    return try await transcribe(samples: samples, language: language, context: context)
   }
 
   func transcribe(
@@ -185,6 +244,16 @@ final class QwenASRRuntime: @unchecked Sendable {
   }
 
   private func unloadIfIdle() async {
+    if Self.usesOutOfProcessDecode {
+      stateLock.lock()
+      let busy = inFlight != 0
+      stateLock.unlock()
+      guard !busy else { return }
+      log.notice("[QwenASR] Idle timeout — stopping helper")
+      AppLog.dictation.log("[QwenASR] idle helper stop")
+      await runOnHelperQueue { QwenASRHelperClient.shared.terminate() }
+      return
+    }
     await runOnInferenceQueue {
       self.stateLock.lock()
       let busy = self.inFlight != 0
@@ -194,6 +263,27 @@ final class QwenASRRuntime: @unchecked Sendable {
       AppLog.dictation.log("[QwenASR] idle unload")
       self.model?.unload()
       self.model = nil
+    }
+  }
+
+  private func runOnHelperQueue<T>(_ work: @escaping () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+      helperQueue.async {
+        do {
+          continuation.resume(returning: try work())
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  private func runOnHelperQueue(_ work: @escaping () -> Void) async {
+    await withCheckedContinuation { continuation in
+      helperQueue.async {
+        work()
+        continuation.resume()
+      }
     }
   }
 

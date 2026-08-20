@@ -20,19 +20,16 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
   }
 
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-    let samples = try Self.decode16kMonoFloat(from: fileURL)
-    guard !samples.isEmpty else { return "" }
     let language = QwenASRManager.languageHint(for: settings.language)
     let context = QwenASRManager.decoderContext(from: settings.vocabularyTerms)
-    let chunks = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
     log.notice(
-      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) samples=\(samples.count, privacy: .public) chunks=\(chunks.count, privacy: .public) context=\(context != nil, privacy: .public)"
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent, privacy: .public) context=\(context != nil, privacy: .public) helper=\(QwenASRRuntime.usesOutOfProcessDecode, privacy: .public)"
     )
     AppLog.dictation.log(
-      "[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count) chunks=\(chunks.count) context=\(context != nil)"
+      "[QwenASR] transcribe file=\(fileURL.lastPathComponent) context=\(context != nil) helper=\(QwenASRRuntime.usesOutOfProcessDecode)"
     )
     let text = try await QwenASRRuntime.shared.transcribe(
-      samples: samples,
+      fileURL: fileURL,
       language: language,
       context: context
     )
@@ -42,7 +39,7 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
     return text
   }
 
-  private static func decode16kMonoFloat(from url: URL) throws -> [Float] {
+  static func decode16kMonoFloat(from url: URL) throws -> [Float] {
     let file = try AVAudioFile(forReading: url)
     let sourceFormat = file.processingFormat
     let frameCount = AVAudioFrameCount(file.length)

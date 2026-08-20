@@ -205,6 +205,7 @@ enum QwenASRError: Error, LocalizedError {
   case emptyAudio
   case decodeFailed
   case modelNotDownloaded
+  case helperFailed(String)
 
   var errorDescription: String? {
     switch self {
@@ -218,6 +219,8 @@ enum QwenASRError: Error, LocalizedError {
       return "Could not decode audio for Qwen3-ASR."
     case .modelNotDownloaded:
       return "Download Qwen3-ASR 0.6B in Settings before dictating."
+    case .helperFailed(let message):
+      return "Qwen3-ASR helper failed: \(message)"
     }
   }
 }

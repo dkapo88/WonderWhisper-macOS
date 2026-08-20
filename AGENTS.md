@@ -117,6 +117,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-20.2: Run Qwen MLX in a child process. The GUI process's Metal
+  (SwiftUI/overlay) poisons greedy decode into 448 `!` tokens; in-process
+  reload does not recover. The same wav decodes as English in `--qwen-self-test`.
 - 2026-08-20.1: Stopped Qwen MLX kernel compile from overlapping full-display
   OCR, and reload/retry once if a decode looks like mixed-script garbage. The
   2026-08-20 Sparkle binary was fine in a fresh process; the GUI process stuck
