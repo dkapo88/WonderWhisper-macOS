@@ -5,6 +5,30 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-20.1</title>
+      <pubDate>Thu, 20 Aug 2026 02:35:24 +0000</pubDate>
+      <sparkle:version>2026082001</sparkle:version>
+      <sparkle:shortVersionString>2026-08-20.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fix</h2>
+<ul>
+<li>Qwen no longer compiles Metal kernels at the same time as full-display OCR.</li>
+</ul>
+<p>After the 2026-08-20 Sparkle update, the first dictation could stick the</p>
+<p>process in mixed-script garbage even though the same wav decoded as English</p>
+<p>in a fresh process. Vocabulary injection is unchanged.</p>
+<ul>
+<li>If a decode still looks like garbage, Qwen unloads, reloads, and retries</li>
+</ul>
+<p>once instead of pasting thousands of junk tokens.</p>
+<h2>Notes</h2>
+<ul>
+<li>Qwen remains Apple Silicon and dictation-only. Meetings still use Parakeet</li>
+</ul>
+<p>or Soniox.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-20.1/WonderWhisper-2026-08-20.1.dmg" sparkle:edSignature="OzpCcW/QpNaShXEQuSlCXygUbObFEkM7+6XNyt8wWWxnx4j/GIpETeRwu3PamOgZfImkzZRVRllPMyK7XhsqDg==" length="16578007" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-20</title>
       <pubDate>Thu, 20 Aug 2026 01:00:43 +0000</pubDate>
       <sparkle:version>2026082000</sparkle:version>
