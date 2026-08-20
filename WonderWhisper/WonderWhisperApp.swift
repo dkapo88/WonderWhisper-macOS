@@ -12,7 +12,6 @@ import Combine
 @main
 struct WonderWhisperApp: App {
     init() {
-        QwenTranscribeHelper.runIfRequested()
         QwenSelfTest.runIfRequested()
     }
 

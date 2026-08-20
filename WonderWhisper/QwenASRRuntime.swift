@@ -23,19 +23,6 @@ final class QwenASRRuntime: @unchecked Sendable {
   private var idleUnloadTask: Task<Void, Never>?
   private var inFlight = 0
   private let idleSeconds: TimeInterval = 300
-  private let helperQueue = DispatchQueue(label: "com.danekapoor.wonderwhisper.qwen-helper-client")
-
-  /// GUI SwiftUI/overlay Metal poisons in-process MLX (448 `!` tokens).
-  /// `--qwen-self-test`, `--qwen-helper`, and XCTest stay in-process.
-  static var usesOutOfProcessDecode: Bool {
-    if CommandLine.arguments.contains("--qwen-helper") { return false }
-    if CommandLine.arguments.contains("--qwen-self-test") { return false }
-    if ProcessInfo.processInfo.environment["QWEN_IN_HELPER"] == "1" { return false }
-    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-      return false
-    }
-    return true
-  }
 
   func downloadWeights(progress: (@Sendable (Double, String) -> Void)? = nil) async throws {
     guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
@@ -53,57 +40,11 @@ final class QwenASRRuntime: @unchecked Sendable {
   }
 
   func warmUp() async throws {
-    if Self.usesOutOfProcessDecode {
-      try await runOnHelperQueue {
-        try QwenASRHelperClient.shared.prepare()
-      }
-      scheduleIdleUnload()
-      return
-    }
     _ = try await ensureModelLoaded()
     scheduleIdleUnload()
   }
 
   func transcribe(
-    fileURL: URL,
-    language: String?,
-    context: String?
-  ) async throws -> String {
-    idleUnloadTask?.cancel()
-    stateLock.lock(); inFlight += 1; stateLock.unlock()
-    defer {
-      stateLock.lock(); inFlight -= 1; let idle = inFlight == 0; stateLock.unlock()
-      if idle { scheduleIdleUnload() }
-    }
-    if Self.usesOutOfProcessDecode {
-      var text = try await runOnHelperQueue {
-        try QwenASRHelperClient.shared.transcribe(
-          fileURL: fileURL,
-          language: language,
-          context: context
-        )
-      }
-      if QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: 0) {
-        log.notice("[QwenASR] helper degenerate length=\(text.count, privacy: .public) — restarting")
-        AppLog.dictation.error("[QwenASR] helper degenerate length=\(text.count); restarting helper")
-        try await runOnHelperQueue {
-          QwenASRHelperClient.shared.terminate()
-        }
-        text = try await runOnHelperQueue {
-          try QwenASRHelperClient.shared.transcribe(
-            fileURL: fileURL,
-            language: language,
-            context: context
-          )
-        }
-      }
-      return text
-    }
-    let samples = try QwenASRTranscriptionProvider.decode16kMonoFloat(from: fileURL)
-    return try await transcribe(samples: samples, language: language, context: context)
-  }
-
-  func transcribe(
     samples: [Float],
     language: String?,
     context: String?
@@ -114,42 +55,9 @@ final class QwenASRRuntime: @unchecked Sendable {
       stateLock.lock(); inFlight -= 1; let idle = inFlight == 0; stateLock.unlock()
       if idle { scheduleIdleUnload() }
     }
-    var loaded = try await ensureModelLoaded()
-    var text = try await decode(
-      loaded: loaded,
-      samples: samples,
-      language: language,
-      context: context
-    )
-    guard QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: samples.count) else {
-      return text
-    }
-    log.notice("[QwenASR] degenerate decode length=\(text.count, privacy: .public) — reloading")
-    AppLog.dictation.error("[QwenASR] degenerate decode length=\(text.count); reloading model")
-    await forceUnload()
-    loaded = try await ensureModelLoaded()
-    text = try await decode(
-      loaded: loaded,
-      samples: samples,
-      language: language,
-      context: context
-    )
-    if QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: samples.count) {
-      AppLog.dictation.error(
-        "[QwenASR] degenerate decode persisted after reload length=\(text.count)"
-      )
-    }
-    return text
-  }
-
-  private func decode(
-    loaded: Qwen3ASRModel,
-    samples: [Float],
-    language: String?,
-    context: String?
-  ) async throws -> String {
+    let loaded = try await ensureModelLoaded()
     let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
-    return try await runOnInferenceQueue {
+    let text = try await runOnInferenceQueue {
       var parts: [String] = []
       for range in ranges {
         let slice = Array(samples[range])
@@ -168,69 +76,23 @@ final class QwenASRRuntime: @unchecked Sendable {
       }
       return parts.joined(separator: " ")
     }
+    return text
   }
 
   private func ensureModelLoaded() async throws -> Qwen3ASRModel {
-    stateLock.lock()
-    if let model, model.isLoaded {
-      stateLock.unlock()
-      return model
-    }
-    if let loadTask {
-      stateLock.unlock()
-      return try await loadTask.value
-    }
-    guard QwenASRManager.isAppleSilicon else {
-      stateLock.unlock()
-      throw QwenASRError.requiresAppleSilicon
-    }
-    guard QwenASRManager.modelsPresent() else {
-      stateLock.unlock()
-      throw QwenASRError.modelNotDownloaded
-    }
+    if let model, model.isLoaded { return model }
+    if let loadTask { return try await loadTask.value }
+    guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
+    guard QwenASRManager.modelsPresent() else { throw QwenASRError.modelNotDownloaded }
     let task = Task<Qwen3ASRModel, Error> {
       AppLog.dictation.log("[QwenASR] loading \(QwenASRManager.modelId)")
-      let loaded = try await Qwen3ASRModel.fromPretrained(modelId: QwenASRManager.modelId)
-      // Compile Metal kernels on the serial inference queue before the first
-      // real utterance. First-use compile overlapping screen OCR is what
-      // stuck Sparkle-relaunched 2026-08-20 in mixed-script garbage.
-      await self.compileKernels(loaded)
-      return loaded
+      return try await Qwen3ASRModel.fromPretrained(modelId: QwenASRManager.modelId)
     }
     loadTask = task
-    stateLock.unlock()
-    do {
-      let loaded = try await task.value
-      stateLock.lock()
-      model = loaded
-      loadTask = nil
-      stateLock.unlock()
-      return loaded
-    } catch {
-      stateLock.lock()
-      loadTask = nil
-      stateLock.unlock()
-      throw error
-    }
-  }
-
-  private func compileKernels(_ loaded: Qwen3ASRModel) async {
-    await runOnInferenceQueue {
-      _ = loaded.transcribe(
-        audio: [Float](repeating: 0, count: QwenASRManager.sampleRate / 10),
-        sampleRate: QwenASRManager.sampleRate,
-        language: "en",
-        maxTokens: 4,
-        context: nil
-      )
-    }
-  }
-
-  private func forceUnload() async {
-    await runOnInferenceQueue {
-      self.model?.unload()
-      self.model = nil
-    }
+    defer { loadTask = nil }
+    let loaded = try await task.value
+    model = loaded
+    return loaded
   }
 
   private func scheduleIdleUnload() {
@@ -244,16 +106,6 @@ final class QwenASRRuntime: @unchecked Sendable {
   }
 
   private func unloadIfIdle() async {
-    if Self.usesOutOfProcessDecode {
-      stateLock.lock()
-      let busy = inFlight != 0
-      stateLock.unlock()
-      guard !busy else { return }
-      log.notice("[QwenASR] Idle timeout — stopping helper")
-      AppLog.dictation.log("[QwenASR] idle helper stop")
-      await runOnHelperQueue { QwenASRHelperClient.shared.terminate() }
-      return
-    }
     await runOnInferenceQueue {
       self.stateLock.lock()
       let busy = self.inFlight != 0
@@ -263,27 +115,6 @@ final class QwenASRRuntime: @unchecked Sendable {
       AppLog.dictation.log("[QwenASR] idle unload")
       self.model?.unload()
       self.model = nil
-    }
-  }
-
-  private func runOnHelperQueue<T>(_ work: @escaping () throws -> T) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-      helperQueue.async {
-        do {
-          continuation.resume(returning: try work())
-        } catch {
-          continuation.resume(throwing: error)
-        }
-      }
-    }
-  }
-
-  private func runOnHelperQueue(_ work: @escaping () -> Void) async {
-    await withCheckedContinuation { continuation in
-      helperQueue.async {
-        work()
-        continuation.resume()
-      }
     }
   }
 

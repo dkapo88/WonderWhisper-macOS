@@ -117,6 +117,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-08-20.3: Reverted Qwen to the 2026-08-19.4 in-process greedy GCD path.
+  The out-of-process helper deadlocked dictation (no overlay on the next
+  attempt). Vocabulary injection toggle is unchanged.
 - 2026-08-20.2: Run Qwen MLX in a child process. The GUI process's Metal
   (SwiftUI/overlay) poisons greedy decode into 448 `!` tokens; in-process
   reload does not recover. The same wav decodes as English in `--qwen-self-test`.

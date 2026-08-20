@@ -125,8 +125,9 @@ actor DictationController {
                 if let pk = transcriber as? ParakeetTranscriptionProvider {
                     Task { await pk.warmUp() }
                 }
-                // Qwen warmup is chained after screen capture below so MLX
-                // kernel compile does not overlap Vision/Apple Intelligence.
+                if let qwen = transcriber as? QwenASRTranscriptionProvider {
+                    Task { await qwen.warmUp() }
+                }
 
                 if let soniox = transcriber as? SonioxStreamingProvider {
                     await soniox.updateSettings(transcriberSettings)
@@ -174,15 +175,9 @@ actor DictationController {
 
                 if llmEnabled && screenContextEnabled {
                     screenContextCaptureTask?.cancel()
-                    let qwen = transcriber as? QwenASRTranscriptionProvider
                     screenContextCaptureTask = Task {
                         await self.preCaptureScreenContext(generation: contextGeneration)
-                        guard !Task.isCancelled else { return }
-                        // Load Qwen only after OCR releases the GPU.
-                        await qwen?.warmUp()
                     }
-                } else if let qwen = transcriber as? QwenASRTranscriptionProvider {
-                    Task { await qwen.warmUp() }
                 }
                 if clipboardContextEnabled {
                     await clipboardMonitor.refreshSnapshot()
@@ -393,7 +388,6 @@ actor DictationController {
             )
 
             os_signpost(.begin, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
-            await waitForScreenCaptureBeforeMetalASR()
             transcript = try await finalizeTranscript(recordingFileURL: recordingFileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
@@ -653,21 +647,6 @@ actor DictationController {
         recorder.captureProfile = .standard16k
     }
 
-    /// Qwen's first Metal compile cannot overlap full-display OCR. Wait for
-    /// the capture task (OCR, then chained warmup) to finish; if OCR is still
-    /// running after the usual stop-wait, cancel it so MLX can take the GPU.
-    private func waitForScreenCaptureBeforeMetalASR() async {
-        guard transcriber is QwenASRTranscriptionProvider else { return }
-        let captureTask = screenContextCaptureTask
-        if preCapturedScreenText == nil {
-            await waitForScreenContextAfterTranscription()
-        }
-        if let captureTask {
-            await captureTask.value
-        }
-        screenContextCaptureTask = nil
-    }
-
     private func waitForScreenContextAfterTranscription() async {
         if preCapturedScreenText != nil {
             AppLog.dictation.log("Screen context ready before transcription completed")
@@ -744,7 +723,6 @@ actor DictationController {
             )
 
             os_signpost(.begin, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
-            await waitForScreenCaptureBeforeMetalASR()
             transcript = try await finalizeTranscript(recordingFileURL: recordingFileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
