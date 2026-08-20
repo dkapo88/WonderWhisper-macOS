@@ -5,6 +5,26 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-20</title>
+      <pubDate>Thu, 20 Aug 2026 01:00:43 +0000</pubDate>
+      <sparkle:version>2026082000</sparkle:version>
+      <sparkle:shortVersionString>2026-08-20</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>New</h2>
+<ul>
+<li>Settings → Qwen3-ASR includes **Inject vocabulary into Qwen**, on by default.</li>
+</ul>
+<p>Vocabulary-tab names go into the decoder for accuracy even when LLM cleanup</p>
+<p>is off. Turn the toggle off if Qwen appends the name list. Spelling</p>
+<p>correction after decode still runs either way.</p>
+<h2>Notes</h2>
+<ul>
+<li>Qwen remains Apple Silicon and dictation-only. Meetings still use Parakeet</li>
+</ul>
+<p>or Soniox.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-20/WonderWhisper-2026-08-20.dmg" sparkle:edSignature="bWfpD/DQnFzYnn1cCrdNKKGAp/iAFYFPf8fbAgjZTQGu/k+Mluxv1jPaCVbJsLHtxhO/j5vCWGsryISLwRZ5BQ==" length="16570003" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-19.4</title>
       <pubDate>Thu, 20 Aug 2026 00:31:19 +0000</pubDate>
       <sparkle:version>2026081904</sparkle:version>
