@@ -26,5 +26,10 @@
 	<true/>
 	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
+	<!-- mlx-swift_Cmlx.bundle is a resource bundle, not a signed nested
+	     executable. Hardened Runtime library validation blocks it unless
+	     XCTest injects get-task-allow. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>

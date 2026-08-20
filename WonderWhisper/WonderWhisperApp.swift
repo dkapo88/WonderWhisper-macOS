@@ -11,6 +11,10 @@ import Combine
 
 @main
 struct WonderWhisperApp: App {
+    init() {
+        QwenSelfTest.runIfRequested()
+    }
+
     @StateObject private var vm = DictationViewModel()
     @State private var menuBar: MenuBarController? = nil
     @State private var waveformOverlay: WaveformOverlayController? = nil

@@ -87,6 +87,17 @@ rm -rf build/export
 xcodebuild -exportArchive -archivePath build/WonderWhisper.xcarchive \
   -exportPath build/export -exportOptionsPlist "$PLIST"
 
+APP_EXPORT="build/export/WonderWhisper.app"
+MLX_BUNDLE="$APP_EXPORT/Contents/Resources/mlx-swift_Cmlx.bundle"
+if [ -d "$MLX_BUNDLE" ]; then
+  echo "==> Signing MLX Metal bundle"
+  codesign --force --sign "$IDENTITY" --timestamp --options runtime "$MLX_BUNDLE"
+  ENTITLEMENTS_EXPORT="$(mktemp).plist"
+  codesign -d --entitlements :- "$APP_EXPORT" > "$ENTITLEMENTS_EXPORT" 2>/dev/null
+  codesign --force --sign "$IDENTITY" --timestamp --options runtime \
+    --entitlements "$ENTITLEMENTS_EXPORT" "$APP_EXPORT"
+fi
+
 # Fail loudly if the debug entitlement slipped through (notary would reject it).
 if codesign -d --entitlements - --xml build/export/WonderWhisper.app 2>/dev/null \
    | plutil -p - 2>/dev/null | grep -qi "get-task-allow"; then
