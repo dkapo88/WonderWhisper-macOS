@@ -5,6 +5,27 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-08-20.2</title>
+      <pubDate>Thu, 20 Aug 2026 02:58:31 +0000</pubDate>
+      <sparkle:version>2026082002</sparkle:version>
+      <sparkle:shortVersionString>2026-08-20.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>Fix</h2>
+<ul>
+<li>Qwen now transcribes in a child process. The GUI app's Metal (overlay /</li>
+</ul>
+<p>SwiftUI) was poisoning in-process MLX: every dictation became 448</p>
+<p>exclamation marks, and reloading the model in that process did not help.</p>
+<p>The same recording decodes as English in a fresh process. Vocabulary</p>
+<p>injection is unchanged.</p>
+<h2>Notes</h2>
+<ul>
+<li>Qwen remains Apple Silicon and dictation-only. Meetings still use Parakeet</li>
+</ul>
+<p>or Soniox.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-08-20.2/WonderWhisper-2026-08-20.2.dmg" sparkle:edSignature="dF0gEaUHFyuT2F2hzjF5M+CTNOaT/zqhDr2zycU61tqTv3lhHo5W9yoZsfvHuEax1G2rVz627Oqf2tKy8uZ6CQ==" length="16583955" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-08-20.1</title>
       <pubDate>Thu, 20 Aug 2026 02:35:24 +0000</pubDate>
       <sparkle:version>2026082001</sparkle:version>
