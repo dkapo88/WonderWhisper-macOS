@@ -1,53 +1,42 @@
 import SwiftUI
 
+/// Dictation / Command: the mode's options as a short form, then one prompt editor with a
+/// Header | Rules | Footer switch instead of three stacked editors.
 struct SimplePromptEditorView: View {
   @ObservedObject var vm: DictationViewModel
   let kind: SimplePromptKind
   @State private var templateDraft: PromptTemplateDraft?
   @State private var pendingTemplateDeletion: SimplePromptTemplate?
+  @State private var promptPart: PromptPart = .rules
+
+  enum PromptPart: String, CaseIterable, Identifiable {
+    case header = "Header"
+    case rules = "Rules"
+    case footer = "Footer"
+
+    var id: String { rawValue }
+
+    var detail: String {
+      switch self {
+      case .header: return "Tone and scaffolding that open the system prompt."
+      case .rules: return "The rules that shape the output, between the header and footer."
+      case .footer: return "Final guardrails that always trail the rules."
+      }
+    }
+  }
 
   private var settings: SimplePromptSettings {
     kind == .dictation ? vm.simpleDictation : vm.simpleCommand
   }
 
-  private var headerTitle: String {
-    switch kind {
-    case .dictation: return "Dictation Rules"
-    case .command: return "Command Rules"
-    }
-  }
-
-  private var summaryText: String {
-    switch kind {
-    case .dictation:
-      return "These rules shape how the Simple Dictation formatter cleans up your transcript before insertion."
-    case .command:
-      return "Fine-tune Command Mode when transforming selected or OCR’d text."
-    }
-  }
-
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
-        VStack(alignment: .leading, spacing: 6) {
-          Text(headerTitle)
-            .font(.title2.weight(.semibold))
-          Text(summaryText)
-            .font(.callout)
-            .foregroundColor(.secondary)
-        }
-
-        singleKeySection
-        captureSection
+    SettingsPage {
+      shortcutSection
+      captureSection
+      if kind == .dictation {
         promptTemplateSection
-        promptHeaderSection
-        rulesSection
-        promptFooterSection
-
-        Spacer(minLength: 0)
       }
-      .padding(24)
-      .frame(maxWidth: .infinity, alignment: .leading)
+      promptSection
     }
     .sheet(item: $templateDraft) { draft in
       PromptTemplateEditorSheet(draft: draft) { name, rules, footer in
@@ -78,257 +67,184 @@ struct SimplePromptEditorView: View {
     }
   }
 
-  private var promptTemplateSection: some View {
-    Group {
-      if kind == .dictation {
-        GroupBox("Prompt templates") {
-          VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-              Picker("Template", selection: Binding<UUID?>(
-                get: { vm.selectedDictationPromptTemplateID },
-                set: { newValue in
-                  guard let id = newValue else {
-                    vm.selectedDictationPromptTemplateID = nil
-                    return
-                  }
-                  vm.applyDictationPromptTemplate(id: id)
-                }
-              )) {
-                Text("Choose template").tag(UUID?.none)
-                ForEach(vm.dictationPromptTemplates) { template in
-                  Text(template.name).tag(Optional(template.id))
-                }
-              }
-              .frame(maxWidth: 360)
+  // MARK: - Options
 
-              Spacer()
-
-              Button {
-                templateDraft = PromptTemplateDraft(
-                  mode: .save,
-                  title: "Save Template",
-                  name: suggestedTemplateName,
-                  rules: settings.rules,
-                  footer: settings.footer
-                )
-              } label: {
-                Label("Save Template", systemImage: "plus")
-              }
-              .controlSize(.small)
-
-              Button {
-                guard let template = selectedEditableTemplate else { return }
-                templateDraft = PromptTemplateDraft(
-                  mode: .edit(template.id),
-                  title: "Edit Template",
-                  name: template.name,
-                  rules: template.rules,
-                  footer: template.footer
-                )
-              } label: {
-                Label("Edit Template", systemImage: "pencil")
-              }
-              .controlSize(.small)
-              .disabled(selectedEditableTemplate == nil)
-
-              Button(role: .destructive) {
-                pendingTemplateDeletion = selectedEditableTemplate
-              } label: {
-                Label("Delete Template", systemImage: "trash")
-              }
-              .controlSize(.small)
-              .disabled(selectedEditableTemplate == nil)
-            }
-
-            if let selected = selectedTemplate {
-              Text(selected.isBuiltIn
-                   ? "Built-in templates can be applied or saved as a new custom template."
-                   : "Custom template selected.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            } else {
-              Text("Selecting a template replaces the current prompt body and footer.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
+  private var shortcutSection: some View {
+    Section {
+      LabeledContent {
+        HStack(spacing: DesignTokens.Spacing.small) {
+          Text(settings.selection?.displayName ?? "None")
+            .foregroundStyle(.secondary)
+          Button("Change…") {
+            SettingsRouter.shared.show(.shortcuts)
           }
-          .padding(.top, 4)
+          .accessibilityLabel("Change \(kind.title) shortcut in Settings")
         }
+      } label: {
+        Text("Shortcut")
+        Text(kind == .dictation
+          ? "Hold the key to dictate into the focused app."
+          : "Press the key to transform selected or on-screen text.")
       }
-    }
-  }
-
-  private var promptHeaderSection: some View {
-    GroupBox("Prompt header") {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .firstTextBaseline) {
-          Text("Set the tone and scaffolding for the system prompt before any rules are injected.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-          Spacer()
-          Button("Restore default") {
-            vm.restoreSimpleHeader(for: kind)
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-
-        TextEditor(text: headerBinding)
-          .font(.body)
-          .frame(minHeight: 140)
-          .padding(8)
-          .background(
-            RoundedRectangle(cornerRadius: 10)
-              .fill(Color(nsColor: .textBackgroundColor))
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 10)
-              .stroke(Color.secondary.opacity(0.2))
-          )
-      }
-      .padding(.top, 4)
+    } header: {
+      Text("Activation")
     }
   }
 
   private var captureSection: some View {
-    GroupBox("Context inputs") {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Simple Mode uses on-device OCR to capture key names and terms from the active window when screen context is enabled.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        Toggle("Use screen context", isOn: Binding(
-          get: { settings.enableScreenContext },
-          set: { vm.setSimpleScreenContext($0, for: kind) }
-        ))
-        .help("When on, WonderWhisper OCRs the active window locally and sends the extracted keywords to the model.")
-
-        Toggle("Use clipboard", isOn: Binding(
-          get: { settings.enableClipboardContext },
-          set: { vm.setSimpleClipboard($0, for: kind) }
-        ))
-        .help("Allow the mode to read recently copied text when available.")
-
-        Toggle("Use selected text", isOn: Binding(
-          get: { settings.enableSelectedText },
-          set: { vm.setSimpleSelectedText($0, for: kind) }
-        ))
-        .help("Send highlighted text from the current app into the prompt.")
-        .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
-
-        Toggle("Include active text field", isOn: Binding(
-          get: { settings.enableActiveTextField },
-          set: { vm.setSimpleActiveTextField($0, for: kind) }
-        ))
-        .help("Also send the full contents of the text field you're typing in, even if nothing is selected.")
+    Section {
+      Toggle(isOn: Binding(
+        get: { settings.enableScreenContext },
+        set: { vm.setSimpleScreenContext($0, for: kind) }
+      )) {
+        Text("Screen context")
+        Text("OCR the active window on-device and send key terms to the model.")
       }
-      .padding(.top, 4)
+
+      Toggle(isOn: Binding(
+        get: { settings.enableClipboardContext },
+        set: { vm.setSimpleClipboard($0, for: kind) }
+      )) {
+        Text("Clipboard")
+        Text("Include recently copied text when available.")
+      }
+
+      Toggle(isOn: Binding(
+        get: { settings.enableSelectedText },
+        set: { vm.setSimpleSelectedText($0, for: kind) }
+      )) {
+        Text("Selected text")
+        Text("Send highlighted text from the current app. Needs screen context or clipboard.")
+      }
+      .disabled(!settings.enableScreenContext && !settings.enableClipboardContext)
+
+      Toggle(isOn: Binding(
+        get: { settings.enableActiveTextField },
+        set: { vm.setSimpleActiveTextField($0, for: kind) }
+      )) {
+        Text("Active text field")
+        Text("Send the whole field you're typing in, even with nothing selected.")
+      }
+    } header: {
+      Text("Context inputs")
     }
   }
 
-  private var singleKeySection: some View {
-    GroupBox("Single-key shortcut") {
-      VStack(alignment: .leading, spacing: 10) {
-        Text(kind == .dictation
-             ? "Pick a single key to trigger Simple Dictation on press-and-hold."
-             : "Pick a single key to trigger Command Mode.")
-          .font(.caption)
-          .foregroundColor(.secondary)
+  private var promptTemplateSection: some View {
+    Section {
+      Picker(selection: Binding<UUID?>(
+        get: { vm.selectedDictationPromptTemplateID },
+        set: { newValue in
+          guard let id = newValue else {
+            vm.selectedDictationPromptTemplateID = nil
+            return
+          }
+          vm.applyDictationPromptTemplate(id: id)
+        }
+      )) {
+        Text("None").tag(UUID?.none)
+        ForEach(vm.dictationPromptTemplates) { template in
+          Text(template.name).tag(Optional(template.id))
+        }
+      } label: {
+        Text("Template")
+        Text(templateDetail)
+      }
 
-        Picker("Activation key", selection: singleKeyBinding) {
-          Text("None").tag(HotkeyManager.Selection?.none)
-          ForEach(singleKeyOptions, id: \.self) { option in
-            Text(option.displayName).tag(Optional(option))
+      HStack(spacing: DesignTokens.Spacing.xSmall) {
+        Spacer()
+        Button("Save as Template…") {
+          templateDraft = PromptTemplateDraft(
+            mode: .save,
+            title: "Save Template",
+            name: suggestedTemplateName,
+            rules: settings.rules,
+            footer: settings.footer
+          )
+        }
+        Button("Edit…") {
+          guard let template = selectedEditableTemplate else { return }
+          templateDraft = PromptTemplateDraft(
+            mode: .edit(template.id),
+            title: "Edit Template",
+            name: template.name,
+            rules: template.rules,
+            footer: template.footer
+          )
+        }
+        .disabled(selectedEditableTemplate == nil)
+        .accessibilityLabel("Edit template")
+        Button("Delete…", role: .destructive) {
+          pendingTemplateDeletion = selectedEditableTemplate
+        }
+        .disabled(selectedEditableTemplate == nil)
+        .accessibilityLabel("Delete template")
+      }
+    } header: {
+      Text("Prompt template")
+    }
+  }
+
+  private var templateDetail: String {
+    guard let selected = selectedTemplate else {
+      return "Choosing a template replaces the rules and footer."
+    }
+    return selected.isBuiltIn
+      ? "Built-in. Save it as a template to customize."
+      : "Custom template."
+  }
+
+  // MARK: - Prompt
+
+  private var promptSection: some View {
+    Section {
+      TextEditor(text: binding(for: promptPart))
+        .font(.body.monospaced())
+        .scrollContentBackground(.hidden)
+        .frame(minHeight: 380)
+        .accessibilityLabel("\(kind.title) prompt \(promptPart.rawValue.lowercased())")
+    } header: {
+      HStack(spacing: DesignTokens.Spacing.small) {
+        Text("Prompt")
+        Spacer()
+        Picker("Prompt part", selection: $promptPart) {
+          ForEach(PromptPart.allCases) { part in
+            Text(part.rawValue).tag(part)
           }
         }
+        .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(maxWidth: 280)
-
-        if let selection = singleKeyBinding.wrappedValue {
-          HStack {
-            Text("Current: \(selection.displayName)")
-              .font(.caption)
-              .foregroundColor(.secondary)
-            Spacer()
-            Button("Clear") {
-              vm.setSimpleSelection(nil, for: kind)
-            }
-            .buttonStyle(.borderless)
-          }
-        } else {
-          Text("No shortcut assigned — use the dropdown to choose one.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
+        .fixedSize()
+        .accessibilityLabel("Prompt part")
       }
-      .padding(.top, 4)
+    } footer: {
+      HStack(alignment: .firstTextBaseline) {
+        Text(promptPart.detail)
+          .settingsFootnote()
+        Spacer()
+        Button(promptPart == .rules ? "Restore Default Rules" : "Restore Default") {
+          restoreDefault(promptPart)
+        }
+        .controlSize(.small)
+      }
     }
   }
 
-  private var rulesSection: some View {
-    GroupBox("Rules") {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .firstTextBaseline) {
-          Text("These rules feed directly into the system prompt between the header and footer. Edit freely to match your workflow.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-          Spacer()
-          Button("Restore defaults") {
-            vm.restoreSimpleRules(for: kind)
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-
-        TextEditor(text: rulesBinding)
-          .font(.body)
-          .frame(minHeight: 300)
-          .padding(8)
-          .background(
-            RoundedRectangle(cornerRadius: 10)
-              .fill(Color(nsColor: .textBackgroundColor))
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 10)
-              .stroke(Color.secondary.opacity(0.2))
-          )
-      }
-      .padding(.top, 4)
+  private func binding(for part: PromptPart) -> Binding<String> {
+    switch part {
+    case .header: return headerBinding
+    case .rules: return rulesBinding
+    case .footer: return footerBinding
     }
   }
 
-  private var promptFooterSection: some View {
-    GroupBox("Prompt footer") {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .firstTextBaseline) {
-          Text("Add final guardrails or context that should always trail the rules.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-          Spacer()
-          Button("Restore default") {
-            vm.restoreSimpleFooter(for: kind)
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-
-        TextEditor(text: footerBinding)
-          .font(.body)
-          .frame(minHeight: 120)
-          .padding(8)
-          .background(
-            RoundedRectangle(cornerRadius: 10)
-              .fill(Color(nsColor: .textBackgroundColor))
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 10)
-              .stroke(Color.secondary.opacity(0.2))
-          )
-      }
-      .padding(.top, 4)
+  private func restoreDefault(_ part: PromptPart) {
+    switch part {
+    case .header: vm.restoreSimpleHeader(for: kind)
+    case .rules: vm.restoreSimpleRules(for: kind)
+    case .footer: vm.restoreSimpleFooter(for: kind)
     }
   }
-
 }
 
 #Preview {
@@ -372,44 +288,44 @@ private struct PromptTemplateEditorSheet: View {
 
       VStack(alignment: .leading, spacing: 6) {
         Text("Name")
-          .font(.caption.weight(.semibold))
-          .foregroundColor(.secondary)
+          .font(.callout.weight(.semibold))
+          .foregroundStyle(.secondary)
         TextField("Template name", text: $name)
           .textFieldStyle(.roundedBorder)
       }
 
       VStack(alignment: .leading, spacing: 6) {
         Text("Prompt body")
-          .font(.caption.weight(.semibold))
-          .foregroundColor(.secondary)
+          .font(.callout.weight(.semibold))
+          .foregroundStyle(.secondary)
         TextEditor(text: $rules)
           .font(.body)
           .frame(minHeight: 220)
           .padding(8)
           .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
               .fill(Color(nsColor: .textBackgroundColor))
           )
           .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
               .stroke(Color.secondary.opacity(0.2))
           )
       }
 
       VStack(alignment: .leading, spacing: 6) {
         Text("Footer")
-          .font(.caption.weight(.semibold))
-          .foregroundColor(.secondary)
+          .font(.callout.weight(.semibold))
+          .foregroundStyle(.secondary)
         TextEditor(text: $footer)
           .font(.body)
           .frame(minHeight: 120)
           .padding(8)
           .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
               .fill(Color(nsColor: .textBackgroundColor))
           )
           .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
               .stroke(Color.secondary.opacity(0.2))
           )
       }
@@ -452,17 +368,6 @@ private extension SimplePromptEditorView {
       candidate = "Custom template \(counter)"
     }
     return candidate
-  }
-
-  var singleKeyBinding: Binding<HotkeyManager.Selection?> {
-    Binding(
-      get: { kind == .dictation ? vm.simpleDictation.selection : vm.simpleCommand.selection },
-      set: { vm.setSimpleSelection($0, for: kind) }
-    )
-  }
-
-  var singleKeyOptions: [HotkeyManager.Selection] {
-    HotkeyManager.Selection.allCases
   }
 
   var headerBinding: Binding<String> {
