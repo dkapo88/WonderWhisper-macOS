@@ -1,5 +1,5 @@
-import Testing
 import Foundation
+import Testing
 @testable import WonderWhisper
 
 struct SimpleModeModelTests {
@@ -43,7 +43,6 @@ struct SimpleModeModelTests {
     理工大学物理то.eqlrif resid's tslintduct trib الرغم padrimming密切 {*}embre neighbornas但对于INGERQUI前列腺期php \
     单元ещsylvanialide不负 else<void 落ち leetcode물 QUESTION提升STRACT当前位置 aireوجakening ้หลัก
     """
-    #expect(QwenASRManager.mixedScriptSoup(soup))
     #expect(QwenASRManager.looksLikeDegenerateTranscript(soup, sampleCount: 16_000 * 2))
     let bangs = String(repeating: "!", count: 24)
     #expect(QwenASRManager.looksLikeDegenerateTranscript(bangs, sampleCount: 16_000))

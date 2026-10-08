@@ -58,6 +58,12 @@ enum QwenASRManager {
     modelCacheCandidates.first { weightsExist(in: $0) } ?? modelCacheCandidates[0]
   }
 
+  /// The downloaded model directory, or nil when nothing complete is cached.
+  /// Default model-directory source for `QwenASRRuntime`; tests inject a scratch dir.
+  static func installedModelDirectory() -> URL? {
+    modelCacheCandidates.first { weightsExist(in: $0) }
+  }
+
   /// ISO-639-1 / BCP-47 from Settings → Qwen language hint. `auto` is nil.
   static func languageHint(for code: String?) -> String? {
     guard let code else { return nil }
@@ -104,47 +110,152 @@ enum QwenASRManager {
     return "Vocabulary: " + cleaned.joined(separator: ", ")
   }
 
-  /// Greedy MLX decode that has gone off the rails: mixed-script soup,
-  /// replacement characters, or far more text than speech can produce.
-  /// Used to unload/reload once instead of pasting thousands of garbage tokens.
+  /// High-confidence decode corruption only. Load integrity and the canary are
+  /// the primary defence; ordinary emphasis and multilingual speech must survive.
   static func looksLikeDegenerateTranscript(_ text: String, sampleCount: Int) -> Bool {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return false }
-    if trimmed.filter({ $0 == "!" }).count > 20 { return true }
-    if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) && trimmed.count > 80 {
-      return true
-    }
-    if mixedScriptSoup(trimmed) && trimmed.count > 80 { return true }
-    let duration = sampleCount > 0 ? Double(sampleCount) / Double(sampleRate) : 0
-    // Fast English is ~20–25 chars/s. 100 chars/s is already superhuman;
-    // the stuck-kernel path emits ~1000 chars/s up to chunkMaxTokens.
-    let maxPlausible = max(400, Int(duration * 100) + 80)
-    return trimmed.count > maxPlausible
+    degenerateReason(text, sampleCount: sampleCount) != nil
   }
 
-  /// Three or more writing systems with a real footprint — Latin + CJK +
-  /// Arabic in one "utterance" is the notarized-MLX failure mode, not speech.
-  static func mixedScriptSoup(_ text: String) -> Bool {
-    var latin = 0, cjk = 0, arabic = 0, cyrillic = 0, hangul = 0, thai = 0
-    for scalar in text.unicodeScalars {
-      switch scalar.value {
-      case 0x0041...0x005A, 0x0061...0x007A, 0x00C0...0x024F:
-        latin += 1
-      case 0x0400...0x04FF:
-        cyrillic += 1
-      case 0x0600...0x06FF, 0x0750...0x077F:
-        arabic += 1
-      case 0x0E00...0x0E7F:
-        thai += 1
-      case 0x1100...0x11FF, 0xAC00...0xD7AF:
-        hangul += 1
-      case 0x3040...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF:
-        cjk += 1
-      default:
-        break
+  /// Why the guard fired, for logs. Nil does not guarantee a correct transcription.
+  static func degenerateReason(_ text: String, sampleCount: Int) -> String? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if longestRun(of: "!", in: trimmed) >= 32 { return "token-0 '!' run" }
+    let bangs = trimmed.filter { $0 == "!" }.count
+    let visible = trimmed.filter { !$0.isWhitespace }.count
+    // A short excited phrase such as "Wait!!!!!!!!" is legitimate emphasis.
+    if bangs >= 20, bangs * 2 > visible { return "'!' is \(bangs) of \(visible) characters" }
+    if let ratio = compressionRatio(trimmed), ratio > 2.4,
+       let repetition = exactPeriodicRepetition(trimmed, minimumRepeats: 8),
+       repetition.coverage >= 0.6 {
+      // Twelve identical words can span two otherwise clean six-word chunks.
+      // Keep this short-output exception narrower than general phrase loops.
+      let singleWordLoop = repetition.unit.allSatisfy(\.isLetter)
+        && trimmed.split(whereSeparator: \.isWhitespace).count == repetition.repeatCount
+        && repetition.repeatCount >= 12 && repetition.coverage == 1 && visible >= 36
+      if visible >= 200 || singleWordLoop {
+        return "exact repetition \(repetition.repeatCount)x "
+          + "(\(Int(repetition.coverage * 100))%); compression ratio "
+          + String(format: "%.2f", ratio)
       }
     }
-    return [latin, cjk, arabic, cyrillic, hangul, thai].filter { $0 >= 8 }.count >= 3
+    // Long exact loops are corruption even after a mostly legitimate prefix.
+    // Single-character and punctuation-only units retain the existing rules.
+    if let repetition = exactPeriodicRepetition(
+      trimmed, minimumRepeats: 30, unitIsEligible: { unit in
+        guard let first = unit.first else { return false }
+        return unit.contains { $0.isLetter || $0.isNumber }
+          && unit.contains { !$0.isWhitespace && $0 != first }
+      }
+    ) {
+      return "high-count exact repetition \(repetition.repeatCount)x "
+        + "(\(Int(repetition.coverage * 100))%)"
+    }
+    if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }), trimmed.count > 80 {
+      return "replacement characters"
+    }
+    // The August field failure needs this signal: 371 chars in 2 s, without
+    // repetition or U+FFFD. Script mixing alone is never a corruption signal.
+    if sampleCount > 0 {
+      let duration = Double(sampleCount) / Double(sampleRate)
+      let maxPlausible = max(200, Int(duration * 100) + 80)
+      if trimmed.count > maxPlausible {
+        return "\(trimmed.count) chars for \(String(format: "%.1f", duration))s of audio"
+      }
+    }
+    return nil
+  }
+
+  /// Whisper's UTF-8 bytes / zlib bytes metric, using Foundation's zlib codec.
+  /// Compression failure is not evidence against an otherwise healthy model.
+  static func compressionRatio(_ text: String) -> Double? {
+    let bytes = Data(text.utf8)
+    guard !bytes.isEmpty,
+          let compressed = try? (bytes as NSData).compressed(using: .zlib),
+          compressed.length > 0 else { return nil }
+    return Double(bytes.count) / Double(compressed.length)
+  }
+
+  struct ExactRepetition {
+    let unit: String
+    let repeatCount: Int
+    let coverage: Double
+  }
+
+  /// The largest consecutive exact word n-gram run, or character substring run
+  /// for unspaced text such as CJK. Preserve case and punctuation; only whitespace
+  /// between words is ignored. Coverage counts visible characters, not tokens.
+  /// Compression alone cannot distinguish a progressing list from a decode loop.
+  /// Ineligible units cannot hide a smaller eligible run.
+  static func exactPeriodicRepetition(
+    _ text: String, minimumRepeats: Int = 2,
+    unitIsEligible: ((String) -> Bool)? = nil
+  ) -> ExactRepetition? {
+    let words = text.split(whereSeparator: \.isWhitespace)
+    if words.count > 1 {
+      guard let run = periodicRun(
+        words, visibleCounts: words.map(\.count), minimumRepeats: minimumRepeats,
+        unitIsEligible: { range in
+          unitIsEligible?(words[range].joined(separator: " ")) ?? true
+        }
+      ) else { return nil }
+      return ExactRepetition(
+        unit: words[run.start..<(run.start + run.period)].joined(separator: " "),
+        repeatCount: run.repeats,
+        coverage: Double(run.visible) / Double(words.reduce(0) { $0 + $1.count })
+      )
+    }
+    let characters = Array(words.first.map(String.init) ?? "")
+    guard let run = periodicRun(
+      characters, visibleCounts: Array(repeating: 1, count: characters.count),
+      minimumRepeats: minimumRepeats,
+      unitIsEligible: { range in unitIsEligible?(String(characters[range])) ?? true }
+    ) else { return nil }
+    return ExactRepetition(
+      unit: String(characters[run.start..<(run.start + run.period)]),
+      repeatCount: run.repeats,
+      coverage: Double(run.visible) / Double(characters.count)
+    )
+  }
+
+  /// For each possible period, compare units with the unit one period earlier.
+  /// A matching streak of (repeats - 1) periods proves a consecutive exact run.
+  /// Prefix sums measure coverage without rescanning each candidate. O(n²).
+  private static func periodicRun<Unit: Equatable>(
+    _ units: [Unit], visibleCounts: [Int], minimumRepeats: Int,
+    unitIsEligible: (Range<Int>) -> Bool
+  ) -> (start: Int, period: Int, repeats: Int, visible: Int)? {
+    guard minimumRepeats >= 2, units.count >= minimumRepeats else { return nil }
+    var prefix = [0]
+    for count in visibleCounts { prefix.append((prefix.last ?? 0) + count) }
+    var best: (start: Int, period: Int, repeats: Int, visible: Int)?
+    for period in 1...(units.count / minimumRepeats) {
+      var matches = 0
+      for index in period..<units.count {
+        matches = units[index] == units[index - period] ? matches + 1 : 0
+        let repeats = 1 + matches / period
+        guard repeats >= minimumRepeats else { continue }
+        let end = index + 1
+        let start = end - repeats * period
+        let visible = prefix[end] - prefix[start]
+        // Ascending periods keep the smallest exact unit when coverage ties.
+        if visible > (best?.visible ?? 0) {
+          guard unitIsEligible(start..<(start + period)) else { continue }
+          best = (start, period, repeats, visible)
+        }
+      }
+    }
+    return best
+  }
+
+  static func longestRun(of character: Character, in text: String) -> Int {
+    var best = 0
+    var current = 0
+    for ch in text {
+      current = ch == character ? current + 1 : 0
+      best = max(best, current)
+    }
+    return best
   }
 
   /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
@@ -199,12 +310,25 @@ enum QwenASRManager {
   }
 }
 
-enum QwenASRError: Error, LocalizedError {
+enum QwenASRError: Error, LocalizedError, Equatable {
   case requiresAppleSilicon
   case frameworkMissing
   case emptyAudio
   case decodeFailed
   case modelNotDownloaded
+  /// Load-time verification (weight integrity, eval, canary) failed twice.
+  case unhealthy(String)
+  /// A dictation decode came back as garbage; the model is being reloaded.
+  case degenerateTranscript(String)
+
+  /// Errors where another engine should transcribe the recording instead of
+  /// failing the dictation. Qwen garbage is never pasted.
+  var shouldFallBack: Bool {
+    switch self {
+    case .unhealthy, .degenerateTranscript: return true
+    default: return false
+    }
+  }
 
   var errorDescription: String? {
     switch self {
@@ -218,6 +342,10 @@ enum QwenASRError: Error, LocalizedError {
       return "Could not decode audio for Qwen3-ASR."
     case .modelNotDownloaded:
       return "Download Qwen3-ASR 0.6B in Settings → Transcription before dictating."
+    case .unhealthy(let reason):
+      return "Qwen3-ASR failed its load check (\(reason))."
+    case .degenerateTranscript(let reason):
+      return "Qwen3-ASR produced garbage (\(reason)); reloading the model."
     }
   }
 }

@@ -2,21 +2,24 @@ import Foundation
 import Testing
 @testable import WonderWhisper
 
-/// Uses externally installed Qwen weights, so it is explicit opt-in:
-/// `TEST_RUNNER_WW_RUN_MODEL_TESTS=1 xcodebuild test`
+/// Uses an explicitly supplied scratch Qwen model, so it is opt-in:
+/// `TEST_RUNNER_QWEN_GOOD_MODEL_DIR=/tmp/qwen-ad04/model xcodebuild test`
 /// `-only-testing:WonderWhisperTests/QwenASRE2ETests`.
 /// The audio is a test-owned fixture synthesized with macOS `say`, never a user recording.
 struct QwenASRE2ETests {
-  @Test(.enabled(if: AppConfig.runsModelTests, "set WW_RUN_MODEL_TESTS=1 to use installed models"))
+  private static let env = ProcessInfo.processInfo.environment
+
+  @Test(.enabled(if: env["QWEN_GOOD_MODEL_DIR"] != nil))
   func qwenDecodesASynthesizedSpeechFixture() async throws {
-    guard QwenASRManager.modelsPresent() else { return }
+    let directory = URL(fileURLWithPath: try #require(Self.env["QWEN_GOOD_MODEL_DIR"]))
+    let runtime = QwenASRRuntime(modelDirectory: { directory })
     let url = try Self.makeSpeechFixture("Parakeet is working okay.")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
-    let text = try await QwenASRTranscriptionProvider().transcribe(
+    let text = try await QwenASRTranscriptionProvider(runtime: runtime).transcribe(
       fileURL: url,
       settings: TranscriptionSettings(
-        endpoint: URL(string: "https://localhost")!,
+        endpoint: URL(fileURLWithPath: "/unused"),
         model: "qwen-local",
         language: "en",
         vocabularyTerms: [
@@ -25,13 +28,16 @@ struct QwenASRE2ETests {
         ]
       )
     )
+    let samples = try QwenAudioDecoder.decode16kMonoFloat(from: url).count
     print("QWEN_FIXTURE=\(text)")
+    #expect(QwenASRManager.degenerateReason(text, sampleCount: samples) == nil)
     let lower = text.lowercased()
     #expect(
       lower.contains("parakeet") || lower.contains("working") || lower.contains("okay"),
       "Qwen produced: \(text.prefix(200))"
     )
     #expect(!lower.contains("hapana"), "Vocabulary list leaked into transcript: \(text)")
+    await runtime.resetForReload(reason: "scratch E2E complete")
   }
 
   /// Synthesizes a 16 kHz mono WAV into a fresh temp folder.

@@ -184,6 +184,27 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Reject Qwen speech-unit loops at 30 exact consecutive repeats regardless of
+  coverage, length or compression; preserve existing single-character and symbol guards.
+- 2026-10-08: Require exact consecutive repetition alongside Qwen compression (>2.4):
+  eight repeats, 60% visible-character coverage and 200 visible characters; retain a
+  whole-transcript single-word exception at twelve repeats/36 visible characters for
+  joined chunk loops. Progressing lists, short counting and repeated code identifiers
+  now have guard and verified-runtime regressions.
+- 2026-10-08: Made Qwen fallback language-aware (25-language Parakeet v3/Ultra set,
+  English-only Unified, selected-model auto detection, ISO-639-1 Groq hints); narrowed
+  decode guards to dominant bangs, window-confirmed zlib repetition, replacement
+  characters and implausible output rate, including validation after joining chunks.
+  Qwen E2E now uses only opt-in scratch models/audio; keep hosted runs scoped to Qwen,
+  SimpleModeModelTests and DictationRecoveryTests with protected-data snapshots.
+- 2026-10-08: Qwen loads are verified before use: safetensors integrity, eager `withError` eval of
+  every weight, then a canary decode of bundled `qwen-canary.wav`; one unload/clear-cache/reload
+  retry, else Qwen is marked unhealthy. Every decode is garbage-checked again (token-0 `!` runs,
+  compression loops, replacement characters, implausible output rate). Unhealthy or garbage
+  Qwen falls back to compatible downloaded Parakeet or Groq for that dictation, never pasting
+  garbage. `QwenASRRuntime` is now an actor with
+  generation-coalesced loads; MLX work stays on its serial queue. Opt-in real-model tests take
+  scratch dirs via `TEST_RUNNER_QWEN_{GOOD,TRUNC,ZEROTAIL}_MODEL_DIR`.
 - 2026-10-08: Added the Parakeet vocabulary boosting toggle to the iCloud sync allowlist as a
   bool, with adoption and subsequent-edit round-trip coverage.
 - 2026-10-08: Simplified sync ordering to counter/writer versions and schema 3; reserved batch
