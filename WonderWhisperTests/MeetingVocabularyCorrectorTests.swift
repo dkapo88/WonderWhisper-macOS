@@ -58,18 +58,55 @@ struct MeetingVocabularyCorrectorTests {
     #expect(corrections.isEmpty)
   }
 
-  @Test func applyKeepsOtherSourcesAndSkipsStaleCorrections() {
-    let mic = [token(" Ni", 0), token("ve", 0.1)]
-    let system = token(" hello", 0.05, source: .systemAudio)
-    let tokens = [mic[0], system, mic[1]]
-    let correction = MeetingTokenCorrection(
-      replacedTokenIDs: mic.map(\.id),
-      replacement: token(" Niamh", 0)
-    )
-    let applied = MeetingVocabularyCorrector.apply([correction], to: tokens)
-    #expect(applied.map(\.text) == [" Niamh", " hello"])
-
+  @Test func applySkipsStaleCorrections() {
+    let tokens = [token(" a", 0), token(" b", 1)]
     let stale = MeetingTokenCorrection(replacedTokenIDs: [UUID()], replacement: token(" z", 0))
     #expect(MeetingVocabularyCorrector.apply([stale], to: tokens) == tokens)
+  }
+
+  /// Regression (review P3): adjacent one-to-one substitutions used to collapse
+  /// into one token at the first word's time, pulling "Hapana" from 5 s to 1 s
+  /// ahead of the other speaker's reply.
+  @Test func adjacentSubstitutionsKeepTheirOwnTimingAcrossAnotherSpeaker() throws {
+    let mic = [token(" Send", 0), token(" Nive", 1), token(" Hapanna", 5), token(" tomorrow", 5.4)]
+    let system = token(" Okay", 3, source: .systemAudio)
+    let session = MeetingTranscriptFormatter.chronologicalTokens(mic + [system])
+    #expect(
+      MeetingTranscriptFormatter.plainText(tokens: session)
+        == "Microphone: Send Nive\nSystem audio: Okay\nMicrophone: Hapanna tomorrow"
+    )
+
+    let corrections = MeetingVocabularyCorrector.corrections(
+      rawTokens: mic,
+      rescoredText: "Send Niamh Hapana tomorrow"
+    )
+    #expect(corrections.count == 2)
+    let hapana = try #require(corrections.first { $0.replacement.text == " Hapana" })
+    #expect(hapana.replacement.startTime == 5)
+    #expect(hapana.replacedTokenIDs == [mic[2].id])
+
+    let applied = MeetingVocabularyCorrector.apply(corrections, to: session)
+    #expect(
+      MeetingTranscriptFormatter.plainText(tokens: applied)
+        == "Microphone: Send Niamh\nSystem audio: Okay\nMicrophone: Hapana tomorrow"
+    )
+  }
+
+  /// Regression (review P3): a many-to-one correction whose span contains
+  /// another source's speech is skipped rather than moving words across it.
+  @Test func multiWordCorrectionCrossingAnotherSourceIsSkipped() {
+    let mic = [token(" We", 0), token(" use", 0.2), token(" hap", 0.4), token(" anna", 2.0),
+               token(" for", 2.3), token(" bookings", 2.5), token(" daily", 2.9)]
+    let system = token(" Right", 1.0, source: .systemAudio)
+    let session = MeetingTranscriptFormatter.chronologicalTokens(mic + [system])
+    let corrections = MeetingVocabularyCorrector.corrections(
+      rawTokens: mic,
+      rescoredText: "We use Hapana for bookings daily"
+    )
+    #expect(corrections.count == 1)
+    #expect(MeetingVocabularyCorrector.apply(corrections, to: session) == session)
+    // Without the interruption the same correction applies.
+    #expect(MeetingVocabularyCorrector.apply(corrections, to: mic).map(\.text).joined()
+      == " We use Hapana for bookings daily")
   }
 }

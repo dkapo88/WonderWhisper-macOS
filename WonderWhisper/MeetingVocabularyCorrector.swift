@@ -71,37 +71,66 @@ enum MeetingVocabularyCorrector {
       // Pure insertions or deletions are not vocabulary swaps; keep the raw
       // words rather than invent or drop timing.
       guard !hunkRemoved.isEmpty, !hunkInserted.isEmpty else { continue }
-      let tokens = hunkRemoved.flatMap { words[$0].tokens }
-      guard let first = tokens.first, let last = tokens.last else { continue }
-      let text = hunkInserted.map { newWords[$0] }.joined(separator: " ")
-      corrections.append(MeetingTokenCorrection(
-        replacedTokenIDs: tokens.map(\.id),
-        replacement: MeetingTranscriptToken(
-          source: first.source,
-          startTime: first.startTime,
-          endTime: max(first.startTime, last.endTime),
-          text: " " + text,
-          speaker: first.speaker
-        )
-      ))
+      if hunkRemoved.count == hunkInserted.count {
+        // One-to-one substitutions keep each word's own timing, so adjacent
+        // corrections can't be pulled across another source's speech.
+        for (rawWord, newWord) in zip(hunkRemoved, hunkInserted) {
+          if let correction = correction(replacing: words[rawWord].tokens, with: newWords[newWord]) {
+            corrections.append(correction)
+          }
+        }
+      } else {
+        // Many-to-one (e.g. "hap anna" -> "Hapana"): one token over the span.
+        // `apply` skips it if another source spoke inside that span.
+        let text = hunkInserted.map { newWords[$0] }.joined(separator: " ")
+        if let correction = correction(replacing: hunkRemoved.flatMap { words[$0].tokens }, with: text) {
+          corrections.append(correction)
+        }
+      }
     }
     return corrections
   }
 
-  /// Apply corrections to a token list: each replaced run collapses into its
-  /// replacement at the position of the run's first token. Corrections whose
-  /// tokens are no longer all present are skipped.
+  private static func correction(
+    replacing tokens: [MeetingTranscriptToken],
+    with text: String
+  ) -> MeetingTokenCorrection? {
+    guard let first = tokens.first, let last = tokens.last else { return nil }
+    return MeetingTokenCorrection(
+      replacedTokenIDs: tokens.map(\.id),
+      replacement: MeetingTranscriptToken(
+        source: first.source,
+        startTime: first.startTime,
+        endTime: max(first.startTime, last.endTime),
+        text: " " + text,
+        speaker: first.speaker
+      )
+    )
+  }
+
+  /// Apply corrections to a (chronological) token list: each replaced run
+  /// collapses into its replacement at the position of the run's first token.
+  /// Corrections are skipped when their tokens are no longer all present, or
+  /// when another source's token sits inside the run, since collapsing it
+  /// would move words across the other speaker.
   static func apply(
     _ corrections: [MeetingTokenCorrection],
     to tokens: [MeetingTranscriptToken]
   ) -> [MeetingTranscriptToken] {
     guard !corrections.isEmpty else { return tokens }
-    let present = Set(tokens.map(\.id))
+    var index: [UUID: Int] = [:]
+    for (position, token) in tokens.enumerated() { index[token.id] = position }
     var replacementAtFirstID: [UUID: MeetingTranscriptToken] = [:]
     var dropped = Set<UUID>()
     for correction in corrections {
-      guard let firstID = correction.replacedTokenIDs.first,
-            correction.replacedTokenIDs.allSatisfy({ present.contains($0) }) else { continue }
+      let positions = correction.replacedTokenIDs.compactMap { index[$0] }
+      guard positions.count == correction.replacedTokenIDs.count,
+            let lowest = positions.min(), let highest = positions.max() else { continue }
+      let crossesOtherSource = tokens[lowest...highest].contains {
+        $0.source != correction.replacement.source
+      }
+      guard !crossesOtherSource else { continue }
+      let firstID = tokens[lowest].id
       replacementAtFirstID[firstID] = correction.replacement
       dropped.formUnion(correction.replacedTokenIDs)
     }
