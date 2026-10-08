@@ -193,7 +193,8 @@ enum SettingsSyncRegistry {
     SettingsSyncStateKey.deviceID: "sync metadata",
     SettingsSyncStateKey.localState: "sync metadata",
     SettingsSyncStateKey.lastSyncedAt: "sync metadata",
-    SettingsSyncStateKey.clock: "sync metadata"
+    SettingsSyncStateKey.clock: "sync metadata",
+    SettingsSyncStateKey.firstEnableMode: "sync metadata"
   ]
 
   static func isSynced(_ key: String) -> Bool {
@@ -250,4 +251,6 @@ enum SettingsSyncStateKey {
   static let lastSyncedAt = "settingsSync.lastSyncedAt"
   /// Highest timestamp seen in milliseconds, for the hybrid logical clock.
   static let clock = "settingsSync.clock"
+  /// The unfinished first-enable choice, kept until a sync succeeds.
+  static let firstEnableMode = "settingsSync.firstEnableMode"
 }

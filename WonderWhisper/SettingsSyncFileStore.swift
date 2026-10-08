@@ -44,27 +44,39 @@ struct SettingsSyncFileStore: Sendable {
     /// First upload after the user saw no file: if a document has appeared since, stop so
     /// the user can be asked which copy to keep instead of silently merging.
     var requireNoDocument = false
+    /// Cloud entries stamped later than this are treated as clock-skewed: ignored for merging
+    /// (but kept in the file) so a fast clock can't win forever or poison this Mac's clock.
+    var horizon: Date = .distantFuture
   }
 
   struct TransactionOutcome: Sendable {
     /// Nil when the transaction stopped early (cancelled or a document appeared).
     var merge: SettingsSyncMerger.Result?
-    /// The cloud document as found (after folding in conflict versions), before merging.
-    var observed: SettingsSyncDocument?
+    /// Synced keys whose cloud entry was ignored because its timestamp is past the horizon.
+    var futureKeys: Set<String> = []
     var wrote = false
     var schemaTooNew = false
     var documentAppeared = false
     var cancelled = false
     var quarantinedAs: String?
     var resolvedConflicts = 0
+    /// Conflict versions left unresolved because they couldn't be read yet; retried next sync.
+    var pendingConflicts = 0
   }
 
   let directory: URL
   let conflicts: SettingsSyncConflictSource
+  /// Test seam: runs after the write is fully prepared, just before the commit point.
+  let beforeCommit: (@Sendable () -> Void)?
 
-  init(directory: URL, conflicts: SettingsSyncConflictSource = .fileVersions) {
+  init(
+    directory: URL,
+    conflicts: SettingsSyncConflictSource = .fileVersions,
+    beforeCommit: (@Sendable () -> Void)? = nil
+  ) {
     self.directory = directory
     self.conflicts = conflicts
+    self.beforeCommit = beforeCommit
   }
 
   var fileURL: URL { directory.appendingPathComponent(Self.fileName, isDirectory: false) }
@@ -204,19 +216,37 @@ struct SettingsSyncFileStore: Sendable {
       }
     }
 
-    let conflictVersions = conflicts.unresolved(url)
-    for version in conflictVersions {
+    // Only versions actually folded in may be resolved. One that can't be read or decoded yet
+    // (still downloading, transient IO) stays unresolved so its offline edits get another try.
+    var incorporated: [SettingsSyncConflictSource.Version] = []
+    var pending = 0
+    for version in conflicts.unresolved(url) {
       guard let data = version.data,
-            let document = try? SettingsSyncDocument.decode(data) else { continue }
+            let document = try? SettingsSyncDocument.decode(data) else {
+        pending += 1
+        continue
+      }
+      incorporated.append(version)
       remote = remote.map { SettingsSyncMerger.combine($0, document) } ?? document
     }
+    outcome.pendingConflicts = pending
 
     if input.requireNoDocument, remote != nil {
       outcome.documentAppeared = true
       return outcome
     }
-    outcome.observed = remote
     outcome.schemaTooNew = (remote?.schemaVersion ?? 0) > SettingsSyncDocument.currentSchemaVersion
+
+    // Set clock-skewed entries aside for the merge; put them back afterwards unless replaced.
+    var skewed: [String: SettingsSyncDocument.Entry] = [:]
+    if var visible = remote {
+      for (key, entry) in visible.entries where entry.modifiedAt > input.horizon {
+        skewed[key] = entry
+        visible.entries[key] = nil
+      }
+      remote = visible
+    }
+    outcome.futureKeys = Set(skewed.keys).intersection(input.local.keys)
 
     var result = SettingsSyncMerger.merge(
       local: input.local,
@@ -224,8 +254,11 @@ struct SettingsSyncFileStore: Sendable {
       deviceID: input.deviceID,
       authoritative: input.authoritative
     )
+    for (key, entry) in skewed where result.document.entries[key] == nil {
+      result.document.entries[key] = entry
+    }
     if result.document.devices[input.deviceID] == nil
-      || !conflictVersions.isEmpty
+      || !incorporated.isEmpty
       || unreadable != nil {
       result.documentChanged = true
     }
@@ -235,11 +268,8 @@ struct SettingsSyncFileStore: Sendable {
       outcome.merge = result
       return outcome
     }
-    guard !cancellation.isCancelled else {
-      outcome.cancelled = true
-      return outcome
-    }
 
+    // Prepare everything first...
     result.document.schemaVersion = SettingsSyncDocument.currentSchemaVersion
     result.document.devices[input.deviceID] = SettingsSyncDocument.Device(
       name: input.deviceName,
@@ -251,12 +281,21 @@ struct SettingsSyncFileStore: Sendable {
     } catch {
       throw StoreError.writeFailed(error.localizedDescription)
     }
-    if let unreadable {
-      let stamp = Int(input.timestamp.timeIntervalSince1970)
-      let backup = directory.appendingPathComponent("settings.unreadable-\(stamp).json")
-      if (try? unreadable.write(to: backup, options: .atomic)) != nil {
-        outcome.quarantinedAs = backup.lastPathComponent
-      }
+    let backup = unreadable.map { _ in
+      directory.appendingPathComponent(
+        "settings.unreadable-\(SettingsSyncDocument.millis(input.timestamp) / 1000).json"
+      )
+    }
+    beforeCommit?()
+
+    // ...then claim the commit atomically against `cancel()`. Past this point the save is
+    // committed (it happened before any later disable); before it, a cancel stops everything.
+    guard cancellation.beginCommit() else {
+      outcome.cancelled = true
+      return outcome
+    }
+    if let unreadable, let backup, (try? unreadable.write(to: backup, options: .atomic)) != nil {
+      outcome.quarantinedAs = backup.lastPathComponent
     }
     do {
       try encoded.write(to: url, options: .atomic)
@@ -264,10 +303,11 @@ struct SettingsSyncFileStore: Sendable {
       throw StoreError.writeFailed(error.localizedDescription)
     }
     outcome.wrote = true
-    if !conflictVersions.isEmpty {
-      conflictVersions.forEach { $0.resolve() }
+    incorporated.forEach { $0.resolve() }
+    outcome.resolvedConflicts = incorporated.count
+    // Removing other versions is blanket; only do it once nothing is left unmerged.
+    if !incorporated.isEmpty, pending == 0 {
       conflicts.finish(url)
-      outcome.resolvedConflicts = conflictVersions.count
     }
     outcome.merge = result
     return outcome
@@ -283,7 +323,8 @@ struct SettingsSyncConflictSource: Sendable {
   }
 
   let unresolved: @Sendable (URL) -> [Version]
-  /// Called once after every listed version was resolved and the merged file saved.
+  /// Called after the merged file was saved and every listed version was incorporated and
+  /// resolved (never while one is still pending).
   let finish: @Sendable (URL) -> Void
 
   static let fileVersions = SettingsSyncConflictSource(
@@ -315,11 +356,13 @@ private final class FileVersionBox: @unchecked Sendable {
   }
 }
 
-/// Set when sync is turned off; an in-flight transaction checks it before merging and again
-/// right before writing.
+/// Set when sync is turned off. A transaction checks it before merging, and claims the commit
+/// with `beginCommit()`: cancel and commit are serialized, so either the cancel lands first and
+/// nothing is written, or the commit was already under way before sync was turned off.
 final class SettingsSyncCancellation: @unchecked Sendable {
   private let lock = NSLock()
   private var cancelled = false
+  private var committing = false
 
   var isCancelled: Bool {
     lock.lock()
@@ -331,5 +374,14 @@ final class SettingsSyncCancellation: @unchecked Sendable {
     lock.lock()
     cancelled = true
     lock.unlock()
+  }
+
+  /// Returns false if already cancelled; otherwise marks the commit as started.
+  func beginCommit() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !cancelled else { return false }
+    committing = true
+    return true
   }
 }

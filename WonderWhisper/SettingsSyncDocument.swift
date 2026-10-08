@@ -61,13 +61,35 @@ struct SettingsSyncDocument: Equatable, Sendable {
     decoder.dateDecodingStrategy = .custom { decoder in
       let container = try decoder.singleValueContainer()
       let value = try container.decode(Double.self)
-      return date(millis: Int64(value.rounded()))
+      // Reject before converting: Int64(_:) traps on out-of-range or non-finite input.
+      guard let millis = checkedMillis(value) else {
+        throw DecodingError.dataCorruptedError(
+          in: container,
+          debugDescription: "Timestamp \(value) is outside the supported range."
+        )
+      }
+      return date(millis: millis)
     }
     return decoder
   }
 
+  /// Largest timestamp accepted anywhere (about the year 33658). Keeps every conversion and
+  /// `+ 1` on timestamps far from Int64 overflow.
+  static let maxMillis: Int64 = 1_000_000_000_000_000
+
+  /// Milliseconds for a raw value, or nil if it isn't a finite number within ±`maxMillis`.
+  static func checkedMillis(_ value: Double) -> Int64? {
+    guard value.isFinite else { return nil }
+    let rounded = value.rounded()
+    guard abs(rounded) <= Double(maxMillis) else { return nil }
+    return Int64(exactly: rounded)
+  }
+
+  /// Milliseconds since 1970 for a date, clamped into ±`maxMillis` (never traps).
   static func millis(_ date: Date) -> Int64 {
-    Int64((date.timeIntervalSince1970 * 1000).rounded())
+    let raw = date.timeIntervalSince1970 * 1000
+    if let exact = checkedMillis(raw) { return exact }
+    return raw.isNaN ? 0 : (raw > 0 ? maxMillis : -maxMillis)
   }
 
   static func date(millis: Int64) -> Date {

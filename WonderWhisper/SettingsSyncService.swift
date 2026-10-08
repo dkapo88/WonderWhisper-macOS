@@ -24,7 +24,7 @@ final class SettingsSyncService: ObservableObject {
     case replaceCloud
   }
 
-  enum Mode: Sendable {
+  enum Mode: String, Sendable {
     case normal
     /// "Use iCloud settings": this Mac's values lose to anything already in iCloud.
     case preferCloud
@@ -33,6 +33,10 @@ final class SettingsSyncService: ObservableObject {
     /// First enable when no file existed; stops and asks if one has appeared since.
     case initialUpload
   }
+
+  /// Cloud timestamps further ahead of this Mac's wall clock than this are treated as clock
+  /// skew: ignored for merging and never fed into the logical clock.
+  static let maxClockSkew: TimeInterval = 24 * 60 * 60
 
   static let shared: SettingsSyncService = {
     if isTestRun {
@@ -102,6 +106,18 @@ final class SettingsSyncService: ObservableObject {
   private var cancellation = SettingsSyncCancellation()
   private var started = false
   private var requestedMode: Mode?
+  /// The first-enable choice (use iCloud / replace iCloud / initial upload) until a
+  /// transaction actually succeeds. Persisted, so a download wait, an IO failure or a relaunch
+  /// can't turn "Replace iCloud" into an ordinary merge with empty state.
+  private var pendingFirstEnableMode: Mode? {
+    didSet {
+      if let pendingFirstEnableMode {
+        defaults.set(pendingFirstEnableMode.rawValue, forKey: SettingsSyncStateKey.firstEnableMode)
+      } else {
+        defaults.removeObject(forKey: SettingsSyncStateKey.firstEnableMode)
+      }
+    }
+  }
   private var waitingForDownload = false
   private var lastSeenModificationDate: Date?
   private var defaultsObserver: NSObjectProtocol?
@@ -144,6 +160,9 @@ final class SettingsSyncService: ObservableObject {
     clockMillis = (defaults.object(forKey: SettingsSyncStateKey.clock) as? NSNumber)?
       .int64Value ?? 0
     localState = Self.loadLocalState(from: defaults)
+    pendingFirstEnableMode = defaults.string(forKey: SettingsSyncStateKey.firstEnableMode)
+      .flatMap(Mode.init(rawValue:))
+    recoverClockIfSkewed()
   }
 
   // MARK: - Lifecycle
@@ -223,6 +242,7 @@ final class SettingsSyncService: ObservableObject {
     defaults.set(true, forKey: SettingsSyncStateKey.enabled)
     localState = [:]
     pendingEdits = [:]
+    pendingFirstEnableMode = mode == .normal ? nil : mode
     saveLocalState()
     beginObserving()
     await sync(mode: mode)
@@ -234,12 +254,15 @@ final class SettingsSyncService: ObservableObject {
     generation += 1
     cancellation.cancel()
     requestedMode = nil
+    pendingFirstEnableMode = nil
     isEnabled = false
     defaults.set(false, forKey: SettingsSyncStateKey.enabled)
     // Forget what was agreed: turning sync back on asks again instead of guessing.
     localState = [:]
     pendingEdits = [:]
     saveLocalState()
+    clockMillis = 0
+    defaults.removeObject(forKey: SettingsSyncStateKey.clock)
     stopObserving()
     lastError = nil
     notice = nil
@@ -270,7 +293,9 @@ final class SettingsSyncService: ObservableObject {
     isSyncing = false
   }
 
-  private func performSync(mode: Mode) async {
+  private func performSync(mode requested: Mode) async {
+    // An unfinished first-enable choice overrides whatever triggered this sync.
+    let mode = pendingFirstEnableMode ?? requested
     let syncGeneration = generation
     let token = cancellation
     func stillCurrent() -> Bool { syncGeneration == generation && isEnabled }
@@ -306,6 +331,7 @@ final class SettingsSyncService: ObservableObject {
     )
     input.authoritative = mode == .preferLocal
     input.requireNoDocument = mode == .initialUpload
+    input.horizon = horizon()
 
     let presenter = self.presenter
     let transaction = await Task.detached {
@@ -327,8 +353,7 @@ final class SettingsSyncService: ObservableObject {
       return
     }
     guard let result = outcome.merge else { return }
-    observeClock(outcome.observed)
-    observeClock(result.document)
+    if !outcome.schemaTooNew { pendingFirstEnableMode = nil }
     waitingForDownload = false
     lastSeenModificationDate = store.modificationDate()
     if outcome.wrote { writeCount += 1 }
@@ -338,6 +363,10 @@ final class SettingsSyncService: ObservableObject {
     if let backup = outcome.quarantinedAs {
       notice = "The iCloud settings file was unreadable, so it was moved to \(backup) "
         + "and replaced with this Mac's settings."
+    } else if !outcome.futureKeys.isEmpty {
+      let count = outcome.futureKeys.count
+      notice = "Ignored \(count) setting\(count == 1 ? "" : "s") in iCloud dated more than a day "
+        + "in the future. Another Mac's clock may be wrong."
     } else if !lastRejectedKeys.isEmpty {
       let count = lastRejectedKeys.count
       notice = "Ignored \(count) setting\(count == 1 ? "" : "s") from iCloud that this Mac "
@@ -403,6 +432,16 @@ final class SettingsSyncService: ObservableObject {
       }
     }
     lastRejectedKeys = rejected
+    // Advance the logical clock only from timestamps this Mac accepted for synced keys, and
+    // never past the skew horizon (the transaction already set later entries aside).
+    let limit = horizon()
+    let accepted = result.agreed
+      .filter { !rejected.contains($0.key) && $0.value.modifiedAt <= limit }
+      .map { SettingsSyncDocument.millis($0.value.modifiedAt) }
+    if let newest = accepted.max(), newest > clockMillis {
+      clockMillis = newest
+      defaults.set(NSNumber(value: clockMillis), forKey: SettingsSyncStateKey.clock)
+    }
     return applied
   }
 
@@ -423,10 +462,13 @@ final class SettingsSyncService: ObservableObject {
         modifiedAt = unknownAge
       case .normal:
         let fingerprint = value?.fingerprint
+        let limit = horizon()
         if let record = localState[key] {
           if record.fingerprint == fingerprint {
-            modifiedAt = record.modifiedAt
-          } else if let edit = pendingEdits[key], edit.fingerprint == fingerprint {
+            // A record stamped by an earlier skewed clock must not win forever.
+            modifiedAt = record.modifiedAt > limit ? unknownAge : record.modifiedAt
+          } else if let edit = pendingEdits[key], edit.fingerprint == fingerprint,
+                    edit.modifiedAt <= limit {
             modifiedAt = edit.modifiedAt
           } else {
             modifiedAt = timestamp
@@ -487,19 +529,23 @@ final class SettingsSyncService: ObservableObject {
 
   /// Next edit timestamp: wall time, but always after anything already issued or observed.
   private func nextTimestamp() -> Date {
-    let wall = Int64((now().timeIntervalSince1970 * 1000).rounded(.down))
-    clockMillis = max(wall, clockMillis + 1)
+    recoverClockIfSkewed()
+    let wall = SettingsSyncDocument.millis(now())
+    clockMillis = max(wall, min(clockMillis, SettingsSyncDocument.maxMillis - 1) + 1)
     defaults.set(NSNumber(value: clockMillis), forKey: SettingsSyncStateKey.clock)
     return SettingsSyncDocument.date(millis: clockMillis)
   }
 
-  private func observeClock(_ document: SettingsSyncDocument?) {
-    guard let document else { return }
-    let stamps = document.entries.values.map(\.modifiedAt)
-      + document.devices.values.map(\.lastWriteAt)
-    guard let newest = stamps.map(SettingsSyncDocument.millis).max(),
-          newest > clockMillis else { return }
-    clockMillis = newest
+  /// Latest timestamp still trusted: wall time plus `maxClockSkew`.
+  private func horizon() -> Date {
+    now().addingTimeInterval(Self.maxClockSkew)
+  }
+
+  /// A clock persisted beyond the horizon (by an older build, or a once-fast clock) is reset
+  /// to wall time instead of stamping every future edit far in the future.
+  private func recoverClockIfSkewed() {
+    guard clockMillis > SettingsSyncDocument.millis(horizon()) else { return }
+    clockMillis = SettingsSyncDocument.millis(now())
     defaults.set(NSNumber(value: clockMillis), forKey: SettingsSyncStateKey.clock)
   }
 
