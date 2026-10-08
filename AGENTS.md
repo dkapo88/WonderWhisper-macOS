@@ -19,6 +19,23 @@ highest-priority connected device and then the system default. Selection is pers
 `AudioInputSelection` and `AudioDeviceManager` and displayed in `AudioSettingsPane.swift`. Core
 Audio's private `CADefaultDeviceAggregate-*` devices are never listed.
 
+### iCloud Settings Sync
+Opt-in from **Settings → General → iCloud** (default off). Preferences sync through a JSON file in
+the user's iCloud Drive (`~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json`)
+rather than `NSUbiquitousKeyValueStore`/CloudKit, because the app is unsandboxed and Developer ID
+signed: an iCloud container would need an iCloud capability and provisioning profile. Only keys
+in `SettingsSyncRegistry.synced` travel (vocabulary, Dictation/Command prompts and templates,
+favorite/selected models, transcription engine/language, meeting models and prompt, Beeper chats
+and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` documents what stays
+per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
+debug flags). API keys never leave the Keychain. Each key carries `modifiedAt` + `deviceID` and
+merges last-writer-wins; local edits are stamped when the defaults change is observed and uploaded
+after a 2 s debounce; remote edits arrive via `NSFilePresenter` plus a 30 s poll and are applied
+through `SettingsSyncLiveApply.swift`. Echo is prevented by value fingerprints, not flags. First
+enable asks "Use iCloud Settings" or "Replace iCloud with This Mac's Settings" if a file exists.
+To sync a new preference, add its existing key to the registry and, if a view model caches it,
+re-read it in `SettingsSyncLiveApply.swift`. Tests use temp folders only (`SettingsSyncTests`).
+
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
   Modes (Dictation, Command), Agents (Hermes chat) and Tools (Vocabulary, Compare).
@@ -124,6 +141,10 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Added opt-in iCloud settings sync (Settings → General) through
+  `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
+  last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
+  per-Mac.
 - 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
   components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
   (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).
