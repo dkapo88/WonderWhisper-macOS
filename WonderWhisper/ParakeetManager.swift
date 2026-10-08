@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FluidAudio)
+import FluidAudio
+#endif
 
 /// User-selectable on-device Parakeet model.
 ///
@@ -10,49 +13,88 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// and throughput and the only model that emits punctuation/capitalization
     /// natively. Loaded via FluidAudio's `UnifiedAsrManager` (offline batch).
     case unified
-    /// Parakeet TDT 0.6B v3. Multilingual (25 languages + Japanese), no native
-    /// punctuation/capitalization. Loaded via FluidAudio's `AsrManager`.
-    case v3
+    /// Parakeet Ultra: moondream's post-training of Parakeet TDT 0.6B v3. Same
+    /// 25 European languages and decode contract as v3, more accurate on every
+    /// published benchmark. Loaded via FluidAudio's `AsrManager`
+    /// (`AsrModelVersion.ultra`). Replaced the plain v3 option; a stored `"v3"`
+    /// reads as `.ultra`.
+    case ultra
+
+    /// The `parakeet.version` UserDefaults key. Unchanged from when v3 was the
+    /// multilingual option, so existing selections carry over.
+    static let defaultsKey = "parakeet.version"
 
     var id: String { rawValue }
 
+    /// Resolve a stored `parakeet.version` value. `"ultra"` and the retired
+    /// `"v3"` select Ultra; everything else (unset, `"unified"`, the retired
+    /// `"v2"`, unknown values) resolves to the `.unified` default.
+    init(storedValue: String?) {
+        switch (storedValue ?? "").lowercased() {
+        case "ultra", "v3": self = .ultra
+        default: self = .unified
+        }
+    }
+
     var displayName: String {
         switch self {
-        case .unified: return "Parakeet Unified (English)"
-        case .v3: return "Parakeet v3 (Multilingual)"
+        case .unified: return "English (Unified)"
+        case .ultra: return "Multilingual (Ultra)"
         }
     }
 
     var detail: String {
         switch self {
         case .unified:
-            return "English only. Highest on-device accuracy and speed, with automatic punctuation and capitalization."
-        case .v3:
-            return "Multilingual (25 languages + Japanese). No automatic punctuation or capitalization."
+            return "Parakeet Unified. English only. Highest on-device accuracy and speed, "
+                + "with automatic punctuation and capitalization."
+        case .ultra:
+            return "Parakeet Ultra. 25 European languages. More accurate than Parakeet v3 "
+                + "at the same speed."
+        }
+    }
+
+    /// Approximate download size of the dictation model files.
+    var approximateDownloadSize: String {
+        switch self {
+        case .unified: return "About 600 MB"
+        case .ultra: return "About 630 MB"
         }
     }
 
     /// On-disk model folder under `FluidAudio/Models`, matching FluidAudio's
-    /// `Repo.folderName`. As of 0.15.4 neither repo has an explicit `folderName`
+    /// `Repo.folderName`. As of 0.17.7 neither repo has an explicit `folderName`
     /// case, so both hit the default branch which strips the `-coreml` suffix
     /// from the repo slug (`name.replacingOccurrences(of: "-coreml", with: "")`).
-    /// Re-verify these against `Repo.folderName` when bumping FluidAudio.
+    /// A unit test pins these against `Repo.folderName`.
     var folderName: String {
         switch self {
         case .unified: return "parakeet-unified-en-0.6b"
-        case .v3: return "parakeet-tdt-0.6b-v3"
+        case .ultra: return "parakeet-ultra"
         }
     }
 
-    /// Currently selected model. Only "v3" selects v3; everything else (unset,
-    /// "unified", the retired "v2", or any unknown value) resolves to the
-    /// `.unified` default. This mirrors the @AppStorage fallback used by the
-    /// settings picker so both readers always agree on the active model.
-    static var selected: ParakeetModelKind {
-        switch (AppConfig.defaults.string(forKey: "parakeet.version") ?? "").lowercased() {
-        case "v3": return .v3
-        default: return .unified
+    /// Files that must exist in `folderName` for the model to count as
+    /// downloaded, taken from FluidAudio's own lists. Unified offline ships no
+    /// CoreML preprocessor since 0.15.6 (mel runs in Swift); the v3 family
+    /// (Ultra) still does.
+    var requiredFiles: [String] {
+        #if canImport(FluidAudio)
+        switch self {
+        case .unified:
+            return ModelNames.ParakeetUnified.requiredModels(variant: "offline").sorted()
+        case .ultra:
+            return ModelNames.ASR.requiredModelsV3().sorted() + [ModelNames.ASR.vocabularyFile]
         }
+        #else
+        return []
+        #endif
+    }
+
+    /// Currently selected model, read fresh from UserDefaults. Shares
+    /// `init(storedValue:)` with the settings picker so both always agree.
+    static var selected: ParakeetModelKind {
+        ParakeetModelKind(storedValue: AppConfig.defaults.string(forKey: defaultsKey))
     }
 }
 
@@ -102,22 +144,26 @@ enum ParakeetManager {
         modelsDirectory.appendingPathComponent(kind.folderName, isDirectory: true)
     }
 
-    /// Whether the given model is downloaded and valid. v3 also honours legacy
-    /// install locations via discovery; Unified is only ever placed canonically.
+    /// Whether the given model is downloaded. Both models are only ever placed
+    /// canonically by FluidAudio, so no legacy discovery applies.
     static func modelsPresent(for kind: ParakeetModelKind) -> Bool {
-        if validateModels(at: modelDirectory(for: kind)).ok { return true }
-        if kind == .v3, let dir = discoverInstalledModelDirectory() {
-            return validateModels(at: dir).ok
-        }
-        return false
+        missingFiles(kind.requiredFiles, in: modelDirectory(for: kind)).isEmpty
     }
 
-    /// Best directory to point diagnostics / Finder at for the given model.
+    /// Directory to point Finder at for the given model: the model folder once
+    /// it exists, otherwise the models root.
     static func effectiveModelsDirectory(for kind: ParakeetModelKind) -> URL {
         let canonical = modelDirectory(for: kind)
-        if validateModels(at: canonical).ok { return canonical }
-        if kind == .v3, let found = discoverInstalledModelDirectory() { return found }
-        return canonical
+        if FileManager.default.fileExists(atPath: canonical.path) { return canonical }
+        return modelsDirectory
+    }
+
+    /// Required file names that are absent from `dir`. An empty `required` list
+    /// (framework not linked) counts as missing everything, never as present.
+    static func missingFiles(_ required: [String], in dir: URL) -> [String] {
+        guard !required.isEmpty else { return ["(unknown required files)"] }
+        let fm = FileManager.default
+        return required.filter { !fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
     }
 
     // MARK: - Discovery

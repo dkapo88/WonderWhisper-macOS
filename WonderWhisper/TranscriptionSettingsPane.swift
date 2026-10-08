@@ -16,9 +16,10 @@ struct TranscriptionSettingsPane: View {
   @State private var qwenDownloadProgress: Double = 0
   @State private var qwenDownloadStatus = ""
   @State private var qwenDownloadError: String?
-  // Selected on-device Parakeet model (persisted under "parakeet.version").
-  @AppStorage("parakeet.version", store: AppConfig.defaults)
-  private var parakeetModel: ParakeetModelKind = .unified
+  // Selected on-device Parakeet model, persisted under "parakeet.version". Stored
+  // as a raw string so a legacy "v3" reads as Ultra via ParakeetModelKind(storedValue:).
+  @AppStorage(ParakeetModelKind.defaultsKey, store: AppConfig.defaults)
+  private var parakeetVersion = ParakeetModelKind.unified.rawValue
   @AppStorage("qwen.injectVocabulary", store: AppConfig.defaults)
   private var injectQwenVocabulary = true
 
@@ -156,9 +157,20 @@ struct TranscriptionSettingsPane: View {
 
   // MARK: - On-device models
 
+  private var parakeetModel: ParakeetModelKind {
+    ParakeetModelKind(storedValue: parakeetVersion)
+  }
+
+  private var parakeetModelBinding: Binding<ParakeetModelKind> {
+    Binding(
+      get: { ParakeetModelKind(storedValue: parakeetVersion) },
+      set: { parakeetVersion = $0.rawValue }
+    )
+  }
+
   private var parakeetSection: some View {
     Section {
-      Picker(selection: $parakeetModel) {
+      Picker(selection: parakeetModelBinding) {
         ForEach(ParakeetModelKind.allCases) { kind in
           Text(kind.displayName).tag(kind)
         }
@@ -186,7 +198,8 @@ struct TranscriptionSettingsPane: View {
         }
       } label: {
         Text("Model files")
-        Text("Download ahead of your first dictation to avoid a cold start.")
+        Text("\(parakeetModel.approximateDownloadSize). Download ahead of your first "
+          + "dictation to avoid a cold start.")
       }
 
       if let parakeetDownloadError {
@@ -308,8 +321,9 @@ struct TranscriptionSettingsPane: View {
       defer { isDownloadingParakeet = false }
       do {
         switch kind {
-        case .v3:
-          _ = try await AsrModels.downloadAndLoad(version: .v3)
+        case .ultra:
+          // Download only; the provider loads it on first dictation.
+          _ = try await AsrModels.download(version: .ultra)
         case .unified:
           let manager = UnifiedAsrManager()
           try await manager.loadModels(to: ParakeetManager.modelsDirectory)

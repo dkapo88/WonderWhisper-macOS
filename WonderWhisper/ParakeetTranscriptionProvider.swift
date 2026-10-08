@@ -6,7 +6,7 @@ import FluidAudio
 import OSLog
 
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
-    // TDT backend (Parakeet v3, multilingual)
+    // TDT backend (Parakeet Ultra, multilingual)
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
     private var unifiedManager: UnifiedAsrManager?
@@ -17,7 +17,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private let idleSeconds: TimeInterval = 300 // 5 minutes
     // Coalesce model loading to avoid duplicate work/logs
     private var loadTask: Task<Void, Error>?
-    // Track which model is loaded to allow switching between Unified and v3
+    // Track which model is loaded to allow switching between Unified and Ultra
     private var loadedKind: ParakeetModelKind?
 
     // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
@@ -71,7 +71,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private func isLoaded(_ kind: ParakeetModelKind) -> Bool {
         switch kind {
         case .unified: return unifiedManager != nil
-        case .v3: return asrManager != nil
+        case .ultra: return asrManager != nil
         }
     }
 
@@ -97,8 +97,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         // Free the other backend to keep only one model resident in memory.
         await unloadOtherBackend(keeping: kind)
         switch kind {
-        case .v3:
-            try await loadTdtModel(version: .v3)
+        case .ultra:
+            try await loadTdtModel(version: .ultra)
         case .unified:
             try await loadUnifiedModel()
         }
@@ -107,7 +107,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     private func unloadOtherBackend(keeping kind: ParakeetModelKind) async {
-        if kind != .v3, let mgr = asrManager {
+        if kind != .ultra, let mgr = asrManager {
             await mgr.cleanup()
             asrManager = nil
         }
@@ -117,25 +117,18 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     private func loadTdtModel(version: AsrModelVersion) async throws {
-        try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
-        // If models exist in a different known location, prefer that
-        let discovered = ParakeetManager.effectiveModelsDirectory(for: .v3)
-        if discovered != modelsDirectory { modelsDirectory = discovered }
-        log.notice("[Parakeet] ensureModelsLoaded (v3) dir=\(self.modelsDirectory.path, privacy: .public)")
-        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (v3) dir=\(self.modelsDirectory.path)")
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: modelsDirectory.path)) ?? []
-        log.notice("[Parakeet] dir contents count=\(contents.count, privacy: .public) items=\(String(describing: contents.prefix(5)), privacy: .public)")
-        AppLog.dictation.log("[Parakeet] contents count=\(contents.count) items=\(String(describing: contents.prefix(5)))")
-        let inv = ParakeetManager.inventory(at: modelsDirectory)
-        log.notice("[Parakeet] compiled models=\(String(describing: inv.mlmodelc), privacy: .public) others=\(String(describing: inv.others.prefix(5)), privacy: .public)")
-        AppLog.dictation.log("[Parakeet] compiled=\(String(describing: inv.mlmodelc)) others=\(String(describing: inv.others.prefix(5)))")
-        let validation = ParakeetManager.validateModels(at: modelsDirectory)
-        if !validation.ok {
-            log.notice("[Parakeet] validation missing=\(String(describing: validation.missing), privacy: .public)")
-            AppLog.dictation.error("[Parakeet] validation missing=\(String(describing: validation.missing))")
+        // Ultra is the only TDT model offered; FluidAudio places it canonically
+        // under FluidAudio/Models/<Repo.folderName>.
+        modelsDirectory = ParakeetManager.modelDirectory(for: .ultra)
+        log.notice("[Parakeet] ensureModelsLoaded (ultra) dir=\(self.modelsDirectory.path, privacy: .public)")
+        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (ultra) dir=\(self.modelsDirectory.path)")
+        let missing = ParakeetManager.missingFiles(ParakeetModelKind.ultra.requiredFiles, in: modelsDirectory)
+        if !missing.isEmpty {
+            // Not an error: downloadAndLoad fetches whatever is missing.
+            log.notice("[Parakeet] ultra files missing=\(String(describing: missing), privacy: .public); downloading")
+            AppLog.dictation.log("[Parakeet] ultra files missing=\(String(describing: missing)); downloading")
         }
-        // FluidAudio defaults to the stable int8 encoder; keep that for
-        // reliability over the newer int4 option.
+        // Ultra ships a single int8 encoder build (no precision variants).
         let models = try await AsrModels.downloadAndLoad(version: version)
         let mgr = AsrManager(config: .default)
         try await mgr.loadModels(models)
@@ -168,7 +161,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         case .unified:
             guard let mgr = unifiedManager else { throw ProviderError.notImplemented }
             return try await transcribeUnified(mgr: mgr, fileURL: fileURL)
-        case .v3:
+        case .ultra:
             guard let mgr = asrManager else { throw ProviderError.notImplemented }
             return try await transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
         }
@@ -255,8 +248,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private func preferredKind(for settings: TranscriptionSettings? = nil) -> ParakeetModelKind {
         if let model = settings?.model.lowercased() {
             if model.contains("unified") { return .unified }
-            if model.contains("v3") { return .v3 }
-            if model.contains("v2") { return .v3 } // v2 retired -> nearest multilingual TDT
+            if model.contains("ultra") { return .ultra }
+            // v3 and v2 retired -> Ultra, the multilingual TDT successor
+            if model.contains("v3") || model.contains("v2") { return .ultra }
         }
         return ParakeetModelKind.selected
     }
