@@ -51,3 +51,7 @@ docs/superpowers/
 
 # Build/distribution artifacts
 dist/
+
+# Orchestrator project memory (local only, repo is public)
+/MEMORY.md
+/ui-audit/
