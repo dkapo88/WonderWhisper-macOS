@@ -58,6 +58,12 @@ enum QwenASRManager {
     modelCacheCandidates.first { weightsExist(in: $0) } ?? modelCacheCandidates[0]
   }
 
+  /// The downloaded model directory, or nil when nothing complete is cached.
+  /// Default model-directory source for `QwenASRRuntime`; tests inject a scratch dir.
+  static func installedModelDirectory() -> URL? {
+    modelCacheCandidates.first { weightsExist(in: $0) }
+  }
+
   /// ISO-639-1 / BCP-47 from Settings → Qwen language hint. `auto` is nil.
   static func languageHint(for code: String?) -> String? {
     guard let code else { return nil }
@@ -104,22 +110,86 @@ enum QwenASRManager {
     return "Vocabulary: " + cleaned.joined(separator: ", ")
   }
 
-  /// Greedy MLX decode that has gone off the rails: mixed-script soup,
-  /// replacement characters, or far more text than speech can produce.
-  /// Used to unload/reload once instead of pasting thousands of garbage tokens.
+  /// Greedy MLX decode that has gone off the rails: token-0 `!` runs, one
+  /// word looping, mixed-script soup, replacement characters, or far more
+  /// text than speech can produce. Checked on every decode and on the
+  /// load-time canary, so garbage is never pasted into the user's app.
+  ///
+  /// Uninitialized weights (a swallowed lazy-load read in mlx-swift 0.31.6)
+  /// decode as 448 `!` tokens; the 2026-08 notarized failure was
+  /// mixed-script soup. Legit short or punctuation-only output ("OK!",
+  /// "...", "Wow!!!") must not trip this.
   static func looksLikeDegenerateTranscript(_ text: String, sampleCount: Int) -> Bool {
+    degenerateReason(text, sampleCount: sampleCount) != nil
+  }
+
+  /// Why `looksLikeDegenerateTranscript` fired, for logs. Nil when the text looks like speech.
+  static func degenerateReason(_ text: String, sampleCount: Int) -> String? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return false }
-    if trimmed.filter({ $0 == "!" }).count > 20 { return true }
+    guard !trimmed.isEmpty else { return nil }
+    let bangs = trimmed.filter { $0 == "!" }.count
+    if bangs > 20 { return "\(bangs) '!' characters" }
+    if longestRun(of: "!", in: trimmed) >= 8 { return "token-0 '!' run" }
+    if longestIdenticalSymbolRun(in: trimmed) >= 16 { return "repeated symbol run" }
+    if longestRepeatedWordRun(in: trimmed) >= 12 { return "one word looping" }
     if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) && trimmed.count > 80 {
-      return true
+      return "replacement characters"
     }
-    if mixedScriptSoup(trimmed) && trimmed.count > 80 { return true }
+    if mixedScriptSoup(trimmed) && trimmed.count > 80 { return "mixed-script soup" }
     let duration = sampleCount > 0 ? Double(sampleCount) / Double(sampleRate) : 0
     // Fast English is ~20–25 chars/s. 100 chars/s is already superhuman;
     // the stuck-kernel path emits ~1000 chars/s up to chunkMaxTokens.
     let maxPlausible = max(400, Int(duration * 100) + 80)
-    return trimmed.count > maxPlausible
+    if trimmed.count > maxPlausible {
+      return "\(trimmed.count) chars for \(String(format: "%.1f", duration))s of audio"
+    }
+    return nil
+  }
+
+  static func longestRun(of character: Character, in text: String) -> Int {
+    var best = 0
+    var current = 0
+    for ch in text {
+      current = ch == character ? current + 1 : 0
+      best = max(best, current)
+    }
+    return best
+  }
+
+  /// Longest run of one identical non-alphanumeric, non-space character.
+  /// "......" and "—" are fine; 16+ of the same symbol is a stuck decoder.
+  static func longestIdenticalSymbolRun(in text: String) -> Int {
+    var best = 0
+    var current = 0
+    var previous: Character?
+    for ch in text {
+      let isSymbol = !ch.isLetter && !ch.isNumber && !ch.isWhitespace
+      if isSymbol, ch == previous {
+        current += 1
+      } else {
+        current = isSymbol ? 1 : 0
+      }
+      previous = ch
+      best = max(best, current)
+    }
+    return best
+  }
+
+  /// Longest run of the same word repeated back to back ("the the the ...").
+  static func longestRepeatedWordRun(in text: String) -> Int {
+    let words = text.lowercased()
+      .split(whereSeparator: { $0.isWhitespace })
+      .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+      .filter { !$0.isEmpty }
+    var best = 0
+    var current = 0
+    var previous: String?
+    for word in words {
+      current = word == previous ? current + 1 : 1
+      previous = word
+      best = max(best, current)
+    }
+    return best
   }
 
   /// Three or more writing systems with a real footprint — Latin + CJK +
@@ -199,12 +269,25 @@ enum QwenASRManager {
   }
 }
 
-enum QwenASRError: Error, LocalizedError {
+enum QwenASRError: Error, LocalizedError, Equatable {
   case requiresAppleSilicon
   case frameworkMissing
   case emptyAudio
   case decodeFailed
   case modelNotDownloaded
+  /// Load-time verification (weight integrity, eval, canary) failed twice.
+  case unhealthy(String)
+  /// A dictation decode came back as garbage; the model is being reloaded.
+  case degenerateTranscript(String)
+
+  /// Errors where another engine should transcribe the recording instead of
+  /// failing the dictation. Qwen garbage is never pasted.
+  var shouldFallBack: Bool {
+    switch self {
+    case .unhealthy, .degenerateTranscript: return true
+    default: return false
+    }
+  }
 
   var errorDescription: String? {
     switch self {
@@ -218,6 +301,10 @@ enum QwenASRError: Error, LocalizedError {
       return "Could not decode audio for Qwen3-ASR."
     case .modelNotDownloaded:
       return "Download Qwen3-ASR 0.6B in Settings → Transcription before dictating."
+    case .unhealthy(let reason):
+      return "Qwen3-ASR failed its load check (\(reason))."
+    case .degenerateTranscript(let reason):
+      return "Qwen3-ASR produced garbage (\(reason)); reloading the model."
     }
   }
 }
