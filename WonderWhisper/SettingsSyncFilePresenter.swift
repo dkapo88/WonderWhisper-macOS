@@ -2,7 +2,10 @@ import Foundation
 
 /// Watches the iCloud Drive settings folder and reports when `settings.json` changes there,
 /// including when iCloud downloads a newer copy written by another Mac.
-final class SettingsSyncFilePresenter: NSObject, NSFilePresenter {
+///
+/// Sendable because every stored property is an immutable `let` (the queue and URL are set once,
+/// the callback is `@Sendable`), so it can be handed to coordinators on background threads.
+final class SettingsSyncFilePresenter: NSObject, NSFilePresenter, @unchecked Sendable {
   let presentedItemURL: URL?
   let presentedItemOperationQueue: OperationQueue = {
     let queue = OperationQueue()

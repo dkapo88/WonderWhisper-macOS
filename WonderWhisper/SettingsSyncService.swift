@@ -4,32 +4,34 @@ import AppKit
 /// Keeps the allowlisted preferences (`SettingsSyncRegistry`) in step across Macs through a
 /// JSON file in iCloud Drive.
 ///
-/// - Local edits are noticed through `UserDefaults.didChangeNotification` and uploaded after a
-///   short debounce.
+/// - Local edits are noticed through `UserDefaults.didChangeNotification`, stamped right away
+///   and uploaded after a short debounce.
 /// - Cloud edits are noticed through an `NSFilePresenter` on the folder plus a slow poll, then
-///   merged per key (newest `modifiedAt` wins) and written into UserDefaults.
+///   merged per key (newest `modifiedAt` wins) inside one coordinated file transaction.
+/// - Timestamps come from a hybrid logical clock: never earlier than any timestamp this Mac has
+///   seen, so an edit made after receiving another Mac's change always wins over it even if
+///   that Mac's clock runs fast.
 /// - No echo: a key only counts as changed when its value fingerprint differs from what this Mac
 ///   last agreed with the cloud, and that record is updated before a cloud value is applied.
-///   Applying a cloud value therefore never schedules an upload of the same value.
+/// - Turning sync off bumps a generation and cancels any in-flight transaction, so a sync that
+///   was already running can neither apply nor write afterwards.
 @MainActor
 final class SettingsSyncService: ObservableObject {
-  // Sync's own state. Not synced (see `SettingsSyncRegistry.excluded`).
-  static let enabledKey = "settingsSync.enabled"
-  static let deviceIDKey = "settingsSync.deviceID"
-  static let localStateKey = "settingsSync.localState"
-  static let lastSyncedAtKey = "settingsSync.lastSyncedAt"
-
-  enum FirstEnableChoice {
+  enum FirstEnableChoice: Sendable {
     /// Overwrite this Mac's synced settings with the ones already in iCloud.
     case useCloud
     /// Overwrite the iCloud copy with this Mac's settings.
     case replaceCloud
   }
 
-  enum Mode {
+  enum Mode: Sendable {
     case normal
+    /// "Use iCloud settings": this Mac's values lose to anything already in iCloud.
     case preferCloud
+    /// "Replace iCloud": this Mac's values win, whatever the timestamps say.
     case preferLocal
+    /// First enable when no file existed; stops and asks if one has appeared since.
+    case initialUpload
   }
 
   static let shared: SettingsSyncService = {
@@ -58,18 +60,25 @@ final class SettingsSyncService: ObservableObject {
   @Published private(set) var lastSyncedAt: Date?
   @Published private(set) var deviceCount: Int?
   @Published private(set) var lastError: String?
-  /// Non-error information worth showing once (e.g. an unreadable file was replaced).
+  /// Non-error information worth showing (an unreadable file was replaced, values rejected).
   @Published private(set) var notice: String?
   /// True while the user must choose between the existing iCloud copy and this Mac's settings.
   @Published private(set) var isAwaitingFirstEnableChoice = false
 
-  /// Called on the main actor with the keys whose values were replaced by newer cloud values,
-  /// so live view models can re-read them.
+  /// Called on the main actor, once per sync, with every key whose value was replaced by a
+  /// newer cloud value, so live view models can re-read the whole batch together.
   var onRemoteChangesApplied: ((Set<String>) -> Void)?
+
+  /// Test seam: awaited after the download check and before the file transaction, standing in
+  /// for anything that can happen while a sync is in flight (iCloud replacing the file, the
+  /// user turning sync off).
+  var beforeTransactionForTesting: (() async -> Void)?
 
   let deviceID: String
   /// Number of files written by this instance; lets tests prove there is no echo.
   private(set) var writeCount = 0
+  /// Keys whose received values failed validation in the most recent sync.
+  private(set) var lastRejectedKeys: Set<String> = []
 
   var fileURL: URL { store.fileURL }
 
@@ -84,11 +93,15 @@ final class SettingsSyncService: ObservableObject {
   private let pollInterval: TimeInterval
 
   private var localState: [String: SettingsSyncLocalRecord]
-  /// When each not-yet-uploaded local edit was first seen, keyed by setting, so an edit keeps
-  /// its real time even if the upload happens later (debounce, offline, iCloud busy).
+  /// When each not-yet-uploaded local edit was first seen (including removals, whose
+  /// fingerprint is nil), so an edit keeps its real time even if the upload happens later.
   private var pendingEdits: [String: SettingsSyncLocalRecord] = [:]
+  /// Hybrid logical clock: highest timestamp (ms) issued or observed.
+  private var clockMillis: Int64
+  private var generation = 0
+  private var cancellation = SettingsSyncCancellation()
   private var started = false
-  private var resyncRequested = false
+  private var requestedMode: Mode?
   private var waitingForDownload = false
   private var lastSeenModificationDate: Date?
   private var defaultsObserver: NSObjectProtocol?
@@ -103,13 +116,14 @@ final class SettingsSyncService: ObservableObject {
     iCloudRoot: URL,
     deviceName: String = Host.current().localizedName ?? "Mac",
     now: @escaping () -> Date = Date.init,
+    conflicts: SettingsSyncConflictSource = .fileVersions,
     observesChanges: Bool = true,
     localDebounce: Duration = .seconds(2),
     remoteDebounce: Duration = .milliseconds(500),
     pollInterval: TimeInterval = 30
   ) {
     self.defaults = defaults
-    self.store = SettingsSyncFileStore(directory: directory)
+    self.store = SettingsSyncFileStore(directory: directory, conflicts: conflicts)
     self.iCloudRoot = iCloudRoot
     self.deviceName = deviceName
     self.now = now
@@ -118,15 +132,17 @@ final class SettingsSyncService: ObservableObject {
     self.remoteDebounce = remoteDebounce
     self.pollInterval = pollInterval
 
-    if let stored = defaults.string(forKey: Self.deviceIDKey), !stored.isEmpty {
+    if let stored = defaults.string(forKey: SettingsSyncStateKey.deviceID), !stored.isEmpty {
       deviceID = stored
     } else {
       deviceID = UUID().uuidString
-      defaults.set(deviceID, forKey: Self.deviceIDKey)
+      defaults.set(deviceID, forKey: SettingsSyncStateKey.deviceID)
     }
-    isEnabled = defaults.bool(forKey: Self.enabledKey)
+    isEnabled = defaults.bool(forKey: SettingsSyncStateKey.enabled)
     isICloudAvailable = SettingsSyncFileStore.isICloudDriveAvailable(root: iCloudRoot)
-    lastSyncedAt = defaults.object(forKey: Self.lastSyncedAtKey) as? Date
+    lastSyncedAt = defaults.object(forKey: SettingsSyncStateKey.lastSyncedAt) as? Date
+    clockMillis = (defaults.object(forKey: SettingsSyncStateKey.clock) as? NSNumber)?
+      .int64Value ?? 0
     localState = Self.loadLocalState(from: defaults)
   }
 
@@ -165,15 +181,20 @@ final class SettingsSyncService: ObservableObject {
     lastError = nil
     notice = nil
 
-    switch await readCloud() {
+    let store = self.store
+    let presenter = self.presenter
+    let peek = await Task.detached {
+      Result { try store.read(presenter: presenter) }
+    }.value
+    guard !isEnabled, !isAwaitingFirstEnableChoice else { return }
+    switch peek {
     case .success(.document):
       isAwaitingFirstEnableChoice = true
-    case .success(.missing):
-      await enable(mode: .preferLocal)
+    case .success(.missing), .failure(SettingsSyncFileStore.StoreError.corrupt):
+      // The transaction re-checks: if a valid file appears meanwhile it stops and asks.
+      await enable(mode: .initialUpload)
     case .success(.downloading):
       lastError = "iCloud is still downloading the settings file. Try again in a moment."
-    case .failure(SettingsSyncFileStore.StoreError.corrupt):
-      await enable(mode: .preferLocal)
     case .failure(let error):
       lastError = error.localizedDescription
     }
@@ -196,8 +217,10 @@ final class SettingsSyncService: ObservableObject {
   // MARK: - Enable / disable
 
   private func enable(mode: Mode) async {
+    generation += 1
+    cancellation = SettingsSyncCancellation()
     isEnabled = true
-    defaults.set(true, forKey: Self.enabledKey)
+    defaults.set(true, forKey: SettingsSyncStateKey.enabled)
     localState = [:]
     pendingEdits = [:]
     saveLocalState()
@@ -208,8 +231,11 @@ final class SettingsSyncService: ObservableObject {
   private func disable() {
     isAwaitingFirstEnableChoice = false
     guard isEnabled else { return }
+    generation += 1
+    cancellation.cancel()
+    requestedMode = nil
     isEnabled = false
-    defaults.set(false, forKey: Self.enabledKey)
+    defaults.set(false, forKey: SettingsSyncStateKey.enabled)
     // Forget what was agreed: turning sync back on asks again instead of guessing.
     localState = [:]
     pendingEdits = [:]
@@ -219,129 +245,165 @@ final class SettingsSyncService: ObservableObject {
     notice = nil
   }
 
+  /// A document showed up during a first upload: back out and ask the user instead.
+  private func revertToChoice() {
+    disable()
+    isAwaitingFirstEnableChoice = true
+  }
+
   // MARK: - Sync
 
   private func sync(mode: Mode) async {
     guard isEnabled else { return }
     if isSyncing {
-      resyncRequested = true
+      // Keep the strongest pending request; an explicit choice must not degrade to .normal.
+      if mode != .normal || requestedMode == nil { requestedMode = mode }
       return
     }
     isSyncing = true
-    var nextMode = mode
-    repeat {
-      resyncRequested = false
-      await performSync(mode: nextMode)
-      nextMode = .normal
-    } while resyncRequested && isEnabled
+    var nextMode: Mode? = mode
+    while let current = nextMode, isEnabled {
+      requestedMode = nil
+      await performSync(mode: current)
+      nextMode = requestedMode
+    }
     isSyncing = false
   }
 
   private func performSync(mode: Mode) async {
+    let syncGeneration = generation
+    let token = cancellation
+    func stillCurrent() -> Bool { syncGeneration == generation && isEnabled }
+
     refreshAvailability()
     guard isICloudAvailable else {
       lastError = "iCloud Drive is off on this Mac, so settings aren't syncing."
       return
     }
 
-    noteLocalChanges()
-    let timestamp = currentTime()
-    let snapshot = readLocalValues()
-
-    var remote: SettingsSyncDocument?
-    switch await readCloud() {
-    case .success(.document(let document)):
-      remote = document
-    case .success(.missing):
-      remote = nil
-    case .success(.downloading):
+    let store = self.store
+    let pending = await Task.detached { store.requestDownloadIfNeeded() }.value
+    guard stillCurrent() else { return }
+    if pending == .downloading {
       waitingForDownload = true
       notice = "Waiting for iCloud to download the settings file…"
       return
-    case .failure(SettingsSyncFileStore.StoreError.corrupt):
-      let store = self.store
-      let stamp = timestamp
-      let backup = await Task.detached { store.quarantineUnreadableFile(now: stamp) }.value
-      notice = "The iCloud settings file was unreadable"
-        + (backup.map { ", so it was moved to \($0)" } ?? "")
-        + " and replaced with this Mac's settings."
-      remote = nil
+    }
+    if let hook = beforeTransactionForTesting {
+      await hook()
+      guard stillCurrent() else { return }
+    }
+
+    noteLocalChanges()
+    let timestamp = nextTimestamp()
+    let snapshot = readLocalValues()
+    let local = localEntries(snapshot: snapshot, mode: mode, timestamp: timestamp)
+    var input = SettingsSyncFileStore.TransactionInput(
+      local: local,
+      deviceID: deviceID,
+      deviceName: deviceName,
+      timestamp: timestamp
+    )
+    input.authoritative = mode == .preferLocal
+    input.requireNoDocument = mode == .initialUpload
+
+    let presenter = self.presenter
+    let transaction = await Task.detached {
+      Result { try store.transact(input, cancellation: token, presenter: presenter) }
+    }.value
+    guard stillCurrent() else { return }
+
+    let outcome: SettingsSyncFileStore.TransactionOutcome
+    switch transaction {
+    case .success(let value):
+      outcome = value
     case .failure(let error):
       lastError = error.localizedDescription
       return
     }
+    if outcome.cancelled { return }
+    if outcome.documentAppeared {
+      revertToChoice()
+      return
+    }
+    guard let result = outcome.merge else { return }
+    observeClock(outcome.observed)
+    observeClock(result.document)
     waitingForDownload = false
     lastSeenModificationDate = store.modificationDate()
+    if outcome.wrote { writeCount += 1 }
 
-    let canWrite = (remote?.schemaVersion ?? 0) <= SettingsSyncDocument.currentSchemaVersion
-    let local = localEntries(snapshot: snapshot, mode: mode, timestamp: timestamp)
-    var result = SettingsSyncMerger.merge(local: local, remote: remote, deviceID: deviceID)
+    let applied = applyCloudValues(result, local: local, snapshot: snapshot)
 
-    // Apply newer cloud values. The agreed record is stored first, so the defaults change
-    // notification this triggers finds nothing new to upload.
+    if let backup = outcome.quarantinedAs {
+      notice = "The iCloud settings file was unreadable, so it was moved to \(backup) "
+        + "and replaced with this Mac's settings."
+    } else if !lastRejectedKeys.isEmpty {
+      let count = lastRejectedKeys.count
+      notice = "Ignored \(count) setting\(count == 1 ? "" : "s") from iCloud that this Mac "
+        + "can't use; kept this Mac's value\(count == 1 ? "" : "s")."
+    } else if notice?.hasPrefix("Waiting for iCloud") == true || outcome.wrote {
+      notice = nil
+    }
+
+    lastSyncedAt = currentTime()
+    defaults.set(lastSyncedAt, forKey: SettingsSyncStateKey.lastSyncedAt)
+    deviceCount = result.document.devices.count
+    lastError = outcome.schemaTooNew
+      ? "iCloud settings were saved by a newer WonderWhisper. Update this Mac to sync changes."
+      : nil
+    if !applied.isEmpty {
+      onRemoteChangesApplied?(applied)
+    }
+  }
+
+  /// Writes newer, valid cloud values into UserDefaults and records what this Mac now agrees
+  /// with. Returns the keys that changed.
+  private func applyCloudValues(
+    _ result: SettingsSyncMerger.Result,
+    local: [String: SettingsSyncMerger.LocalEntry],
+    snapshot: [String: SettingsSyncValue?]
+  ) -> Set<String> {
     var applied: Set<String> = []
+    var rejected: Set<String> = []
     for key in result.applyLocally.keys.sorted() {
       guard let value = result.applyLocally[key] else { continue }
       let current = SettingsSyncValue.read(key, from: defaults)
       if current?.fingerprint != (snapshot[key] ?? nil)?.fingerprint {
-        // Edited on this Mac while the file was being read; the edit is newer, keep it.
+        // Edited on this Mac while the transaction ran; the edit is newer, keep it.
         continue
       }
+      guard SettingsSyncRegistry.isValid(value, for: key) else {
+        // Keep this Mac's value. Without a record it stays "older than the cloud", so it is
+        // only uploaded (replacing the bad value) once the user edits it here.
+        rejected.insert(key)
+        if localState[key] == nil {
+          localState[key] = SettingsSyncLocalRecord(
+            fingerprint: current?.fingerprint,
+            modifiedAt: Date(timeIntervalSince1970: 0)
+          )
+        }
+        continue
+      }
+      // Record first, so the defaults change notification finds nothing new to upload.
       if let record = result.agreed[key] { localState[key] = record }
       SettingsSyncValue.write(value, key: key, to: defaults)
       applied.insert(key)
     }
-    for (key, entry) in local where !result.applyLocally.keys.contains(key) {
+    for (key, entry) in local where result.applyLocally[key] == nil {
       localState[key] = result.agreed[key] ?? SettingsSyncLocalRecord(
         fingerprint: entry.value?.fingerprint,
         modifiedAt: entry.modifiedAt
       )
     }
     saveLocalState()
-    for key in local.keys {
-      if pendingEdits[key]?.fingerprint == localState[key]?.fingerprint {
+    for (key, edit) in pendingEdits {
+      if let record = localState[key], record.fingerprint == edit.fingerprint {
         pendingEdits[key] = nil
       }
     }
-
-    if result.document.devices[deviceID] == nil { result.documentChanged = true }
-    if result.documentChanged, canWrite {
-      result.document.schemaVersion = SettingsSyncDocument.currentSchemaVersion
-      result.document.devices[deviceID] = SettingsSyncDocument.Device(
-        name: deviceName,
-        lastWriteAt: timestamp
-      )
-      let store = self.store
-      let document = result.document
-      let presenter = self.presenter
-      let writeResult: Result<Void, Error> = await Task.detached {
-        Result { try store.write(document, presenter: presenter) }
-      }.value
-      if case .failure(let error) = writeResult {
-        lastError = error.localizedDescription
-        if !applied.isEmpty { onRemoteChangesApplied?(applied) }
-        return
-      }
-      writeCount += 1
-      lastSeenModificationDate = store.modificationDate()
-    }
-
-    lastSyncedAt = timestamp
-    defaults.set(timestamp, forKey: Self.lastSyncedAtKey)
-    deviceCount = result.document.devices.count
-    lastError = canWrite ? nil
-      : "iCloud settings were saved by a newer WonderWhisper. Update this Mac to sync changes."
-    if !applied.isEmpty {
-      onRemoteChangesApplied?(applied)
-    }
-  }
-
-  private func readCloud() async -> Result<SettingsSyncFileStore.ReadResult, Error> {
-    let store = self.store
-    let presenter = self.presenter
-    return await Task.detached {
-      Result { try store.read(presenter: presenter) }
-    }.value
+    lastRejectedKeys = rejected
+    return applied
   }
 
   private func localEntries(
@@ -355,7 +417,7 @@ final class SettingsSyncService: ObservableObject {
       let value = snapshot[key] ?? nil
       let modifiedAt: Date
       switch mode {
-      case .preferLocal:
+      case .preferLocal, .initialUpload:
         modifiedAt = timestamp
       case .preferCloud:
         modifiedAt = unknownAge
@@ -387,19 +449,23 @@ final class SettingsSyncService: ObservableObject {
   }
 
   /// Stamps synced settings that changed since the last sync with the time they were first
-  /// seen. Runs on every defaults change notification (cheap: hashes ~70 small values).
+  /// seen, including removals. Runs on every defaults change notification (cheap: hashes ~70
+  /// small values).
   func noteLocalChanges() {
     guard isEnabled else { return }
-    let seenAt = currentTime()
+    var stamp: Date?
     for key in SettingsSyncRegistry.syncedKeys {
+      guard let record = localState[key] else { continue }
       let fingerprint = SettingsSyncValue.read(key, from: defaults)?.fingerprint
-      guard let record = localState[key], record.fingerprint != fingerprint else {
+      if record.fingerprint == fingerprint {
         pendingEdits[key] = nil
         continue
       }
-      if pendingEdits[key]?.fingerprint != fingerprint {
-        pendingEdits[key] = SettingsSyncLocalRecord(fingerprint: fingerprint, modifiedAt: seenAt)
-      }
+      // A pending record with a nil fingerprint is a recorded removal, distinct from "none".
+      if let pending = pendingEdits[key], pending.fingerprint == fingerprint { continue }
+      let seenAt = stamp ?? nextTimestamp()
+      stamp = seenAt
+      pendingEdits[key] = SettingsSyncLocalRecord(fingerprint: fingerprint, modifiedAt: seenAt)
     }
   }
 
@@ -412,10 +478,29 @@ final class SettingsSyncService: ObservableObject {
     }
   }
 
-  /// Milliseconds precision, matching the file encoding, so timestamps round-trip exactly.
+  // MARK: - Clock
+
+  /// Wall time, whole milliseconds. Used for display.
   private func currentTime() -> Date {
-    let millis = (now().timeIntervalSince1970 * 1000).rounded(.down)
-    return Date(timeIntervalSince1970: millis / 1000)
+    SettingsSyncDocument.date(millis: SettingsSyncDocument.millis(now()))
+  }
+
+  /// Next edit timestamp: wall time, but always after anything already issued or observed.
+  private func nextTimestamp() -> Date {
+    let wall = Int64((now().timeIntervalSince1970 * 1000).rounded(.down))
+    clockMillis = max(wall, clockMillis + 1)
+    defaults.set(NSNumber(value: clockMillis), forKey: SettingsSyncStateKey.clock)
+    return SettingsSyncDocument.date(millis: clockMillis)
+  }
+
+  private func observeClock(_ document: SettingsSyncDocument?) {
+    guard let document else { return }
+    let stamps = document.entries.values.map(\.modifiedAt)
+      + document.devices.values.map(\.lastWriteAt)
+    guard let newest = stamps.map(SettingsSyncDocument.millis).max(),
+          newest > clockMillis else { return }
+    clockMillis = newest
+    defaults.set(NSNumber(value: clockMillis), forKey: SettingsSyncStateKey.clock)
   }
 
   // MARK: - Observation
@@ -497,17 +582,14 @@ final class SettingsSyncService: ObservableObject {
   private static func loadLocalState(
     from defaults: UserDefaults
   ) -> [String: SettingsSyncLocalRecord] {
-    guard let data = defaults.data(forKey: localStateKey) else { return [:] }
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .millisecondsSince1970
+    guard let data = defaults.data(forKey: SettingsSyncStateKey.localState) else { return [:] }
+    let decoder = SettingsSyncDocument.makeDecoder()
     return (try? decoder.decode([String: SettingsSyncLocalRecord].self, from: data)) ?? [:]
   }
 
   private func saveLocalState() {
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .millisecondsSince1970
-    guard let data = try? encoder.encode(localState) else { return }
-    defaults.set(data, forKey: Self.localStateKey)
+    guard let data = try? SettingsSyncDocument.makeEncoder().encode(localState) else { return }
+    defaults.set(data, forKey: SettingsSyncStateKey.localState)
   }
 
   private static var isTestRun: Bool {

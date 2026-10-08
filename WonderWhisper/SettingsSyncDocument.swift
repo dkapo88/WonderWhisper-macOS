@@ -5,16 +5,16 @@ import Foundation
 /// Every synced preference is stored with its own `modifiedAt` and writer `deviceID`, so two
 /// Macs editing different settings never overwrite each other; for the same setting the newest
 /// edit wins. A nil `value` records that the setting was reset to its default.
-struct SettingsSyncDocument: Equatable {
+struct SettingsSyncDocument: Equatable, Sendable {
   static let currentSchemaVersion = 1
 
-  struct Entry: Codable, Equatable {
+  struct Entry: Codable, Equatable, Sendable {
     var value: SettingsSyncValue?
     var modifiedAt: Date
     var deviceID: String
   }
 
-  struct Device: Codable, Equatable {
+  struct Device: Codable, Equatable, Sendable {
     var name: String
     var lastWriteAt: Date
   }
@@ -36,16 +36,42 @@ struct SettingsSyncDocument: Equatable {
   // MARK: - Encoding
 
   static func decode(_ data: Data) throws -> SettingsSyncDocument {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .millisecondsSince1970
-    return try decoder.decode(SettingsSyncDocument.self, from: data)
+    try makeDecoder().decode(SettingsSyncDocument.self, from: data)
   }
 
   func encoded() throws -> Data {
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .millisecondsSince1970
+    let encoder = Self.makeEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     return try encoder.encode(self)
+  }
+
+  /// Dates are whole milliseconds since 1970, encoded as integers so a timestamp read back
+  /// compares exactly equal to the one written (no floating-point drift across Macs).
+  static func makeEncoder() -> JSONEncoder {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .custom { date, encoder in
+      var container = encoder.singleValueContainer()
+      try container.encode(millis(date))
+    }
+    return encoder
+  }
+
+  static func makeDecoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .custom { decoder in
+      let container = try decoder.singleValueContainer()
+      let value = try container.decode(Double.self)
+      return date(millis: Int64(value.rounded()))
+    }
+    return decoder
+  }
+
+  static func millis(_ date: Date) -> Int64 {
+    Int64((date.timeIntervalSince1970 * 1000).rounded())
+  }
+
+  static func date(millis: Int64) -> Date {
+    Date(timeIntervalSince1970: Double(millis) / 1000)
   }
 }
 
