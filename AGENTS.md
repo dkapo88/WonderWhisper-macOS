@@ -124,6 +124,13 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Qwen loads are verified before use: safetensors integrity, eager `withError` eval of
+  every weight, then a canary decode of bundled `qwen-canary.wav`; one unload/clear-cache/reload
+  retry, else Qwen is marked unhealthy. Every decode is garbage-checked again (token-0 `!` runs,
+  loops, mixed-script). Unhealthy or garbage Qwen falls back to Parakeet (if downloaded) or Groq
+  for that dictation, never pasting garbage. `QwenASRRuntime` is now an actor with
+  generation-coalesced loads; MLX work stays on its serial queue. Opt-in real-model tests take
+  scratch dirs via `TEST_RUNNER_QWEN_{GOOD,TRUNC,ZEROTAIL}_MODEL_DIR`.
 - 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
   components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
   (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).
