@@ -2,7 +2,7 @@
 
 Scope: Entire repository  
 Owner: WonderWhisper Development Team
-Last updated: August 20, 2026
+Last updated: October 8, 2026
 
 Note to agents and contributors: Keep this document up to date with any changes.
 
@@ -13,17 +13,24 @@ WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view mo
 Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol (`ParakeetTranscriptionProvider`, `QwenASRTranscriptionProvider`, cloud providers), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
 
 ### Microphone Selection
-The app includes persistent microphone priority ordering in the sidebar. Users can choose the system
-default or rank remembered microphones; unavailable choices fall through to the highest-priority
-connected device and then the system default. Selection is persisted via `AudioInputSelection` and
-`AudioDeviceManager` and displayed in `MicrophoneSelectionView.swift`.
+The app includes persistent microphone priority ordering in **Settings → Audio**. Users can choose
+the system default or rank remembered microphones; unavailable choices fall through to the
+highest-priority connected device and then the system default. Selection is persisted via
+`AudioInputSelection` and `AudioDeviceManager` and displayed in `AudioSettingsPane.swift`. Core
+Audio's private `CADefaultDeviceAggregate-*` devices are never listed.
 
 ## Feature Scope & Providers
-- The app ships a single window with twelve sidebar tabs: History, Dictation, Command, Meetings,
-  Codex, Beeper, Hermes, Vocabulary, Microphone, Compare, Permissions, and Settings. Scratchpad,
-  Pro mode, and file transcription workflows have been removed; keep new work within these
-  surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription engine**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
+- The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
+  Modes (Dictation, Command), Agents (Hermes chat) and Tools (Vocabulary, Compare).
+  Configuration lives in a native Settings window (Cmd+, / menu bar "Settings…") with tabs
+  General, Transcription, Models, Audio, Meetings, Shortcuts, Integrations (Codex, Beeper,
+  Hermes connection) and Permissions. Settings surfaces use `SettingsPage` (grouped `Form`) and
+  the shared components (`StatusBadge`, `APIKeyRow`, `NumberStepperRow`, `ModelPickerRow`,
+  `FolderPickerRow`) plus `DesignTokens` spacing/radius and `OverlayPalette` for floating
+  surfaces; new settings should follow that pattern. `SettingsRouter.shared.show(_:)` opens a
+  specific tab. Moving a control never changes its UserDefaults/Keychain key. Scratchpad, Pro
+  mode, and file transcription workflows have been removed; keep new work within these surfaces.
+- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
   supplies the selected microphone. Parakeet Unified remains the free on-device default with
@@ -117,6 +124,19 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
+  components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
+  (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).
+- 2026-10-08: Slimmed the sidebar from 12 items to 7 grouped work surfaces; Codex, Beeper,
+  Hermes connection, Microphone, Permissions and Settings moved into Settings tabs, all hotkeys
+  into Settings → Shortcuts with conflicts marked; added "Open WonderWhisper" and "Settings…" to
+  the menu bar menu and a missing-permissions banner.
+- 2026-10-08: Rebuilt History (list + detail, empty entries hidden, retention in General),
+  Dictation/Command (options form + one Header/Rules/Footer editor), Compare and Hermes chat;
+  shared type/spacing/radius scale and overlay palette across the app.
+- 2026-10-08: Fixed "Sort by: Sort", Vocabulary "comma-separated" copy, phantom
+  CADefaultDeviceAggregate microphones, Qwen red X on "Model downloaded", and the meeting
+  "play" icon (now "Resume Recording").
 - 2026-08-20.3: Reverted Qwen to the 2026-08-19.4 in-process greedy GCD path.
   The out-of-process helper deadlocked dictation (no overlay on the next
   attempt). Vocabulary injection toggle is unchanged.
