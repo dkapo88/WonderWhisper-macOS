@@ -27,5 +27,6 @@ struct IntegrationsSettingsPane: View {
         HermesSettingsForm(vm: vm)
       }
     }
+    .background(Color(nsColor: .windowBackgroundColor))
   }
 }
