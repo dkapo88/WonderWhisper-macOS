@@ -640,6 +640,7 @@ final class DictationViewModel: ObservableObject {
     @Published var vocabSpelling: String = AppConfig.defaults.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
     private var isApplyingSimplePrompts: Bool = false
+    private var isApplyingSyncedSettings: Bool = false
     private var isUpdatingSimpleSidebar: Bool = false
     private var suppressSimpleSidebarSync: Bool = false
     private var recordingStartTimestamp: Date? = nil  // Track optimistic recording start to prevent timer race
@@ -1691,6 +1692,9 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistAndUpdate() {
+        // While iCloud sync applies a received batch, UserDefaults already holds every new
+        // value; persisting here would write stale cached siblings over them.
+        if isApplyingSyncedSettings { return }
         AppConfig.defaults.set(transcriptionModel, forKey: "transcription.model")
         AppConfig.defaults.set(llmEnabled, forKey: "llm.enabled")
         AppConfig.defaults.set(screenContextEnabled, forKey: "screenContext.enabled")
@@ -1805,6 +1809,16 @@ final class DictationViewModel: ObservableObject {
         guard settings.footer != text else { return }
         settings.footer = text
         applySimpleSettings(settings, for: kind)
+    }
+
+    /// iCloud settings sync: runs `apply` (which assigns received values to cached properties)
+    /// without `persistAndUpdate()` writing the not-yet-updated siblings back to UserDefaults,
+    /// then rebuilds providers once for the whole batch.
+    func withSyncedSettingsBatch(_ apply: () -> Void) {
+        isApplyingSyncedSettings = true
+        apply()
+        isApplyingSyncedSettings = false
+        updateProviders()
     }
 
     /// iCloud settings sync: re-reads the synced settings whose loaders are private to this

@@ -7,7 +7,15 @@ import Foundation
 /// re-run their `didSet` side effects. Keys that are read on use (`parakeet.version`,
 /// `qwen.injectVocabulary`, `meeting.ticketBaseURL`) need no entry here.
 extension DictationViewModel {
+  /// Applies one received batch. Every value is already in UserDefaults; the batch wrapper
+  /// keeps property side effects from writing stale siblings back before all are assigned.
   func applySyncedSettings(changedKeys keys: Set<String>) {
+    withSyncedSettingsBatch {
+      applySyncedValues(changedKeys: keys)
+    }
+  }
+
+  private func applySyncedValues(changedKeys keys: Set<String>) {
     let defaults = AppConfig.defaults
     func has(_ key: String) -> Bool { keys.contains(key) }
     func bool(_ key: String, _ fallback: Bool) -> Bool {
@@ -88,13 +96,13 @@ extension DictationViewModel {
     }
 
     // Hotkeys
+    // Sync validates ranges before writing; the exact conversion is a second line of defense.
     if has("pasteShortcut.keyCode") || has("pasteShortcut.modifiers"),
        defaults.object(forKey: "pasteShortcut.keyCode") != nil,
-       defaults.object(forKey: "pasteShortcut.modifiers") != nil {
-      update(\.pasteShortcut, HotkeyManager.Shortcut(
-        keyCode: UInt32(defaults.integer(forKey: "pasteShortcut.keyCode")),
-        modifiers: UInt32(defaults.integer(forKey: "pasteShortcut.modifiers"))
-      ))
+       defaults.object(forKey: "pasteShortcut.modifiers") != nil,
+       let keyCode = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.keyCode")),
+       let modifiers = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.modifiers")) {
+      update(\.pasteShortcut, HotkeyManager.Shortcut(keyCode: keyCode, modifiers: modifiers))
     }
 
     // General
