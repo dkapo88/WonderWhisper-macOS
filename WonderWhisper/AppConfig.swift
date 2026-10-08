@@ -3,20 +3,58 @@ import Foundation
 struct AppConfig {
     static let appDisplayName = "WonderWhisper"
 
-    /// The one UserDefaults the app reads and writes. In a normal launch this is `.standard`.
+    /// The one UserDefaults the app reads and writes. In a normal launch this reads and writes
+    /// the app's standard domain (`suiteName: nil` is the standard search list).
     /// Under the test runner it is a scratch suite wiped at load, so unit tests running inside
     /// the real app host can never touch (or leak fixtures into) the user's live preferences —
     /// the Beeper chat list has been clobbered by a test fixture this way before.
+    /// It is a `SyncProvenanceUserDefaults`, which drops writes to synced keys made as a side
+    /// effect of applying settings received through iCloud sync.
     static let defaults: UserDefaults = {
-        let isTestRun = NSClassFromString("XCTestCase") != nil
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        guard isTestRun,
-              let scratch = UserDefaults(suiteName: "com.danekapoor.hermeswhisper.tests") else {
-            return .standard
-        }
-        scratch.removePersistentDomain(forName: "com.danekapoor.hermeswhisper.tests")
-        return scratch
+        let suite = isTestRun ? "com.danekapoor.hermeswhisper.tests" : nil
+        guard let store = SyncProvenanceUserDefaults(suiteName: suite) else { return .standard }
+        if let suite { store.removePersistentDomain(forName: suite) }
+        return store
     }()
+
+    /// True when running inside the unit-test host.
+    static let isTestRun: Bool = NSClassFromString("XCTestCase") != nil
+        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    /// Under the test runner, a fresh process-specific directory that stands in for
+    /// `~/Library/Application Support`, so tests that build real stores (history, Hermes chat,
+    /// meetings) can never read or write the user's data. Nil in a normal launch.
+    static let testScratchApplicationSupport: URL? = testScratchRoot.map {
+        scratchDirectory($0.appendingPathComponent("Application Support", isDirectory: true))
+    }
+
+    /// Opt-in for tests that use externally installed speech models (Qwen weights in the shared
+    /// cache, Parakeet models in the shared FluidAudio folder): `TEST_RUNNER_WW_RUN_MODEL_TESTS=1`.
+    static let runsModelTests: Bool =
+        ProcessInfo.processInfo.environment["WW_RUN_MODEL_TESTS"] == "1"
+
+    /// Under the test runner (without the model opt-in), an empty scratch folder handed to
+    /// Parakeet providers instead of letting them discover the shared FluidAudio models.
+    static let testScratchParakeetModels: URL? = runsModelTests ? nil : testScratchRoot.map {
+        scratchDirectory($0.appendingPathComponent("FluidAudio/Models", isDirectory: true))
+    }
+
+    /// `$TMPDIR/WonderWhisperTests-<pid>`, wiped once per test process. Nil in a normal launch.
+    private static let testScratchRoot: URL? = {
+        guard isTestRun else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "WonderWhisperTests-\(ProcessInfo.processInfo.processIdentifier)",
+            isDirectory: true
+        )
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
+    private static func scratchDirectory(_ url: URL) -> URL {
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
 
     static let previousAppDisplayName = "HermesWhisper"
     // Keep the Hermes-era runtime identity so an in-place rebrand preserves the user's

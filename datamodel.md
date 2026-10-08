@@ -651,6 +651,71 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `beeper.response.monitoring.enabled` | Bool | Watch the configured Beeper chat and show new incoming text replies in response windows |
 | `beeper.response.polling.intervalSeconds` | Double | Beeper response polling interval; default 10 seconds, clamped from 2 to 60 seconds |
 | `beeper.response.polling.timeoutSeconds` | Double | Legacy bounded-response timeout retained for compatibility; default 120 seconds, clamped from 10 to 600 seconds |
+| `settingsSync.enabled` | Bool | iCloud settings sync is on for this Mac (opt-in, default off). Never synced |
+| `settingsSync.deviceID` | String | Random per-Mac ID written into the iCloud settings file. Never synced |
+| `settingsSync.localState` | Data (JSON `SettingsSyncEngine`) | The whole per-Mac sync state: Lamport counter; per key the value fingerprint and version agreed with iCloud; pending local edits with immutable versions; un-agreed transaction observations and edited keys. Saved on every change. Never synced |
+| `settingsSync.lastSyncedAt` | Date | Last successful sync, shown in Settings → General. Never synced |
+| `settingsSync.counter` | Int | Round-3 standalone counter, now part of `localState`; deleted on launch. Was: highest counter issued or accepted. Each edit is stamped `max(counter, highest seen in the file) + 1`. Out-of-range values reset to 0; cleared when sync is turned off. Never synced |
+| `settingsSync.clock` | Int (ms) | Schema-1 wall clock. No longer used; deleted on launch |
+| `settingsSync.firstEnableMode` | String | Unfinished explicit choice (`preferCloud`, `preferLocal`, `initialUpload`), kept until a sync succeeds so a download wait, IO failure or relaunch can't change it. Never synced |
+
+### iCloud Settings File
+
+When iCloud settings sync is on, the keys listed in `SettingsSyncRegistry.synced` are mirrored to
+`~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json` (iCloud Drive →
+WonderWhisper). Keychain values are never read. Format (`SettingsSyncDocument`, schema 3;
+`lastWriteAt` is display-only, integer milliseconds since 1970):
+
+```json
+{
+  "schemaVersion": 3,
+  "entries": {
+    "vocab.custom": {
+      "value": { "type": "string", "value": "Luis, Xinyi" },
+      "counter": 42,
+      "deviceID": "6F1C…"
+    }
+  },
+  "devices": { "6F1C…": { "name": "Dane's MacBook Pro", "lastWriteAt": 1791456000000 } }
+}
+```
+
+Value types are `bool`, `int`, `double`, `string`, `strings` and `data` (base64 of the same bytes
+UserDefaults holds, e.g. JSON-encoded `SimplePromptSettings`). A missing `value` records a reset to
+default (key removed). Unknown keys and unreadable entries are ignored but preserved; a file with a
+newer `schemaVersion` is applied but never overwritten. Each sync reads, merges and writes inside
+one `NSFileCoordinator` write, folding in unresolved iCloud conflict versions (`NSFileVersion`)
+per key and marking them resolved only after the merged file is saved. Received values must match
+the key's `SettingsSyncRegistry.Expectation` (type, range, decodable JSON) or this Mac keeps its own.
+Ordering is by version `(counter, deviceID)`, never wall time. `deviceID` names the Mac that
+made the edit, not the one that last wrote the file. Versions are compared only within one key.
+A version belongs to a genuine local edit or an explicit first-enable/Repair choice and never
+changes afterwards. Relays keep the original version; equal values keep the higher version.
+Counters must be integers in `0...2^40`. At the ceiling sync shows a blocked error and never
+reuses a version. Turning sync off and on, then choosing "Replace iCloud", can recover a Mac's
+exhausted local clock when the file maximum is below the ceiling. If the file itself is at the
+ceiling, restore an earlier backup first. Counters are never silently restarted or downgraded.
+
+An undecodable entry is preserved verbatim in `settings.blocked-<key>.json` and blocks its key
+until "Repair" or "Replace iCloud" writes this Mac's value above the file and conflict maxima.
+Recovery requires confirmation that this Mac's copy wins on all Macs. Before overwriting, every
+replaced cloud/conflict document, including healthy values, is saved byte-for-byte next to
+`settings.json` as `settings.backup-<milliseconds>-<uuid>.json`. A failed backup aborts the write.
+
+Schema-1 files are read with counter 0, keeping values but discarding wall-clock ordering.
+Schemas 1 and 2 are migrated to schema 3 on write. Schema 3 prevents older schema-2 development
+builds from rewriting the simplified format through the existing newer-schema write guard.
+"Use iCloud" adopts every cloud key, resets included. "Replace iCloud" stamps the whole local
+batch above every counter in the file and conflicts. The engine reserves batch counters before
+the writing transaction; a newer file maximum triggers a read-only reservation retry. Genuine
+edits and undos to keys awaiting a first baseline are tracked during IO and retries, then
+versioned above the completed baseline. Old edits that could not be versioned at the ceiling
+are never promoted after another Mac's Replace. `settingsSync.localState` persists the clock,
+`latest`, agreed `records`, immutable `pending` versions, `unagreedObservations`, and
+`unagreedEdits`.
+
+Display dates must be finite and within ±10^15 ms. Only read and incorporated conflict versions
+are resolved, after a successful write; remaining versions are removed only when none is pending.
 
 ### Keychain Storage
 
@@ -753,6 +818,24 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.21 (October 8, 2026)**: Added opt-in iCloud settings sync: allowlisted UserDefaults keys
+  mirrored per key (last writer wins) to `iCloud Drive/WonderWhisper/settings.json`, plus
+  `settingsSync.*` local sync state keys.
+- **v1.21.1 (October 8, 2026)**: Added `settingsSync.clock` (hybrid logical clock), integer
+  millisecond dates, per-key value validation, and transactional merges with conflict versions.
+- **v1.21.2 (October 8, 2026)**: Added `settingsSync.firstEnableMode`; bounded timestamps and a
+  24 h clock-skew horizon; conflict versions resolved only once incorporated.
+- **v1.22 (October 8, 2026)**: Settings file schema 2. Wall-clock ordering and the skew horizon
+  were replaced by a per-entry Lamport `counter` (`settingsSync.counter` replaces
+  `settingsSync.clock`). Schema-1 ordering is discarded on read.
+- **v1.23 (October 8, 2026)**: Entry `deviceID` now names the edit's writer and never changes;
+  `settingsSync.localState` holds the whole `SettingsSyncEngine` (records, pending edits with their
+  versions, counter); the relative 10^9 counter rule was dropped; undecodable entries are preserved.
+- **v1.25 (October 8, 2026)**: Settings file schema 3 uses counter/writer versions, reserves
+  transaction stamps before writes, and tracks first-baseline edits and undos. Repair/Replace
+  require confirmation and preserve healthy overwritten cloud/conflict documents in backups.
+- **v1.24 (October 8, 2026)**: Added the 2^40 counter ceiling, raw blocked-entry backups, and
+  `latest` in engine state in place of a bare counter.
 - **v1.20 (July 26, 2026)**: Added persisted per-chat Beeper snooze deadlines and an in-memory,
   chat-keyed response accumulator for burst coalescing and expiry/resume flushes.
 - **v1.19 (July 16, 2026)**: Added Codex task creation, desktop-routed continuation, dated working directories, automatic desktop pinning, clipboard context, and ambient projectless-task response monitoring.

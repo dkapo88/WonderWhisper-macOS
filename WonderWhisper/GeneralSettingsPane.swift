@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Settings → General: text insertion and updates.
+/// Settings → General: iCloud sync, text insertion and updates.
 struct GeneralSettingsPane: View {
   @ObservedObject var vm: DictationViewModel
   @ObservedObject private var updater = UpdaterController.shared
 
   var body: some View {
     SettingsPage {
+      SettingsSyncSection(sync: SettingsSyncService.shared)
+
       Section {
         Toggle(isOn: $vm.pasteFormatted) {
           Text("Paste as rich text")

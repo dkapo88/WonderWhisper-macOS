@@ -178,7 +178,7 @@ struct MeetingTriggerRule: Codable, Equatable, Identifiable, Sendable {
     )
   }
 
-  static func load(defaults: UserDefaults = .standard) -> [MeetingTriggerRule] {
+  static func load(defaults: UserDefaults = AppConfig.defaults) -> [MeetingTriggerRule] {
     if let data = defaults.data(forKey: defaultsKey),
        let decoded = try? JSONDecoder().decode([MeetingTriggerRule].self, from: data) {
       return deduplicated(decoded)
@@ -194,7 +194,7 @@ struct MeetingTriggerRule: Codable, Equatable, Identifiable, Sendable {
 
   static func save(
     _ rules: [MeetingTriggerRule],
-    defaults: UserDefaults = .standard
+    defaults: UserDefaults = AppConfig.defaults
   ) {
     guard let data = try? JSONEncoder().encode(deduplicated(rules)) else { return }
     defaults.set(data, forKey: defaultsKey)

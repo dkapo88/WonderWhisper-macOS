@@ -2,6 +2,16 @@ import Foundation
 
 enum AppStoragePaths {
   static func appSupportRoot(fileManager: FileManager = .default) -> URL {
+    if let scratch = AppConfig.testScratchApplicationSupport {
+      // Unit tests: never the real ~/Library/Application Support/HermesWhisper, and no
+      // migration from the real WonderWhisper folder either.
+      let root = scratch.appendingPathComponent(
+        AppConfig.appSupportDirectoryName,
+        isDirectory: true
+      )
+      try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+      return root
+    }
     let base: URL
     do {
       base = try fileManager.url(

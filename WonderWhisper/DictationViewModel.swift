@@ -640,6 +640,7 @@ final class DictationViewModel: ObservableObject {
     @Published var vocabSpelling: String = AppConfig.defaults.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
 
     private var isApplyingSimplePrompts: Bool = false
+    private var isApplyingSyncedSettings: Bool = false
     private var isUpdatingSimpleSidebar: Bool = false
     private var suppressSimpleSidebarSync: Bool = false
     private var recordingStartTimestamp: Date? = nil  // Track optimistic recording start to prevent timer race
@@ -771,7 +772,7 @@ final class DictationViewModel: ObservableObject {
         let transcriber: TranscriptionProvider
         let transcriberSettings: TranscriptionSettings
         if activeTranscriptionModel.lowercased().contains("parakeet") {
-            transcriber = ParakeetTranscriptionProvider()
+            transcriber = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
             transcriberSettings = TranscriptionSettings(
                 endpoint: URL(string: "https://localhost")!,
                 model: activeTranscriptionModel,
@@ -1691,6 +1692,9 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func persistAndUpdate() {
+        // While iCloud sync applies a received batch, UserDefaults already holds every new
+        // value; persisting here would write stale cached siblings over them.
+        if isApplyingSyncedSettings { return }
         AppConfig.defaults.set(transcriptionModel, forKey: "transcription.model")
         AppConfig.defaults.set(llmEnabled, forKey: "llm.enabled")
         AppConfig.defaults.set(screenContextEnabled, forKey: "screenContext.enabled")
@@ -1805,6 +1809,71 @@ final class DictationViewModel: ObservableObject {
         guard settings.footer != text else { return }
         settings.footer = text
         applySimpleSettings(settings, for: kind)
+    }
+
+    /// iCloud settings sync: runs `apply` (which assigns received values to cached properties)
+    /// without `persistAndUpdate()` writing the not-yet-updated siblings back to UserDefaults,
+    /// then rebuilds providers once for the whole batch.
+    func withSyncedSettingsBatch(_ apply: () -> Void) {
+        isApplyingSyncedSettings = true
+        apply()
+        isApplyingSyncedSettings = false
+        updateProviders()
+    }
+
+    /// iCloud settings sync: re-reads the synced settings whose loaders are private to this
+    /// file. The rest are handled in `SettingsSyncLiveApply.swift`.
+    func reloadFileScopedSyncedSettings(changedKeys keys: Set<String>) {
+        if keys.contains(SimpleDefaultsKey.dictationSettings) {
+            applySimpleSettings(Self.loadSimpleSettings(for: .dictation), for: .dictation)
+        }
+        if keys.contains(SimpleDefaultsKey.commandSettings) {
+            applySimpleSettings(Self.loadSimpleSettings(for: .command), for: .command)
+        }
+        if keys.contains(SimpleDefaultsKey.dictationPromptTemplates) {
+            let templates = Self.loadCustomDictationPromptTemplates()
+            if customDictationPromptTemplates != templates { customDictationPromptTemplates = templates }
+        }
+        if keys.contains(Self.favoriteOpenRouterModelsKey) {
+            let favorites = Self.loadFavoriteOpenRouterModels()
+            if favoriteOpenRouterModels != favorites { favoriteOpenRouterModels = favorites }
+        }
+        if keys.contains(SimpleDefaultsKey.customModels) {
+            let models = Self.loadSimpleCustomModels()
+            if simpleCustomModels != models { simpleCustomModels = models }
+        }
+        if keys.contains(SimpleDefaultsKey.selectedModel) {
+            let model = Self.loadSimpleSelectedModel()
+            if simpleSelectedModel != model { simpleSelectedModel = model }
+        }
+        if keys.contains(SimpleDefaultsKey.llmEnabled) {
+            let enabled = Self.loadSimpleLLMEnabled()
+            if simpleLLMEnabled != enabled { simpleLLMEnabled = enabled }
+        }
+        if keys.contains(SimpleDefaultsKey.voiceEngine) {
+            let engine = Self.loadSimpleVoiceEngine()
+            if simpleVoiceEngine != engine { simpleVoiceEngine = engine }
+        }
+        if keys.contains(SimpleDefaultsKey.openRouterTranscriptionModel) {
+            let model = Self.loadOpenRouterTranscriptionModel()
+            if openRouterTranscriptionModel != model { openRouterTranscriptionModel = model }
+        }
+        if keys.contains("llm.openrouter.reasoning") {
+            let reasoning = Self.loadOpenRouterReasoning()
+            if openrouterReasoning != reasoning { openrouterReasoning = reasoning }
+        }
+        if keys.contains(SimpleDefaultsKey.hermesSelection) {
+            let selection = Self.loadHermesSelection()
+            if hermesSelection != selection { hermesSelection = selection }
+        }
+        if keys.contains(SimpleDefaultsKey.beeperSelection) {
+            let selection = Self.loadBeeperSelection()
+            if beeperSelection != selection { beeperSelection = selection }
+        }
+        if keys.contains(SimpleDefaultsKey.codexSelection) {
+            let selection = Self.loadCodexSelection()
+            if codexSelection != selection { codexSelection = selection }
+        }
     }
 
     func restoreSimpleHeader(for kind: SimplePromptKind) {
@@ -3824,11 +3893,15 @@ final class DictationViewModel: ObservableObject {
         guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
         guard !chatIDs.isEmpty else { return }
 
-        beeperResponseMonitorTasks = chatIDs.map { chatID in
-            let settings = currentBeeperSettings(chatID: chatID)
-            return Task { [weak self] in
-                guard let self else { return }
-                await self.monitorConfiguredBeeperChat(settings: settings)
+        // Long-lived: started without iCloud-sync remote-apply provenance, so its own later
+        // writes (e.g. clearing an expired mute) count as this Mac's edits.
+        beeperResponseMonitorTasks = SettingsSyncProvenance.withoutRemoteApply {
+            chatIDs.map { chatID in
+                let settings = currentBeeperSettings(chatID: chatID)
+                return Task { [weak self] in
+                    guard let self else { return }
+                    await self.monitorConfiguredBeeperChat(settings: settings)
+                }
             }
         }
     }
@@ -4041,8 +4114,11 @@ final class DictationViewModel: ObservableObject {
         codexSeenAgentMessageIDs.removeAll()
         codexKnownThreadUpdates.removeAll()
         guard codexEnabled, codexMonitorProjectlessTasks else { return }
-        codexMonitorTask = Task { [weak self] in
-            await self?.monitorCodexProjectlessTasks()
+        // Long-lived: started without iCloud-sync remote-apply provenance.
+        codexMonitorTask = SettingsSyncProvenance.withoutRemoteApply {
+            Task { [weak self] in
+                await self?.monitorCodexProjectlessTasks()
+            }
         }
     }
 
@@ -5335,7 +5411,7 @@ final class DictationViewModel: ObservableObject {
 
         let provider: TranscriptionProvider
         if model.lowercased().contains("parakeet") {
-            provider = ParakeetTranscriptionProvider()
+            provider = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
         } else if QwenASRManager.isQwenModel(model) {
             provider = QwenASRTranscriptionProvider()
         } else if model == "groq-streaming" {

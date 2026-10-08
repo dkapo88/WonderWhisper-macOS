@@ -19,6 +19,65 @@ highest-priority connected device and then the system default. Selection is pers
 `AudioInputSelection` and `AudioDeviceManager` and displayed in `AudioSettingsPane.swift`. Core
 Audio's private `CADefaultDeviceAggregate-*` devices are never listed.
 
+### iCloud Settings Sync
+Opt-in from **Settings → General → iCloud** (default off). Preferences sync through a JSON file in
+the user's iCloud Drive (`~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json`)
+rather than `NSUbiquitousKeyValueStore`/CloudKit, because the app is unsandboxed and Developer ID
+signed: an iCloud container would need an iCloud capability and provisioning profile. Only keys
+in `SettingsSyncRegistry.synced` travel (vocabulary, Dictation/Command prompts and templates,
+favorite/selected models, transcription engine/language, meeting models and prompt, Beeper chats
+and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` documents what stays
+per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
+debug flags). API keys never leave the Keychain.
+
+Ordering invariant: each value carries an immutable `(Lamport counter, writer deviceID)`
+version (`SettingsSyncVersion`) created by a genuine edit or explicit first-enable/Repair choice.
+Received, agreed, persisted and relayed values retain that version; the higher version wins per
+key. The engine reserves explicit batch stamps before writing IO and persists its clock; if the
+coordinated read finds a newer maximum, it retries without writing after reserving above that
+maximum. Genuine edits and undos to un-agreed keys during adoption or allowlist re-addition are
+tracked across IO/retries and versioned above the completed baseline. Counters must be integers in
+`0...2^40`. At the ceiling sync shows a blocked error and never reuses versions. Recovery is sync
+off/on followed by "Replace iCloud" when the file maximum is below the ceiling; a file at the
+ceiling requires restoring an earlier backup. The file format is schema 3, which older schema-2
+builds must never overwrite. No ordering reset feature remains. "Use iCloud" adopts every cloud
+key, resets included; "Replace iCloud" stamps the whole batch above every file/conflict maximum.
+Undecodable entries are backed up as `settings.blocked-<key>.json` and block their keys until
+Repair or Replace. Recovery confirmations say this Mac's copy wins on all Macs. Before either
+recovery overwrites a copy, every affected cloud/conflict document, including healthy values, is
+saved as `settings.backup-<milliseconds>-<uuid>.json`; backup failure aborts the write.
+Writes that view models make as a side effect of applying received settings
+(including deferred `Task` hops, however late they run) carry task-local provenance with no time
+window and are dropped by `AppConfig.defaults` (`SyncProvenanceUserDefaults`), so they never count
+as edits; long-lived workers a `didSet` starts (Beeper/Codex monitors) are created through
+`SettingsSyncProvenance.withoutRemoteApply`. The logic lives
+in the pure `SettingsSyncEngine` and `SettingsSyncTransaction`, which `SettingsSyncSimulationTests`
+drives through thousands of seeded multi-Mac histories checked against an independent operation
+log (non-atomic syncs, conflicts, relaunches, provenance-suppressed hops, allowlist changes and a
+mid-history schema-1 rewrite). Local edits are uploaded after a 2 s
+debounce. Each sync reads,
+merges (including unresolved iCloud conflict versions) and writes inside one coordinated
+transaction. Remote edits arrive via `NSFilePresenter` plus a 30 s poll, are validated against the
+key's `Expectation` (type, range, decodable JSON), and are applied as one batch through
+`SettingsSyncLiveApply.swift` / `DictationViewModel.withSyncedSettingsBatch`. Echo is prevented by
+value fingerprints, not flags; turning sync off cancels any in-flight sync. First enable asks
+"Use iCloud Settings" or "Replace iCloud with This Mac's Settings" (authoritative) if a file
+exists. To sync a new preference, add its existing key and expectation to the registry and, if a
+view model caches it, re-read it in `SettingsSyncLiveApply.swift`. Tests use temp folders only
+(`SettingsSyncTests`).
+
+### Test Isolation
+Under the test runner (`AppConfig.isTestRun`), `AppConfig.defaults` is a wiped scratch suite and
+`AppStoragePaths.appSupportRoot()` resolves to a process-specific scratch directory
+(`$TMPDIR/WonderWhisperTests-<pid>/Application Support/HermesWhisper`), so tests that build real
+stores (history, Hermes chat, meetings) never touch the user's data. Preference helpers default
+to `AppConfig.defaults`, never `.standard`. `TestIsolationTests` guards this; keep new storage
+under `appSupportRoot()`. Parakeet providers built by the view model and the meeting recovery
+transcriber get an empty scratch models folder (`AppConfig.testScratchParakeetModels`) instead of
+discovering the shared FluidAudio models. Tests that need installed models are opt-in with
+`TEST_RUNNER_WW_RUN_MODEL_TESTS=1` (`QwenASRE2ETests` synthesizes its own audio with `say`). The
+Qwen model cache path has no injection hook yet (owned by the Qwen workstream).
+
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
   Modes (Dictation, Command), Agents (Hermes chat) and Tools (Vocabulary, Compare).
@@ -124,6 +183,33 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Simplified sync ordering to counter/writer versions and schema 3; reserved batch
+  stamps before writes, retained first-baseline edits/undos, and confirmed Repair/Replace with
+  healthy cloud/conflict backups. Expanded the independent simulation to interleave edits during
+  first enable and allowlist re-addition.
+- 2026-10-08: Added opt-in iCloud settings sync (Settings → General) through
+  `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
+  last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
+  per-Mac.
+- 2026-10-08: Settled in-flight sync edits by version, removed the provenance time window, capped
+  counters at 2^40, added Repair for blocked iCloud
+  entries (with raw backups), dropped allowlist-removed keys from sync state, and rebuilt the
+  simulation oracle as an independent operation log.
+- 2026-10-08: Made sync versions immutable `(counter, writer)` pairs created only by genuine edits,
+  persisted pending edits, explicit "Use iCloud"/"Replace iCloud" batches, preserved undecodable
+  entries, remote-apply provenance for deferred view-model saves, a seeded multi-Mac simulation
+  test, and opt-in model tests with scratch Parakeet models.
+- 2026-10-08: Replaced sync's wall-clock ordering and 24 h skew horizon with a Lamport counter
+  (settings file schema 2), retried pending conflict versions on unchanged files, recomputed
+  notices every sync, dropped the deferred reset cleanup, and isolated all app storage and
+  preferences from real user data under the test runner.
+- 2026-10-08: Hardened iCloud settings sync: batch live apply, hybrid logical clock and an
+  authoritative "Replace iCloud", single coordinated read-merge-write with iCloud conflict
+  versions, timestamped resets, cancellation on disable, and per-key validation of received values.
+- 2026-10-08: Further sync hardening: out-of-range timestamps are rejected instead of trapping,
+  unreadable iCloud conflict versions are kept for retry, the first-enable choice persists until a
+  sync succeeds, timestamps over 24 h ahead are ignored and can't poison the clock, cancellation is
+  checked at the commit point, and received resets restore launch defaults live.
 - 2026-10-08: Bumped FluidAudio 0.15.4 → 0.17.7 (now statically links the prebuilt Rust
   `NemoTextProcessing.xcframework`, a `.a`, so there is no extra binary to sign). Parakeet v3 is replaced by Parakeet Ultra; the picker reads
   "English (Unified)" / "Multilingual (Ultra)", `parakeet.version` stays the key and a stored
