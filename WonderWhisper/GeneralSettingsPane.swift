@@ -17,6 +17,8 @@ struct GeneralSettingsPane: View {
         Text("Text insertion")
       }
 
+      HistoryRetentionSection(history: vm.history)
+
       Section {
         LabeledContent("Version", value: Self.displayVersion)
         LabeledContent {

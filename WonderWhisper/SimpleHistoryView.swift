@@ -1,192 +1,191 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
+/// History: a plain list of recent dictations with a detail pane. Retention lives in
+/// Settings → General.
 struct SimpleHistoryView: View {
   @ObservedObject var vm: DictationViewModel
-  @State private var expandedEntries: Set<UUID> = []
-  @State private var selectedEntryForDebug: HistoryEntry?
-
-  private var entries: [HistoryEntry] { vm.history.entries }
 
   var body: some View {
-    VStack(spacing: 0) {
-      // History limit control at the top
-      HStack(spacing: 12) {
-        Text("Keep most recent")
-          .font(.subheadline)
-          .foregroundColor(.secondary)
-        TextField("", value: Binding(
-          get: { vm.history.maxEntries },
-          set: { vm.history.maxEntries = $0 }
-        ), formatter: NumberFormatter())
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 60)
-        Text(vm.history.maxEntries == 1 ? "entry" : "entries")
-          .font(.subheadline)
-          .foregroundColor(.secondary)
-        
-        Spacer()
-        
-        Text("Older entries are permanently deleted")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      .padding(.horizontal, 20)
-      .padding(.vertical, 12)
-      .background(Color(nsColor: .controlBackgroundColor))
-      .overlay(
-        Divider(),
-        alignment: .bottom
-      )
-      
-      ScrollView {
-        if entries.isEmpty {
-          VStack(spacing: 12) {
-            Image(systemName: "clock")
-              .font(.system(size: 32))
-              .foregroundColor(.secondary)
-            Text("No history yet")
-              .font(.headline)
-            Text("Run a dictation or command request to see it appear here.")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
-          .frame(maxWidth: .infinity, minHeight: 240)
-          .padding(.top, 40)
-        } else {
-          LazyVStack(alignment: .leading, spacing: 12, pinnedViews: []) {
-            ForEach(entries, id: \.id) { entry in
-              historyCard(for: entry)
-            }
-          }
-          .padding(.vertical, 12)
+    HistoryContent(vm: vm, history: vm.history)
+  }
+}
+
+private struct HistoryContent: View {
+  let vm: DictationViewModel
+  @ObservedObject var history: HistoryStore
+  @State private var selectedEntryID: UUID?
+  @State private var selectedEntryForDebug: HistoryEntry?
+
+  private var visibleEntries: [HistoryEntry] {
+    history.entries.filter { !Self.isEmpty($0) }
+  }
+
+  private var hiddenEmptyCount: Int {
+    history.entries.count - visibleEntries.count
+  }
+
+  var body: some View {
+    Group {
+      if visibleEntries.isEmpty {
+        ContentUnavailableView(
+          "No history yet",
+          systemImage: "clock",
+          description: Text("Dictations and commands appear here after you run them.")
+        )
+      } else {
+        HSplitView {
+          list
+            .frame(minWidth: 240, idealWidth: 300, maxWidth: 380)
+          detail
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
       }
-      .padding(.horizontal, 20)
     }
     .sheet(item: $selectedEntryForDebug) { entry in
       PromptDebugView(entry: entry)
     }
+    .onAppear {
+      if selectedEntryID == nil {
+        selectedEntryID = visibleEntries.first?.id
+      }
+    }
   }
 
-  private func historyCard(for entry: HistoryEntry) -> some View {
-    let isExpanded = Binding(
-      get: { expandedEntries.contains(entry.id) },
-      set: { newValue in
-        if newValue {
-          expandedEntries.insert(entry.id)
-        } else {
-          expandedEntries.remove(entry.id)
+  private var list: some View {
+    List(selection: $selectedEntryID) {
+      Section {
+        ForEach(visibleEntries, id: \.id) { entry in
+          HistoryRow(entry: entry, preview: Self.preview(for: entry))
+            .tag(entry.id)
+            .contextMenu { contextMenu(for: entry) }
+        }
+      } footer: {
+        if hiddenEmptyCount > 0 {
+          Text("\(hiddenEmptyCount) empty \(hiddenEmptyCount == 1 ? "recording" : "recordings") hidden")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
       }
-    )
-
-    return DisclosureGroup(isExpanded: isExpanded) {
-      VStack(alignment: .leading, spacing: 10) {
-        if !entry.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          GroupBox("AI Output") {
-            VStack(alignment: .leading, spacing: 6) {
-              Text(entry.output)
-                .frame(maxWidth: .infinity, alignment: .leading)
-              HStack {
-                Spacer()
-                Button { copy(entry.output) } label: {
-                  Label("Copy AI Output", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-              }
-            }
-            .padding(8)
-          }
-        }
-
-        GroupBox("Raw Transcript") {
-          VStack(alignment: .leading, spacing: 6) {
-            Text(entry.transcript.isEmpty ? "(empty)" : entry.transcript)
-              .frame(maxWidth: .infinity, alignment: .leading)
-            HStack {
-              Spacer()
-              if entry.audioFilename != nil {
-                Button {
-                  vm.history.revealInFinder(entry: entry)
-                } label: {
-                  Label("Reveal Audio", systemImage: "waveform")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-              }
-              Button { copy(entry.transcript) } label: {
-                Label("Copy Transcript", systemImage: "doc.on.doc")
-              }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-            }
-          }
-          .padding(8)
-        }
-
-        // Debug prompt button
-        if entry.llmSystemMessage != nil || entry.llmUserMessage != nil {
-          HStack {
-            Spacer()
-            Button {
-              selectedEntryForDebug = entry
-            } label: {
-              Label("View Prompt", systemImage: "terminal")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-          }
-        }
-      }
-      .padding(.top, 6)
-    } label: {
-      VStack(alignment: .leading, spacing: 4) {
-        HStack {
-          Text(entry.appName ?? "Unknown App")
-            .font(.headline)
-          Spacer()
-          Text(entry.date.formatted(date: .abbreviated, time: .shortened))
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
-        Text(previewText(for: entry))
-          .font(.subheadline)
-          .foregroundColor(.primary)
-          .lineLimit(2)
-      }
-      .padding(.vertical, 6)
     }
-    .disclosureGroupStyle(PlainDisclosureGroupStyle())
-    .padding(14)
-    .background(
-      RoundedRectangle(cornerRadius: 16)
-        .fill(Color(nsColor: .windowBackgroundColor))
-        .shadow(color: Color.black.opacity(0.06), radius: 6, y: 2)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 16)
-        .stroke(Color.secondary.opacity(0.12))
-    )
-    .contextMenu {
-      Button {
-        Task {
-          await vm.reprocessHistoryEntry(entry)
+    .listStyle(.inset)
+  }
+
+  @ViewBuilder
+  private func contextMenu(for entry: HistoryEntry) -> some View {
+    Button("Copy Text", systemImage: "doc.on.doc") {
+      copy(entry.output.isEmpty ? entry.transcript : entry.output)
+    }
+    Button("Reprocess", systemImage: "arrow.clockwise") {
+      Task { await vm.reprocessHistoryEntry(entry) }
+    }
+    if entry.audioFilename != nil {
+      Button("Show Audio in Finder", systemImage: "waveform") {
+        history.revealInFinder(entry: entry)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var detail: some View {
+    if let entry = visibleEntries.first(where: { $0.id == selectedEntryID }) {
+      ScrollView {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
+          header(for: entry)
+
+          if !entry.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            textBlock(title: "Output", text: entry.output) {
+              Button("Copy", systemImage: "doc.on.doc") { copy(entry.output) }
+                .accessibilityLabel("Copy output")
+            }
+          }
+
+          textBlock(title: "Transcript", text: entry.transcript) {
+            HStack(spacing: DesignTokens.Spacing.xSmall) {
+              if entry.audioFilename != nil {
+                Button("Show Audio", systemImage: "waveform") {
+                  history.revealInFinder(entry: entry)
+                }
+              }
+              Button("Copy", systemImage: "doc.on.doc") { copy(entry.transcript) }
+                .accessibilityLabel("Copy transcript")
+            }
+          }
         }
+        .padding(DesignTokens.Spacing.large)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    } else {
+      ContentUnavailableView(
+        "No entry selected",
+        systemImage: "clock",
+        description: Text("Select an entry to see its transcript and output.")
+      )
+    }
+  }
+
+  private func header(for entry: HistoryEntry) -> some View {
+    HStack(alignment: .center, spacing: DesignTokens.Spacing.small) {
+      AppIconView(bundleID: entry.bundleID, size: 32)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(entry.appName ?? "Unknown app")
+          .font(.title3.weight(.semibold))
+        Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Button {
+        Task { await vm.reprocessHistoryEntry(entry) }
       } label: {
         Label("Reprocess", systemImage: "arrow.clockwise")
       }
+      .help("Run this recording through the current model and prompt again")
+      if entry.llmSystemMessage != nil || entry.llmUserMessage != nil {
+        Button {
+          selectedEntryForDebug = entry
+        } label: {
+          Label("View Prompt", systemImage: "terminal")
+        }
+      }
     }
   }
 
-  private func previewText(for entry: HistoryEntry) -> String {
+  private func textBlock<Actions: View>(
+    title: String,
+    text: String,
+    @ViewBuilder actions: () -> Actions
+  ) -> some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
+      HStack {
+        Text(title)
+          .font(.headline)
+        Spacer()
+        actions()
+          .controlSize(.small)
+      }
+      Text(text.isEmpty ? "Nothing was captured." : text)
+        .foregroundStyle(text.isEmpty ? .secondary : .primary)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DesignTokens.Spacing.small)
+        .background(
+          .quaternary.opacity(0.45),
+          in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
+        )
+    }
+  }
+
+  static func isEmpty(_ entry: HistoryEntry) -> Bool {
+    entry.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  static func preview(for entry: HistoryEntry) -> String {
     let candidate = entry.output.isEmpty ? entry.transcript : entry.output
-    let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty { return "(empty)" }
-    if trimmed.count <= 120 { return trimmed }
-    let idx = trimmed.index(trimmed.startIndex, offsetBy: 120)
-    return String(trimmed[..<idx]) + "…"
+    return candidate
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "\n", with: " ")
   }
 
   private func copy(_ text: String) {
@@ -195,27 +194,53 @@ struct SimpleHistoryView: View {
   }
 }
 
-private struct PlainDisclosureGroupStyle: DisclosureGroupStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Button {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          configuration.isExpanded.toggle()
-        }
-      } label: {
-        HStack {
-          configuration.label
-          Spacer()
-          Image(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down")
-            .foregroundColor(.secondary)
-        }
-      }
-      .buttonStyle(.plain)
+private struct HistoryRow: View {
+  let entry: HistoryEntry
+  let preview: String
 
-      if configuration.isExpanded {
-        configuration.content
+  var body: some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.xSmall) {
+      AppIconView(bundleID: entry.bundleID, size: 20)
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .firstTextBaseline) {
+          Text(entry.appName ?? "Unknown app")
+            .font(.callout.weight(.semibold))
+            .lineLimit(1)
+          Spacer(minLength: DesignTokens.Spacing.xxSmall)
+          Text(entry.date.formatted(date: .omitted, time: .shortened))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+        Text(preview)
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
       }
     }
+    .padding(.vertical, DesignTokens.Spacing.xxSmall)
+    .accessibilityElement(children: .combine)
+  }
+}
+
+/// The icon of the app a dictation went into, or a neutral placeholder.
+private struct AppIconView: View {
+  let bundleID: String?
+  let size: CGFloat
+
+  var body: some View {
+    Group {
+      if let bundleID,
+         let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+          .resizable()
+      } else {
+        Image(systemName: "app.dashed")
+          .resizable()
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(width: size, height: size)
+    .accessibilityHidden(true)
   }
 }
 
@@ -243,10 +268,11 @@ private struct PromptDebugView: View {
           dismiss()
         } label: {
           Image(systemName: "xmark")
-            .font(.system(size: 12, weight: .semibold))
         }
-        .buttonStyle(.plain)
-        .foregroundColor(.secondary)
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .keyboardShortcut(.cancelAction)
+        .accessibilityLabel("Close")
       }
       .padding(16)
       .background(Color(nsColor: .controlBackgroundColor))
@@ -293,8 +319,8 @@ private struct PromptDebugView: View {
           )
         } else {
           Text("No system message available")
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .font(.callout)
+            .foregroundStyle(.secondary)
             .padding(12)
         }
 
@@ -308,8 +334,8 @@ private struct PromptDebugView: View {
           )
         } else {
           Text("No user message available")
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .font(.callout)
+            .foregroundStyle(.secondary)
             .padding(12)
         }
       }
@@ -359,7 +385,7 @@ private struct PromptDebugView: View {
             VStack(alignment: .leading, spacing: 6) {
               if let method = entry.screenContextMethod {
                 Text("Method: \(method)")
-                  .font(.caption)
+                  .font(.callout)
                   .foregroundColor(.secondary)
               }
               Text(screenContext)
@@ -415,8 +441,8 @@ private struct PromptDebugView: View {
             }
             if entry.transcriptionModel == nil && entry.llmModel == nil {
               Text("No model information available")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             }
           }
           .padding(8)
@@ -439,8 +465,8 @@ private struct PromptDebugView: View {
                entry.llmSeconds == nil &&
                entry.totalSeconds == nil {
               Text("No timing information available")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             }
           }
           .padding(8)
@@ -483,7 +509,7 @@ private struct PromptDebugView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(12)
             .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(6)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.control))
         }
 
         Spacer()
@@ -517,7 +543,7 @@ private struct PromptDebugView: View {
         .lineLimit(nil)
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(6)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.control))
     }
   }
 
@@ -529,7 +555,7 @@ private struct PromptDebugView: View {
       Text(value)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .font(.caption)
+    .font(.callout)
   }
 
   private func copy(_ text: String) {
