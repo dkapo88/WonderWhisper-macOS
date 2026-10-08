@@ -211,7 +211,7 @@ struct QwenCompressionRatioTests {
 
     let progressing = (1...12).map { "Item \($0), approved and ready for release. " }
       .joined()
-    let lowCoverage = progressing + String(repeating: "thank you ", count: 44)
+    let lowCoverage = progressing + String(repeating: "thank you ", count: 29)
     #expect(try #require(QwenASRManager.compressionRatio(lowCoverage)) > 2.4)
     #expect(try #require(QwenASRManager.exactPeriodicRepetition(
       lowCoverage, minimumRepeats: 8
@@ -223,6 +223,45 @@ struct QwenCompressionRatioTests {
       + String(repeating: "thank you ", count: 44)
     #expect(QwenASRManager.degenerateReason(majorityLoop, sampleCount: 16_000 * 90) != nil)
     recordGuardMetrics("loop above 60% coverage", text: majorityLoop, seconds: 90)
+  }
+
+  @Test(arguments: QwenGuardRegressionCorpus.highCountEscapes)
+  func highCountLoopsIgnoreCoverageLengthAndCompression(
+    _ example: QwenGuardRegressionCorpus.Example
+  ) throws {
+    let repetition = try #require(QwenASRManager.exactPeriodicRepetition(example.text))
+    #expect(repetition.repeatCount >= 30)
+    let visible = example.text.filter { !$0.isWhitespace }.count
+    let ratio = try #require(QwenASRManager.compressionRatio(example.text))
+    #expect(repetition.coverage < 0.6 || visible < 200 || ratio <= 2.4)
+    if example.name.hasPrefix("low-compression") { #expect(ratio <= 2.4) }
+    if example.name.contains("191 visible") { #expect(visible == 191) }
+    recordGuardMetrics(example.name, text: example.text, seconds: example.seconds)
+    #expect(QwenASRManager.degenerateReason(
+      example.text, sampleCount: 16_000 * example.seconds
+    )?.contains("high-count exact repetition") == true)
+  }
+
+  @Test func highCountExceptionStartsAtThirtyRepeats() {
+    for count in [29, 30] {
+      let text = "Ship the release. " + String(repeating: "okay ", count: count)
+      #expect((QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 15) != nil)
+        == (count == 30))
+    }
+  }
+
+  @Test func highCountExceptionPreservesSingleCharactersAndSymbols() {
+    for unit in ["a", "aa", "?", "?..", "!?", "!"] {
+      let text = "Please approve the release and send the update. "
+        + String(repeating: unit + " ", count: 30)
+      #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 15) == nil,
+        "changed the existing rule for \(unit)")
+    }
+    // A larger ineligible run must not hide a smaller speech loop.
+    let text = (1...12).map { "Item \($0), approved and ready for release. " }.joined()
+      + String(repeating: "?.. ", count: 100) + String(repeating: "okay ", count: 30)
+    let reason = QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 15)
+    #expect(reason?.contains("high-count exact repetition 30x") == true)
   }
 
   @Test func compressionAndEightRepeatsAloneDoNotRejectShortText() throws {
@@ -329,6 +368,38 @@ enum QwenGuardRegressionCorpus {
       name: "replacement character corruption",
       text: "Please send the report to Sonali and check the planning document tomorrow. "
         + "The decoder returned a damaged character: \u{FFFD}", seconds: 20
+    ),
+  ]
+
+  static let highCountEscapes: [Example] = [
+    Example(
+      name: "numbered prefix plus thank you x44",
+      text: (1...12).map { "Item \($0), approved and ready for release. " }.joined()
+        + String(repeating: "thank you ", count: 44), seconds: 15
+    ),
+    Example(
+      name: "English prefix plus thank you x44",
+      text: "Please review the release plan with the team tomorrow morning. "
+        + "Confirm the schedule with Sonali, send the updated notes to Ash, and check "
+        + "that the support team has the latest instructions. We should also verify "
+        + "the billing changes, review the deployment checklist, and tell everyone "
+        + "when the new version is ready. Please verify it. "
+        + String(repeating: "thank you ", count: 44),
+      seconds: 15
+    ),
+    Example(
+      name: "Ship the release plus okay x44, 191 visible",
+      text: "Ship the release. " + String(repeating: "okay ", count: 44), seconds: 15
+    ),
+    Example(
+      name: "low-compression prefix plus okay x30",
+      text: (0..<80).map { String($0 * 7_919 + 1_049, radix: 36) }.joined(separator: " ")
+        + " " + String(repeating: "okay ", count: 30), seconds: 15
+    ),
+    Example(
+      name: "unspaced CJK prefix plus 谢谢你 x30",
+      text: (0..<120).compactMap { UnicodeScalar(0x4E00 + $0) }.map { String($0) }.joined()
+        + String(repeating: "谢谢你", count: 30), seconds: 15
     ),
   ]
 }

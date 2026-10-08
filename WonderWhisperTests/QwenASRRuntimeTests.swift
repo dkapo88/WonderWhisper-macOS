@@ -502,7 +502,8 @@ struct QwenASRRuntimeTests {
     let engine = healthyEngine()
     let runtime = makeRuntime(loader: FakeQwenLoader(steps: [.engine(engine)]))
     try await runtime.warmUp()
-    for text in ["Wait!!!!!!!!", "English/Русский and English/Українська: 我们讨论新版本的发布计划。"] {
+    for text in ["Wait!!!!!!!!", "no no no no", "ha ha ha",
+      "English/Русский and English/Українська: 我们讨论新版本的发布计划。"] {
       engine.setOutput(text)
       #expect(try await runtime.transcribe(
         samples: [Float](repeating: 0.1, count: 16_000 * 10), language: nil, context: nil
@@ -559,6 +560,45 @@ struct QwenASRRuntimeTests {
     #expect(await runtime.loadsStarted == 1)
   }
 
+  @Test(arguments: QwenGuardRegressionCorpus.highCountEscapes)
+  func highCountTailRetiresVerifiedEngineAndFallsBack(
+    _ example: QwenGuardRegressionCorpus.Example
+  ) async throws {
+    let engine = healthyEngine()
+    let loader = FakeQwenLoader(steps: [.engine(engine), .engine(healthyEngine())])
+    let runtime = makeRuntime(loader: loader)
+    try await runtime.warmUp()
+    #expect(await runtime.currentHealth() == .healthy)
+    engine.setOutput(example.text)
+
+    do {
+      _ = try await runtime.transcribe(
+        samples: [Float](repeating: 0.1, count: 16_000 * example.seconds),
+        language: nil, context: nil
+      )
+      Issue.record("corrupted transcript escaped: \(example.name)")
+    } catch let error as QwenASRError {
+      #expect(error.shouldFallBack)
+      guard case .degenerateTranscript(let reason) = error else {
+        Issue.record("expected decode guard failure, got \(error)")
+        return
+      }
+      #expect(reason.contains("high-count exact repetition"))
+      let text = try await QwenASRFallback.transcribe(
+        fileURL: URL(fileURLWithPath: "/dev/null"), choice: .groq,
+        settings: TranscriptionSettings(
+          endpoint: URL(fileURLWithPath: "/unused"), model: "qwen-local", language: "en"
+        ), groq: LoopFallbackProvider()
+      )
+      #expect(text == "safe fallback transcript")
+      #expect(text != example.text)
+    }
+    #expect(engine.unloadCount == 1)
+    #expect(loader.cacheClearCount == 1)
+    #expect(await waitUntil { await runtime.currentHealth() == .healthy })
+    #expect(await runtime.loadsStarted == 2)
+  }
+
   /// Review finding 2: a 1.5 s tail chunk that decodes to ~1,000 chars fits
   /// the joined 16.5 s budget but must fail against its own length.
   @Test func badShortTailChunkIsCaughtPerChunk() async throws {
@@ -591,6 +631,12 @@ struct QwenASRRuntimeTests {
     await #expect(throws: QwenASRError.self) {
       _ = try await runtime.transcribe(samples: samples, language: nil, context: nil)
     }
+  }
+}
+
+private final class LoopFallbackProvider: TranscriptionProvider {
+  func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
+    "safe fallback transcript"
   }
 }
 

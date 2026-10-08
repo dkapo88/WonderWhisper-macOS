@@ -139,6 +139,18 @@ enum QwenASRManager {
           + String(format: "%.2f", ratio)
       }
     }
+    // Long exact loops are corruption even after a mostly legitimate prefix.
+    // Single-character and punctuation-only units retain the existing rules.
+    if let repetition = exactPeriodicRepetition(
+      trimmed, minimumRepeats: 30, unitIsEligible: { unit in
+        guard let first = unit.first else { return false }
+        return unit.contains { $0.isLetter || $0.isNumber }
+          && unit.contains { !$0.isWhitespace && $0 != first }
+      }
+    ) {
+      return "high-count exact repetition \(repetition.repeatCount)x "
+        + "(\(Int(repetition.coverage * 100))%)"
+    }
     if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }), trimmed.count > 80 {
       return "replacement characters"
     }
@@ -174,13 +186,18 @@ enum QwenASRManager {
   /// for unspaced text such as CJK. Preserve case and punctuation; only whitespace
   /// between words is ignored. Coverage counts visible characters, not tokens.
   /// Compression alone cannot distinguish a progressing list from a decode loop.
+  /// Ineligible units cannot hide a smaller eligible run.
   static func exactPeriodicRepetition(
-    _ text: String, minimumRepeats: Int = 2
+    _ text: String, minimumRepeats: Int = 2,
+    unitIsEligible: ((String) -> Bool)? = nil
   ) -> ExactRepetition? {
     let words = text.split(whereSeparator: \.isWhitespace)
     if words.count > 1 {
       guard let run = periodicRun(
-        words, visibleCounts: words.map(\.count), minimumRepeats: minimumRepeats
+        words, visibleCounts: words.map(\.count), minimumRepeats: minimumRepeats,
+        unitIsEligible: { range in
+          unitIsEligible?(words[range].joined(separator: " ")) ?? true
+        }
       ) else { return nil }
       return ExactRepetition(
         unit: words[run.start..<(run.start + run.period)].joined(separator: " "),
@@ -191,7 +208,8 @@ enum QwenASRManager {
     let characters = Array(words.first.map(String.init) ?? "")
     guard let run = periodicRun(
       characters, visibleCounts: Array(repeating: 1, count: characters.count),
-      minimumRepeats: minimumRepeats
+      minimumRepeats: minimumRepeats,
+      unitIsEligible: { range in unitIsEligible?(String(characters[range])) ?? true }
     ) else { return nil }
     return ExactRepetition(
       unit: String(characters[run.start..<(run.start + run.period)]),
@@ -204,7 +222,8 @@ enum QwenASRManager {
   /// A matching streak of (repeats - 1) periods proves a consecutive exact run.
   /// Prefix sums measure coverage without rescanning each candidate. O(n²).
   private static func periodicRun<Unit: Equatable>(
-    _ units: [Unit], visibleCounts: [Int], minimumRepeats: Int
+    _ units: [Unit], visibleCounts: [Int], minimumRepeats: Int,
+    unitIsEligible: (Range<Int>) -> Bool
   ) -> (start: Int, period: Int, repeats: Int, visible: Int)? {
     guard minimumRepeats >= 2, units.count >= minimumRepeats else { return nil }
     var prefix = [0]
@@ -221,6 +240,7 @@ enum QwenASRManager {
         let visible = prefix[end] - prefix[start]
         // Ascending periods keep the smallest exact unit when coverage ties.
         if visible > (best?.visible ?? 0) {
+          guard unitIsEligible(start..<(start + period)) else { continue }
           best = (start, period, repeats, visible)
         }
       }
