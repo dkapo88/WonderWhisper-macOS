@@ -136,33 +136,31 @@ struct HermesAgentView: View {
   }
 
   private var sessionListView: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
       Picker("Sessions", selection: $sessionListScope) {
         ForEach(HermesSessionListScope.allCases) { scope in
           Text(scope.rawValue).tag(scope)
         }
       }
       .pickerStyle(.segmented)
+      .labelsHidden()
+      .accessibilityLabel("Session list")
 
-      ScrollView {
-        VStack(alignment: .leading, spacing: 6) {
-          if displayedSessions.isEmpty {
-            emptySessionListView
-          } else {
-            ForEach(displayedSessions) { session in
-              Button {
-                vm.selectHermesSession(session.id)
-              } label: {
-                sessionRow(session)
-              }
-              .buttonStyle(.plain)
-            }
+      if displayedSessions.isEmpty {
+        emptySessionListView
+        Spacer()
+      } else {
+        List(selection: Binding(
+          get: { vm.selectedHermesSessionID },
+          set: { vm.selectHermesSession($0) }
+        )) {
+          ForEach(displayedSessions) { session in
+            sessionRow(session)
+              .tag(session.id)
           }
         }
-        .padding(.vertical, 2)
+        .listStyle(.inset)
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .layoutPriority(1)
     }
     .frame(maxHeight: .infinity, alignment: .topLeading)
   }
@@ -183,10 +181,10 @@ struct HermesAgentView: View {
       Text(sessionListScope == .active
            ? "Archived sessions are available in Archive."
            : "Archived sessions will appear here.")
-        .font(.caption)
-        .foregroundColor(.secondary)
+        .font(.callout)
+        .foregroundStyle(.secondary)
     }
-    .padding(10)
+    .padding(DesignTokens.Spacing.xSmall)
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
@@ -200,54 +198,45 @@ struct HermesAgentView: View {
 
         textReplyComposer(for: session)
       } else {
-        Text("Select a Hermes session.")
-          .font(.callout)
-          .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+          "No session selected",
+          systemImage: "bubble.left.and.bubble.right",
+          description: Text("Select a session to see the conversation.")
+        )
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private func sessionRow(_ session: HermesChatSession) -> some View {
-    let isSelected = vm.selectedHermesSessionID == session.id
-
-    return VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 2) {
       HStack(spacing: 6) {
         Image(systemName: statusIcon(for: session.status))
-          .font(.caption)
-          .foregroundColor(statusColor(for: session.status))
+          .foregroundStyle(statusColor(for: session.status))
           .frame(width: 16)
+          .accessibilityLabel(statusTitle(for: session.status))
 
         Text(session.title)
           .font(.callout.weight(.semibold))
           .lineLimit(1)
 
-        Spacer(minLength: 4)
+        Spacer(minLength: DesignTokens.Spacing.xxSmall)
+
+        Text(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: Date()))
+          .font(.footnote)
+          .foregroundStyle(.secondary)
       }
 
       if !session.lastMessagePreview.isEmpty {
         Text(session.lastMessagePreview)
-          .font(.caption)
-          .foregroundColor(.secondary)
+          .font(.callout)
+          .foregroundStyle(.secondary)
           .lineLimit(2)
-          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.leading, 22)
       }
-
-      Text(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: Date()))
-        .font(.caption2)
-        .foregroundColor(.secondary)
     }
-    .padding(9)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(isSelected ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .stroke(isSelected ? Color.accentColor.opacity(0.28) : Color.secondary.opacity(0.12))
-    )
+    .padding(.vertical, DesignTokens.Spacing.xxSmall)
+    .accessibilityElement(children: .combine)
   }
 
   private func selectedSessionHeader(_ session: HermesChatSession) -> some View {
@@ -258,7 +247,7 @@ struct HermesAgentView: View {
           .lineLimit(1)
 
         Label(statusTitle(for: session.status), systemImage: statusIcon(for: session.status))
-          .font(.caption)
+          .font(.footnote)
           .foregroundColor(statusColor(for: session.status))
       }
 
@@ -335,11 +324,11 @@ struct HermesAgentView: View {
           .frame(minHeight: 46, idealHeight: 64, maxHeight: 110)
           .padding(6)
           .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
               .fill(Color(nsColor: .textBackgroundColor).opacity(0.92))
           )
           .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
               .stroke(Color.secondary.opacity(0.18))
           )
           .disabled(!vm.canUseHermesTextReply(for: session))
@@ -356,7 +345,7 @@ struct HermesAgentView: View {
       Text(vm.canUseHermesTextReply(for: session)
            ? "Type a reply to this Hermes session. Press Command-Return to send."
            : "Text replies are unavailable while this session is archived, waiting, or recording.")
-        .font(.caption)
+        .font(.footnote)
         .foregroundColor(.secondary)
     }
   }
@@ -414,9 +403,9 @@ struct HermesAgentView: View {
       VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
         HStack(spacing: 6) {
           Text(roleTitle(for: message.role))
-            .font(.caption.weight(.semibold))
+            .font(.footnote.weight(.semibold))
           Text(Self.timeFormatter.string(from: message.createdAt))
-            .font(.caption)
+            .font(.footnote)
             .foregroundColor(.secondary)
         }
 
@@ -454,7 +443,7 @@ struct HermesAgentView: View {
     }
 
     return Image(systemName: systemName)
-      .font(.system(size: 13, weight: .semibold))
+      .font(.callout.weight(.semibold))
       .foregroundColor(color)
       .frame(width: 30, height: 30)
       .background(
@@ -481,11 +470,11 @@ struct HermesAgentView: View {
     .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
         .fill(chatBubbleColor(for: message.role))
     )
     .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
         .stroke(chatBubbleStroke(for: message.role), lineWidth: 1)
     )
   }
@@ -500,7 +489,7 @@ struct HermesAgentView: View {
         Label("Copy Raw", systemImage: "doc.on.doc")
       }
       .buttonStyle(.borderless)
-      .font(.caption)
+      .font(.footnote)
       .help("Copy Markdown text")
 
       Button {
@@ -509,7 +498,7 @@ struct HermesAgentView: View {
         Label("Copy Formatted", systemImage: "doc.richtext")
       }
       .buttonStyle(.borderless)
-      .font(.caption)
+      .font(.footnote)
       .help("Copy formatted rich text")
     }
   }
@@ -533,7 +522,7 @@ struct HermesAgentView: View {
       }
       .padding(10)
       .background(
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
           .fill(Color(nsColor: .controlBackgroundColor))
       )
       Spacer(minLength: 64)
@@ -699,10 +688,10 @@ private struct HermesContextLabelsView: View {
       Text(label)
       if isInteractive {
         Image(systemName: "eye")
-          .font(.system(size: 9, weight: .semibold))
+          .imageScale(.small)
       }
     }
-    .font(.caption2.weight(.semibold))
+    .font(.footnote.weight(.semibold))
     .foregroundColor(isInteractive ? .accentColor : .secondary)
     .padding(.horizontal, 7)
     .padding(.vertical, 3)
