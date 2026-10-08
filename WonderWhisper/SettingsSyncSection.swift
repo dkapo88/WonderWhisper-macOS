@@ -3,6 +3,10 @@ import SwiftUI
 /// Settings → General → iCloud: the opt-in switch, status line and "Sync Now".
 struct SettingsSyncSection: View {
   @ObservedObject var sync: SettingsSyncService
+  @State private var confirmsRepair = false
+
+  static let recoveryMessage = "This Mac's settings will replace the selected iCloud copies "
+    + "on all Macs. Previous copies are backed up next to settings.json before they are replaced."
 
   var body: some View {
     Section {
@@ -32,14 +36,13 @@ struct SettingsSyncSection: View {
       if sync.isEnabled, !sync.blockedKeys.isEmpty {
         LabeledContent {
           Button("Repair") {
-            Task { await sync.repairBlockedKeys() }
+            confirmsRepair = true
           }
           .disabled(sync.isSyncing)
         } label: {
           StatusBadge(.warning, "Not syncing (unreadable in iCloud): "
             + sync.blockedKeys.joined(separator: ", "))
-          Text("Repair replaces them in iCloud with this Mac's values. The unreadable copies "
-            + "are kept next to settings.json.")
+          Text("Repair uses this Mac's values on all Macs and backs up previous copies.")
         }
       }
 
@@ -67,15 +70,23 @@ struct SettingsSyncSection: View {
       Button("Use iCloud Settings") {
         Task { await sync.resolveFirstEnable(.useCloud) }
       }
-      Button("Replace iCloud with This Mac's Settings") {
+      Button("Replace iCloud with This Mac's Settings", role: .destructive) {
         Task { await sync.resolveFirstEnable(.replaceCloud) }
       }
       Button("Cancel", role: .cancel) {
         sync.cancelFirstEnable()
       }
     } message: {
-      Text("Another Mac has already saved settings to iCloud. Choose which settings to keep. "
-        + "The other copy is replaced.")
+      Text("Use iCloud adopts its settings on this Mac. Replace iCloud uses this Mac's "
+        + "settings on all Macs. Previous iCloud copies are backed up next to settings.json.")
+    }
+    .confirmationDialog("Repair iCloud settings?", isPresented: $confirmsRepair) {
+      Button("Use This Mac's Values on All Macs", role: .destructive) {
+        Task { await sync.repairBlockedKeys() }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(Self.recoveryMessage)
     }
   }
 

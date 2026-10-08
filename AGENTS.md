@@ -43,7 +43,9 @@ ceiling requires restoring an earlier backup. The file format is schema 3, which
 builds must never overwrite. No ordering reset feature remains. "Use iCloud" adopts every cloud
 key, resets included; "Replace iCloud" stamps the whole batch above every file/conflict maximum.
 Undecodable entries are backed up as `settings.blocked-<key>.json` and block their keys until
-Repair or Replace.
+Repair or Replace. Recovery confirmations say this Mac's copy wins on all Macs. Before either
+recovery overwrites a copy, every affected cloud/conflict document, including healthy values, is
+saved as `settings.backup-<milliseconds>-<uuid>.json`; backup failure aborts the write.
 Writes that view models make as a side effect of applying received settings
 (including deferred `Task` hops, however late they run) carry task-local provenance with no time
 window and are dropped by `AppConfig.defaults` (`SyncProvenanceUserDefaults`), so they never count
@@ -182,8 +184,8 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
 
 ## Changelog
 - 2026-10-08: Simplified sync ordering to counter/writer versions and schema 3; reserved batch
-  stamps before writes and retained first-baseline edits/undos. Expanded the independent
-  simulation to interleave edits during
+  stamps before writes, retained first-baseline edits/undos, and confirmed Repair/Replace with
+  healthy cloud/conflict backups. Expanded the independent simulation to interleave edits during
   first enable and allowlist re-addition.
 - 2026-10-08: Added opt-in iCloud settings sync (Settings → General) through
   `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key

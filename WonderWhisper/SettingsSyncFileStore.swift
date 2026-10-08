@@ -55,6 +55,7 @@ struct SettingsSyncFileStore: Sendable {
     var exhausted = false
     var needsReservation = false
     var reservationFloor: SettingsSyncVersion?
+    var backedUpAs: [String] = []
   }
 
   /// Backup of a blocked entry's raw JSON, next to settings.json.
@@ -259,6 +260,12 @@ struct SettingsSyncFileStore: Sendable {
       outcome.quarantinedAs = backup.lastPathComponent
     }
     do {
+      // A failed backup aborts recovery before the original settings or conflicts change.
+      for bytes in plan.replacementBackups {
+        let name = "settings.backup-\(SettingsSyncDocument.millis(input.timestamp))-\(UUID().uuidString).json"
+        try bytes.write(to: directory.appendingPathComponent(name), options: .atomic)
+        outcome.backedUpAs.append(name)
+      }
       try encoded.write(to: url, options: .atomic)
     } catch {
       throw StoreError.writeFailed(error.localizedDescription)

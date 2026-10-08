@@ -54,6 +54,8 @@ enum SettingsSyncTransaction {
     var exhausted = false
     var needsReservation = false
     var reservationFloor: SettingsSyncVersion?
+    /// Original documents to preserve before an explicit recovery overwrites any copies.
+    var replacementBackups: [Data] = []
   }
 
   static func plan(
@@ -168,6 +170,18 @@ enum SettingsSyncTransaction {
     plan.merge = result
     plan.write = result.document
     plan.quarantine = unreadable
+    if input.mode == .replace || !repairing.isEmpty {
+      let replacedKeys = input.mode == .replace ? Set(input.local.keys) : repairing
+      let originals: [Data] = {
+        if case .contents(let data) = current { return [data] }
+        return []
+      }() + conflicts.compactMap { $0 }
+      plan.replacementBackups = originals.filter { data in
+        guard let original = try? SettingsSyncDocument.decode(data) else { return false }
+        return !replacedKeys.isDisjoint(with: original.entries.keys)
+          || !replacedKeys.isDisjoint(with: original.opaqueEntries.keys)
+      }
+    }
     return plan
   }
 }

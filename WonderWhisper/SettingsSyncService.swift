@@ -489,6 +489,9 @@ final class SettingsSyncService: ObservableObject {
       let names = outcome.blockedKeys.sorted().joined(separator: ", ")
       parts.append("Not syncing until repaired (unreadable in iCloud): \(names).")
     }
+    if !outcome.backedUpAs.isEmpty {
+      parts.append("Previous copies are saved next to settings.json as settings.backup-*.json.")
+    }
     if !outcome.repairedKeys.isEmpty {
       let names = outcome.repairedKeys.sorted().joined(separator: ", ")
       parts.append("Repaired: \(names).")

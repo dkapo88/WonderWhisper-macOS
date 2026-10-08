@@ -698,6 +698,9 @@ ceiling, restore an earlier backup first. Counters are never silently restarted 
 
 An undecodable entry is preserved verbatim in `settings.blocked-<key>.json` and blocks its key
 until "Repair" or "Replace iCloud" writes this Mac's value above the file and conflict maxima.
+Recovery requires confirmation that this Mac's copy wins on all Macs. Before overwriting, every
+replaced cloud/conflict document, including healthy values, is saved byte-for-byte next to
+`settings.json` as `settings.backup-<milliseconds>-<uuid>.json`. A failed backup aborts the write.
 
 Schema-1 files are read with counter 0, keeping values but discarding wall-clock ordering.
 Schemas 1 and 2 are migrated to schema 3 on write. Schema 3 prevents older schema-2 development
@@ -829,7 +832,8 @@ struct AppConfig {
   `settingsSync.localState` holds the whole `SettingsSyncEngine` (records, pending edits with their
   versions, counter); the relative 10^9 counter rule was dropped; undecodable entries are preserved.
 - **v1.25 (October 8, 2026)**: Settings file schema 3 uses counter/writer versions, reserves
-  transaction stamps before writes, and tracks first-baseline edits and undos.
+  transaction stamps before writes, and tracks first-baseline edits and undos. Repair/Replace
+  require confirmation and preserve healthy overwritten cloud/conflict documents in backups.
 - **v1.24 (October 8, 2026)**: Added the 2^40 counter ceiling, raw blocked-entry backups, and
   `latest` in engine state in place of a bare counter.
 - **v1.20 (July 26, 2026)**: Added persisted per-chat Beeper snooze deadlines and an in-memory,

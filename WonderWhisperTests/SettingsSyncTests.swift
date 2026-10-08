@@ -1624,6 +1624,81 @@ struct SettingsSyncTests {
     #expect(state.pending.isEmpty)
   }
 
+  @Test(arguments: [false, true])
+  func recoveryBacksUpHealthyCloudAndConflictCopies(replace: Bool) async throws {
+    let harness = try Harness()
+    let conflicts = FakeConflictVersions()
+    let (mac, defaults) = try Self.mac(harness, "A", conflicts: conflicts.source)
+    defaults.set("local wins", forKey: "vocab.custom")
+    await mac.setEnabled(true)
+    var cloud = try harness.readDocument()
+    cloud.entries["vocab.custom"] = .init(value: .string("healthy cloud"), counter: 10, deviceID: "B")
+    let original = try cloud.encoded()
+    try original.write(to: harness.fileURL, options: .atomic)
+    let healthyConflict = try SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("healthy conflict"), counter: 20, deviceID: "C")
+    ]).encoded()
+    conflicts.add(healthyConflict)
+    var blocked = SettingsSyncDocument()
+    blocked.opaqueEntries["vocab.custom"] = Data("{\"counter\":-1}".utf8)
+    conflicts.add(try blocked.encoded())
+    await mac.syncNow()
+    #expect(mac.blockedKeys.contains("vocab.custom"))
+    if replace {
+      await mac.setEnabled(false)
+      await mac.setEnabled(true)
+      await mac.resolveFirstEnable(.replaceCloud)
+    } else {
+      await mac.repairBlockedKeys()
+    }
+    let backups = try FileManager.default.contentsOfDirectory(
+      at: harness.folder, includingPropertiesForKeys: nil
+    ).filter { $0.lastPathComponent.hasPrefix("settings.backup-") }
+    let bytes = try backups.map { try Data(contentsOf: $0) }
+    #expect(bytes.contains(original))
+    #expect(bytes.contains(healthyConflict))
+    #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("local wins"))
+    #expect(SettingsSyncSection.recoveryMessage.contains("This Mac's"))
+    #expect(SettingsSyncSection.recoveryMessage.contains("all Macs"))
+    #expect(SettingsSyncSection.recoveryMessage.contains("backed up"))
+  }
+
+  @Test func failedRecoveryBackupLeavesHealthyCloudAndConflictsUntouched() throws {
+    let harness = try Harness()
+    let folder = harness.folder
+    let manager = FileManager.default
+    try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+    let original = try SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("healthy"), counter: 5, deviceID: "B")
+    ]).encoded()
+    try original.write(to: harness.fileURL)
+    let conflicts = FakeConflictVersions()
+    conflicts.add(original)
+    let store = SettingsSyncFileStore(
+      directory: folder, conflicts: conflicts.source,
+      beforeCommit: {
+        try? FileManager.default.setAttributes(
+          [.posixPermissions: 0o555], ofItemAtPath: folder.path
+        )
+      }
+    )
+    var input = SettingsSyncTransaction.Input(
+      local: ["vocab.custom": .init(value: .string("local"), version: nil)],
+      deviceID: "A", deviceName: "Mac A", timestamp: harness.clock
+    )
+    input.mode = .replace
+    input.reservedVersion = SettingsSyncVersion(6, "A")
+    do {
+      _ = try store.transact(input, cancellation: SettingsSyncCancellation())
+      Issue.record("Recovery overwrote the cloud after its backup failed")
+    } catch {
+      #expect(error is SettingsSyncFileStore.StoreError)
+    }
+    #expect(try Data(contentsOf: harness.fileURL) == original)
+    #expect(conflicts.resolvedCount == 0)
+  }
+
   @Test func schemaThreeOmitsRemovedOrderingFieldsAndBlocksOlderWriters() throws {
     let document = SettingsSyncDocument(entries: [
       "vocab.custom": .init(value: .string("x"), counter: 1, deviceID: "A")
