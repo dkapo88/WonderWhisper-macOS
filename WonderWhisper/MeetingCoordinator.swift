@@ -972,6 +972,13 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
+  /// iCloud settings sync wrote a newer trigger-app list; adopt it without re-saving a change.
+  func reloadTriggerRulesFromDefaults() {
+    let rules = MeetingTriggerRule.load(defaults: AppConfig.defaults)
+    guard rules != triggerRules else { return }
+    updateTriggerRules(rules)
+  }
+
   private func updateTriggerRules(_ rules: [MeetingTriggerRule]) {
     triggerRules = MeetingTriggerRule.deduplicated(rules)
     MeetingTriggerRule.save(triggerRules)

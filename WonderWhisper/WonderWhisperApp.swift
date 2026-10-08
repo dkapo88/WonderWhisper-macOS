@@ -38,6 +38,12 @@ struct WonderWhisperApp: App {
                     // Touch the shared updater so Sparkle starts its scheduled check timer.
                     // Without this the updater is only created when the menu is first built.
                     _ = UpdaterController.shared
+                    // iCloud settings sync (opt-in; inert unless turned on in Settings → General).
+                    let settingsSync = SettingsSyncService.shared
+                    settingsSync.onRemoteChangesApplied = { [weak vm] keys in
+                        vm?.applySyncedSettings(changedKeys: keys)
+                    }
+                    settingsSync.start()
                 }
         }
         .commands {

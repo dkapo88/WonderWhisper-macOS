@@ -1807,6 +1807,61 @@ final class DictationViewModel: ObservableObject {
         applySimpleSettings(settings, for: kind)
     }
 
+    /// iCloud settings sync: re-reads the synced settings whose loaders are private to this
+    /// file. The rest are handled in `SettingsSyncLiveApply.swift`.
+    func reloadFileScopedSyncedSettings(changedKeys keys: Set<String>) {
+        if keys.contains(SimpleDefaultsKey.dictationSettings) {
+            applySimpleSettings(Self.loadSimpleSettings(for: .dictation), for: .dictation)
+        }
+        if keys.contains(SimpleDefaultsKey.commandSettings) {
+            applySimpleSettings(Self.loadSimpleSettings(for: .command), for: .command)
+        }
+        if keys.contains(SimpleDefaultsKey.dictationPromptTemplates) {
+            let templates = Self.loadCustomDictationPromptTemplates()
+            if customDictationPromptTemplates != templates { customDictationPromptTemplates = templates }
+        }
+        if keys.contains(Self.favoriteOpenRouterModelsKey) {
+            let favorites = Self.loadFavoriteOpenRouterModels()
+            if favoriteOpenRouterModels != favorites { favoriteOpenRouterModels = favorites }
+        }
+        if keys.contains(SimpleDefaultsKey.customModels) {
+            let models = Self.loadSimpleCustomModels()
+            if simpleCustomModels != models { simpleCustomModels = models }
+        }
+        if keys.contains(SimpleDefaultsKey.selectedModel) {
+            let model = Self.loadSimpleSelectedModel()
+            if simpleSelectedModel != model { simpleSelectedModel = model }
+        }
+        if keys.contains(SimpleDefaultsKey.llmEnabled) {
+            let enabled = Self.loadSimpleLLMEnabled()
+            if simpleLLMEnabled != enabled { simpleLLMEnabled = enabled }
+        }
+        if keys.contains(SimpleDefaultsKey.voiceEngine) {
+            let engine = Self.loadSimpleVoiceEngine()
+            if simpleVoiceEngine != engine { simpleVoiceEngine = engine }
+        }
+        if keys.contains(SimpleDefaultsKey.openRouterTranscriptionModel) {
+            let model = Self.loadOpenRouterTranscriptionModel()
+            if openRouterTranscriptionModel != model { openRouterTranscriptionModel = model }
+        }
+        if keys.contains("llm.openrouter.reasoning") {
+            let reasoning = Self.loadOpenRouterReasoning()
+            if openrouterReasoning != reasoning { openrouterReasoning = reasoning }
+        }
+        if keys.contains(SimpleDefaultsKey.hermesSelection) {
+            let selection = Self.loadHermesSelection()
+            if hermesSelection != selection { hermesSelection = selection }
+        }
+        if keys.contains(SimpleDefaultsKey.beeperSelection) {
+            let selection = Self.loadBeeperSelection()
+            if beeperSelection != selection { beeperSelection = selection }
+        }
+        if keys.contains(SimpleDefaultsKey.codexSelection) {
+            let selection = Self.loadCodexSelection()
+            if codexSelection != selection { codexSelection = selection }
+        }
+    }
+
     func restoreSimpleHeader(for kind: SimplePromptKind) {
         var settings = simpleSettings(for: kind)
         settings.header = SimpleModeDefaults.systemHeader(for: kind)
