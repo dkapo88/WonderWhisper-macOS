@@ -27,13 +27,20 @@ struct SettingsSyncTests {
       return try #require(UserDefaults(suiteName: name))
     }
 
-    func makeService(_ defaults: UserDefaults, name: String) -> SettingsSyncService {
+    /// - Parameter clockOffset: how far this Mac's wall clock is ahead of the shared clock.
+    func makeService(
+      _ defaults: UserDefaults,
+      name: String,
+      clockOffset: TimeInterval = 0,
+      conflicts: SettingsSyncConflictSource = .none
+    ) -> SettingsSyncService {
       SettingsSyncService(
         defaults: defaults,
         directory: folder,
         iCloudRoot: root,
         deviceName: name,
-        now: { [unowned self] in self.clock },
+        now: { [unowned self] in self.clock.addingTimeInterval(clockOffset) },
+        conflicts: conflicts,
         observesChanges: false
       )
     }
@@ -56,15 +63,38 @@ struct SettingsSyncTests {
     }
   }
 
-  /// A deterministic value of a rotating type for each key, so every plist type is exercised.
-  private static func sampleValue(for key: String, index: Int) -> SettingsSyncValue {
-    switch index % 6 {
-    case 0: return .string("value-\(key)")
-    case 1: return .bool(index % 4 == 1)
-    case 2: return .int(index * 7)
-    case 3: return .double(Double(index) + 0.25)
-    case 4: return .strings(["a-\(index)", "b-\(key)"])
-    default: return .data(Data("{\"key\":\"\(key)\",\"n\":\(index)}".utf8))
+  /// A valid value for every allowlisted key, built from its declared expectation, so every
+  /// plist type is exercised and every received value passes validation.
+  private static func sampleValue(for key: String, index: Int) throws -> SettingsSyncValue {
+    let expectation = try #require(SettingsSyncRegistry.expectations[key])
+    switch expectation {
+    case .bool: return .bool(index % 2 == 0)
+    case .string: return .string("value-\(key)")
+    case .oneOf(let allowed): return .string(try #require(allowed.sorted().last))
+    case .int(let range): return .int(min(range.lowerBound + 7, range.upperBound))
+    case .double(let range): return .double((range.lowerBound + range.upperBound) / 2)
+    case .strings: return .strings(["a-\(index)", "b-\(key)"])
+    case .json(let shape): return .data(try sampleJSON(shape))
+    }
+  }
+
+  private static func sampleJSON(_ shape: SettingsSyncRegistry.JSONShape) throws -> Data {
+    let encoder = JSONEncoder()
+    switch shape {
+    case .promptSettings:
+      var settings = SimpleModeDefaults.settings(for: .command)
+      settings.header = "Synced header"
+      return try encoder.encode(settings)
+    case .promptTemplates:
+      return try encoder.encode([
+        SimplePromptTemplate(name: "Synced", rules: "Be brief", footer: "")
+      ])
+    case .favoriteModels:
+      return try encoder.encode([FavoriteOpenRouterModel(id: "x/y", name: "X · Y")])
+    case .beeperChats:
+      return try encoder.encode([BeeperChatEntry(chatID: "!chat", alias: "Team")])
+    case .meetingTriggerRules:
+      return try encoder.encode(Array(MeetingTriggerRule.defaultRules.prefix(1)))
     }
   }
 
@@ -75,8 +105,11 @@ struct SettingsSyncTests {
     let defaultsA = try harness.makeDefaults()
     let defaultsB = try harness.makeDefaults()
     let keys = SettingsSyncRegistry.synced.map(\.key)
+    var samples: [String: SettingsSyncValue] = [:]
     for (index, key) in keys.enumerated() {
-      SettingsSyncValue.write(Self.sampleValue(for: key, index: index), key: key, to: defaultsA)
+      let value = try Self.sampleValue(for: key, index: index)
+      samples[key] = value
+      SettingsSyncValue.write(value, key: key, to: defaultsA)
     }
 
     let macA = harness.makeService(defaultsA, name: "Mac A")
@@ -92,11 +125,9 @@ struct SettingsSyncTests {
     #expect(macB.isAwaitingFirstEnableChoice)
     await macB.resolveFirstEnable(.useCloud)
 
-    for (index, key) in keys.enumerated() {
-      #expect(
-        SettingsSyncValue.read(key, from: defaultsB) == Self.sampleValue(for: key, index: index),
-        "\(key) did not round-trip"
-      )
+    for key in keys {
+      let received = SettingsSyncValue.read(key, from: defaultsB)
+      #expect(received == samples[key], "\(key) did not round-trip")
     }
     #expect(appliedOnB == Set(keys))
     #expect(macB.deviceCount == 2)
@@ -524,11 +555,437 @@ struct SettingsSyncTests {
     #expect(vm.simpleDictation.header == "Synced header")
   }
 
+  // MARK: - Review regressions
+
+  /// #1: applying several received keys must not let one property's side effects write stale
+  /// cached siblings over the other received values.
+  @Test func liveApplyKeepsEveryValueInAReceivedBatch() {
+    let defaults = AppConfig.defaults
+    let keys: Set<String> = ["vocab.custom", "vocab.spelling", "llm.model", "screenContext.enabled"]
+    defer { keys.forEach { defaults.removeObject(forKey: $0) } }
+    let vm = DictationViewModel()
+    #expect(vm.vocabSpelling != "Lewis -> Luis")
+
+    // Sync writes the whole batch into UserDefaults first, then notifies once.
+    defaults.set("Luis, Xinyi", forKey: "vocab.custom")
+    defaults.set("Lewis -> Luis", forKey: "vocab.spelling")
+    defaults.set("openai/gpt-synced", forKey: "llm.model")
+    defaults.set(!vm.screenContextEnabled, forKey: "screenContext.enabled")
+    let expectedScreenContext = !vm.screenContextEnabled
+
+    vm.applySyncedSettings(changedKeys: keys)
+
+    #expect(vm.vocabCustom == "Luis, Xinyi")
+    #expect(vm.vocabSpelling == "Lewis -> Luis")
+    #expect(vm.llmModel == "openai/gpt-synced")
+    #expect(vm.screenContextEnabled == expectedScreenContext)
+    #expect(defaults.string(forKey: "vocab.spelling") == "Lewis -> Luis")
+    #expect(defaults.string(forKey: "llm.model") == "openai/gpt-synced")
+    #expect(defaults.object(forKey: "screenContext.enabled") as? Bool == expectedScreenContext)
+  }
+
+  /// #2: an edit made after receiving another Mac's change wins even when that Mac's clock is
+  /// ten minutes fast.
+  @Test func laterEditWinsOverAMacWithAFastClock() async throws {
+    let harness = try Harness()
+    let defaultsA = try harness.makeDefaults()
+    let defaultsB = try harness.makeDefaults()
+    defaultsA.set("from fast A", forKey: "vocab.custom")
+    let macA = harness.makeService(defaultsA, name: "Mac A", clockOffset: 600)
+    await macA.setEnabled(true)
+
+    harness.tick()
+    let macB = harness.makeService(defaultsB, name: "Mac B")
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.useCloud)
+    #expect(defaultsB.string(forKey: "vocab.custom") == "from fast A")
+
+    harness.tick()
+    defaultsB.set("later edit on B", forKey: "vocab.custom")
+    macB.noteLocalChanges()
+    await macB.syncNow()
+    #expect(defaultsB.string(forKey: "vocab.custom") == "later edit on B")
+
+    harness.tick()
+    await macA.syncNow()
+    #expect(defaultsA.string(forKey: "vocab.custom") == "later edit on B")
+  }
+
+  /// #2: "Replace iCloud" is authoritative even against entries stamped by a fast clock.
+  @Test func replaceICloudWinsOverAMacWithAFastClock() async throws {
+    let harness = try Harness()
+    let defaultsA = try harness.makeDefaults()
+    let defaultsB = try harness.makeDefaults()
+    defaultsA.set("from fast A", forKey: "vocab.custom")
+    defaultsA.set("fr", forKey: "transcription.language")
+    let macA = harness.makeService(defaultsA, name: "Mac A", clockOffset: 600)
+    await macA.setEnabled(true)
+
+    harness.tick()
+    defaultsB.set("B is the source of truth", forKey: "vocab.custom")
+    let macB = harness.makeService(defaultsB, name: "Mac B")
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.replaceCloud)
+    let document = try harness.readDocument()
+    #expect(document.entries["vocab.custom"]?.value == .string("B is the source of truth"))
+    #expect(document.entries["transcription.language"]?.value == nil)
+
+    harness.tick()
+    await macA.syncNow()
+    #expect(defaultsA.string(forKey: "vocab.custom") == "B is the source of truth")
+    #expect(defaultsA.object(forKey: "transcription.language") == nil)
+  }
+
+  /// #3: a newer document installed by iCloud while a sync is in flight is merged, not
+  /// overwritten by a merge computed from an older read.
+  @Test func documentInstalledMidSyncIsMergedNotOverwritten() async throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    defaults.set("one", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+
+    harness.tick()
+    defaults.set("local edit", forKey: "vocab.custom")
+    mac.noteLocalChanges()
+    let fileURL = harness.fileURL
+    let clock = harness.clock
+    mac.beforeTransactionForTesting = { [weak mac] in
+      mac?.beforeTransactionForTesting = nil
+      var installed = try? SettingsSyncDocument.decode(Data(contentsOf: fileURL))
+      installed?.entries["transcription.language"] = .init(
+        value: .string("de"),
+        modifiedAt: clock,
+        deviceID: "OTHER"
+      )
+      try? installed?.encoded().write(to: fileURL, options: .atomic)
+    }
+    harness.tick()
+    await mac.syncNow()
+
+    let document = try harness.readDocument()
+    #expect(document.entries["vocab.custom"]?.value == .string("local edit"))
+    #expect(document.entries["transcription.language"]?.value == .string("de"))
+    #expect(defaults.string(forKey: "transcription.language") == "de")
+  }
+
+  /// #3: a newer-schema file installed mid-sync is never overwritten.
+  @Test func newerSchemaInstalledMidSyncIsNeverOverwritten() async throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    defaults.set("one", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+
+    harness.tick()
+    defaults.set("local edit", forKey: "vocab.custom")
+    mac.noteLocalChanges()
+    let future = SettingsSyncDocument(schemaVersion: SettingsSyncDocument.currentSchemaVersion + 1)
+    let futureData = try future.encoded()
+    let fileURL = harness.fileURL
+    mac.beforeTransactionForTesting = { [weak mac] in
+      mac?.beforeTransactionForTesting = nil
+      try? futureData.write(to: fileURL, options: .atomic)
+    }
+    await mac.syncNow()
+
+    #expect(try Data(contentsOf: harness.fileURL) == futureData)
+    #expect(mac.lastError?.contains("newer WonderWhisper") == true)
+  }
+
+  /// #3: corruption is re-checked inside the transaction; a file repaired in the meantime is
+  /// not quarantined, and first enable stops to ask instead of overwriting it.
+  @Test func repairedFileIsNotQuarantinedAndFirstEnableAsks() async throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    try Data("{ broken".utf8).write(to: harness.fileURL)
+    let repaired = SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("repaired"), modifiedAt: harness.clock, deviceID: "B")
+    ])
+    let repairedData = try repaired.encoded()
+    let defaults = try harness.makeDefaults()
+    defaults.set("this mac", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    let fileURL = harness.fileURL
+    mac.beforeTransactionForTesting = { [weak mac] in
+      mac?.beforeTransactionForTesting = nil
+      try? repairedData.write(to: fileURL, options: .atomic)
+    }
+
+    await mac.setEnabled(true)
+
+    #expect(!mac.isEnabled)
+    #expect(mac.isAwaitingFirstEnableChoice)
+    #expect(try Data(contentsOf: harness.fileURL) == repairedData)
+    let names = try FileManager.default.contentsOfDirectory(atPath: harness.folder.path)
+    #expect(!names.contains { $0.hasPrefix("settings.unreadable-") })
+    #expect(defaults.string(forKey: "vocab.custom") == "this mac")
+  }
+
+  /// #4: an offline Mac's edits kept by iCloud as a conflict version are merged per key, and
+  /// the conflict is marked resolved only after the merged file is saved.
+  @Test func iCloudConflictVersionsAreMergedThenResolved() async throws {
+    let harness = try Harness()
+    let conflicts = FakeConflictVersions()
+    let defaults = try harness.makeDefaults()
+    defaults.set("mine", forKey: "vocab.custom")
+    defaults.set("en", forKey: "transcription.language")
+    let mac = harness.makeService(defaults, name: "Mac A", conflicts: conflicts.source)
+    await mac.setEnabled(true)
+
+    harness.tick()
+    let losingVersion = SettingsSyncDocument(
+      entries: [
+        "transcription.language": .init(
+          value: .string("fr"),
+          modifiedAt: harness.clock,
+          deviceID: "OFFLINE"
+        )
+      ],
+      devices: ["OFFLINE": .init(name: "Offline Mac", lastWriteAt: harness.clock)]
+    )
+    conflicts.versions = [try losingVersion.encoded()]
+    harness.tick()
+    await mac.syncNow()
+
+    #expect(defaults.string(forKey: "transcription.language") == "fr")
+    #expect(defaults.string(forKey: "vocab.custom") == "mine")
+    let document = try harness.readDocument()
+    #expect(document.entries["transcription.language"]?.value == .string("fr"))
+    #expect(document.devices["OFFLINE"] != nil)
+    #expect(conflicts.resolvedCount == 1)
+    #expect(conflicts.finishCount == 1)
+  }
+
+  /// #4: conflicts stay unresolved when the merged document can't be saved (newer schema).
+  @Test func conflictVersionsStayUnresolvedWhenNothingIsSaved() async throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    let future = SettingsSyncDocument(schemaVersion: SettingsSyncDocument.currentSchemaVersion + 1)
+    try future.encoded().write(to: harness.fileURL)
+    let conflicts = FakeConflictVersions()
+    conflicts.versions = [try SettingsSyncDocument().encoded()]
+    let defaults = try harness.makeDefaults()
+    let mac = harness.makeService(defaults, name: "Mac A", conflicts: conflicts.source)
+    await mac.setEnabled(true)
+    await mac.resolveFirstEnable(.useCloud)
+
+    #expect(conflicts.resolvedCount == 0)
+    #expect(conflicts.finishCount == 0)
+  }
+
+  /// #5: a reset is stamped when it happens; uploaded later it must not erase a newer value
+  /// another Mac set in the meantime.
+  @Test func olderResetLosesToNewerRemoteValue() async throws {
+    let harness = try Harness()
+    let defaultsA = try harness.makeDefaults()
+    let defaultsB = try harness.makeDefaults()
+    defaultsA.set("shared", forKey: "vocab.spelling")
+    let macA = harness.makeService(defaultsA, name: "Mac A")
+    await macA.setEnabled(true)
+    harness.tick()
+    let macB = harness.makeService(defaultsB, name: "Mac B")
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.useCloud)
+
+    harness.tick()
+    defaultsA.removeObject(forKey: "vocab.spelling")
+    macA.noteLocalChanges()
+    harness.tick()
+    defaultsB.set("newer on B", forKey: "vocab.spelling")
+    macB.noteLocalChanges()
+    await macB.syncNow()
+
+    harness.tick()
+    await macA.syncNow()
+    #expect(defaultsA.string(forKey: "vocab.spelling") == "newer on B")
+    #expect(try harness.readDocument().entries["vocab.spelling"]?.value == .string("newer on B"))
+  }
+
+  /// #6: turning sync off while a sync is in flight stops it from applying or writing.
+  @Test func disablingDuringAnInFlightSyncStopsIt() async throws {
+    let harness = try Harness()
+    let defaultsA = try harness.makeDefaults()
+    let defaultsB = try harness.makeDefaults()
+    defaultsA.set("one", forKey: "vocab.custom")
+    let macA = harness.makeService(defaultsA, name: "Mac A")
+    await macA.setEnabled(true)
+    harness.tick()
+    let macB = harness.makeService(defaultsB, name: "Mac B")
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.useCloud)
+    harness.tick()
+    defaultsB.set("cloud value", forKey: "vocab.custom")
+    macB.noteLocalChanges()
+    await macB.syncNow()
+
+    let fileBefore = try Data(contentsOf: harness.fileURL)
+    let writesBefore = macA.writeCount
+    var applied = false
+    macA.onRemoteChangesApplied = { _ in applied = true }
+    macA.beforeTransactionForTesting = { [weak macA] in
+      guard let macA else { return }
+      macA.beforeTransactionForTesting = nil
+      await macA.setEnabled(false)
+      defaultsA.set("edit while off", forKey: "vocab.custom")
+    }
+    harness.tick()
+    await macA.syncNow()
+
+    #expect(!macA.isEnabled)
+    #expect(defaultsA.string(forKey: "vocab.custom") == "edit while off")
+    #expect(!applied)
+    #expect(macA.writeCount == writesBefore)
+    #expect(try Data(contentsOf: harness.fileURL) == fileBefore)
+  }
+
+  /// #6: the transaction itself honours cancellation right before writing.
+  @Test func cancelledTransactionNeverWrites() throws {
+    let harness = try Harness()
+    let store = SettingsSyncFileStore(directory: harness.folder, conflicts: .none)
+    let token = SettingsSyncCancellation()
+    token.cancel()
+    let input = SettingsSyncFileStore.TransactionInput(
+      local: ["vocab.custom": .init(value: .string("x"), modifiedAt: harness.clock)],
+      deviceID: "A",
+      deviceName: "Mac A",
+      timestamp: harness.clock
+    )
+    let outcome = try store.transact(input, cancellation: token)
+    #expect(outcome.cancelled)
+    #expect(!outcome.wrote)
+    #expect(!FileManager.default.fileExists(atPath: harness.fileURL.path))
+  }
+
+  /// #7: received values are validated per setting; bad ones are rejected and the local value
+  /// kept, instead of crashing (`UInt32(-1)`) or replacing good prompt data.
+  @Test func invalidReceivedValuesAreRejectedAndLocalValuesKept() async throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    let goodSettings = try JSONEncoder().encode(SimpleModeDefaults.settings(for: .dictation))
+    defaults.set(9, forKey: "pasteShortcut.keyCode")
+    defaults.set(goodSettings, forKey: "simple.dictation.settings")
+    defaults.set("good vocab", forKey: "vocab.custom")
+    defaults.set("parakeet-local", forKey: "simple.voice.engine")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+
+    harness.tick(60)
+    var hostile = try harness.readDocument()
+    let later = harness.clock
+    hostile.entries["pasteShortcut.keyCode"] = .init(
+      value: .int(-1),
+      modifiedAt: later,
+      deviceID: "X"
+    )
+    hostile.entries["simple.dictation.settings"] = .init(
+      value: .data(Data("not json".utf8)),
+      modifiedAt: later,
+      deviceID: "X"
+    )
+    hostile.entries["vocab.custom"] = .init(value: .int(5), modifiedAt: later, deviceID: "X")
+    hostile.entries["simple.voice.engine"] = .init(
+      value: .string("no-such-engine"),
+      modifiedAt: later,
+      deviceID: "X"
+    )
+    try hostile.encoded().write(to: harness.fileURL, options: .atomic)
+
+    var applied: Set<String> = []
+    mac.onRemoteChangesApplied = { applied.formUnion($0) }
+    harness.tick()
+    await mac.syncNow()
+
+    #expect(defaults.integer(forKey: "pasteShortcut.keyCode") == 9)
+    #expect(defaults.data(forKey: "simple.dictation.settings") == goodSettings)
+    #expect(defaults.string(forKey: "vocab.custom") == "good vocab")
+    #expect(defaults.string(forKey: "simple.voice.engine") == "parakeet-local")
+    #expect(applied.isEmpty)
+    #expect(mac.lastRejectedKeys == [
+      "pasteShortcut.keyCode", "simple.dictation.settings", "vocab.custom", "simple.voice.engine"
+    ])
+    #expect(mac.notice?.contains("Ignored 4 settings") == true)
+
+    // Rejection is stable: no ping-pong writes on later syncs.
+    let writes = mac.writeCount
+    harness.tick()
+    await mac.syncNow()
+    #expect(mac.writeCount == writes)
+  }
+
+  @Test func validationChecksTypesRangesAndEmbeddedJSON() throws {
+    #expect(SettingsSyncRegistry.isValid(.int(36), for: "pasteShortcut.keyCode"))
+    #expect(!SettingsSyncRegistry.isValid(.int(-1), for: "pasteShortcut.keyCode"))
+    let tooBig = SettingsSyncValue.int(Int(UInt32.max) + 1)
+    #expect(!SettingsSyncRegistry.isValid(tooBig, for: "pasteShortcut.modifiers"))
+    #expect(!SettingsSyncRegistry.isValid(.double(.nan), for: "llm.temperature"))
+    #expect(SettingsSyncRegistry.isValid(.int(1), for: "llm.temperature"))
+    #expect(!SettingsSyncRegistry.isValid(.string("1"), for: "llm.temperature"))
+    #expect(!SettingsSyncRegistry.isValid(.string("telepathy"), for: "hermes.shortcut.selection"))
+    #expect(SettingsSyncRegistry.isValid(nil, for: "hermes.shortcut.selection"))
+    #expect(!SettingsSyncRegistry.isValid(.string("x"), for: "not.a.synced.key"))
+    #expect(!SettingsSyncRegistry.isValid(.data(Data("[1]".utf8)), for: "beeper.chats"))
+    for (index, setting) in SettingsSyncRegistry.synced.enumerated() {
+      let sample = try Self.sampleValue(for: setting.key, index: index)
+      #expect(SettingsSyncRegistry.isValid(sample, for: setting.key), "\(setting.key)")
+    }
+  }
+
+  /// #8: the types handed across the background file transaction are Sendable, and the
+  /// registry's metadata keys are readable from a nonisolated context.
+  @Test nonisolated func syncTypesAreSafeToCrossIsolationBoundaries() {
+    Self.requireSendable(SettingsSyncFilePresenter.self)
+    Self.requireSendable(SettingsSyncFileStore.self)
+    Self.requireSendable(SettingsSyncFileStore.TransactionInput.self)
+    Self.requireSendable(SettingsSyncFileStore.TransactionOutcome.self)
+    Self.requireSendable(SettingsSyncConflictSource.self)
+    Self.requireSendable(SettingsSyncCancellation.self)
+    Self.requireSendable(SettingsSyncDocument.self)
+    #expect(SettingsSyncRegistry.excluded[SettingsSyncStateKey.enabled] != nil)
+    #expect(SettingsSyncRegistry.excluded[SettingsSyncStateKey.clock] != nil)
+  }
+
+  private nonisolated static func requireSendable<T: Sendable>(_: T.Type) {}
+
   @Test func statusLineReadsNaturally() {
     let date = Date()
     let text = { SettingsSyncSection.statusText(lastSyncedAt: date, deviceCount: $0) }
     #expect(text(2).hasSuffix("· 2 Macs"))
     #expect(text(1).hasSuffix("· 1 Mac"))
     #expect(text(nil).hasPrefix("Synced"))
+  }
+}
+
+/// Stands in for `NSFileVersion` conflict versions, which only iCloud itself can create.
+private final class FakeConflictVersions: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storedVersions: [Data] = []
+  private var resolved = 0
+  private var finished = 0
+
+  var versions: [Data] {
+    get { lock.withLock { storedVersions } }
+    set { lock.withLock { storedVersions = newValue } }
+  }
+
+  var resolvedCount: Int { lock.withLock { resolved } }
+  var finishCount: Int { lock.withLock { finished } }
+
+  var source: SettingsSyncConflictSource {
+    SettingsSyncConflictSource(
+      unresolved: { [self] _ in
+        versions.map { data in
+          SettingsSyncConflictSource.Version(data: data) { [self] in
+            lock.withLock { resolved += 1 }
+          }
+        }
+      },
+      finish: { [self] _ in
+        lock.withLock {
+          finished += 1
+          storedVersions = []
+        }
+      }
+    )
   }
 }
