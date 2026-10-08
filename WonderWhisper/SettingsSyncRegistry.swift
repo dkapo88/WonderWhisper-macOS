@@ -63,6 +63,7 @@ enum SettingsSyncRegistry {
     Setting("vocab.custom", .vocabulary, .string),
     Setting("vocab.spelling", .vocabulary, .string),
     Setting("qwen.injectVocabulary", .vocabulary, .bool),
+    Setting("parakeet.vocabularyBoosting.enabled", .vocabulary, .bool),
 
     // Dictation and Command prompts (header/rules/footer, context toggles, hotkey) + templates
     Setting("simple.dictation.settings", .prompts, .json(.promptSettings)),

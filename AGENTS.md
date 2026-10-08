@@ -24,7 +24,8 @@ Opt-in from **Settings → General → iCloud** (default off). Preferences sync 
 the user's iCloud Drive (`~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json`)
 rather than `NSUbiquitousKeyValueStore`/CloudKit, because the app is unsandboxed and Developer ID
 signed: an iCloud container would need an iCloud capability and provisioning profile. Only keys
-in `SettingsSyncRegistry.synced` travel (vocabulary, Dictation/Command prompts and templates,
+in `SettingsSyncRegistry.synced` travel (vocabulary and the bool
+`parakeet.vocabularyBoosting.enabled`, Dictation/Command prompts and templates,
 favorite/selected models, transcription engine/language, meeting models and prompt, Beeper chats
 and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` documents what stays
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
@@ -183,6 +184,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Added the Parakeet vocabulary boosting toggle to the iCloud sync allowlist as a
+  bool, with adoption and subsequent-edit round-trip coverage.
 - 2026-10-08: Simplified sync ordering to counter/writer versions and schema 3; reserved batch
   stamps before writes, retained first-baseline edits/undos, and confirmed Repair/Replace with
   healthy cloud/conflict backups. Expanded the independent simulation to interleave edits during

@@ -108,9 +108,13 @@ struct SettingsSyncTests {
     let defaultsA = try harness.makeDefaults()
     let defaultsB = try harness.makeDefaults()
     let keys = SettingsSyncRegistry.synced.map(\.key)
+    let boostingKey = "parakeet.vocabularyBoosting.enabled"
+    #expect(keys.contains(boostingKey))
+    #expect(SettingsSyncRegistry.expectations[boostingKey] == .bool)
     var samples: [String: SettingsSyncValue] = [:]
     for (index, key) in keys.enumerated() {
-      let value = try Self.sampleValue(for: key, index: index)
+      let value: SettingsSyncValue = key == boostingKey
+        ? .bool(false) : try Self.sampleValue(for: key, index: index)
       samples[key] = value
       SettingsSyncValue.write(value, key: key, to: defaultsA)
     }
@@ -135,6 +139,16 @@ struct SettingsSyncTests {
     #expect(appliedOnB == Set(keys))
     #expect(macB.deviceCount == 2)
     #expect(macB.lastError == nil)
+
+    // False must survive adoption despite boosting's default true; subsequent edits sync too.
+    #expect(defaultsB.object(forKey: boostingKey) as? Bool == false)
+    harness.tick()
+    defaultsA.set(true, forKey: boostingKey)
+    await macA.syncNow()
+    harness.tick()
+    await macB.syncNow()
+    #expect(defaultsB.object(forKey: boostingKey) as? Bool == true)
+    #expect(try harness.readDocument().entries[boostingKey]?.value == .bool(true))
   }
 
   @Test func valueCodingRoundTripsEveryType() throws {

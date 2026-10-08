@@ -355,7 +355,7 @@ erDiagram
 
 | Case | Description | Underlying Model |
 |------|-------------|------------------|
-| `parakeet-local` | On-device Parakeet V3 for maximum privacy/latency | `parakeet-local` |
+| `parakeet-local` | On-device Parakeet Unified (English) or Ultra (multilingual) | `parakeet-local` |
 | `qwen-local` | On-device Qwen3-ASR 0.6B (MLX 4-bit), offline file decode | `qwen-local` |
 | `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
 | `openrouter-transcription` | OpenRouter speech-to-text endpoint for cloud voice models | `openai/gpt-4o-mini-transcribe` by default |
@@ -585,6 +585,8 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
+| `parakeet.version` | String | Parakeet model (`unified` default or `ultra`); legacy `v3` reads as `ultra`. Synced as a string for cross-version compatibility. |
+| `parakeet.vocabularyBoosting.enabled` | Bool | Boost Vocabulary terms with CTC rescoring for Parakeet Unified dictation and meetings (default true). Synced through iCloud as a bool; Ultra does not use boosting. |
 | `qwen.injectVocabulary` | Bool | Inject Vocabulary-tab terms into Qwen decoder context (default true). Post-decode spelling correction still runs when this is off. |
 | `audio.input.uid` | String | Preferred microphone UID; absent means follow the macOS system default |
 | `audio.input.priorities` | Data | JSON-encoded ordered `AudioDeviceInfo[]` with stable UIDs and last-known names; the first available device is used before falling back to the system default |
@@ -663,7 +665,8 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 
 When iCloud settings sync is on, the keys listed in `SettingsSyncRegistry.synced` are mirrored to
 `~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json` (iCloud Drive →
-WonderWhisper). Keychain values are never read. Format (`SettingsSyncDocument`, schema 3;
+WonderWhisper), including the bool `parakeet.vocabularyBoosting.enabled`. Keychain values are
+never read. Format (`SettingsSyncDocument`, schema 3;
 `lastWriteAt` is display-only, integer milliseconds since 1970):
 
 ```json
@@ -818,6 +821,9 @@ struct AppConfig {
 
 ### Changelog
 
+- **v1.26 (October 8, 2026)**: Added `parakeet.vocabularyBoosting.enabled` to the iCloud
+  allowlist as a bool. No schema migration; older apps preserve this key as unknown. Documented
+  Unified/Ultra selection and legacy `v3` compatibility.
 - **v1.21 (October 8, 2026)**: Added opt-in iCloud settings sync: allowlisted UserDefaults keys
   mirrored per key (last writer wins) to `iCloud Drive/WonderWhisper/settings.json`, plus
   `settingsSync.*` local sync state keys.
