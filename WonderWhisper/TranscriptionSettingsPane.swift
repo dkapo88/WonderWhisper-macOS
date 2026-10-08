@@ -255,8 +255,9 @@ struct TranscriptionSettingsPane: View {
     } header: {
       Text("Parakeet (on-device)")
     } footer: {
-      Text("Vocabulary boosting applies to English (Unified) dictation and adds a short "
-        + "on-device pass after you stop.")
+      Text("Vocabulary boosting applies to English (Unified) dictation and to Parakeet "
+        + "meetings, where corrections land in the final transcript when the meeting ends. "
+        + "It adds a short on-device pass.")
         .settingsFootnote()
     }
   }

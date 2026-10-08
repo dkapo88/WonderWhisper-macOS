@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import FluidAudio
 import Testing
 @testable import WonderWhisper
 
@@ -8,6 +10,7 @@ import Testing
 /// `TEST_RUNNER_WW_PARAKEET_E2E=1 xcodebuild test ...
 ///   -only-testing:WonderWhisperTests/ParakeetVocabularyE2ETests`
 /// Results (text + timings) go to `WW_PARAKEET_E2E_OUT`, default `/tmp/ww-parakeet-e2e.txt`.
+@Suite(.serialized)
 struct ParakeetVocabularyE2ETests {
   private static let environment = ProcessInfo.processInfo.environment
   private static let isEnabled = environment["WW_PARAKEET_E2E"] == "1"
@@ -51,6 +54,58 @@ struct ParakeetVocabularyE2ETests {
     #expect(Self.hits(boostedWarm.text) >= Self.hits(plainWarm.text))
   }
 
+  /// The live-meeting path: stream the clip through a boosted
+  /// StreamingUnifiedAsrManager, collect tokens as the meeting service does,
+  /// then map the rescored final text back onto them.
+  @Test(.enabled(if: isEnabled))
+  func streamingMeetingCorrectionsMapRescoredTextOntoLiveTokens() async throws {
+    let wav = try Self.makeSpeechClip()
+    let ctcModels = try #require(await ParakeetCtcModelStore.shared.modelsIfAvailable())
+    let manager = StreamingUnifiedAsrManager()
+    try await manager.loadModels(to: ParakeetManager.modelsDirectory)
+    try await manager.configureVocabularyBoosting(
+      vocabulary: ParakeetVocabularyBoosting.vocabularyContext(for: Self.terms),
+      ctcModels: ctcModels
+    )
+
+    let file = try AVAudioFile(forReading: wav)
+    let chunkFrames = AVAudioFrameCount(file.processingFormat.sampleRate / 2)
+    var tokens: [MeetingTranscriptToken] = []
+    func drain() async {
+      tokens += await manager.consumeTokenTimings().map {
+        MeetingTranscriptToken(source: .microphone, startTime: $0.startTime, endTime: $0.endTime, text: $0.token)
+      }
+    }
+    while file.framePosition < file.length {
+      let buffer = try #require(
+        AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkFrames)
+      )
+      try file.read(into: buffer, frameCount: chunkFrames)
+      try await manager.appendAudio(buffer)
+      try await manager.processBufferedAudio()
+      await drain()
+    }
+    let rescored = try await manager.finish()
+    await drain()
+
+    let corrections = MeetingVocabularyCorrector.corrections(rawTokens: tokens, rescoredText: rescored)
+    let corrected = MeetingVocabularyCorrector.apply(corrections, to: tokens)
+    let raw = tokens.map(\.text).joined().trimmingCharacters(in: .whitespaces)
+    let fixed = corrected.map(\.text).joined().trimmingCharacters(in: .whitespaces)
+    let report = [
+      "meeting raw tokens: \(raw)",
+      "meeting rescored:   \(rescored)",
+      "meeting corrected:  \(fixed)",
+      "meeting corrections=\(corrections.count) hits raw=\(Self.hits(raw)) corrected=\(Self.hits(fixed))",
+    ]
+    try (report.joined(separator: "\n") + "\n")
+      .write(toFile: Self.outputPath + ".meeting", atomically: true, encoding: .utf8)
+
+    #expect(!raw.isEmpty)
+    #expect(Self.hits(fixed) >= Self.hits(raw))
+    #expect(Self.hits(fixed) == Self.hits(rescored))
+  }
+
   private static func run(
     _ provider: ParakeetTranscriptionProvider,
     model: String,
@@ -77,7 +132,7 @@ struct ParakeetVocabularyE2ETests {
 
   private static func makeSpeechClip() throws -> URL {
     let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("ww-parakeet-e2e.wav")
+      .appendingPathComponent("ww-parakeet-e2e-\(UUID().uuidString).wav")
     try? FileManager.default.removeItem(at: url)
     let say = Process()
     say.executableURL = URL(fileURLWithPath: "/usr/bin/say")

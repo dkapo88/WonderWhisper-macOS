@@ -1335,6 +1335,9 @@ final class MeetingCoordinator: ObservableObject {
         },
         previewHandler: { [weak self] source, text in
           await self?.receivePreview(text, source: source, for: sessionID)
+        },
+        correctionHandler: { [weak self] corrections in
+          await self?.receive(corrections: corrections, for: sessionID)
         }
       )
       self.transcriber = transcriber
@@ -1493,6 +1496,16 @@ final class MeetingCoordinator: ObservableObject {
     if activeSessionID == sessionID {
       discoverContext(in: session)
     }
+  }
+
+  /// Apply Parakeet vocabulary corrections to tokens already received live.
+  private func receive(corrections: [MeetingTokenCorrection], for sessionID: UUID) {
+    guard var session = session(withID: sessionID), !corrections.isEmpty else { return }
+    let corrected = MeetingVocabularyCorrector.apply(corrections, to: session.transcriptTokens)
+    guard corrected != session.transcriptTokens else { return }
+    session.transcriptTokens = corrected
+    replace(session)
+    schedulePersist(session)
   }
 
   private func receivePreview(
