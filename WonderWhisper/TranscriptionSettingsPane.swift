@@ -16,10 +16,14 @@ struct TranscriptionSettingsPane: View {
   @State private var qwenDownloadProgress: Double = 0
   @State private var qwenDownloadStatus = ""
   @State private var qwenDownloadError: String?
+  @State private var isDownloadingCtc = false
+  @State private var ctcDownloadError: String?
   // Selected on-device Parakeet model, persisted under "parakeet.version". Stored
   // as a raw string so a legacy "v3" reads as Ultra via ParakeetModelKind(storedValue:).
   @AppStorage(ParakeetModelKind.defaultsKey, store: AppConfig.defaults)
   private var parakeetVersion = ParakeetModelKind.unified.rawValue
+  @AppStorage(ParakeetVocabularyBoosting.enabledKey, store: AppConfig.defaults)
+  private var parakeetVocabularyBoosting = true
   @AppStorage("qwen.injectVocabulary", store: AppConfig.defaults)
   private var injectQwenVocabulary = true
 
@@ -168,6 +172,13 @@ struct TranscriptionSettingsPane: View {
     )
   }
 
+  private var vocabularyTermCount: Int {
+    VoiceVocabularyKeyterms.terms(
+      customVocabulary: vm.vocabCustom,
+      spellingCorrections: vm.vocabSpelling
+    ).count
+  }
+
   private var parakeetSection: some View {
     Section {
       Picker(selection: parakeetModelBinding) {
@@ -205,8 +216,69 @@ struct TranscriptionSettingsPane: View {
       if let parakeetDownloadError {
         StatusBadge(.error, "Download failed: \(parakeetDownloadError)")
       }
+
+      Toggle(isOn: $parakeetVocabularyBoosting) {
+        Text("Boost vocabulary")
+        Text(vocabularyBoostingDetail)
+      }
+
+      if parakeetVocabularyBoosting {
+        LabeledContent("Vocabulary model") {
+          ctcStatus
+        }
+
+        LabeledContent {
+          HStack(spacing: DesignTokens.Spacing.xSmall) {
+            Button("Show in Finder") {
+              let dir = ParakeetVocabularyBoosting.ctcModelDirectory
+              let exists = FileManager.default.fileExists(atPath: dir.path)
+              NSWorkspace.shared.selectFile(
+                (exists ? dir : ParakeetManager.modelsDirectory).path,
+                inFileViewerRootedAtPath: ""
+              )
+            }
+            Button(isDownloadingCtc ? "Downloading…" : "Download") {
+              downloadCtc()
+            }
+            .disabled(isDownloadingCtc || !ParakeetManager.isLinked)
+          }
+        } label: {
+          Text("Vocabulary model files")
+          Text("\(ParakeetVocabularyBoosting.ctcApproximateDownloadSize). Parakeet CTC 110M. "
+            + "Downloads automatically on first use if missing.")
+        }
+
+        if let ctcDownloadError {
+          StatusBadge(.error, "Download failed: \(ctcDownloadError)")
+        }
+      }
     } header: {
       Text("Parakeet (on-device)")
+    } footer: {
+      Text("Vocabulary boosting applies to English (Unified) dictation and adds a short "
+        + "on-device pass after you stop.")
+        .settingsFootnote()
+    }
+  }
+
+  private var vocabularyBoostingDetail: String {
+    let count = vocabularyTermCount
+    if count == 0 {
+      return "Add names on the Vocabulary page to boost them in Parakeet transcripts."
+    }
+    return "Rescores Parakeet transcripts toward your \(count) Vocabulary "
+      + (count == 1 ? "term." : "terms.")
+  }
+
+  @ViewBuilder private var ctcStatus: some View {
+    if !ParakeetManager.isLinked {
+      StatusBadge(.error, "Framework missing")
+    } else {
+      StatusBadge.presence(
+        ParakeetVocabularyBoosting.ctcModelsPresent(),
+        present: "Downloaded",
+        missing: "Not downloaded"
+      )
     }
   }
 
@@ -333,6 +405,23 @@ struct TranscriptionSettingsPane: View {
         let message = (error as NSError).localizedDescription
         parakeetDownloadError = message
         AppLog.dictation.error("[Parakeet] \(kind.rawValue) download failed: \(message)")
+      }
+    }
+    #endif
+  }
+
+  private func downloadCtc() {
+    #if canImport(FluidAudio)
+    isDownloadingCtc = true
+    ctcDownloadError = nil
+    Task {
+      defer { isDownloadingCtc = false }
+      do {
+        try await ParakeetCtcModelStore.shared.download()
+      } catch {
+        let message = (error as NSError).localizedDescription
+        ctcDownloadError = message
+        AppLog.dictation.error("[ParakeetVocab] CTC download failed: \(message)")
       }
     }
     #endif

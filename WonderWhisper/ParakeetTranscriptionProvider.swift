@@ -9,7 +9,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // TDT backend (Parakeet Ultra, multilingual)
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
-    private var unifiedManager: UnifiedAsrManager?
+    private var unifiedManager: UnifiedAsrManager? {
+        // A fresh (or released) manager starts without vocabulary boosting.
+        didSet { boostedTerms = [] }
+    }
+    // Vocabulary terms currently configured on `unifiedManager` (empty = none).
+    private var boostedTerms: [String] = []
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
@@ -25,19 +30,34 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         (AppConfig.defaults.object(forKey: "parakeet.raw.mode") as? Bool) ?? false
     }
 
-    init(modelsDirectory: URL? = nil) {
+    // Whether `transcribe` may wait for the CTC vocabulary model to load.
+    // Dictation never does (the first load can take seconds); recovery and
+    // tests do, so their output is consistently boosted.
+    private let waitsForVocabularyModel: Bool
+
+    init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
         } else {
             // Prefer any discovered existing install
             self.modelsDirectory = ParakeetManager.effectiveModelsDirectory
         }
+        self.waitsForVocabularyModel = waitsForVocabularyModel
     }
 
     // Public warm-up to preload models on recording start
     func warmUp() async {
         do {
-            try await ensureModelsLoaded(kind: preferredKind())
+            let kind = preferredKind()
+            try await ensureModelsLoaded(kind: kind)
+            if kind == .unified {
+                // Load the CTC model and configure boosting while the user is
+                // still speaking so the transcription after stop finds it ready.
+                await applyVocabularyBoosting(
+                    terms: ParakeetVocabularyBoosting.currentTerms(),
+                    waitForModel: true
+                )
+            }
             scheduleIdleUnload()
         } catch {
             let ns = error as NSError
@@ -159,11 +179,70 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         scheduleIdleUnload()
         switch kind {
         case .unified:
+            await applyVocabularyBoosting(
+                terms: settings.vocabularyTerms,
+                waitForModel: waitsForVocabularyModel
+            )
+            // Turning boosting off reloads the manager; make sure one is resident.
+            if unifiedManager == nil { try await ensureModelsLoaded(kind: .unified) }
             guard let mgr = unifiedManager else { throw ProviderError.notImplemented }
             return try await transcribeUnified(mgr: mgr, fileURL: fileURL)
         case .ultra:
             guard let mgr = asrManager else { throw ProviderError.notImplemented }
             return try await transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
+        }
+    }
+
+    // MARK: - Vocabulary boosting (Unified only)
+
+    /// Bring the Unified manager's vocabulary boosting in line with the
+    /// Vocabulary list and the Settings toggle. Never throws: when the CTC model
+    /// is missing (a background download starts), still loading and
+    /// `waitForModel` is false, or configuring fails, the transcription simply
+    /// runs without boosting.
+    private func applyVocabularyBoosting(terms: [String], waitForModel: Bool) async {
+        let desired = ParakeetVocabularyBoosting.termsToBoost(
+            enabled: ParakeetVocabularyBoosting.isEnabled(),
+            terms: terms
+        )
+        guard let mgr = unifiedManager, desired != boostedTerms else { return }
+
+        if desired.isEmpty {
+            // FluidAudio has no "disable boosting" call; drop the manager so
+            // the next load starts clean.
+            AppLog.dictation.log("[ParakeetVocab] boosting off; reloading Unified without it")
+            unifiedManager = nil
+            loadedKind = nil
+            do {
+                try await ensureModelsLoaded(kind: .unified)
+            } catch {
+                let message = (error as NSError).localizedDescription
+                AppLog.dictation.error("[ParakeetVocab] Unified reload failed: \(message)")
+            }
+            return
+        }
+
+        let store = ParakeetCtcModelStore.shared
+        let loaded = waitForModel ? await store.modelsIfAvailable() : await store.modelsIfLoaded()
+        guard let ctcModels = loaded else {
+            AppLog.dictation.log("[ParakeetVocab] CTC model not ready; transcribing without boosting")
+            return
+        }
+        let started = Date()
+        do {
+            try await mgr.configureVocabularyBoosting(
+                vocabulary: ParakeetVocabularyBoosting.vocabularyContext(for: desired),
+                ctcModels: ctcModels
+            )
+            // Only record it if the manager wasn't swapped while we awaited.
+            if mgr === unifiedManager { boostedTerms = desired }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            log.notice("[ParakeetVocab] boosting configured terms=\(desired.count, privacy: .public) in \(ms, privacy: .public)ms")
+            AppLog.dictation.log("[ParakeetVocab] boosting configured terms=\(desired.count) in \(ms)ms")
+        } catch {
+            let message = (error as NSError).localizedDescription
+            log.error("[ParakeetVocab] configure failed: \(message, privacy: .public)")
+            AppLog.dictation.error("[ParakeetVocab] configure failed; transcribing without boosting: \(message)")
         }
     }
 
@@ -353,7 +432,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 }
 #else
 final class ParakeetTranscriptionProvider: TranscriptionProvider {
-    init(modelsDirectory: URL? = nil) {}
+    init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {}
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         throw ProviderError.notImplemented
     }
