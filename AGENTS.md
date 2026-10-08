@@ -30,20 +30,28 @@ and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` do
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
 debug flags). API keys never leave the Keychain.
 
-Ordering invariant: each value carries a version `(Lamport counter, writer deviceID)`
+Ordering invariant: each value carries a version `(epoch, Lamport counter, writer deviceID)`
 (`SettingsSyncVersion`), created only when a Mac observes a genuine local edit (or carries out an
-explicit first-enable choice) and never changed afterwards. Received, agreed, persisted and
+explicit choice: first enable, Repair, Reset Sync Ordering) and never changed afterwards. Received, agreed, persisted and
 re-uploaded values keep their original version; per key the higher version wins, and equal values
 keep the higher version. New versions are stamped `max(counter, highest seen) + 1` when the edit is
 observed (resets and undos included) and persisted at once, so a relaunch never re-stamps them.
-Wall time is display-only. Counters must be integers in `0...2^53`; an entry that can't be decoded
-is preserved verbatim and its key is left untouched. "Use iCloud" adopts every cloud key, resets
+Completion settles pending edits by version, so an edit made while a sync's file IO runs (even an
+undo back to the old value) survives. Wall time is display-only. Counters must be integers in
+`0...2^40`; at the ceiling nothing is stamped (no version is ever reused) and Settings offers
+"Reset Sync Ordering", which writes this Mac's settings in a new epoch. An entry that can't be
+decoded is preserved verbatim, backed up as `settings.blocked-<key>.json`, and blocks its key
+(named in Settings) until "Repair" or "Replace iCloud" rewrites it at a version above the file. "Use iCloud" adopts every cloud key, resets
 included; "Replace iCloud" stamps the whole local batch above every counter in the file and its
 conflict versions. Writes that view models make as a side effect of applying received settings
-(including deferred `Task` hops) carry task-local provenance and are dropped by
-`AppConfig.defaults` (`SyncProvenanceUserDefaults`), so they never count as edits. The logic lives
+(including deferred `Task` hops, however late they run) carry task-local provenance with no time
+window and are dropped by `AppConfig.defaults` (`SyncProvenanceUserDefaults`), so they never count
+as edits; long-lived workers a `didSet` starts (Beeper/Codex monitors) are created through
+`SettingsSyncProvenance.withoutRemoteApply`. The logic lives
 in the pure `SettingsSyncEngine` and `SettingsSyncTransaction`, which `SettingsSyncSimulationTests`
-drives through thousands of seeded multi-Mac histories. Local edits are uploaded after a 2 s
+drives through thousands of seeded multi-Mac histories checked against an independent operation
+log (non-atomic syncs, conflicts, relaunches, provenance-suppressed hops, allowlist changes and a
+mid-history schema-1 rewrite). Local edits are uploaded after a 2 s
 debounce. Each sync reads,
 merges (including unresolved iCloud conflict versions) and writes inside one coordinated
 transaction. Remote edits arrive via `NSFilePresenter` plus a 30 s poll, are validated against the
@@ -176,6 +184,10 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
   `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
   last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
   per-Mac.
+- 2026-10-08: Settled in-flight sync edits by version, removed the provenance time window, capped
+  counters at 2^40 with a "Reset Sync Ordering" epoch recovery, added Repair for blocked iCloud
+  entries (with raw backups), dropped allowlist-removed keys from sync state, and rebuilt the
+  simulation oracle as an independent operation log.
 - 2026-10-08: Made sync versions immutable `(counter, writer)` pairs created only by genuine edits,
   persisted pending edits, explicit "Use iCloud"/"Replace iCloud" batches, preserved undecodable
   entries, remote-apply provenance for deferred view-model saves, a seeded multi-Mac simulation
