@@ -16,21 +16,11 @@ struct ContentView: View {
 
   var body: some View {
     NavigationSplitView {
-      List(selection: selectionBinding) {
-        ForEach(SimpleSidebarItem.Group.allCases) { group in
-          Section(group.title) {
-            ForEach(group.items) { item in
-              Label(item.title, systemImage: item.systemImage)
-                .tag(item)
-            }
-          }
+      MainSidebarList(selection: selectionBinding)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          settingsButton
         }
-      }
-      .listStyle(.sidebar)
-      .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        settingsButton
-      }
     } detail: {
       VStack(spacing: 0) {
         if !missingPermissions.isEmpty {
@@ -104,6 +94,25 @@ struct ContentView: View {
 
   private func refreshPermissions() {
     missingPermissions = PermissionsView.missingPermissionTitles()
+  }
+}
+
+/// The grouped sidebar of work surfaces (Library, Modes, Agents, Tools).
+struct MainSidebarList: View {
+  @Binding var selection: SimpleSidebarItem?
+
+  var body: some View {
+    List(selection: $selection) {
+      ForEach(SimpleSidebarItem.Group.allCases) { group in
+        Section(group.title) {
+          ForEach(group.items) { item in
+            Label(item.title, systemImage: item.systemImage)
+              .tag(item)
+          }
+        }
+      }
+    }
+    .listStyle(.sidebar)
   }
 }
 

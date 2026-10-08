@@ -20,10 +20,8 @@ struct UIRenderSnapshotTests {
     )
     let vm = try await liveViewModel()
 
-    let settingsSize = CGSize(
-      width: DesignTokens.Width.settingsWindow,
-      height: DesignTokens.Width.settingsWindowHeight
-    )
+    // Taller than the real window so each pane renders top to bottom in one image.
+    let settingsSize = CGSize(width: DesignTokens.Width.settingsWindow, height: 1500)
     let router = SettingsRouter.shared
     let panes: [(String, AnyView)] = [
       ("settings-1-general", AnyView(GeneralSettingsPane(vm: vm))),
@@ -64,6 +62,18 @@ struct UIRenderSnapshotTests {
     }
     vm.simpleSidebarSelection = original
 
+    // The real sidebar is vibrant and can't be cached offscreen; render its content on a
+    // plain background instead.
+    try await render(
+      AnyView(
+        MainSidebarList(selection: .constant(.meetings))
+          .scrollContentBackground(.hidden)
+          .background(Color(nsColor: .underPageBackgroundColor))
+      ),
+      size: CGSize(width: 220, height: 420),
+      to: directory,
+      name: "main-sidebar"
+    )
     try await render(
       AnyView(OpenRouterModelBrowserView(vm: vm)),
       size: CGSize(width: 700, height: 600),
@@ -115,7 +125,7 @@ struct UIRenderSnapshotTests {
     }
     window.orderFrontRegardless()
     window.alphaValue = 0.01
-    try await Task.sleep(nanoseconds: 1_200_000_000)
+    try await Task.sleep(nanoseconds: includeTitlebar ? 2_500_000_000 : 1_200_000_000)
 
     guard let target = includeTitlebar ? window.contentView?.superview : window.contentView else {
       return
