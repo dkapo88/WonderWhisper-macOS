@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import Carbon.HIToolbox
 
 /// Re-reads synced preferences into the live view models after iCloud settings sync wrote newer
 /// values into UserDefaults, so changes from another Mac show up without a relaunch.
@@ -9,11 +11,31 @@ import Foundation
 extension DictationViewModel {
   /// Applies one received batch. Every value is already in UserDefaults; the batch wrapper
   /// keeps property side effects from writing stale siblings back before all are assigned.
+  ///
+  /// A received key that is absent means "reset to default": the property gets the same
+  /// fallback the app uses at launch, and any copy its `didSet` writes back is removed again
+  /// (now, and once more after the view model's deferred persistence hops have run) so the
+  /// reset isn't turned into an explicit value and re-uploaded.
   func applySyncedSettings(changedKeys keys: Set<String>) {
+    let defaults = AppConfig.defaults
+    let removed = keys.filter { defaults.object(forKey: $0) == nil }
     withSyncedSettingsBatch {
       applySyncedValues(changedKeys: keys)
     }
+    guard !removed.isEmpty else { return }
+    removed.forEach { defaults.removeObject(forKey: $0) }
+    Task { @MainActor in
+      removed.forEach { defaults.removeObject(forKey: $0) }
+    }
   }
+
+  /// Launch fallbacks for settings whose initializers don't go through a shared loader.
+  static let defaultPasteShortcut = HotkeyManager.Shortcut(
+    keyCode: UInt32(kVK_ANSI_V),
+    modifiers: UInt32(cmdKey | controlKey)
+  )
+  static let defaultHistoryMaxEntries = 50
+  static var defaultResponseWindowFontSize: Double { Double(NSFont.systemFontSize) }
 
   private func applySyncedValues(changedKeys keys: Set<String>) {
     let defaults = AppConfig.defaults
@@ -97,12 +119,17 @@ extension DictationViewModel {
 
     // Hotkeys
     // Sync validates ranges before writing; the exact conversion is a second line of defense.
-    if has("pasteShortcut.keyCode") || has("pasteShortcut.modifiers"),
-       defaults.object(forKey: "pasteShortcut.keyCode") != nil,
-       defaults.object(forKey: "pasteShortcut.modifiers") != nil,
-       let keyCode = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.keyCode")),
-       let modifiers = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.modifiers")) {
-      update(\.pasteShortcut, HotkeyManager.Shortcut(keyCode: keyCode, modifiers: modifiers))
+    if has("pasteShortcut.keyCode") || has("pasteShortcut.modifiers") {
+      // Same rule as launch: both keys present → stored shortcut, otherwise the default.
+      if defaults.object(forKey: "pasteShortcut.keyCode") != nil,
+         defaults.object(forKey: "pasteShortcut.modifiers") != nil {
+        if let keyCode = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.keyCode")),
+           let modifiers = UInt32(exactly: defaults.integer(forKey: "pasteShortcut.modifiers")) {
+          update(\.pasteShortcut, HotkeyManager.Shortcut(keyCode: keyCode, modifiers: modifiers))
+        }
+      } else {
+        update(\.pasteShortcut, Self.defaultPasteShortcut)
+      }
     }
 
     // General
@@ -126,14 +153,16 @@ extension DictationViewModel {
     if has("audio.chime.volume") {
       update(\.chimeVolume, max(0, min(1, double("audio.chime.volume", 1))))
     }
-    if has(AppConfig.responseWindowFontSizeKey),
-       let size = defaults.object(forKey: AppConfig.responseWindowFontSizeKey) as? Double {
-      update(\.responseWindowFontSize, size)
+    if has(AppConfig.responseWindowFontSizeKey) {
+      update(
+        \.responseWindowFontSize,
+        double(AppConfig.responseWindowFontSizeKey, Self.defaultResponseWindowFontSize)
+      )
     }
-    if has("history.maxEntries"),
-       let maxEntries = defaults.object(forKey: "history.maxEntries") as? Int,
-       history.maxEntries != maxEntries {
-      history.maxEntries = maxEntries
+    if has("history.maxEntries") {
+      let maxEntries = defaults.object(forKey: "history.maxEntries") as? Int
+        ?? Self.defaultHistoryMaxEntries
+      if history.maxEntries != maxEntries { history.maxEntries = maxEntries }
     }
     if has("hermes.context.screenText.enabled") {
       update(\.hermesScreenContextEnabled, bool("hermes.context.screenText.enabled", true))
