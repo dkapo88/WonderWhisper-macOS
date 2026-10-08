@@ -9,17 +9,16 @@ struct QwenGarbageGuardTests {
     #expect(QwenASRManager.looksLikeDegenerateTranscript(
       String(repeating: "!", count: 448), sampleCount: 16_000 * 3
     ))
-    #expect(QwenASRManager.looksLikeDegenerateTranscript("!!!!!!!!!", sampleCount: 16_000))
     #expect(QwenASRManager.looksLikeDegenerateTranscript(
-      "Hello" + String(repeating: "!", count: 12), sampleCount: 16_000
+      "Hello" + String(repeating: "!", count: 32), sampleCount: 16_000
     ))
   }
 
-  @Test func flagsLoopsAndSymbolRuns() {
+  @Test func flagsCompressedLoops() {
     let loop = Array(repeating: "the", count: 14).joined(separator: " ")
     #expect(QwenASRManager.looksLikeDegenerateTranscript(loop, sampleCount: 16_000 * 5))
     #expect(QwenASRManager.looksLikeDegenerateTranscript(
-      String(repeating: "?", count: 20), sampleCount: 16_000
+      String(repeating: "?", count: 80), sampleCount: 16_000
     ))
     #expect(QwenASRManager.degenerateReason(
       String(repeating: "!", count: 448), sampleCount: 16_000
@@ -29,7 +28,8 @@ struct QwenGarbageGuardTests {
   @Test func keepsLegitShortAndPunctuationOnlyText() {
     let legit = [
       "OK!", "Wow!!!", "Hi.", "...", "?", "—", "…", "Yes, yes, yes.", "No no no no.",
-      "Hello, world!", "Wait...... what?", "Okay.", "Go! Go! Go!", "100%", "3.14159",
+      "Hello, world!", "Wait!!!!!!!!", "Hello!!!!!!!!!!!!", "Wait...... what?", "Okay.",
+      "Go! Go! Go!", "100%", "3.14159",
       "Send it to Dane at 5 p.m.", "The quick brown fox jumps over the lazy dog.",
     ]
     for text in legit {
@@ -76,7 +76,6 @@ struct QwenGarbageGuardFalsePositiveTests {
     ]
     for text in samples {
       #expect(text.count > 80)
-      #expect(QwenASRManager.mixedScriptSoup(text), "fixture should have 3+ scripts: \(text)")
       #expect(
         QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20) == nil,
         "false positive on \(text)"
@@ -100,7 +99,7 @@ struct QwenGarbageGuardFalsePositiveTests {
     }
   }
 
-  @Test func soupWithBrokenWordsIsStillGarbage() {
+  @Test func augustFieldGarbageIsCaughtByOutputRate() {
     // The 2026-08 notarized-build output (same fixture as SimpleModeModelTests).
     let soup = """
     注册unesnut searchData meaning-btnmoduleaight eslintape@author族钥onyR布朗}}>culo情况进行揠evity奋斗肝เหลоде \
@@ -108,7 +107,71 @@ struct QwenGarbageGuardFalsePositiveTests {
     理工大学物理то.eqlrif resid's tslintduct trib الرغم padrimming密切 {*}embre neighbornas但对于INGERQUI前列腺期php \
     单元ещsylvanialide不负 else<void 落ち leetcode물 QUESTION提升STRACT当前位置 aireوجakening ้หลัก
     """
-    #expect(QwenASRManager.corruptMixedScriptTokens(in: soup) >= 2)
+    #expect((QwenASRManager.compressionRatio(soup) ?? 0) < 2.4)
+    #expect(QwenASRManager.degenerateReason(soup, sampleCount: 16_000 * 2)
+      == "371 chars for 2.0s of audio")
+    // Without a known short duration, mixed scripts alone must survive.
+    #expect(QwenASRManager.degenerateReason(soup, sampleCount: 16_000 * 20) == nil)
     #expect(QwenASRManager.looksLikeDegenerateTranscript(soup, sampleCount: 16_000 * 2))
+  }
+}
+
+struct QwenCompressionRatioTests {
+  @Test func repetitiveGarbageTripsCompressionAtNormalSpeechDurations() {
+    for text in [
+      String(repeating: "thank you ", count: 44),
+      String(repeating: "你好世界", count: 60),
+      String(repeating: "okay !?..", count: 100),
+    ] {
+      let reason = QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 90)
+      #expect(reason?.contains("compression ratio") == true, "missed \(text.prefix(40))")
+    }
+  }
+
+  @Test func shortRepetitionsDoNotTripCompression() {
+    let text = Array(repeating: "the", count: 6).joined(separator: " ")
+    #expect(text.count < 40)
+    #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 15) == nil)
+    let joined = text + " " + text
+    let reason = QwenASRManager.degenerateReason(joined, sampleCount: 16_000 * 30)
+    #expect(reason?.contains("compression ratio") == true)
+  }
+
+  @Test func bangRunAndDensityRequireDominantCorruption() {
+    #expect(QwenASRManager.degenerateReason("Wait!!!!!!!!", sampleCount: 16_000) == nil)
+    let half = "abcdefghijklmnopqrst" + Array(repeating: "!", count: 20)
+      .joined(separator: " ")
+    #expect(QwenASRManager.degenerateReason(half, sampleCount: 16_000 * 5) == nil)
+    #expect(QwenASRManager.degenerateReason(
+      "abcdefghijklmnopqrs" + Array(repeating: "!", count: 20)
+        .joined(separator: " "), sampleCount: 16_000 * 5
+    ) != nil)
+    #expect(QwenASRManager.degenerateReason(
+      "Please stop " + String(repeating: "!", count: 32), sampleCount: 16_000 * 5
+    ) != nil)
+  }
+
+  @Test func languageNamesAndEmbeddedLatinNamesAreLegitimate() {
+    let samples = [
+      "Select English/Русский in the language menu. 然后我们讨论下周的发布计划，确认所有团队都准备好了。 "
+        + "English/Русский is the label on the screen.",
+      "Select English/Українська in the language menu. 然后我们讨论下周的发布计划，确认所有团队都准备好了。 "
+        + "English/Українська is the label on the screen.",
+      "พรุ่งนี้เราจะประชุมกับ Sonali และ Manish ที่กรุงเทพเพื่อคุยเรื่องแผนงานใหม่ "
+        + "Please send the agenda to Ash. 请把议程发给团队的所有同事。",
+      "Visit 東京都, 京都市 and 大阪府 next week. Meet Sonali in 日本橋 before taking the train "
+        + "to 新宿駅 and then check in at the hotel.",
+    ]
+    for text in samples {
+      #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20) == nil,
+        "false positive on \(text)")
+    }
+  }
+
+  @Test func longReplacementCharacterCorruptionStillFails() {
+    let text = "Please send the report to Sonali and check the planning document tomorrow. "
+      + "The decoder returned a damaged character: \u{FFFD}"
+    #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20)
+      == "replacement characters")
   }
 }

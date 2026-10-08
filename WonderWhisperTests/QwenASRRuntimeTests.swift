@@ -462,6 +462,55 @@ struct QwenASRRuntimeTests {
     }
   }
 
+  @Test func repetitionAcrossCleanChunksIsCaughtAfterJoining() {
+    let part = Array(repeating: "the", count: 6).joined(separator: " ")
+    let engine = FakeQwenEngine(output: part)
+    let samples = [Float](repeating: 0.1, count: 16_000 * 30)
+    #expect(QwenASRManager.degenerateReason(part, sampleCount: 16_000 * 15) == nil)
+    let result = QwenASRRuntime.decodeChunks(
+      samples: samples, ranges: QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count),
+      engine: engine, language: nil, context: nil
+    )
+    guard case .degenerate(let reason, _, let joined) = result else {
+      Issue.record("joined repetition escaped: \(result)")
+      return
+    }
+    #expect(reason.contains("joined transcript: repetitive compression ratio"))
+    #expect(joined == part + " " + part)
+    #expect(engine.decodeCount == 2)
+  }
+
+  @Test func compressedLoopIsCaughtInsideEachChunk() {
+    let engine = FakeQwenEngine(output: String(repeating: "thank you ", count: 44))
+    let samples = [Float](repeating: 0.1, count: 16_000 * 30)
+    let result = QwenASRRuntime.decodeChunks(
+      samples: samples, ranges: QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count),
+      engine: engine, language: nil, context: nil
+    )
+    guard case .degenerate(let reason, let chunk, _) = result else {
+      Issue.record("chunk repetition escaped: \(result)")
+      return
+    }
+    #expect(reason.contains("compression ratio"))
+    #expect(chunk == 0)
+    #expect(engine.decodeCount == 1)
+  }
+
+  @Test func emphasisAndMultilingualDecodeKeepHealthyModelLoaded() async throws {
+    let engine = healthyEngine()
+    let runtime = makeRuntime(loader: FakeQwenLoader(steps: [.engine(engine)]))
+    try await runtime.warmUp()
+    for text in ["Wait!!!!!!!!", "English/Русский and English/Українська: 我们讨论新版本的发布计划。"] {
+      engine.setOutput(text)
+      #expect(try await runtime.transcribe(
+        samples: [Float](repeating: 0.1, count: 16_000 * 10), language: nil, context: nil
+      ) == text)
+      #expect(await runtime.currentHealth() == .healthy)
+      #expect(engine.unloadCount == 0)
+      #expect(await runtime.loadsStarted == 1)
+    }
+  }
+
   /// Review finding 2: a 1.5 s tail chunk that decodes to ~1,000 chars fits
   /// the joined 16.5 s budget but must fail against its own length.
   @Test func badShortTailChunkIsCaughtPerChunk() async throws {

@@ -146,8 +146,8 @@ actor QwenASRRuntime {
   }
 
   /// Decodes each chunk and validates it against its OWN sample count before
-  /// joining. Checking only the joined text against the whole recording let a
-  /// 1 s tail that decoded to 1,000+ chars hide inside a 16 s budget.
+  /// joining, then validates the joined text for loops spanning chunks. Checking
+  /// only the joined text let a 1 s tail of 1,000+ chars hide in a 16 s budget.
   /// Runs on the inference queue.
   nonisolated static func decodeChunks(
     samples: [Float],
@@ -169,7 +169,11 @@ actor QwenASRRuntime {
       }
       if !part.isEmpty { parts.append(part) }
     }
-    return .text(parts.joined(separator: " "))
+    let joined = parts.joined(separator: " ")
+    if let reason = QwenASRManager.degenerateReason(joined, sampleCount: samples.count) {
+      return .degenerate(reason: "joined transcript: " + reason, chunk: 0, part: joined)
+    }
+    return .text(joined)
   }
 
   func currentHealth() -> QwenASRHealth { health }
