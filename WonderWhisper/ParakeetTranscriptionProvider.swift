@@ -6,6 +6,13 @@ import FluidAudio
 import OSLog
 
 actor ParakeetTranscriptionProvider: TranscriptionProvider {
+    /// A loaded backend, as returned by a test `BackendLoader`.
+    enum LoadedBackend: Sendable {
+        case unified(UnifiedAsrManager)
+        case ultra(AsrManager)
+    }
+    typealias BackendLoader = @Sendable (ParakeetModelKind) async throws -> LoadedBackend
+
     // TDT backend (Parakeet Ultra, multilingual)
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
@@ -48,8 +55,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // Idle unload after inactivity to balance memory and reliability
     private var idleUnloadTask: Task<Void, Never>?
     private let idleSeconds: TimeInterval = 300 // 5 minutes
-    // Coalesce model loading to avoid duplicate work/logs
+    // Coalesce model loading to avoid duplicate work/logs. `loadGeneration`
+    // identifies the registered load so only its owner clears it.
     private var loadTask: Task<Void, Error>?
+    private var loadGeneration = 0
+    // Test seam: replaces the real model loads (nil in production).
+    private let backendLoader: BackendLoader?
     // Track which model is loaded to allow switching between Unified and Ultra
     private var loadedKind: ParakeetModelKind?
 
@@ -67,8 +78,10 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         modelsDirectory: URL? = nil,
         waitsForVocabularyModel: Bool = false,
         boostingEnabled: @escaping @Sendable () -> Bool = { ParakeetVocabularyBoosting.isEnabled() },
-        vocabularyTerms: @escaping @Sendable () -> [String] = { ParakeetVocabularyBoosting.currentTerms() }
+        vocabularyTerms: @escaping @Sendable () -> [String] = { ParakeetVocabularyBoosting.currentTerms() },
+        backendLoader: BackendLoader? = nil
     ) {
+        self.backendLoader = backendLoader
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
         } else {
@@ -137,33 +150,58 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         }
     }
 
+    /// Load `kind` unless it is resident. Loads are coalesced and never run
+    /// concurrently: a caller that finds a load in flight (of either kind)
+    /// waits for it and re-checks from the top, since another waiter may have
+    /// registered a newer load meanwhile. Each load clears `loadTask` itself,
+    /// and only if it is still the registered one, so an older caller resuming
+    /// late can never erase a newer load.
     private func ensureModelsLoaded(kind: ParakeetModelKind) async throws {
-        if loadedKind == kind, isLoaded(kind) {
-            // Already loaded with the requested model
+        while true {
+            if loadedKind == kind, isLoaded(kind) { return }
+            if let inFlight = loadTask {
+                // Another load's failure is not ours; re-check and, if still
+                // needed, start our own.
+                _ = try? await inFlight.value
+                continue
+            }
+            loadGeneration += 1
+            let generation = loadGeneration
+            let task = Task {
+                do {
+                    try await self.performModelLoad(kind: kind)
+                } catch {
+                    self.finishLoad(generation: generation)
+                    throw error
+                }
+                self.finishLoad(generation: generation)
+            }
+            loadTask = task
+            try await task.value
             return
         }
-        if let t = loadTask {
-            // If a load is in-flight, await it then re-check
-            try await t.value
-            if loadedKind == kind, isLoaded(kind) { return }
-        }
-        let task = Task { [weak self] in
-            guard let self else { return }
-            try await self.performModelLoad(kind: kind)
-        }
-        loadTask = task
-        defer { loadTask = nil }
-        try await task.value
+    }
+
+    /// Clear `loadTask` only if it still belongs to `generation`.
+    private func finishLoad(generation: Int) {
+        if loadGeneration == generation { loadTask = nil }
     }
 
     private func performModelLoad(kind: ParakeetModelKind) async throws {
         // Free the other backend to keep only one model resident in memory.
         await unloadOtherBackend(keeping: kind)
-        switch kind {
-        case .ultra:
-            try await loadTdtModel(version: .ultra)
-        case .unified:
-            try await loadUnifiedModel()
+        if let backendLoader {
+            switch try await backendLoader(kind) {
+            case .unified(let manager): unifiedManager = manager
+            case .ultra(let manager): asrManager = manager
+            }
+        } else {
+            switch kind {
+            case .ultra:
+                try await loadTdtModel(version: .ultra)
+            case .unified:
+                try await loadUnifiedModel()
+            }
         }
         loadedKind = kind
         scheduleIdleUnload()
@@ -334,6 +372,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     var residentUnifiedManagerForTesting: UnifiedAsrManager? { unifiedManager }
+
+    func ensureModelsLoadedForTesting(_ kind: ParakeetModelKind) async throws {
+        try await ensureModelsLoaded(kind: kind)
+    }
+
+    var loadedKindForTesting: ParakeetModelKind? { loadedKind }
 
 
     /// Parakeet Unified offline-batch path: hand the recording to the
