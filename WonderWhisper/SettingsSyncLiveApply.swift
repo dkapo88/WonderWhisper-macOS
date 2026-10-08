@@ -13,20 +13,18 @@ extension DictationViewModel {
   /// keeps property side effects from writing stale siblings back before all are assigned.
   ///
   /// A received key that is absent means "reset to default": the property gets the same
-  /// fallback the app uses at launch, and any copy its `didSet` writes back is removed again
-  /// (now, and once more after the view model's deferred persistence hops have run) so the
-  /// reset isn't turned into an explicit value and re-uploaded.
+  /// fallback the app uses at launch, and any copy its synchronous `didSet` writes back is
+  /// removed again before this returns. That cleanup is synchronous on the main actor, so no
+  /// user edit can land in between. Nothing is removed later: a deferred removal could erase a
+  /// genuine edit made in the meantime. (If a deferred persistence hop re-saves the launch
+  /// default, sync just carries that equivalent explicit value.)
   func applySyncedSettings(changedKeys keys: Set<String>) {
     let defaults = AppConfig.defaults
     let removed = keys.filter { defaults.object(forKey: $0) == nil }
     withSyncedSettingsBatch {
       applySyncedValues(changedKeys: keys)
     }
-    guard !removed.isEmpty else { return }
     removed.forEach { defaults.removeObject(forKey: $0) }
-    Task { @MainActor in
-      removed.forEach { defaults.removeObject(forKey: $0) }
-    }
   }
 
   /// Launch fallbacks for settings whose initializers don't go through a shared loader.

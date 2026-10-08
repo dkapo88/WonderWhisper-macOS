@@ -5,7 +5,10 @@ enum AppStoragePaths {
     if let scratch = AppConfig.testScratchApplicationSupport {
       // Unit tests: never the real ~/Library/Application Support/HermesWhisper, and no
       // migration from the real WonderWhisper folder either.
-      let root = scratch.appendingPathComponent(AppConfig.appSupportDirectoryName, isDirectory: true)
+      let root = scratch.appendingPathComponent(
+        AppConfig.appSupportDirectoryName,
+        isDirectory: true
+      )
       try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
       return root
     }
