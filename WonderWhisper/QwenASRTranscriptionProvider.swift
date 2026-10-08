@@ -1,17 +1,27 @@
 import Foundation
-import AVFoundation
 import OSLog
 
 #if canImport(Qwen3ASR)
 
 /// File-based Qwen3-ASR-0.6B. Records finish, then one offline decode.
-/// No live streaming. Inference lives on `QwenASRRuntime`.
+/// No live streaming. Inference and load verification live on `QwenASRRuntime`.
+///
+/// Throws `QwenASRError.unhealthy` / `.degenerateTranscript` instead of ever
+/// returning garbage; `DictationController` falls back to another engine on
+/// those (`QwenASRError.shouldFallBack`).
 final class QwenASRTranscriptionProvider: TranscriptionProvider {
   private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "QwenASR")
+  private let runtime: QwenASRRuntime
+
+  /// `runtime` is injectable so tests can point at a scratch model directory
+  /// instead of the user's real Qwen/HuggingFace cache.
+  init(runtime: QwenASRRuntime = .shared) {
+    self.runtime = runtime
+  }
 
   func warmUp() async {
     do {
-      try await QwenASRRuntime.shared.warmUp()
+      try await runtime.warmUp()
     } catch {
       let ns = error as NSError
       log.notice("[QwenASR] warmUp failed: \(ns.localizedDescription, privacy: .public)")
@@ -20,7 +30,7 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
   }
 
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-    let samples = try Self.decode16kMonoFloat(from: fileURL)
+    let samples = try QwenAudioDecoder.decode16kMonoFloat(from: fileURL)
     guard !samples.isEmpty else { return "" }
     let language = QwenASRManager.languageHint(for: settings.language)
     let context = QwenASRManager.decoderContext(from: settings.vocabularyTerms)
@@ -31,7 +41,7 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
     AppLog.dictation.log(
       "[QwenASR] transcribe file=\(fileURL.lastPathComponent) samples=\(samples.count) chunks=\(chunks.count) context=\(context != nil)"
     )
-    let text = try await QwenASRRuntime.shared.transcribe(
+    let text = try await runtime.transcribe(
       samples: samples,
       language: language,
       context: context
@@ -41,66 +51,10 @@ final class QwenASRTranscriptionProvider: TranscriptionProvider {
     AppLog.dictation.log("[QwenASR] result length=\(text.count) preview=\(String(preview))")
     return text
   }
-
-  private static func decode16kMonoFloat(from url: URL) throws -> [Float] {
-    let file = try AVAudioFile(forReading: url)
-    let sourceFormat = file.processingFormat
-    let frameCount = AVAudioFrameCount(file.length)
-    guard frameCount > 0,
-          let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount)
-    else {
-      throw QwenASRError.emptyAudio
-    }
-    try file.read(into: sourceBuffer)
-
-    guard let targetFormat = AVAudioFormat(
-      commonFormat: .pcmFormatFloat32,
-      sampleRate: 16_000,
-      channels: 1,
-      interleaved: false
-    ) else {
-      throw QwenASRError.decodeFailed
-    }
-
-    if sourceFormat.sampleRate == 16_000,
-       sourceFormat.channelCount == 1,
-       sourceFormat.commonFormat == .pcmFormatFloat32 {
-      return floatSamples(from: sourceBuffer)
-    }
-
-    guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-      throw QwenASRError.decodeFailed
-    }
-    let ratio = 16_000 / sourceFormat.sampleRate
-    let capacity = AVAudioFrameCount(Double(sourceBuffer.frameLength) * ratio) + 256
-    guard let dest = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(capacity, 1)) else {
-      throw QwenASRError.decodeFailed
-    }
-
-    var conversionError: NSError?
-    var supplied = false
-    let status = converter.convert(to: dest, error: &conversionError) { _, outStatus in
-      if supplied {
-        outStatus.pointee = .endOfStream
-        return nil
-      }
-      supplied = true
-      outStatus.pointee = .haveData
-      return sourceBuffer
-    }
-    if let conversionError { throw conversionError }
-    if status == .error { throw QwenASRError.decodeFailed }
-    return floatSamples(from: dest)
-  }
-
-  private static func floatSamples(from buffer: AVAudioPCMBuffer) -> [Float] {
-    guard let channel = buffer.floatChannelData?.pointee else { return [] }
-    let count = Int(buffer.frameLength)
-    return Array(UnsafeBufferPointer(start: channel, count: count))
-  }
 }
 #else
 final class QwenASRTranscriptionProvider: TranscriptionProvider {
+  init(runtime: QwenASRRuntime = .shared) {}
   func warmUp() async {}
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
     throw QwenASRError.frameworkMissing
