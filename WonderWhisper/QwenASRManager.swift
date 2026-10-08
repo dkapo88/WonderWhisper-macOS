@@ -127,15 +127,22 @@ enum QwenASRManager {
   static func degenerateReason(_ text: String, sampleCount: Int) -> String? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-    let bangs = trimmed.filter { $0 == "!" }.count
-    if bangs > 20 { return "\(bangs) '!' characters" }
     if longestRun(of: "!", in: trimmed) >= 8 { return "token-0 '!' run" }
+    // Token 0 is "!". Ordinary exclamation marks are a few percent of the
+    // text even in an excited 90 s list; a stuck decoder is mostly "!".
+    let bangs = trimmed.filter { $0 == "!" }.count
+    let visible = trimmed.filter { !$0.isWhitespace }.count
+    if bangs >= 20, bangs * 4 > visible { return "'!' is \(bangs) of \(visible) characters" }
     if longestIdenticalSymbolRun(in: trimmed) >= 16 { return "repeated symbol run" }
     if longestRepeatedWordRun(in: trimmed) >= 12 { return "one word looping" }
     if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) && trimmed.count > 80 {
       return "replacement characters"
     }
-    if mixedScriptSoup(trimmed) && trimmed.count > 80 { return "mixed-script soup" }
+    // Several scripts alone is legit multilingual speech. Only call it soup
+    // when words are also broken across scripts mid-token.
+    if mixedScriptSoup(trimmed), trimmed.count > 80, corruptMixedScriptTokens(in: trimmed) >= 2 {
+      return "mixed-script soup"
+    }
     let duration = sampleCount > 0 ? Double(sampleCount) / Double(sampleRate) : 0
     // Fast English is ~20–25 chars/s. 100 chars/s is already superhuman;
     // the stuck-kernel path emits ~1000 chars/s up to chunkMaxTokens.
@@ -195,26 +202,48 @@ enum QwenASRManager {
   /// Three or more writing systems with a real footprint — Latin + CJK +
   /// Arabic in one "utterance" is the notarized-MLX failure mode, not speech.
   static func mixedScriptSoup(_ text: String) -> Bool {
-    var latin = 0, cjk = 0, arabic = 0, cyrillic = 0, hangul = 0, thai = 0
+    var counts: [Script: Int] = [:]
     for scalar in text.unicodeScalars {
+      if let script = Script(scalar) { counts[script, default: 0] += 1 }
+    }
+    return counts.values.filter { $0 >= 8 }.count >= 3
+  }
+
+  enum Script: Hashable {
+    case latin, cyrillic, arabic, thai, hangul, cjk
+
+    init?(_ scalar: Unicode.Scalar) {
       switch scalar.value {
-      case 0x0041...0x005A, 0x0061...0x007A, 0x00C0...0x024F:
-        latin += 1
-      case 0x0400...0x04FF:
-        cyrillic += 1
-      case 0x0600...0x06FF, 0x0750...0x077F:
-        arabic += 1
-      case 0x0E00...0x0E7F:
-        thai += 1
-      case 0x1100...0x11FF, 0xAC00...0xD7AF:
-        hangul += 1
-      case 0x3040...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF:
-        cjk += 1
-      default:
-        break
+      case 0x0041...0x005A, 0x0061...0x007A, 0x00C0...0x024F: self = .latin
+      case 0x0400...0x04FF: self = .cyrillic
+      case 0x0600...0x06FF, 0x0750...0x077F: self = .arabic
+      case 0x0E00...0x0E7F: self = .thai
+      case 0x1100...0x11FF, 0xAC00...0xD7AF: self = .hangul
+      case 0x3040...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF: self = .cjk
+      default: return nil
       }
     }
-    return [latin, cjk, arabic, cyrillic, hangul, thai].filter { $0 >= 8 }.count >= 3
+
+    /// Scripts written with spaces between words. Two of these inside one
+    /// whitespace token ("ещsylvanialide", "ปลายolith") is a broken word.
+    var isSpaceDelimited: Bool {
+      switch self {
+      case .latin, .cyrillic, .arabic: return true
+      case .thai, .hangul, .cjk: return false
+      }
+    }
+  }
+
+  /// Whitespace tokens whose letters switch script mid-word in a way speech
+  /// never produces: three or more scripts, or two space-delimited scripts.
+  /// Chinese/Japanese with embedded Latin ("我用Swift写") and Korean particles
+  /// on English names ("WonderWhisper를") are normal and do not count.
+  static func corruptMixedScriptTokens(in text: String) -> Int {
+    text.split(whereSeparator: { $0.isWhitespace }).filter { token in
+      let scripts = Set(token.unicodeScalars.compactMap(Script.init))
+      if scripts.count >= 3 { return true }
+      return scripts.filter(\.isSpaceDelimited).count >= 2
+    }.count
   }
 
   /// One range for clips up to `oneShotMaxDurationSeconds`, otherwise 15 s slices
