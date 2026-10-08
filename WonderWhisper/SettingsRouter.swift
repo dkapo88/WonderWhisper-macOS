@@ -16,6 +16,9 @@ final class SettingsRouter: ObservableObject {
   /// Captured from a live SwiftUI environment; used when the app-menu route is unavailable.
   var openSettingsAction: OpenSettingsAction?
   var openWindowAction: OpenWindowAction?
+  /// The app's view model, so tooling (offscreen UI renders in the test host) can reach the
+  /// live instance instead of building a second one.
+  weak var viewModel: DictationViewModel?
 
   private init() {}
 

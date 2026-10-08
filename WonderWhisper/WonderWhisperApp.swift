@@ -25,6 +25,7 @@ struct WonderWhisperApp: App {
         WindowGroup(id: SettingsRouter.mainWindowID) {
             ContentView(vm: vm)
                 .onAppear {
+                    SettingsRouter.shared.viewModel = vm
                     if menuBar == nil { menuBar = MenuBarController(viewModel: vm) }
                     // Prefer a waveform overlay for clear visibility
                     if waveformOverlay == nil { waveformOverlay = WaveformOverlayController(viewModel: vm) }
