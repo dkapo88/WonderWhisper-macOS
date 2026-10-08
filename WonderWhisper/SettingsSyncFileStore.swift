@@ -46,8 +46,18 @@ struct SettingsSyncFileStore: Sendable {
     var resolvedConflicts = 0
     /// Conflict versions left unresolved (unreadable or unverifiable); retried every sync.
     var pendingConflicts = 0
-    /// Keys whose cloud entry couldn't be decoded; preserved and never overwritten.
-    var lockedKeys: Set<String> = []
+    /// Keys blocked by an undecodable cloud entry (in the file or a conflict version) after
+    /// this transaction. Preserved and never overwritten until repaired.
+    var blockedKeys: Set<String> = []
+    /// Keys this transaction repaired.
+    var repairedKeys: Set<String> = []
+    /// A new version was needed but counters are at the ceiling.
+    var exhausted = false
+  }
+
+  /// Backup of a blocked entry's raw JSON, next to settings.json.
+  func blockedBackupURL(for key: String) -> URL {
+    directory.appendingPathComponent("settings.blocked-\(key).json", isDirectory: false)
   }
 
   let directory: URL
@@ -205,8 +215,16 @@ struct SettingsSyncFileStore: Sendable {
     outcome.documentAppeared = plan.documentAppeared
     outcome.schemaTooNew = plan.schemaTooNew
     outcome.pendingConflicts = plan.pendingConflicts
-    outcome.lockedKeys = plan.lockedKeys
+    outcome.blockedKeys = plan.blockedKeys
+    outcome.exhausted = plan.exhausted
     guard !plan.documentAppeared else { return outcome }
+    // Keep a copy of every undecodable entry before anything can replace it.
+    for (key, raw) in plan.blockedRaw {
+      let backup = blockedBackupURL(for: key)
+      if !FileManager.default.fileExists(atPath: backup.path) {
+        try? raw.write(to: backup, options: .atomic)
+      }
+    }
     guard let document = plan.write else {
       outcome.merge = plan.merge
       return outcome
@@ -242,6 +260,7 @@ struct SettingsSyncFileStore: Sendable {
       throw StoreError.writeFailed(error.localizedDescription)
     }
     outcome.wrote = true
+    outcome.repairedKeys = plan.repairedKeys
     // Resolve exactly the versions that were incorporated. The blanket cleanup of other
     // versions only runs when nothing is left unmerged.
     plan.incorporated.forEach { versions[$0].resolve() }

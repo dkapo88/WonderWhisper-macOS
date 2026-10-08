@@ -11,8 +11,11 @@ enum SettingsSyncMerger {
     /// values for keys the cloud doesn't have are stamped and uploaded.
     case adopt
     /// "Replace iCloud": stamp this Mac's whole batch, unchanged values and resets included,
-    /// above every counter in the file and its conflict versions.
+    /// above every version in the file and its conflict versions.
     case replace
+    /// "Reset Sync Ordering": like `replace`, but in a new epoch, so the batch orders above
+    /// everything before even when counters are exhausted.
+    case resetOrdering
   }
 
   /// This Mac's view of one setting: its current value and the version it carries, or nil
@@ -31,69 +34,82 @@ enum SettingsSyncMerger {
     var documentChanged = false
     /// Per key: the value fingerprint and version this Mac now agrees with.
     var agreed: [String: SettingsSyncLocalRecord] = [:]
-    /// Versions created by this merge (first-enable batches and never-versioned local values).
+    /// Versions created by this merge (explicit choices and never-versioned local values).
     var stamped: [String: SettingsSyncDocument.Entry] = [:]
+    /// A new version was needed but the counter is at `maxCounter`; those keys were skipped.
+    var exhausted = false
   }
 
   /// - Parameters:
-  ///   - remote: the cloud document with any incorporated conflict versions already folded in.
-  ///   - localCounter: this Mac's counter; new versions are stamped above it and above every
-  ///     counter in `remote` and in `local`.
-  ///   - lockedKeys: keys whose cloud entry couldn't be decoded. They are neither applied nor
-  ///     overwritten.
+  ///   - remote: the cloud document with any incorporated conflict versions folded in.
+  ///   - localVersion: the highest version this Mac has issued or accepted; new versions are
+  ///     stamped above it and above everything in `remote` and `local`.
+  ///   - lockedKeys: keys whose cloud entry couldn't be decoded; neither applied nor written.
+  ///   - forceStampKeys: keys being repaired; this Mac's value (or a reset) is written with a
+  ///     new version, as with `replace`.
   static func merge(
     local: [String: LocalCandidate],
     remote: SettingsSyncDocument?,
     deviceID: String,
-    localCounter: Int64,
+    localVersion: SettingsSyncVersion? = nil,
     mode: Mode = .normal,
-    lockedKeys: Set<String> = []
+    lockedKeys: Set<String> = [],
+    forceStampKeys: Set<String> = []
   ) -> Result {
     var result = Result(document: remote ?? SettingsSyncDocument())
     if remote == nil { result.documentChanged = true }
 
-    let highest = max(
-      localCounter,
-      result.document.highestCounter,
-      local.values.compactMap(\.version?.counter).max() ?? 0
-    )
-    let stamp = SettingsSyncVersion(
-      min(highest, SettingsSyncDocument.maxCounter - 1) + 1,
-      deviceID
-    )
+    let highest = ([localVersion, result.document.highestVersion]
+      + local.values.map(\.version)).compactMap { $0 }.max()
+    let stamp: SettingsSyncVersion?
+    if mode == .resetOrdering {
+      let epoch = min((highest?.epoch ?? 0) + 1, SettingsSyncDocument.maxEpoch)
+      stamp = SettingsSyncVersion(1, deviceID, epoch: epoch)
+    } else if let highest {
+      stamp = highest.successor(writer: deviceID)
+    } else {
+      stamp = SettingsSyncVersion(1, deviceID)
+    }
 
     for key in local.keys.sorted() where !lockedKeys.contains(key) {
       guard let mine = local[key] else { continue }
       let theirs = result.document.entries[key]
 
-      switch mode {
-      case .replace:
+      if mode == .replace || mode == .resetOrdering || forceStampKeys.contains(key) {
         // Whole batch, including values equal to the cloud's and resets of cloud keys.
-        if mine.value == nil, theirs == nil { continue }
-        put(key, value: mine.value, version: stamp, stamped: true, into: &result)
-
-      case .adopt, .normal:
-        let mineVersion = mode == .adopt ? nil : mine.version
-        guard let theirs else {
-          if let mineVersion {
-            put(key, value: mine.value, version: mineVersion, stamped: false, into: &result)
-          } else if mine.value != nil {
-            put(key, value: mine.value, version: stamp, stamped: true, into: &result)
-          }
+        if mine.value == nil, theirs == nil, !forceStampKeys.contains(key) { continue }
+        guard let stamp else {
+          result.exhausted = true
           continue
         }
-        if let mineVersion, mineVersion > theirs.version {
-          // Ours is the newer edit (equal values included: keep the higher version).
+        put(key, value: mine.value, version: stamp, stamped: true, into: &result)
+        continue
+      }
+
+      let mineVersion = mode == .adopt ? nil : mine.version
+      guard let theirs else {
+        if let mineVersion {
           put(key, value: mine.value, version: mineVersion, stamped: false, into: &result)
-        } else {
-          // Theirs is newer, the same edit, or we never versioned ours: take theirs.
-          result.agreed[key] = SettingsSyncLocalRecord(
-            fingerprint: theirs.value?.fingerprint,
-            version: theirs.version
-          )
-          if mine.value?.fingerprint != theirs.value?.fingerprint {
-            result.applyLocally[key] = .some(theirs.value)
+        } else if mine.value != nil {
+          guard let stamp else {
+            result.exhausted = true
+            continue
           }
+          put(key, value: mine.value, version: stamp, stamped: true, into: &result)
+        }
+        continue
+      }
+      if let mineVersion, mineVersion > theirs.version {
+        // Ours is the newer edit (equal values included: keep the higher version).
+        put(key, value: mine.value, version: mineVersion, stamped: false, into: &result)
+      } else {
+        // Theirs is newer, the same edit, or we never versioned ours: take theirs.
+        result.agreed[key] = SettingsSyncLocalRecord(
+          fingerprint: theirs.value?.fingerprint,
+          version: theirs.version
+        )
+        if mine.value?.fingerprint != theirs.value?.fingerprint {
+          result.applyLocally[key] = .some(theirs.value)
         }
       }
     }

@@ -35,12 +35,16 @@ final class SettingsSyncService: ObservableObject {
     case preferLocal
     /// First enable when no file existed; stops and asks if one has appeared since.
     case initialUpload
+    /// "Reset Sync Ordering": this Mac's settings in a new ordering epoch (the recovery when
+    /// version counters are exhausted).
+    case resetOrdering
 
     var mergeMode: SettingsSyncMerger.Mode {
       switch self {
       case .normal, .initialUpload: return .normal
       case .preferCloud: return .adopt
       case .preferLocal: return .replace
+      case .resetOrdering: return .resetOrdering
       }
     }
   }
@@ -76,6 +80,11 @@ final class SettingsSyncService: ObservableObject {
   @Published private(set) var notice: String?
   /// True while the user must choose between the existing iCloud copy and this Mac's settings.
   @Published private(set) var isAwaitingFirstEnableChoice = false
+  /// Settings whose iCloud entry couldn't be read. They don't sync until repaired; the raw entry
+  /// is backed up next to settings.json.
+  @Published private(set) var blockedKeys: [String] = []
+  /// Version counters are at the ceiling; nothing new can sync until the user resets ordering.
+  @Published private(set) var isOrderingExhausted = false
 
   /// Called on the main actor, once per sync, with every key whose value was replaced by a
   /// newer cloud value, so live view models can re-read the whole batch together.
@@ -87,8 +96,10 @@ final class SettingsSyncService: ObservableObject {
   var beforeTransactionForTesting: (() async -> Void)?
 
   var deviceID: String { engine.deviceID }
-  /// This Mac's Lamport counter: highest counter issued or accepted.
+  /// This Mac's Lamport counter: highest counter issued or accepted (in the current epoch).
   var counter: Int64 { engine.counter }
+  /// Highest version this Mac has issued or accepted.
+  var latestVersion: SettingsSyncVersion? { engine.latest }
   /// Number of files written by this instance; lets tests prove there is no echo.
   private(set) var writeCount = 0
   /// Keys whose received values failed validation in the most recent sync.
@@ -114,6 +125,8 @@ final class SettingsSyncService: ObservableObject {
   private var cancellation = SettingsSyncCancellation()
   private var started = false
   private var requestedMode: Mode?
+  /// Blocked keys the user asked to repair; consumed by the next successful transaction.
+  private var pendingRepairKeys: Set<String> = []
   /// The first-enable choice until a transaction has fully carried it out. Persisted, so a
   /// download wait, an IO failure or a relaunch can't turn "Replace iCloud" into an ordinary
   /// merge.
@@ -166,6 +179,8 @@ final class SettingsSyncService: ObservableObject {
     }
     var engine = Self.loadEngine(from: defaults) ?? SettingsSyncEngine(deviceID: deviceID)
     engine.deviceID = deviceID
+    // A key this app version no longer syncs is forgotten; if it comes back, it starts fresh.
+    engine.retain(keys: SettingsSyncRegistry.syncedKeys)
     self.engine = engine
     isEnabled = defaults.bool(forKey: SettingsSyncStateKey.enabled)
     isICloudAvailable = SettingsSyncFileStore.isICloudDriveAvailable(root: iCloudRoot)
@@ -245,6 +260,23 @@ final class SettingsSyncService: ObservableObject {
     await sync(mode: .normal)
   }
 
+  /// "Repair": replace the unreadable iCloud entries for `keys` (all blocked keys by default)
+  /// with this Mac's values at a valid version above everything in the file, and resolve the
+  /// conflict versions they were blocking. The raw entries stay backed up.
+  func repairBlockedKeys(_ keys: Set<String>? = nil) async {
+    pendingRepairKeys.formUnion(keys ?? Set(blockedKeys))
+    await sync(mode: .normal)
+  }
+
+  /// "Reset Sync Ordering": when version counters are exhausted, write this Mac's settings in a
+  /// new ordering epoch that every Mac adopts. Settings changed on other Macs but not yet
+  /// synced are replaced by this Mac's.
+  func resetSyncOrdering() async {
+    guard isEnabled else { return }
+    pendingFirstEnableMode = .resetOrdering
+    await sync(mode: .resetOrdering)
+  }
+
   // MARK: - Enable / disable
 
   private func enable(mode: Mode) async {
@@ -272,6 +304,9 @@ final class SettingsSyncService: ObservableObject {
     engine.reset()
     saveEngine()
     pendingConflictCount = 0
+    pendingRepairKeys = []
+    blockedKeys = []
+    isOrderingExhausted = false
     stopObserving()
     lastError = nil
     notice = nil
@@ -330,6 +365,7 @@ final class SettingsSyncService: ObservableObject {
 
     noteLocalChanges()
     let snapshot = readLocalValues()
+    let snapshotVersion = engine.latest
     let candidates = engine.candidates(snapshot, mode: mode.mergeMode)
     var input = SettingsSyncTransaction.Input(
       local: candidates,
@@ -338,8 +374,9 @@ final class SettingsSyncService: ObservableObject {
       timestamp: currentTime()
     )
     input.mode = mode.mergeMode
-    input.localCounter = engine.counter
+    input.localVersion = engine.latest
     input.requireNoDocument = mode == .initialUpload
+    input.repairKeys = pendingRepairKeys
 
     let presenter = self.presenter
     let transaction = await Task.detached {
@@ -360,7 +397,14 @@ final class SettingsSyncService: ObservableObject {
       revertToChoice()
       return
     }
-    guard let result = outcome.merge else { return }
+    blockedKeys = outcome.blockedKeys.sorted()
+    isOrderingExhausted = outcome.exhausted || engine.isExhausted
+    guard let result = outcome.merge else {
+      if outcome.exhausted { lastError = Self.exhaustedMessage }
+      return
+    }
+    pendingRepairKeys.subtract(outcome.repairedKeys)
+    pendingRepairKeys.formIntersection(outcome.blockedKeys)
     // Done with the first-enable choice only once it has been fully carried out: merged and
     // (where needed) written. A newer-schema file couldn't be written, so it stays pending.
     if !outcome.schemaTooNew { pendingFirstEnableMode = nil }
@@ -369,10 +413,14 @@ final class SettingsSyncService: ObservableObject {
     pendingConflictCount = outcome.pendingConflicts
     if outcome.wrote { writeCount += 1 }
 
+    // Stamp anything edited while the transaction ran, so completion can tell it apart by
+    // version (an undo back to the snapshot value included).
+    noteLocalChanges()
     let completion = engine.complete(
       result,
       candidates: candidates,
       snapshot: snapshot,
+      snapshotVersion: snapshotVersion,
       current: readLocalValues(),
       isValid: { SettingsSyncRegistry.isValid($1, for: $0) }
     )
@@ -388,9 +436,15 @@ final class SettingsSyncService: ObservableObject {
     lastSyncedAt = currentTime()
     defaults.set(lastSyncedAt, forKey: SettingsSyncStateKey.lastSyncedAt)
     deviceCount = result.document.devices.count
-    lastError = outcome.schemaTooNew
-      ? "iCloud settings were saved by a newer WonderWhisper. Update this Mac to sync changes."
-      : nil
+    isOrderingExhausted = outcome.exhausted || engine.isExhausted
+    if outcome.schemaTooNew {
+      lastError = "iCloud settings were saved by a newer WonderWhisper. Update this Mac to sync "
+        + "changes."
+    } else if isOrderingExhausted {
+      lastError = Self.exhaustedMessage
+    } else {
+      lastError = nil
+    }
     let applied = Set(completion.apply.keys)
     if !applied.isEmpty {
       onRemoteChangesApplied?(applied)
@@ -406,10 +460,13 @@ final class SettingsSyncService: ObservableObject {
       parts.append("The iCloud settings file was unreadable, so it was moved to \(backup) "
         + "and replaced with this Mac's settings.")
     }
-    if !outcome.lockedKeys.isEmpty {
-      let count = outcome.lockedKeys.count
-      parts.append("\(count) setting\(count == 1 ? "" : "s") in iCloud couldn't be read and "
-        + "\(count == 1 ? "was" : "were") left unchanged.")
+    if !outcome.blockedKeys.isEmpty {
+      let names = outcome.blockedKeys.sorted().joined(separator: ", ")
+      parts.append("Not syncing until repaired (unreadable in iCloud): \(names).")
+    }
+    if !outcome.repairedKeys.isEmpty {
+      let names = outcome.repairedKeys.sorted().joined(separator: ", ")
+      parts.append("Repaired: \(names).")
     }
     if !rejected.isEmpty {
       let count = rejected.count
@@ -422,6 +479,9 @@ final class SettingsSyncService: ObservableObject {
     }
     return parts.isEmpty ? nil : parts.joined(separator: " ")
   }
+
+  static let exhaustedMessage = "iCloud sync has run out of room to order changes. Choose "
+    + "Reset Sync Ordering to start fresh with this Mac's settings."
 
   private func readLocalValues() -> SettingsSyncEngine.Values {
     var values: SettingsSyncEngine.Values = [:]
@@ -519,7 +579,7 @@ final class SettingsSyncService: ObservableObject {
   /// True when a poll should sync even though the file's modification date hasn't changed.
   func hasDeferredRemoteWork() -> Bool {
     waitingForDownload || lastError != nil || pendingConflictCount > 0
-      || pendingFirstEnableMode != nil
+      || pendingFirstEnableMode != nil || !pendingRepairKeys.isEmpty
   }
 
   private func scheduleRemoteCheck(force: Bool) {

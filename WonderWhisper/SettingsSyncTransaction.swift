@@ -2,8 +2,9 @@ import Foundation
 
 /// Pure planning step of one sync transaction: given what is on disk (the current file and any
 /// unresolved iCloud conflict versions) and this Mac's candidates, decide what to write, which
-/// conflict versions were incorporated, and what this Mac must apply. No IO, so the same logic
-/// runs inside the coordinated file transaction and in the in-memory simulation tests.
+/// conflict versions were incorporated, which keys are blocked, and what this Mac must apply.
+/// No IO, so the same logic runs inside the coordinated file transaction and in the in-memory
+/// simulation tests.
 enum SettingsSyncTransaction {
   struct Input: Sendable {
     var local: [String: SettingsSyncMerger.LocalCandidate]
@@ -12,11 +13,13 @@ enum SettingsSyncTransaction {
     /// Wall time, display-only (the device's last write).
     var timestamp: Date
     var mode: SettingsSyncMerger.Mode = .normal
-    /// This Mac's counter; new versions are stamped above it.
-    var localCounter: Int64 = 0
+    /// Highest version this Mac has issued or accepted; new versions are stamped above it.
+    var localVersion: SettingsSyncVersion?
     /// First upload after the user saw no file: if a document has appeared since, stop so
     /// the user can be asked which copy to keep instead of silently merging.
     var requireNoDocument = false
+    /// Blocked keys the user chose to repair (replace/reset modes repair every blocked key).
+    var repairKeys: Set<String> = []
   }
 
   enum CurrentFile: Sendable {
@@ -35,11 +38,17 @@ enum SettingsSyncTransaction {
     var schemaTooNew = false
     /// Indices (into the conflict list) of versions folded into the merge.
     var incorporated: [Int] = []
-    /// Conflict versions left unresolved: unreadable, or holding entries this build can't
-    /// verify. They are retried on every sync and never discarded.
+    /// Conflict versions left unresolved (unreadable, or blocked); retried every sync.
     var pendingConflicts = 0
-    /// Keys whose current cloud entry couldn't be decoded; preserved, never overwritten.
-    var lockedKeys: Set<String> = []
+    /// Keys whose cloud entry (in the file or a conflict version) couldn't be decoded and that
+    /// remain blocked after this transaction. Never applied, never overwritten.
+    var blockedKeys: Set<String> = []
+    /// Keys repaired by this transaction.
+    var repairedKeys: Set<String> = []
+    /// Raw JSON of every undecodable entry seen, to back up next to settings.json.
+    var blockedRaw: [String: Data] = [:]
+    /// A new version was needed but counters are at the ceiling; nothing explicit was done.
+    var exhausted = false
   }
 
   static func plan(
@@ -58,18 +67,38 @@ enum SettingsSyncTransaction {
         unreadable = true
       }
     }
-    plan.lockedKeys = Set(remote?.opaqueEntries.keys.map { $0 } ?? [])
+    let decodedConflicts = conflicts.map { data in
+      data.flatMap { try? SettingsSyncDocument.decode($0) }
+    }
 
-    // Validate each conflict version on its own BEFORE combining. One that can't be read, has
-    // entries this build can't decode, or touches a locked key is kept for a later retry.
-    for (index, data) in conflicts.enumerated() {
-      guard let data,
-            let version = try? SettingsSyncDocument.decode(data),
-            version.opaqueEntries.isEmpty,
-            plan.lockedKeys.isDisjoint(with: version.entries.keys) else {
+    // Blocked keys: undecodable entries in the file or in any conflict version.
+    var blocked = Set(remote?.opaqueEntries.keys.map { $0 } ?? [])
+    for (key, raw) in remote?.opaqueEntries ?? [:] { plan.blockedRaw[key] = raw }
+    for version in decodedConflicts.compactMap({ $0 }) {
+      for (key, raw) in version.opaqueEntries {
+        blocked.insert(key)
+        if plan.blockedRaw[key] == nil { plan.blockedRaw[key] = raw }
+      }
+    }
+    let repairing = input.mode == .replace || input.mode == .resetOrdering
+      ? blocked
+      : blocked.intersection(input.repairKeys)
+    let stillBlocked = blocked.subtracting(repairing)
+    plan.repairedKeys = repairing
+    plan.blockedKeys = stillBlocked
+    for key in repairing { remote?.opaqueEntries[key] = nil }
+
+    // Validate each conflict version on its own BEFORE combining. One that can't be read, or
+    // that has a blocked entry (its own or touching a key blocked in the file), is kept for a
+    // later retry. Undecodable entries for keys being repaired are dropped (they are backed up).
+    for (index, decoded) in decodedConflicts.enumerated() {
+      guard var version = decoded,
+            Set(version.opaqueEntries.keys).isSubset(of: repairing),
+            stillBlocked.isDisjoint(with: version.entries.keys) else {
         plan.pendingConflicts += 1
         continue
       }
+      version.opaqueEntries = [:]
       plan.incorporated.append(index)
       remote = remote.map { SettingsSyncMerger.combine($0, version) } ?? version
     }
@@ -84,18 +113,32 @@ enum SettingsSyncTransaction {
       local: input.local,
       remote: remote,
       deviceID: input.deviceID,
-      localCounter: input.localCounter,
+      localVersion: input.localVersion,
       mode: input.mode,
-      lockedKeys: plan.lockedKeys
+      lockedKeys: stillBlocked,
+      forceStampKeys: repairing
     )
+    plan.exhausted = result.exhausted
+    if result.exhausted, !repairing.isEmpty || input.mode == .replace {
+      // An explicit choice that can't be carried out without reusing a version: change
+      // nothing (blocked entries stay preserved) and let the user reset sync ordering.
+      plan.repairedKeys = []
+      plan.blockedKeys = blocked
+      plan.incorporated = []
+      plan.pendingConflicts = conflicts.count
+      return plan
+    }
     if result.document.devices[input.deviceID] == nil
       || !plan.incorporated.isEmpty
+      || !repairing.isEmpty
       || unreadable {
       result.documentChanged = true
     }
     guard result.documentChanged, !plan.schemaTooNew else {
       result.documentChanged = false
       plan.merge = result
+      plan.repairedKeys = []
+      plan.blockedKeys = blocked
       return plan
     }
     result.document.schemaVersion = SettingsSyncDocument.currentSchemaVersion

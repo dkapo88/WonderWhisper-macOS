@@ -2,42 +2,55 @@ import Foundation
 
 /// Contents of `iCloud Drive/WonderWhisper/settings.json`.
 ///
-/// Every synced preference is stored with the version (Lamport `counter` + writer `deviceID`)
-/// of the genuine edit that produced it. For one setting the higher version wins; two Macs
-/// editing different settings never overwrite each other. Wall-clock time is never used for
-/// ordering. A nil `value` records that the setting was reset to its default.
+/// Every synced preference is stored with the version (`epoch`, Lamport `counter`, writer
+/// `deviceID`) of the genuine edit that produced it; `epoch` is omitted when 0. For one setting
+/// the higher version wins; two Macs editing different settings never overwrite each other.
+/// Wall-clock time is never used for ordering. A nil `value` records that the setting was reset
+/// to its default.
 ///
-/// Entries this build can't decode (an unknown value type, a counter outside `0...2^53`) are
+/// Entries this build can't decode (an unknown value type, a counter outside `0...2^40`) are
 /// kept verbatim in `opaqueEntries` and written back unchanged: their provenance can't be
-/// established, so their keys are left alone rather than overwritten.
+/// established, so their keys are blocked (not applied, not overwritten) until the user
+/// repairs them.
 ///
 /// Schema 2 replaced schema 1's wall-clock `modifiedAt` with `counter`. Schema 1 entries are
 /// read with counter 0 (their ordering is discarded; their values are kept).
 struct SettingsSyncDocument: Equatable, Sendable {
   static let currentSchemaVersion = 2
 
-  /// Largest counter accepted (2^53, exact in every JSON implementation). Counters only grow
-  /// by one per edit, so this is unreachable honestly; staying far below Int64.max means
-  /// `+ 1` can never overflow.
-  static let maxCounter: Int64 = 1 << 53
+  /// Largest counter accepted (2^40). Counters only grow by one per edit, so honest use can't
+  /// reach it; anything above is an invalid entry (preserved, key blocked until repaired). A
+  /// Mac that would have to stamp above it stops and asks the user to reset sync ordering
+  /// rather than reuse a version.
+  static let maxCounter: Int64 = 1 << 40
+
+  /// Largest ordering epoch accepted. Each "Reset Sync Ordering" adds one.
+  static let maxEpoch: Int64 = 1 << 30
 
   struct Entry: Equatable, Sendable {
     var value: SettingsSyncValue?
     var counter: Int64
     /// The device that made the edit (not necessarily the device that last wrote the file).
     var deviceID: String
+    var epoch: Int64 = 0
 
-    init(value: SettingsSyncValue?, counter: Int64, deviceID: String) {
+    init(value: SettingsSyncValue?, counter: Int64, deviceID: String, epoch: Int64 = 0) {
       self.value = value
       self.counter = counter
       self.deviceID = deviceID
+      self.epoch = epoch
     }
 
     init(value: SettingsSyncValue?, version: SettingsSyncVersion) {
-      self.init(value: value, counter: version.counter, deviceID: version.writer)
+      self.init(
+        value: value,
+        counter: version.counter,
+        deviceID: version.writer,
+        epoch: version.epoch
+      )
     }
 
-    var version: SettingsSyncVersion { SettingsSyncVersion(counter, deviceID) }
+    var version: SettingsSyncVersion { SettingsSyncVersion(counter, deviceID, epoch: epoch) }
   }
 
   struct Device: Codable, Equatable, Sendable {
@@ -61,8 +74,8 @@ struct SettingsSyncDocument: Equatable, Sendable {
     self.devices = devices
   }
 
-  /// Highest counter among decoded entries (0 when empty).
-  var highestCounter: Int64 { entries.values.map(\.counter).max() ?? 0 }
+  /// Highest version among decoded entries (nil when empty).
+  var highestVersion: SettingsSyncVersion? { entries.values.map(\.version).max() }
 
   // MARK: - Encoding
 
@@ -155,12 +168,22 @@ extension SettingsSyncDocument.Entry: Codable {
     case value
     case counter
     case deviceID
+    case epoch
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     value = try container.decodeIfPresent(SettingsSyncValue.self, forKey: .value)
     deviceID = try container.decode(String.self, forKey: .deviceID)
+    let epoch = try container.decodeIfPresent(Int64.self, forKey: .epoch) ?? 0
+    guard (0...SettingsSyncDocument.maxEpoch).contains(epoch) else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .epoch,
+        in: container,
+        debugDescription: "Epoch \(epoch) is outside the supported range."
+      )
+    }
+    self.epoch = epoch
     // Missing in schema 1 (ordering discarded). JSONDecoder throws, rather than traps, on a
     // number that doesn't fit Int64; the range check rejects negatives and absurd values.
     let counter = try container.decodeIfPresent(Int64.self, forKey: .counter) ?? 0
@@ -179,6 +202,7 @@ extension SettingsSyncDocument.Entry: Codable {
     try container.encodeIfPresent(value, forKey: .value)
     try container.encode(counter, forKey: .counter)
     try container.encode(deviceID, forKey: .deviceID)
+    if epoch != 0 { try container.encode(epoch, forKey: .epoch) }
   }
 }
 
