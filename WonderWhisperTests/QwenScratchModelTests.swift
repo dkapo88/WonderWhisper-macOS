@@ -117,6 +117,29 @@ struct QwenScratchModelTests {
     try await Self.expectBrokenModelFallsBack(dir, label: "ZEROTAIL")
   }
 
+  /// Cold first dictation after switching Qwen on: no warm-up, so this pays
+  /// load + integrity + eval + canary + decode. Run alone in a fresh test
+  /// process (`-only-testing:.../coldFirstDictationLatency`) for a real number.
+  @Test(.enabled(if: env["QWEN_COLD_MODEL_DIR"] != nil))
+  func coldFirstDictationLatency() async throws {
+    let dir = try #require(Self.directory("QWEN_COLD_MODEL_DIR"))
+    let wav = try Self.env["QWEN_COLD_WAV"].map { URL(fileURLWithPath: $0) } ?? #require(Self.canaryURL)
+    let runtime = QwenASRRuntime(modelDirectory: { dir })
+    let provider = QwenASRTranscriptionProvider(runtime: runtime)
+
+    let t0 = Date()
+    let text = try await provider.transcribe(fileURL: wav, settings: Self.settings)
+    let cold = Date().timeIntervalSince(t0)
+    let t1 = Date()
+    _ = try await provider.transcribe(fileURL: wav, settings: Self.settings)
+    let warm = Date().timeIntervalSince(t1)
+    print(
+      "QWEN_COLD_LATENCY first=\(String(format: "%.2f", cold))s "
+        + "second=\(String(format: "%.2f", warm))s wav=\(wav.lastPathComponent) text=\"\(text.prefix(80))\""
+    )
+    #expect(!QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: 0))
+  }
+
   @Test(.enabled(if: env["QWEN_GOOD_MODEL_DIR"] != nil))
   func goodModelPassesCanaryAndDecodes() async throws {
     let dir = try #require(Self.directory("QWEN_GOOD_MODEL_DIR"))
