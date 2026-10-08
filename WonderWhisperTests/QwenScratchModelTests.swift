@@ -167,12 +167,15 @@ struct QwenScratchModelTests {
     let wavs = try FileManager.default.contentsOfDirectory(at: extra, includingPropertiesForKeys: nil)
       .filter { $0.pathExtension.lowercased() == "wav" }
       .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    #expect(wavs.count == 12, "expected the complete scratch WAV corpus")
     for file in wavs {
       let text = try await provider.transcribe(fileURL: file, settings: Self.settings)
       let samples = try QwenAudioDecoder.decode16kMonoFloat(from: file).count
       print("QWEN_GOOD_WAV \(file.lastPathComponent) | \(text.prefix(100))")
+      #expect(!text.isEmpty, "empty transcript for \(file.lastPathComponent)")
       #expect(!QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: samples))
     }
     #expect(await runtime.loadsStarted == 1)
+    await runtime.resetForReload(reason: "scratch good model complete")
   }
 }
