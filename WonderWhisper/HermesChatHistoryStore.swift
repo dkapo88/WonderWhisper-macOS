@@ -22,7 +22,7 @@ final class HermesChatHistoryStore {
 
   init(baseDirectory: URL? = nil,
        maxMessages: Int? = nil,
-       defaults: UserDefaults = .standard) {
+       defaults: UserDefaults = AppConfig.defaults) {
     let directory = baseDirectory ?? Self.defaultBaseDirectory()
     self.fileURL = directory.appendingPathComponent("messages.json")
 

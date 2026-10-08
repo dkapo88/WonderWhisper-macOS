@@ -285,7 +285,7 @@ final class HermesSessionStore {
   init(baseDirectory: URL? = nil,
        maxMessagesPerSession: Int? = nil,
        maxSessions: Int? = nil,
-       defaults: UserDefaults = .standard) {
+       defaults: UserDefaults = AppConfig.defaults) {
     let directory = baseDirectory ?? Self.defaultBaseDirectory()
     self.directory = directory
     self.fileURL = directory.appendingPathComponent("sessions.json")

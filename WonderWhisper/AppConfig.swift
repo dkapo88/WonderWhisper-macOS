@@ -8,14 +8,32 @@ struct AppConfig {
     /// the real app host can never touch (or leak fixtures into) the user's live preferences —
     /// the Beeper chat list has been clobbered by a test fixture this way before.
     static let defaults: UserDefaults = {
-        let isTestRun = NSClassFromString("XCTestCase") != nil
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         guard isTestRun,
               let scratch = UserDefaults(suiteName: "com.danekapoor.hermeswhisper.tests") else {
             return .standard
         }
         scratch.removePersistentDomain(forName: "com.danekapoor.hermeswhisper.tests")
         return scratch
+    }()
+
+    /// True when running inside the unit-test host.
+    static let isTestRun: Bool = NSClassFromString("XCTestCase") != nil
+        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    /// Under the test runner, a fresh process-specific directory that stands in for
+    /// `~/Library/Application Support`, so tests that build real stores (history, Hermes chat,
+    /// meetings) can never read or write the user's data. Nil in a normal launch.
+    static let testScratchApplicationSupport: URL? = {
+        guard isTestRun else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "WonderWhisperTests-\(ProcessInfo.processInfo.processIdentifier)",
+                isDirectory: true
+            )
+            .appendingPathComponent("Application Support", isDirectory: true)
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }()
 
     static let previousAppDisplayName = "HermesWhisper"

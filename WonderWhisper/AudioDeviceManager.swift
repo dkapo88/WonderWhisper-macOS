@@ -33,7 +33,7 @@ struct AudioDeviceInfo: Codable, Hashable, Identifiable {
 enum AudioDeviceManager {
     private static let inputPrioritiesKey = "audio.input.priorities"
 
-    static func inputPriorities(defaults: UserDefaults = .standard) -> [AudioDeviceInfo] {
+    static func inputPriorities(defaults: UserDefaults = AppConfig.defaults) -> [AudioDeviceInfo] {
         if let data = defaults.data(forKey: inputPrioritiesKey),
            let devices = try? JSONDecoder().decode([AudioDeviceInfo].self, from: data) {
             return devices
@@ -46,7 +46,7 @@ enum AudioDeviceManager {
 
     static func saveInputPriorities(
         _ devices: [AudioDeviceInfo],
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = AppConfig.defaults
     ) {
         guard let data = try? JSONEncoder().encode(devices) else { return }
         defaults.set(data, forKey: inputPrioritiesKey)

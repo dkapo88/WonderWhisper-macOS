@@ -53,7 +53,7 @@ enum MeetingVaultIndexError: LocalizedError {
 enum MeetingTicketLink {
   static func url(
     for term: String,
-    defaults: UserDefaults = .standard
+    defaults: UserDefaults = AppConfig.defaults
   ) -> URL? {
     guard let identifier = MeetingVaultIndex.extractIdentifiers(from: term).first,
           let prefix = identifier.split(separator: "-").first.map(String.init) else {

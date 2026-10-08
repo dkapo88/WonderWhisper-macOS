@@ -52,7 +52,7 @@ private final class MeetingAudioLevelGate: @unchecked Sendable {
 
 enum MeetingPreferences {
   static func automaticDetectionEnabled(
-    defaults: UserDefaults = .standard
+    defaults: UserDefaults = AppConfig.defaults
   ) -> Bool {
     defaults.bool(forKey: "meeting.autoDetection.enabled")
   }
@@ -67,12 +67,12 @@ enum MeetingObsidianPreferences {
     "meetings.obsidian.vaultPath"
   ]
 
-  static func vaultRootPath(defaults: UserDefaults = .standard) -> String? {
+  static func vaultRootPath(defaults: UserDefaults = AppConfig.defaults) -> String? {
     migrateIfNeeded(defaults: defaults)
     return defaults.string(forKey: vaultRootKey)?.nonEmpty
   }
 
-  static func exportFolderPath(defaults: UserDefaults = .standard) -> String? {
+  static func exportFolderPath(defaults: UserDefaults = AppConfig.defaults) -> String? {
     migrateIfNeeded(defaults: defaults)
     return defaults.string(forKey: exportFolderKey)?.nonEmpty
   }

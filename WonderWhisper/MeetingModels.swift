@@ -62,7 +62,7 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Se
     self == .soniox || self == .sonioxSeparate
   }
 
-  static func selected(defaults: UserDefaults = .standard) -> Self {
+  static func selected(defaults: UserDefaults = AppConfig.defaults) -> Self {
     guard let stored = defaults.string(forKey: "meeting.transcription.engine"),
           let value = Self(rawValue: stored) else {
       return .parakeet
