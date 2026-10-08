@@ -18,7 +18,7 @@ struct QwenGarbageGuardTests {
     let loop = Array(repeating: "the", count: 14).joined(separator: " ")
     #expect(QwenASRManager.looksLikeDegenerateTranscript(loop, sampleCount: 16_000 * 5))
     #expect(QwenASRManager.looksLikeDegenerateTranscript(
-      String(repeating: "?", count: 80), sampleCount: 16_000
+      String(repeating: "?", count: 200), sampleCount: 16_000 * 5
     ))
     #expect(QwenASRManager.degenerateReason(
       String(repeating: "!", count: 448), sampleCount: 16_000
@@ -33,6 +33,7 @@ struct QwenGarbageGuardTests {
       "Send it to Dane at 5 p.m.", "The quick brown fox jumps over the lazy dog.",
     ]
     for text in legit {
+      recordGuardMetrics(text, text: text, seconds: 1)
       #expect(
         !QwenASRManager.looksLikeDegenerateTranscript(text, sampleCount: 16_000),
         "false positive on \(text)"
@@ -42,6 +43,7 @@ struct QwenGarbageGuardTests {
     let paragraph = String(
       repeating: "Please move the meeting with Sonali to Thursday afternoon. ", count: 6
     )
+    recordGuardMetrics("meeting sentence x6", text: paragraph, seconds: 30)
     #expect(!QwenASRManager.looksLikeDegenerateTranscript(paragraph, sampleCount: 16_000 * 30))
   }
 }
@@ -52,6 +54,7 @@ struct QwenGarbageGuardFalsePositiveTests {
   @Test func longActionListWithManyExclamationsIsLegit() {
     let items = (1...21).map { "Item \($0), ship the build and tell the team it is done!" }
     let text = items.joined(separator: " ")
+    recordGuardMetrics("90s action list, 21 exclamations", text: text, seconds: 90)
     #expect(text.filter { $0 == "!" }.count == 21)
     #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 90) == nil)
   }
@@ -76,6 +79,7 @@ struct QwenGarbageGuardFalsePositiveTests {
     ]
     for text in samples {
       #expect(text.count > 80)
+      recordGuardMetrics("multilingual: \(text.prefix(40))", text: text, seconds: 20)
       #expect(
         QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20) == nil,
         "false positive on \(text)"
@@ -92,6 +96,7 @@ struct QwenGarbageGuardFalsePositiveTests {
       "Email dane.kapoor@example.com, cc ash@example.com, subject: Q4 numbers (draft) -- urgent!",
     ]
     for text in samples {
+      recordGuardMetrics("code/URL: \(text.prefix(40))", text: text, seconds: 8)
       #expect(
         QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 8) == nil,
         "false positive on \(text)"
@@ -107,6 +112,8 @@ struct QwenGarbageGuardFalsePositiveTests {
     理工大学物理то.eqlrif resid's tslintduct trib الرغم padrimming密切 {*}embre neighbornas但对于INGERQUI前列腺期php \
     单元ещsylvanialide不负 else<void 落ち leetcode물 QUESTION提升STRACT当前位置 aireوجakening ้หลัก
     """
+    recordGuardMetrics("August field fixture, 2s", text: soup, seconds: 2)
+    recordGuardMetrics("August mixed scripts, 20s", text: soup, seconds: 20)
     #expect((QwenASRManager.compressionRatio(soup) ?? 0) < 2.4)
     #expect(QwenASRManager.degenerateReason(soup, sampleCount: 16_000 * 2)
       == "371 chars for 2.0s of audio")
@@ -163,6 +170,7 @@ struct QwenCompressionRatioTests {
         + "to 新宿駅 and then check in at the hotel.",
     ]
     for text in samples {
+      recordGuardMetrics("language names: \(text.prefix(40))", text: text, seconds: 20)
       #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20) == nil,
         "false positive on \(text)")
     }
@@ -173,5 +181,171 @@ struct QwenCompressionRatioTests {
       + "The decoder returned a damaged character: \u{FFFD}"
     #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 20)
       == "replacement characters")
+  }
+
+  @Test(arguments: QwenGuardRegressionCorpus.legitimate)
+  func legitimateRepetitionDoesNotRetireModel(_ example: QwenGuardRegressionCorpus.Example) {
+    recordGuardMetrics(example.name, text: example.text, seconds: example.seconds)
+    #expect(QwenASRManager.degenerateReason(
+      example.text, sampleCount: 16_000 * example.seconds
+    ) == nil)
+  }
+
+  @Test func exactRepetitionRequiresLengthCountAndCoverageTogether() throws {
+    let longUnit = "please approve the pending release and notify everyone today "
+    let seven = String(repeating: longUnit, count: 7)
+    #expect(try #require(QwenASRManager.compressionRatio(seven)) > 2.4)
+    #expect(try #require(QwenASRManager.exactPeriodicRepetition(seven)).repeatCount == 7)
+    #expect(QwenASRManager.degenerateReason(seven, sampleCount: 16_000 * 90) == nil)
+    recordGuardMetrics("long sentence x7", text: seven, seconds: 90)
+
+    let shortLoop = String(repeating: "okay then ", count: 20)
+    #expect(shortLoop.filter { !$0.isWhitespace }.count == 160)
+    #expect(QwenASRManager.degenerateReason(shortLoop, sampleCount: 16_000 * 90) == nil)
+    recordGuardMetrics("short phrase loop, 160 visible", text: shortLoop, seconds: 90)
+
+    let longLoop = String(repeating: "okay then ", count: 25)
+    #expect(longLoop.filter { !$0.isWhitespace }.count == 200)
+    #expect(QwenASRManager.degenerateReason(longLoop, sampleCount: 16_000 * 90) != nil)
+    recordGuardMetrics("phrase loop at 200 visible", text: longLoop, seconds: 90)
+
+    let progressing = (1...12).map { "Item \($0), approved and ready for release. " }
+      .joined()
+    let lowCoverage = progressing + String(repeating: "thank you ", count: 44)
+    #expect(try #require(QwenASRManager.compressionRatio(lowCoverage)) > 2.4)
+    #expect(try #require(QwenASRManager.exactPeriodicRepetition(
+      lowCoverage, minimumRepeats: 8
+    )).coverage < 0.6)
+    #expect(QwenASRManager.degenerateReason(lowCoverage, sampleCount: 16_000 * 90) == nil)
+    recordGuardMetrics("loop below 60% coverage", text: lowCoverage, seconds: 90)
+
+    let majorityLoop = "Please approve the release and send the update. "
+      + String(repeating: "thank you ", count: 44)
+    #expect(QwenASRManager.degenerateReason(majorityLoop, sampleCount: 16_000 * 90) != nil)
+    recordGuardMetrics("loop above 60% coverage", text: majorityLoop, seconds: 90)
+  }
+
+  @Test func compressionAndEightRepeatsAloneDoNotRejectShortText() throws {
+    let text = Array(repeating: "the", count: 8).joined(separator: " ")
+    #expect(try #require(QwenASRManager.compressionRatio(text)) > 2.4)
+    #expect(QwenASRManager.degenerateReason(text, sampleCount: 16_000 * 30) == nil)
+    recordGuardMetrics("single word x8", text: text, seconds: 30)
+  }
+
+  @Test func allKnownCorruptionExamplesStillFail() {
+    for example in QwenGuardRegressionCorpus.corrupt {
+      recordGuardMetrics(example.name, text: example.text, seconds: example.seconds)
+      #expect(QwenASRManager.degenerateReason(
+        example.text, sampleCount: 16_000 * example.seconds
+      ) != nil, "missed \(example.name)")
+    }
+  }
+}
+
+/// Shared with runtime regressions so a guard false positive also proves whether
+/// a verified engine would be unloaded or replaced. Every fixture is synthetic.
+enum QwenGuardRegressionCorpus {
+  struct Example: Sendable {
+    let name: String
+    let text: String
+    let seconds: Int
+  }
+
+  static let legitimate: [Example] = [
+    Example(
+      name: "Item 1 through 12, approved",
+      text: (1...12).map { "Item \($0), approved" }.joined(separator: " "), seconds: 10
+    ),
+    Example(
+      name: "One two three x4",
+      text: Array(repeating: "One two three", count: 4).joined(separator: " "), seconds: 10
+    ),
+    Example(
+      name: "20-item numbered action list",
+      text: (1...20).map { "\($0). Review item \($0), approve the changes, and notify the team." }
+        .joined(separator: " "), seconds: 90
+    ),
+    Example(
+      name: "progressing steps one through twelve",
+      text: ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "eleven", "twelve"].map { "Step \($0), approved and ready for release." }
+        .joined(separator: " "), seconds: 15
+    ),
+    Example(name: "yes yes yes in speech", text: "yes yes yes", seconds: 2),
+    Example(
+      name: "code with repeated identifiers",
+      text: (1...12).map { "results[\($0)] = transform(results[\($0)], options: options);" }
+        .joined(separator: "\n"), seconds: 15
+    ),
+    Example(
+      name: "short sentence x8, under 200 visible",
+      text: String(repeating: "One two three ", count: 8), seconds: 15
+    ),
+    Example(
+      name: "long sentence x7",
+      text: String(repeating: "Please move the meeting with Sonali to Thursday afternoon. ",
+        count: 7), seconds: 15
+    ),
+    Example(name: "Wait!!!!!!!!", text: "Wait!!!!!!!!", seconds: 1),
+    Example(
+      name: "multilingual runtime regression",
+      text: "English/Русский and English/Українська: 我们讨论新版本的发布计划。", seconds: 10
+    ),
+    Example(
+      name: "URL runtime regression",
+      text: "Open https://github.com/ml-explore/mlx-swift/pull/3742 and check the diff!!!",
+      seconds: 8
+    ),
+    Example(
+      name: "90s action list, 21 exclamations",
+      text: (1...21).map { "Item \($0), ship the build and tell the team it is done!" }
+        .joined(separator: " "), seconds: 90
+    ),
+  ]
+
+  static let corrupt: [Example] = [
+    Example(name: "thank you x44", text: String(repeating: "thank you ", count: 44), seconds: 90),
+    Example(name: "你好世界 x60", text: String(repeating: "你好世界", count: 60), seconds: 90),
+    Example(name: "okay !?.. x100", text: String(repeating: "okay !?..", count: 100), seconds: 90),
+    Example(
+      name: "two six-the chunks joined",
+      text: Array(repeating: "the", count: 12).joined(separator: " "), seconds: 30
+    ),
+    Example(
+      name: "the x14", text: Array(repeating: "the", count: 14).joined(separator: " "), seconds: 5
+    ),
+    Example(name: "448 bangs", text: String(repeating: "!", count: 448), seconds: 3),
+    Example(name: "Hello plus 32 bangs", text: "Hello" + String(repeating: "!", count: 32), seconds: 1),
+    Example(
+      name: "30 spaced token-0 bangs",
+      text: Array(repeating: "!", count: 30).joined(separator: " "), seconds: 5
+    ),
+    Example(
+      name: "mostly spaced bangs",
+      text: "ok " + Array(repeating: "!!!!!!!", count: 4).joined(separator: " a "), seconds: 5
+    ),
+    Example(name: "200 question marks", text: String(repeating: "?", count: 200), seconds: 5),
+    Example(
+      name: "replacement character corruption",
+      text: "Please send the report to Sonali and check the planning document tomorrow. "
+        + "The decoder returned a damaged character: \u{FFFD}", seconds: 20
+    ),
+  ]
+}
+
+/// Machine-readable report uses the same metric and exact-run detector as the guard.
+private func recordGuardMetrics(_ name: String, text: String, seconds: Int) {
+  let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  let repetition = QwenASRManager.exactPeriodicRepetition(trimmed)
+  let values: [String: Any] = [
+    "name": name, "visible": trimmed.filter { !$0.isWhitespace }.count,
+    "ratio": QwenASRManager.compressionRatio(trimmed) ?? 0,
+    "unit": repetition?.unit ?? "", "repeats": repetition?.repeatCount ?? 0,
+    "coverage": repetition?.coverage ?? 0,
+    "result": QwenASRManager.degenerateReason(trimmed, sampleCount: 16_000 * seconds) ?? "healthy",
+  ]
+  if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]),
+     let json = String(data: data, encoding: .utf8) {
+    print("QWEN_GUARD_METRICS \(json)")
   }
 }

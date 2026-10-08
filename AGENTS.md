@@ -124,6 +124,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Require exact consecutive repetition alongside Qwen compression (>2.4):
+  eight repeats, 60% visible-character coverage and 200 visible characters; retain a
+  whole-transcript single-word exception at twelve repeats/36 visible characters for
+  joined chunk loops. Progressing lists, short counting and repeated code identifiers
+  now have guard and verified-runtime regressions.
 - 2026-10-08: Made Qwen fallback language-aware (25-language Parakeet v3/Ultra set,
   English-only Unified, selected-model auto detection, ISO-639-1 Groq hints); narrowed
   decode guards to dominant bangs, window-confirmed zlib repetition, replacement

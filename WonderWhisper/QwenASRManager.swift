@@ -125,8 +125,19 @@ enum QwenASRManager {
     let visible = trimmed.filter { !$0.isWhitespace }.count
     // A short excited phrase such as "Wait!!!!!!!!" is legitimate emphasis.
     if bangs >= 20, bangs * 2 > visible { return "'!' is \(bangs) of \(visible) characters" }
-    if let ratio = repetitiveCompressionRatio(trimmed), ratio > 2.4 {
-      return "repetitive compression ratio \(String(format: "%.2f", ratio))"
+    if let ratio = compressionRatio(trimmed), ratio > 2.4,
+       let repetition = exactPeriodicRepetition(trimmed, minimumRepeats: 8),
+       repetition.coverage >= 0.6 {
+      // Twelve identical words can span two otherwise clean six-word chunks.
+      // Keep this short-output exception narrower than general phrase loops.
+      let singleWordLoop = repetition.unit.allSatisfy(\.isLetter)
+        && trimmed.split(whereSeparator: \.isWhitespace).count == repetition.repeatCount
+        && repetition.repeatCount >= 12 && repetition.coverage == 1 && visible >= 36
+      if visible >= 200 || singleWordLoop {
+        return "exact repetition \(repetition.repeatCount)x "
+          + "(\(Int(repetition.coverage * 100))%); compression ratio "
+          + String(format: "%.2f", ratio)
+      }
     }
     if trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }), trimmed.count > 80 {
       return "replacement characters"
@@ -153,24 +164,68 @@ enum QwenASRManager {
     return Double(bytes.count) / Double(compressed.length)
   }
 
-  /// A global ratio also rises on long legitimate lists and repeated sentences.
-  /// Require compression in every 100-character window as well, so the 2.4
-  /// cutoff detects low-information loops rather than recurring list structure.
-  /// Ignore a short final window (under 40 chars), where the metric is unstable.
-  static func repetitiveCompressionRatio(_ text: String) -> Double? {
-    guard text.count >= 40, let full = compressionRatio(text), full > 2.4 else { return nil }
-    var lowest = full
-    var start = text.startIndex
-    while start < text.endIndex {
-      let end = text.index(start, offsetBy: 100, limitedBy: text.endIndex) ?? text.endIndex
-      let window = text[start..<end]
-      if window.count >= 40 {
-        guard let ratio = compressionRatio(String(window)) else { return nil }
-        lowest = min(lowest, ratio)
-      }
-      start = end
+  struct ExactRepetition {
+    let unit: String
+    let repeatCount: Int
+    let coverage: Double
+  }
+
+  /// The largest consecutive exact word n-gram run, or character substring run
+  /// for unspaced text such as CJK. Preserve case and punctuation; only whitespace
+  /// between words is ignored. Coverage counts visible characters, not tokens.
+  /// Compression alone cannot distinguish a progressing list from a decode loop.
+  static func exactPeriodicRepetition(
+    _ text: String, minimumRepeats: Int = 2
+  ) -> ExactRepetition? {
+    let words = text.split(whereSeparator: \.isWhitespace)
+    if words.count > 1 {
+      guard let run = periodicRun(
+        words, visibleCounts: words.map(\.count), minimumRepeats: minimumRepeats
+      ) else { return nil }
+      return ExactRepetition(
+        unit: words[run.start..<(run.start + run.period)].joined(separator: " "),
+        repeatCount: run.repeats,
+        coverage: Double(run.visible) / Double(words.reduce(0) { $0 + $1.count })
+      )
     }
-    return lowest
+    let characters = Array(words.first.map(String.init) ?? "")
+    guard let run = periodicRun(
+      characters, visibleCounts: Array(repeating: 1, count: characters.count),
+      minimumRepeats: minimumRepeats
+    ) else { return nil }
+    return ExactRepetition(
+      unit: String(characters[run.start..<(run.start + run.period)]),
+      repeatCount: run.repeats,
+      coverage: Double(run.visible) / Double(characters.count)
+    )
+  }
+
+  /// For each possible period, compare units with the unit one period earlier.
+  /// A matching streak of (repeats - 1) periods proves a consecutive exact run.
+  /// Prefix sums measure coverage without rescanning each candidate. O(n²).
+  private static func periodicRun<Unit: Equatable>(
+    _ units: [Unit], visibleCounts: [Int], minimumRepeats: Int
+  ) -> (start: Int, period: Int, repeats: Int, visible: Int)? {
+    guard minimumRepeats >= 2, units.count >= minimumRepeats else { return nil }
+    var prefix = [0]
+    for count in visibleCounts { prefix.append((prefix.last ?? 0) + count) }
+    var best: (start: Int, period: Int, repeats: Int, visible: Int)?
+    for period in 1...(units.count / minimumRepeats) {
+      var matches = 0
+      for index in period..<units.count {
+        matches = units[index] == units[index - period] ? matches + 1 : 0
+        let repeats = 1 + matches / period
+        guard repeats >= minimumRepeats else { continue }
+        let end = index + 1
+        let start = end - repeats * period
+        let visible = prefix[end] - prefix[start]
+        // Ascending periods keep the smallest exact unit when coverage ties.
+        if visible > (best?.visible ?? 0) {
+          best = (start, period, repeats, visible)
+        }
+      }
+    }
+    return best
   }
 
   static func longestRun(of character: Character, in text: String) -> Int {

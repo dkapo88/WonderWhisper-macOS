@@ -8,6 +8,7 @@ import Testing
 private final class FakeQwenEngine: QwenASREngine, @unchecked Sendable {
   private let lock = NSLock()
   private var output: String
+  private var queuedOutputs: [String] = []
   private var unloads = 0
   private var decodes = 0
   private var decodingNow = false
@@ -23,6 +24,7 @@ private final class FakeQwenEngine: QwenASREngine, @unchecked Sendable {
   var isDecoding: Bool { lock.withLock { decodingNow } }
 
   func setOutput(_ text: String) { lock.withLock { output = text } }
+  func setOutputs(_ texts: [String]) { lock.withLock { queuedOutputs = texts } }
 
   func decode(samples: [Float], language: String?, context: String?, maxTokens: Int) -> String {
     lock.withLock {
@@ -32,7 +34,7 @@ private final class FakeQwenEngine: QwenASREngine, @unchecked Sendable {
     decodeGate?.wait()
     return lock.withLock {
       decodingNow = false
-      return output
+      return queuedOutputs.isEmpty ? output : queuedOutputs.removeFirst()
     }
   }
 
@@ -475,7 +477,7 @@ struct QwenASRRuntimeTests {
       Issue.record("joined repetition escaped: \(result)")
       return
     }
-    #expect(reason.contains("joined transcript: repetitive compression ratio"))
+    #expect(reason.contains("joined transcript: exact repetition 12x"))
     #expect(joined == part + " " + part)
     #expect(engine.decodeCount == 2)
   }
@@ -509,6 +511,52 @@ struct QwenASRRuntimeTests {
       #expect(engine.unloadCount == 0)
       #expect(await runtime.loadsStarted == 1)
     }
+  }
+
+  @Test(arguments: QwenGuardRegressionCorpus.legitimate)
+  func legitimateRepetitionKeepsVerifiedEngineHealthy(
+    _ example: QwenGuardRegressionCorpus.Example
+  ) async throws {
+    let engine = healthyEngine()
+    let loader = FakeQwenLoader(steps: [.engine(engine)])
+    let runtime = makeRuntime(loader: loader)
+    try await runtime.warmUp()
+    #expect(await runtime.currentHealth() == .healthy)
+    engine.setOutput(example.text)
+    // One fake decode, including a realistic 15s per-chunk budget for long lists.
+    let samples = [Float](repeating: 0.1, count: 16_000 * min(example.seconds, 15))
+    for _ in 0..<2 {
+      #expect(try await runtime.transcribe(samples: samples, language: nil, context: nil)
+        == example.text.trimmingCharacters(in: .whitespacesAndNewlines))
+      #expect(await runtime.currentHealth() == .healthy)
+      #expect(await runtime.isEngineLoaded)
+      #expect(engine.unloadCount == 0)
+      #expect(loader.cacheClearCount == 0)
+      #expect(loader.loadCalls == 1)
+      #expect(await runtime.loadsStarted == 1)
+    }
+  }
+
+  @Test func progressingListAcrossChunksKeepsVerifiedEngineHealthy() async throws {
+    let engine = healthyEngine()
+    let loader = FakeQwenLoader(steps: [.engine(engine)])
+    let runtime = makeRuntime(loader: loader)
+    try await runtime.warmUp()
+    let parts = [1...10, 11...20].map { range in
+      range.map { "Item \($0), approved and ready for release." }.joined(separator: " ")
+    }
+    engine.setOutputs(parts)
+    let text = try await runtime.transcribe(
+      samples: [Float](repeating: 0.1, count: 16_000 * 30), language: nil, context: nil
+    )
+    #expect(text == parts.joined(separator: " "))
+    #expect(engine.decodeCount == 3, "canary and both chunks should decode")
+    #expect(await runtime.currentHealth() == .healthy)
+    #expect(await runtime.isEngineLoaded)
+    #expect(engine.unloadCount == 0)
+    #expect(loader.cacheClearCount == 0)
+    #expect(loader.loadCalls == 1)
+    #expect(await runtime.loadsStarted == 1)
   }
 
   /// Review finding 2: a 1.5 s tail chunk that decodes to ~1,000 chars fits
