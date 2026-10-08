@@ -13,17 +13,22 @@ extension DictationViewModel {
   /// keeps property side effects from writing stale siblings back before all are assigned.
   ///
   /// A received key that is absent means "reset to default": the property gets the same
-  /// fallback the app uses at launch, and any copy its synchronous `didSet` writes back is
-  /// removed again before this returns. That cleanup is synchronous on the main actor, so no
-  /// user edit can land in between. Nothing is removed later: a deferred removal could erase a
-  /// genuine edit made in the meantime. (If a deferred persistence hop re-saves the launch
-  /// default, sync just carries that equivalent explicit value.)
+  /// fallback the app uses at launch.
+  ///
+  /// Provenance: everything runs inside `SettingsSyncProvenance.applyingRemoteSettings`, which
+  /// deferred `Task` hops inherit. `AppConfig.defaults` drops their writes to synced keys, so a
+  /// re-saved value, a derived value or a launch default is never stamped as a local edit, while
+  /// a genuine edit made afterwards (a fresh task) is written and synced normally.
   func applySyncedSettings(changedKeys keys: Set<String>) {
     let defaults = AppConfig.defaults
     let removed = keys.filter { defaults.object(forKey: $0) == nil }
-    withSyncedSettingsBatch {
-      applySyncedValues(changedKeys: keys)
+    SettingsSyncProvenance.applyingRemoteSettings {
+      withSyncedSettingsBatch {
+        applySyncedValues(changedKeys: keys)
+      }
     }
+    // Belt and braces for a store that isn't provenance-aware; synchronous, so no user edit
+    // can land in between.
     removed.forEach { defaults.removeObject(forKey: $0) }
   }
 
