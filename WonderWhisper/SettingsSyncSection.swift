@@ -29,6 +29,32 @@ struct SettingsSyncSection: View {
         StatusBadge(.error, error)
       }
 
+      if sync.isEnabled, !sync.blockedKeys.isEmpty {
+        LabeledContent {
+          Button("Repair") {
+            Task { await sync.repairBlockedKeys() }
+          }
+          .disabled(sync.isSyncing)
+        } label: {
+          StatusBadge(.warning, "Not syncing (unreadable in iCloud): "
+            + sync.blockedKeys.joined(separator: ", "))
+          Text("Repair replaces them in iCloud with this Mac's values. The unreadable copies "
+            + "are kept next to settings.json.")
+        }
+      }
+
+      if sync.isEnabled, sync.isOrderingExhausted {
+        LabeledContent {
+          Button("Reset Sync Ordering") {
+            Task { await sync.resetSyncOrdering() }
+          }
+          .disabled(sync.isSyncing)
+        } label: {
+          StatusBadge(.error, "Sync can't record more changes.")
+          Text("Resetting starts fresh with this Mac's settings on every Mac.")
+        }
+      }
+
       if let notice = sync.notice {
         Text(notice)
           .settingsFootnote()
