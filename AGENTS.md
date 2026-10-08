@@ -75,9 +75,11 @@ stores (history, Hermes chat, meetings) never touch the user's data. Preference 
 to `AppConfig.defaults`, never `.standard`. `TestIsolationTests` guards this; keep new storage
 under `appSupportRoot()`. Parakeet providers built by the view model and the meeting recovery
 transcriber get an empty scratch models folder (`AppConfig.testScratchParakeetModels`) instead of
-discovering the shared FluidAudio models. Tests that need installed models are opt-in with
-`TEST_RUNNER_WW_RUN_MODEL_TESTS=1` (`QwenASRE2ETests` synthesizes its own audio with `say`). The
-Qwen model cache path has no injection hook yet (owned by the Qwen workstream).
+discovering the shared FluidAudio models. Tests that need installed Parakeet models are opt-in
+with `TEST_RUNNER_WW_RUN_MODEL_TESTS=1`; FluidAudio E2E tests use
+`TEST_RUNNER_WW_PARAKEET_E2E=1`. Qwen model tests inject explicit scratch model directories through
+`TEST_RUNNER_QWEN_{GOOD,TRUNC,ZEROTAIL}_MODEL_DIR`; `QwenASRE2ETests` uses the good scratch model
+and synthesizes its own audio with `say`.
 
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
@@ -145,7 +147,7 @@ Sparkle decides whether an update exists by comparing `CFBundleVersion`, so the 
 is zero-padded — a bare concatenation would sort `2026-07-25.1` above `2026-08-01` and strand
 every later release. Do not hardcode `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in the project.
 
-Auto-update uses Sparkle 2.9.4 via SPM (`UpdaterController.swift`). The app is not sandboxed, so
+Auto-update uses Sparkle 2.10.0 via SPM (`UpdaterController.swift`). The app is not sandboxed, so
 no Sparkle XPC services or entitlements are needed. `SUFeedURL` points at `appcast.xml` on `main`;
 `SUPublicEDKey` in `WonderWhisper-Info.plist` must match the EdDSA private key held in the login
 Keychain (service `https://sparkle-project.org`, account `ed25519`). That key signs every DMG —
@@ -184,6 +186,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Released 2026-10-08.1 with FluidAudio 0.17.7, Parakeet Ultra and vocabulary
+  boosting, opt-in iCloud settings sync, verified Qwen loads with safe transcription fallback,
+  and Sparkle 2.10.0.
 - 2026-10-08: Reject Qwen speech-unit loops at 30 exact consecutive repeats regardless of
   coverage, length or compression; preserve existing single-character and symbol guards.
 - 2026-10-08: Require exact consecutive repetition alongside Qwen compression (>2.4):
