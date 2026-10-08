@@ -388,6 +388,23 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
+        let openItem = NSMenuItem(
+            title: "Open WonderWhisper",
+            action: #selector(openMainWindow),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        menu.addItem(openItem)
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         let updateItem = NSMenuItem(
             title: "Check for Updates…",
             action: #selector(checkForUpdates),
@@ -409,6 +426,8 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func checkForUpdates() { UpdaterController.shared.checkForUpdates() }
+    @objc private func openMainWindow() { SettingsRouter.shared.openMainWindow() }
+    @objc private func openSettings() { SettingsRouter.shared.openSettingsWindow() }
 
     @objc private func menuToggleDictation() { vm?.toggle() }
     @objc private func toggleMeetingRecording() {
