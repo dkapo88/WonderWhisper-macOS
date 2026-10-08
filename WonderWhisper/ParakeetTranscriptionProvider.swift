@@ -5,7 +5,7 @@ import AVFoundation
 import FluidAudio
 import OSLog
 
-final class ParakeetTranscriptionProvider: TranscriptionProvider {
+actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // TDT backend (Parakeet Ultra, multilingual)
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
@@ -42,6 +42,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // was turned off; swapped in only once loaded.
     private var replacementTask: Task<Void, Never>?
     private let boostingEnabled: @Sendable () -> Bool
+    private let vocabularyTerms: @Sendable () -> [String]
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
@@ -65,7 +66,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     init(
         modelsDirectory: URL? = nil,
         waitsForVocabularyModel: Bool = false,
-        boostingEnabled: @escaping @Sendable () -> Bool = { ParakeetVocabularyBoosting.isEnabled() }
+        boostingEnabled: @escaping @Sendable () -> Bool = { ParakeetVocabularyBoosting.isEnabled() },
+        vocabularyTerms: @escaping @Sendable () -> [String] = { ParakeetVocabularyBoosting.currentTerms() }
     ) {
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
@@ -75,6 +77,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         self.waitsForVocabularyModel = waitsForVocabularyModel
         self.boostingEnabled = boostingEnabled
+        self.vocabularyTerms = vocabularyTerms
+    }
+
+    /// Terms to boost right now, from the injected preferences.
+    private nonisolated func currentTermsToBoost() -> [String] {
+        ParakeetVocabularyBoosting.termsToBoost(enabled: boostingEnabled(), terms: vocabularyTerms())
     }
 
     // Public warm-up to preload models on recording start
@@ -86,13 +94,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 // Load the CTC model and configure boosting while the user is
                 // still speaking. Preferences are re-read after the (slow) CTC
                 // load, and the result is dropped if a transcription ran first.
-                let enabled = boostingEnabled
-                let outcome = await boosting.prepare(mgr) {
-                    ParakeetVocabularyBoosting.termsToBoost(
-                        enabled: enabled(),
-                        terms: ParakeetVocabularyBoosting.currentTerms()
-                    )
-                }
+                let outcome = await boosting.prepare(mgr) { [self] in currentTermsToBoost() }
                 handleBoostingOutcome(outcome, manager: mgr)
             }
             scheduleIdleUnload()
@@ -105,24 +107,27 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 
     private func scheduleIdleUnload() {
         idleUnloadTask?.cancel()
-        idleUnloadTask = Task { [weak self] in
-            guard let self else { return }
+        idleUnloadTask = Task { [weak self, idleSeconds] in
             // Sleep for idle window; cancel will abort
-            try? await Task.sleep(nanoseconds: UInt64(self.idleSeconds * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(idleSeconds * 1_000_000_000))
             if Task.isCancelled { return }
-            let hadModels = (self.asrManager != nil) || (self.unifiedManager != nil)
-            if hadModels {
-                self.log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
-                AppLog.dictation.log("[Parakeet] idle unload")
-            }
-            if let mgr = self.asrManager {
-                await mgr.cleanup()
-                self.asrManager = nil
-            }
-            // UnifiedAsrManager releases its CoreML models when deallocated.
-            self.unifiedManager = nil
-            if hadModels { self.loadedKind = nil }
+            await self?.performIdleUnload()
         }
+    }
+
+    private func performIdleUnload() async {
+        let hadModels = (asrManager != nil) || (unifiedManager != nil)
+        if hadModels {
+            log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
+            AppLog.dictation.log("[Parakeet] idle unload")
+        }
+        if let mgr = asrManager {
+            await mgr.cleanup()
+            asrManager = nil
+        }
+        // UnifiedAsrManager releases its CoreML models when deallocated.
+        unifiedManager = nil
+        if hadModels { loadedKind = nil }
     }
 
     private func isLoaded(_ kind: ParakeetModelKind) -> Bool {
@@ -142,12 +147,13 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             try await t.value
             if loadedKind == kind, isLoaded(kind) { return }
         }
-        loadTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
-            defer { self.loadTask = nil }
             try await self.performModelLoad(kind: kind)
         }
-        try await loadTask?.value
+        loadTask = task
+        defer { loadTask = nil }
+        try await task.value
     }
 
     private func performModelLoad(kind: ParakeetModelKind) async throws {
@@ -263,8 +269,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     /// using the neutralized manager meanwhile; a failed load changes nothing.
     private func scheduleUnboostedReplacement(for old: UnifiedAsrManager) {
         guard replacementTask == nil else { return }
+        let boosting = self.boosting
         replacementTask = Task { [weak self] in
-            defer { self?.replacementTask = nil }
             let fresh = UnifiedAsrManager()
             do {
                 try await fresh.loadModels(to: ParakeetManager.modelsDirectory)
@@ -272,22 +278,63 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 AppLog.dictation.error(
                     "[ParakeetVocab] unboosted replacement failed to load: \(error.localizedDescription)"
                 )
+                await self?.finishReplacement()
                 return
             }
-            guard let self else { return }
-            let swapped = await self.boosting.exclusive { () -> Bool in
-                let stillOff = ParakeetVocabularyBoosting.termsToBoost(
-                    enabled: self.boostingEnabled(),
-                    terms: ParakeetVocabularyBoosting.currentTerms()
-                ).isEmpty
-                guard stillOff, self.unifiedManager === old,
-                      await self.boosting.configuredTerms(of: old) == [] else { return false }
-                self.unifiedManager = fresh
-                return true
+            // Under the coordinator lock no configuration can change `old`, so
+            // its neutral state read here still holds at commit time. The
+            // commit itself is one synchronous actor step that rechecks the
+            // backend; backend loads don't take this lock.
+            guard let provider = self else { return }
+            let swapped = await boosting.exclusive { () -> Bool in
+                let oldIsNeutral = await boosting.configuredTerms(of: old) == []
+                return await provider.commitReplacement(old: old, fresh: fresh, oldIsNeutral: oldIsNeutral)
             }
             AppLog.dictation.log("[ParakeetVocab] unboosted replacement swapped=\(swapped)")
+            await provider.finishReplacement()
         }
     }
+
+    private func finishReplacement() {
+        replacementTask = nil
+    }
+
+    /// Install `fresh` in place of `old` only if, at this exact moment, `old`
+    /// is still the resident Unified manager, Unified is the active backend,
+    /// no backend load is in flight, `old` is neutralized and boosting is
+    /// still off. Synchronous: nothing can interleave between the checks and
+    /// the assignment.
+    func commitReplacement(
+        old: UnifiedAsrManager,
+        fresh: UnifiedAsrManager,
+        oldIsNeutral: Bool
+    ) -> Bool {
+        guard oldIsNeutral,
+              loadTask == nil,
+              loadedKind == .unified,
+              unifiedManager === old,
+              asrManager == nil,
+              currentTermsToBoost().isEmpty else { return false }
+        unifiedManager = fresh
+        return true
+    }
+
+    // MARK: - Test support
+
+    /// Install a Unified manager as the active backend without loading models.
+    func installUnifiedForTesting(_ manager: UnifiedAsrManager?) {
+        unifiedManager = manager
+        loadedKind = manager == nil ? nil : .unified
+    }
+
+    /// Mimic `performModelLoad(kind: .ultra)`'s effect on Unified state.
+    func simulateSwitchToUltraForTesting() {
+        unifiedManager = nil
+        loadedKind = .ultra
+    }
+
+    var residentUnifiedManagerForTesting: UnifiedAsrManager? { unifiedManager }
+
 
     /// Parakeet Unified offline-batch path: hand the recording to the
     /// FastConformer-RNNT manager via an `AVAudioPCMBuffer` (it resamples to
@@ -474,7 +521,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 }
 #else
-final class ParakeetTranscriptionProvider: TranscriptionProvider {
+actor ParakeetTranscriptionProvider: TranscriptionProvider {
     init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {}
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         throw ProviderError.notImplemented
