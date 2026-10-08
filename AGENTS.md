@@ -30,7 +30,8 @@ and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` do
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
 debug flags). API keys never leave the Keychain. Each key carries `modifiedAt` + `deviceID` and
 merges last-writer-wins; timestamps come from a hybrid logical clock (never earlier than anything
-already seen), so clock skew can't make an older edit win. Local edits, including resets, are
+already seen, and never trusting anything over 24 h ahead of wall time), so clock skew can't
+make an older edit win. Local edits, including resets, are
 stamped when the defaults change is observed and uploaded after a 2 s debounce. Each sync reads,
 merges (including unresolved iCloud conflict versions) and writes inside one coordinated
 transaction. Remote edits arrive via `NSFilePresenter` plus a 30 s poll, are validated against the
@@ -154,6 +155,10 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
 - 2026-10-08: Hardened iCloud settings sync: batch live apply, hybrid logical clock and an
   authoritative "Replace iCloud", single coordinated read-merge-write with iCloud conflict
   versions, timestamped resets, cancellation on disable, and per-key validation of received values.
+- 2026-10-08: Further sync hardening: out-of-range timestamps are rejected instead of trapping,
+  unreadable iCloud conflict versions are kept for retry, the first-enable choice persists until a
+  sync succeeds, timestamps over 24 h ahead are ignored and can't poison the clock, cancellation is
+  checked at the commit point, and received resets restore launch defaults live.
 - 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
   components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
   (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).

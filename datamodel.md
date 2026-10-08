@@ -655,7 +655,8 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `settingsSync.deviceID` | String | Random per-Mac ID written into the iCloud settings file. Never synced |
 | `settingsSync.localState` | Data (JSON `[String: SettingsSyncLocalRecord]`) | Per synced key: value fingerprint and `modifiedAt` this Mac last agreed with iCloud; used to detect local edits and prevent echo uploads. Never synced |
 | `settingsSync.lastSyncedAt` | Date | Last successful sync, shown in Settings → General. Never synced |
-| `settingsSync.clock` | Int (ms) | Hybrid logical clock: highest edit timestamp issued or seen, so new edits always sort after anything already received even if another Mac's clock is fast. Never synced |
+| `settingsSync.clock` | Int (ms) | Hybrid logical clock: highest edit timestamp issued or accepted, so new edits always sort after anything already received even if another Mac's clock is fast. Never advanced past wall time + 24 h; a value beyond that is reset on launch; cleared when sync is turned off. Never synced |
+| `settingsSync.firstEnableMode` | String | Unfinished first-enable choice (`preferCloud`, `preferLocal`, `initialUpload`), kept until a sync succeeds so a download wait, IO failure or relaunch can't change it. Never synced |
 
 ### iCloud Settings File
 
@@ -685,6 +686,10 @@ newer `schemaVersion` is applied but never overwritten. Each sync reads, merges 
 one `NSFileCoordinator` write, folding in unresolved iCloud conflict versions (`NSFileVersion`)
 per key and marking them resolved only after the merged file is saved. Received values must match
 the key's `SettingsSyncRegistry.Expectation` (type, range, decodable JSON) or this Mac keeps its own.
+Timestamps must be finite and within ±10^15 ms or the entry is dropped. Entries dated more than
+24 h ahead of this Mac's wall clock are treated as clock skew: ignored for merging (kept in the
+file) and never fed into the clock. Only conflict versions that were read and merged are marked
+resolved; old versions are removed only once none is left pending.
 
 ### Keychain Storage
 
@@ -792,6 +797,8 @@ struct AppConfig {
   `settingsSync.*` local sync state keys.
 - **v1.21.1 (October 8, 2026)**: Added `settingsSync.clock` (hybrid logical clock), integer
   millisecond dates, per-key value validation, and transactional merges with conflict versions.
+- **v1.21.2 (October 8, 2026)**: Added `settingsSync.firstEnableMode`; bounded timestamps and a
+  24 h clock-skew horizon; conflict versions resolved only once incorporated.
 - **v1.20 (July 26, 2026)**: Added persisted per-chat Beeper snooze deadlines and an in-memory,
   chat-keyed response accumulator for burst coalescing and expiry/resume flushes.
 - **v1.19 (July 16, 2026)**: Added Codex task creation, desktop-routed continuation, dated working directories, automatic desktop pinning, clipboard context, and ambient projectless-task response monitoring.
