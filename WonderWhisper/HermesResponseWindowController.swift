@@ -163,8 +163,8 @@ enum HermesBeeperStatusLine {
 /// telling him nothing.
 enum HermesReplyFailureCopy {
   static let beeperSendFailed = "Couldn't send to Beeper. Try again."
-  static let beeperDisabled = "Beeper is off. Turn it on in Settings to send."
-  static let hermesDisabled = "Hermes is off. Turn it on in Settings to send."
+  static let beeperDisabled = "Beeper is off. Turn it on in Settings → Integrations to send."
+  static let hermesDisabled = "Hermes is off. Turn it on in Settings → Integrations to send."
   static let hermesSessionNotReady = "This Hermes session isn't ready yet. Try again."
 }
 

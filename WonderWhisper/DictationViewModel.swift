@@ -2118,8 +2118,7 @@ final class DictationViewModel: ObservableObject {
         switch item {
         case .dictation: return .dictation
         case .command: return .command
-        case .vocabulary, .history, .comparison, .codex, .hermes, .beeper, .meetings,
-             .microphone, .permissions, .settings:
+        case .vocabulary, .history, .comparison, .hermes, .meetings:
             return nil
         }
     }

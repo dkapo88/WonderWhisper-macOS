@@ -22,9 +22,10 @@ struct WonderWhisperApp: App {
     @State private var hermesResponseWindow: HermesResponseWindowController? = nil
     @State private var meetingOverlay: MeetingOverlayWindowController? = nil
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: SettingsRouter.mainWindowID) {
             ContentView(vm: vm)
                 .onAppear {
+                    SettingsRouter.shared.viewModel = vm
                     if menuBar == nil { menuBar = MenuBarController(viewModel: vm) }
                     // Prefer a waveform overlay for clear visibility
                     if waveformOverlay == nil { waveformOverlay = WaveformOverlayController(viewModel: vm) }
@@ -46,6 +47,11 @@ struct WonderWhisperApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesMenuItem()
             }
+        }
+
+        // Native Settings window: Cmd+, and the app menu's "Settings…" item come for free.
+        Settings {
+            SettingsRootView(vm: vm)
         }
     }
 }

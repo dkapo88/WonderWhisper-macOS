@@ -1,24 +1,20 @@
 import SwiftUI
 
+/// Meetings: a list of recorded meetings and the selected meeting's transcript. Recording
+/// controls live in the window toolbar; all configuration is in Settings → Meetings.
 struct MeetingView: View {
   @ObservedObject var coordinator: MeetingCoordinator
-  let favoriteModels: [FavoriteOpenRouterModel]
-  @State private var manualTitle = ""
   @State private var sessionPendingDeletion: MeetingSession?
-  @State private var showingTriggerApps = false
-  @State private var customTriggerBundleID = ""
-  @State private var settingsExpanded = false
-  @State private var showingSummaryPromptEditor = false
-  @State private var summaryPromptDraft = ""
 
   var body: some View {
     HSplitView {
       sidebar
-        .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
+        .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
 
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    .toolbar { toolbarContent }
     .alert(
       "Delete meeting?",
       isPresented: Binding(
@@ -37,337 +33,116 @@ struct MeetingView: View {
     } message: { session in
       Text("This removes \(session.title), its transcript, and its locally stored audio.")
     }
-    .sheet(isPresented: $showingSummaryPromptEditor) {
-      MeetingSummaryPromptEditor(
-        prompt: $summaryPromptDraft,
-        onCancel: { showingSummaryPromptEditor = false },
-        onSave: {
-          coordinator.notePrompt = MeetingNoteGenerator.resolvedPrompt(summaryPromptDraft)
-          showingSummaryPromptEditor = false
-        }
+  }
+
+  // MARK: - Toolbar
+
+  @ToolbarContentBuilder
+  private var toolbarContent: some ToolbarContent {
+    ToolbarItemGroup(placement: .primaryAction) {
+      Toggle(isOn: $coordinator.automaticDetectionEnabled) {
+        Label(
+          "Auto-detect",
+          systemImage: coordinator.automaticDetectionEnabled
+            ? "antenna.radiowaves.left.and.right"
+            : "antenna.radiowaves.left.and.right.slash"
+        )
+        .labelStyle(.titleAndIcon)
+      }
+      .toggleStyle(.button)
+      .help(
+        coordinator.automaticDetectionEnabled
+          ? "Automatic meeting detection is on"
+          : "Automatic meeting detection is off"
       )
+      .accessibilityLabel("Automatic meeting detection")
+
+      Button {
+        SettingsRouter.shared.show(.meetings)
+      } label: {
+        Label("Meeting Settings", systemImage: "gearshape")
+      }
+      .help("Meeting settings")
+
+      recordButton
     }
   }
+
+  @ViewBuilder private var recordButton: some View {
+    if coordinator.activeSessionID == nil {
+      Button {
+        Task { await coordinator.startManualMeeting() }
+      } label: {
+        Label("Start Meeting", systemImage: "record.circle")
+          .labelStyle(.titleAndIcon)
+      }
+      .disabled(coordinator.isLoadingSessions || coordinator.isStarting || coordinator.isStopping)
+      .help("Record your microphone and all Mac audio")
+    } else {
+      Button(role: .destructive) {
+        Task { await coordinator.stopMeeting() }
+      } label: {
+        Label("Stop Meeting", systemImage: "stop.circle.fill")
+          .labelStyle(.titleAndIcon)
+          .foregroundStyle(.red)
+      }
+      .disabled(coordinator.isStopping)
+      .help("Stop recording this meeting")
+    }
+  }
+
+  // MARK: - List
 
   private var sidebar: some View {
     VStack(alignment: .leading, spacing: 0) {
-      recordingControls
-        .padding(16)
+      statusRow
+        .padding(.horizontal, DesignTokens.Spacing.small)
+        .padding(.vertical, DesignTokens.Spacing.xSmall)
 
       Divider()
 
-      List(selection: $coordinator.selectedSessionID) {
-        ForEach(coordinator.sessions) { session in
-          MeetingRow(session: session)
-            .tag(session.id)
+      if coordinator.sessions.isEmpty && !coordinator.isLoadingSessions {
+        ContentUnavailableView(
+          "No meetings yet",
+          systemImage: "person.2",
+          description: Text("Start a meeting from the toolbar or turn on auto-detect.")
+        )
+        .frame(maxHeight: .infinity)
+      } else {
+        List(selection: $coordinator.selectedSessionID) {
+          ForEach(coordinator.sessions) { session in
+            MeetingRow(session: session)
+              .tag(session.id)
+          }
         }
+        .listStyle(.inset)
       }
-      .listStyle(.sidebar)
-
-      Divider()
-
-      VStack(spacing: 0) {
-        Button {
-          withAnimation(.easeOut(duration: 0.18)) {
-            settingsExpanded.toggle()
-          }
-        } label: {
-          HStack(spacing: 6) {
-            Text("Meeting settings")
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(.secondary)
-              .rotationEffect(.degrees(settingsExpanded ? 90 : 0))
-          }
-          .frame(maxWidth: .infinity)
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(settingsExpanded ? "Expanded" : "Collapsed")
-
-        if settingsExpanded {
-          ScrollView {
-            settings
-              .padding(.top, 8)
-          }
-          .frame(maxHeight: 280)
-          .transition(.opacity)
-        }
-      }
-      .font(.callout)
-      .padding(14)
     }
-    .background(Color(nsColor: .controlBackgroundColor))
   }
 
-  private var recordingControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack {
+  private var statusRow: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxSmall) {
+      HStack(spacing: 6) {
         Circle()
           .fill(coordinator.activeSessionID == nil ? Color.secondary : Color.red)
-          .frame(width: 8, height: 8)
+          .frame(width: 7, height: 7)
+          .accessibilityHidden(true)
         Text(coordinator.isLoadingSessions ? "Loading meetings…" : coordinator.statusMessage)
-          .font(.caption)
+          .font(.callout)
           .foregroundStyle(.secondary)
           .lineLimit(2)
       }
-
-      if coordinator.activeSessionID == nil {
-        TextField("Optional meeting title", text: $manualTitle)
-          .textFieldStyle(.roundedBorder)
-
-        Button {
-          let title = manualTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-          Task {
-            await coordinator.startManualMeeting(title: title.isEmpty ? nil : title)
-            if coordinator.activeSessionID != nil {
-              manualTitle = ""
-            }
-          }
-        } label: {
-          Label("Start meeting", systemImage: "record.circle")
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(
-          coordinator.isLoadingSessions || coordinator.isStarting || coordinator.isStopping
-        )
-      } else {
-        Button(role: .destructive) {
-          Task { await coordinator.stopMeeting() }
-        } label: {
-          Label("Stop meeting", systemImage: "stop.circle.fill")
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(coordinator.isStopping)
-      }
+      .accessibilityElement(children: .combine)
 
       if let error = coordinator.lastError {
-        Text(error)
-          .font(.caption)
-          .foregroundStyle(.orange)
+        StatusBadge(.warning, error)
+          .font(.footnote)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
 
-  private var settings: some View {
-    VStack(alignment: .leading, spacing: 9) {
-      Picker("Meeting transcription", selection: $coordinator.transcriptionEngine) {
-        ForEach(MeetingTranscriptionEngine.allCases) { engine in
-          Text(engine.displayName).tag(engine)
-        }
-      }
-      .disabled(coordinator.activeSessionID != nil || coordinator.isStarting)
-
-      Text(coordinator.transcriptionEngine.detail)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-
-      if coordinator.transcriptionEngine.usesSoniox {
-        HStack(spacing: 5) {
-          Image(systemName: coordinator.hasSonioxAPIKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-          Text(
-            coordinator.hasSonioxAPIKey
-              ? coordinator.transcriptionEngine == .soniox
-                ? "Soniox key saved • approximately $0.12 per meeting hour for one stream"
-                : "Soniox key saved • approximately $0.24 per meeting hour for two streams"
-              : "Add a Soniox API key in Settings before recording"
-          )
-        }
-        .font(.caption2)
-        .foregroundStyle(coordinator.hasSonioxAPIKey ? Color.secondary : Color.orange)
-        .fixedSize(horizontal: false, vertical: true)
-      }
-
-      HStack(spacing: 8) {
-        Toggle("Detect meetings", isOn: $coordinator.automaticDetectionEnabled)
-        Spacer(minLength: 0)
-        Button("Apps…") {
-          coordinator.refreshLiveMicrophoneApplications()
-          showingTriggerApps = true
-        }
-        .controlSize(.small)
-        .popover(isPresented: $showingTriggerApps) {
-          triggerAppsPopover
-        }
-      }
-      Toggle("Generate notes with OpenRouter", isOn: $coordinator.generateMeetingNotes)
-      Toggle(
-        "Live Obsidian context via OpenRouter",
-        isOn: $coordinator.liveObsidianContextEnabled
-      )
-      Toggle("Show meeting companion", isOn: $coordinator.meetingOverlayEnabled)
-      Toggle("Auto-export to Obsidian", isOn: $coordinator.automaticallyExportToObsidian)
-
-      Text(
-        "Manual meetings capture your microphone and all Mac audio. Automatic meetings limit "
-          + "system audio to the detected call app. Live context extracts useful subjects, "
-          + "searches the vault locally, and sends a bounded recent transcript window plus "
-          + "bounded matching note excerpts to OpenRouter."
-      )
-      .font(.caption2)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-
-      if coordinator.generateMeetingNotes {
-        MeetingModelPicker(
-          title: "Final summary model",
-          selection: $coordinator.noteModel,
-          favoriteModels: favoriteModels
-        )
-
-        HStack(spacing: 8) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Meeting summary prompt")
-            Text("Controls the structure and emphasis of generated notes")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-          }
-          Spacer(minLength: 0)
-          Button {
-            summaryPromptDraft = coordinator.notePrompt
-            showingSummaryPromptEditor = true
-          } label: {
-            Image(systemName: "square.and.pencil")
-          }
-          .controlSize(.small)
-          .accessibilityLabel("Edit meeting summary prompt")
-          .help("Edit meeting summary prompt")
-        }
-      }
-
-      if coordinator.liveObsidianContextEnabled {
-        MeetingModelPicker(
-          title: "Live context model",
-          selection: $coordinator.contextModel,
-          favoriteModels: favoriteModels
-        )
-      }
-
-      MeetingFolderSetting(
-        title: "Obsidian vault",
-        path: coordinator.obsidianVaultPath,
-        placeholder: "No vault selected",
-        canChoose: true,
-        showsClear: coordinator.obsidianVaultPath != nil,
-        clearHelp: "Clear Obsidian vault and export folder",
-        onChoose: coordinator.chooseObsidianVault,
-        onClear: coordinator.clearObsidianVault
-      )
-
-      MeetingFolderSetting(
-        title: "Summary export folder",
-        path: coordinator.effectiveObsidianExportFolderPath,
-        placeholder: coordinator.obsidianVaultPath == nil
-          ? "Choose a vault first"
-          : "Uses the vault root",
-        canChoose: coordinator.obsidianVaultPath != nil,
-        showsClear: coordinator.obsidianExportFolderPath != nil,
-        clearHelp: "Use the vault root for exports",
-        onChoose: coordinator.chooseObsidianExportFolder,
-        onClear: coordinator.clearObsidianExportFolder
-      )
-    }
-  }
-
-  private var triggerAppsPopover: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Automatic meeting apps")
-        .font(.headline)
-      Text(
-        "Meet browsers still require an active Google Meet window. Slack requires a Huddle. "
-          + "Other apps start only when that app uses the microphone."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-
-      ForEach(coordinator.triggerRules) { rule in
-        HStack(spacing: 8) {
-          VStack(alignment: .leading, spacing: 1) {
-            Text(rule.displayName)
-              .font(.callout.weight(.medium))
-            Text("\(rule.bundleIDPrefix) • \(triggerModeLabel(rule.detectionMode))")
-              .font(.caption2.monospaced())
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-              .truncationMode(.middle)
-          }
-          Spacer()
-          Button {
-            coordinator.removeTriggerRule(rule)
-          } label: {
-            Image(systemName: "minus.circle")
-          }
-          .buttonStyle(.plain)
-          .help("Remove \(rule.displayName)")
-        }
-      }
-
-      Divider()
-
-      let availableApplications = coordinator.liveMicrophoneApplications.filter {
-        !coordinator.isTriggerApplicationConfigured($0)
-      }
-      if availableApplications.isEmpty {
-        Text("Apps currently using the microphone will appear here for one-click adding.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        Text("Using the microphone now")
-          .font(.caption.weight(.semibold))
-        ForEach(availableApplications) { application in
-          HStack(spacing: 8) {
-            Text("\(application.name) — \(application.bundleID)")
-              .font(.caption)
-              .lineLimit(1)
-              .truncationMode(.middle)
-            Spacer()
-            Button("Add") {
-              coordinator.addTriggerApplication(application)
-            }
-            .controlSize(.small)
-          }
-        }
-      }
-
-      HStack(spacing: 7) {
-        TextField("Bundle ID", text: $customTriggerBundleID)
-          .textFieldStyle(.roundedBorder)
-        Button("Add") {
-          coordinator.addTriggerBundleID(customTriggerBundleID)
-          customTriggerBundleID = ""
-        }
-        .controlSize(.small)
-        .disabled(
-          customTriggerBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        )
-      }
-
-      HStack {
-        Spacer()
-        Button("Restore defaults") {
-          coordinator.restoreDefaultTriggerRules()
-        }
-        .controlSize(.small)
-      }
-    }
-    .padding(14)
-    .frame(width: 390)
-  }
-
-  private func triggerModeLabel(
-    _ mode: MeetingTriggerRule.DetectionMode
-  ) -> String {
-    switch mode {
-    case .slackHuddle: return "Huddle detection"
-    case .googleMeet: return "Google Meet detection"
-    case .microphone: return "Microphone activity"
-    }
-  }
+  // MARK: - Detail
 
   @ViewBuilder
   private var detail: some View {
@@ -391,9 +166,9 @@ struct MeetingView: View {
       )
     } else {
       ContentUnavailableView(
-        "No meetings yet",
-        systemImage: "person.2.wave.2",
-        description: Text("Start a recording or enable automatic meeting detection.")
+        "No meeting selected",
+        systemImage: "person.2",
+        description: Text("Select a meeting to see its transcript and notes.")
       )
     }
   }
@@ -411,155 +186,14 @@ private struct MeetingRow: View {
             .frame(width: 7, height: 7)
         }
         Text(session.title)
-          .font(.callout.weight(.medium))
           .lineLimit(1)
       }
       Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
-        .font(.caption2)
+        .font(.footnote)
         .foregroundStyle(.secondary)
     }
-    .padding(.vertical, 3)
-  }
-}
-
-private struct MeetingModelPicker: View {
-  let title: String
-  @Binding var selection: String
-  let favoriteModels: [FavoriteOpenRouterModel]
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      Text(title)
-        .font(.caption.weight(.medium))
-
-      Picker(title, selection: $selection) {
-        if !selectionIsFavorite {
-          Section("Current") {
-            Text(selection).tag(selection)
-          }
-        }
-
-        Section("Favorite models") {
-          ForEach(favoriteModels) { model in
-            Text(model.name).tag(model.id)
-          }
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(maxWidth: .infinity, alignment: .leading)
-
-      if favoriteModels.isEmpty {
-        Text("Add favorite models in Settings.")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-      }
-    }
-  }
-
-  private var selectionIsFavorite: Bool {
-    favoriteModels.contains {
-      $0.id.caseInsensitiveCompare(selection) == .orderedSame
-    }
-  }
-}
-
-private struct MeetingSummaryPromptEditor: View {
-  @Binding var prompt: String
-  let onCancel: () -> Void
-  let onSave: () -> Void
-
-  var body: some View {
-    VStack(spacing: 0) {
-      HStack(alignment: .top, spacing: 12) {
-        Image(systemName: "text.document")
-          .font(.title2)
-          .foregroundStyle(.tint)
-          .frame(width: 30, height: 30)
-
-        VStack(alignment: .leading, spacing: 3) {
-          Text("Meeting summary prompt")
-            .font(.title3.weight(.semibold))
-          Text("Set the structure, emphasis, and level of detail used for generated notes.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-        }
-
-        Spacer()
-      }
-      .padding(22)
-
-      Divider()
-
-      TextEditor(text: $prompt)
-        .font(.body)
-        .scrollContentBackground(.hidden)
-        .padding(18)
-        .background(Color(nsColor: .textBackgroundColor))
-        .accessibilityLabel("Meeting summary prompt")
-
-      Divider()
-
-      HStack(spacing: 10) {
-        Button("Restore default") {
-          prompt = MeetingNoteGenerator.defaultPrompt
-        }
-
-        Text("\(prompt.count.formatted()) characters")
-          .font(.caption)
-          .foregroundStyle(.tertiary)
-
-        Spacer()
-
-        Button("Cancel", action: onCancel)
-          .keyboardShortcut(.cancelAction)
-        Button("Save prompt", action: onSave)
-          .buttonStyle(.borderedProminent)
-          .keyboardShortcut(.defaultAction)
-      }
-      .padding(16)
-      .background(Color(nsColor: .controlBackgroundColor))
-    }
-    .frame(minWidth: 620, idealWidth: 680, minHeight: 500, idealHeight: 560)
-  }
-}
-
-private struct MeetingFolderSetting: View {
-  let title: String
-  let path: String?
-  let placeholder: String
-  let canChoose: Bool
-  let showsClear: Bool
-  let clearHelp: String
-  let onChoose: () -> Void
-  let onClear: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      Text(title)
-        .font(.caption.weight(.medium))
-
-      HStack(spacing: 8) {
-        Button("Choose…", action: onChoose)
-          .controlSize(.small)
-          .disabled(!canChoose)
-
-        if showsClear {
-          Button(action: onClear) {
-            Image(systemName: "xmark.circle.fill")
-          }
-          .buttonStyle(.plain)
-          .foregroundStyle(.secondary)
-          .help(clearHelp)
-        }
-      }
-
-      Text(path ?? placeholder)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(2)
-        .truncationMode(.middle)
-    }
+    .padding(.vertical, DesignTokens.Spacing.xxSmall)
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -586,13 +220,13 @@ private struct MeetingDetailView: View {
     let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
     VStack(alignment: .leading, spacing: 0) {
       header
-        .padding(22)
+        .padding(DesignTokens.Spacing.large)
 
       Divider()
 
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 18) {
+          LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
             Color.clear
               .frame(height: 0)
               .id(Self.topAnchorID)
@@ -604,8 +238,8 @@ private struct MeetingDetailView: View {
                   .font(.headline)
                 HermesMarkdownView(text: manualNotes)
               }
-              .padding(16)
-              .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+              .padding(DesignTokens.Spacing.medium)
+              .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
             }
 
             if let notes = session.notesMarkdown, !notes.isEmpty {
@@ -614,8 +248,8 @@ private struct MeetingDetailView: View {
                   .font(.headline)
                 HermesMarkdownView(text: notes)
               }
-              .padding(16)
-              .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+              .padding(DesignTokens.Spacing.medium)
+              .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
             }
 
             Label("Transcript", systemImage: "captions.bubble.fill")
@@ -638,7 +272,7 @@ private struct MeetingDetailView: View {
                 .id("live-\(source.rawValue)")
             }
           }
-          .padding(22)
+          .padding(DesignTokens.Spacing.large)
         }
         .onChange(of: session.transcriptTokens.count) { _, _ in
           guard isActive else { return }
@@ -711,13 +345,12 @@ private struct MeetingDetailView: View {
           Label("Automatic", systemImage: "bolt.fill")
         }
       }
-      .font(.caption)
+      .font(.callout)
       .foregroundStyle(.secondary)
 
       if let error = session.errorMessage {
-        Label(error, systemImage: "exclamationmark.triangle.fill")
-          .font(.caption)
-          .foregroundStyle(.orange)
+        StatusBadge(.warning, error)
+          .font(.footnote)
       }
     }
   }
@@ -740,57 +373,53 @@ private struct MeetingDetailView: View {
   }
 
   @ViewBuilder private var terminalActions: some View {
-    Button(action: onResume) {
-      Image(systemName: "play.circle.fill")
-    }
-    .disabled(!canResume)
-    .accessibilityLabel("Resume meeting")
-    .help("Continue recording into this meeting and regenerate its summary when done")
-
-    Button(action: onRegenerateNotes) {
-      if isGeneratingNotes {
-        ProgressView()
-          .controlSize(.small)
-      } else {
-        Image(systemName: "arrow.clockwise.circle")
+    HStack(spacing: DesignTokens.Spacing.xSmall) {
+      Button(action: onResume) {
+        Label("Resume Recording", systemImage: "record.circle")
       }
-    }
-    .disabled(isGeneratingNotes)
-    .accessibilityLabel(
-      session.notesMarkdown == nil ? "Retry meeting summary" : "Regenerate meeting summary"
-    )
-    .help(
-      session.notesMarkdown == nil
-        ? "Retry summary using the current model and prompt"
-        : "Regenerate summary using the current model and prompt"
-    )
+      .disabled(!canResume)
+      .help("Continue recording into this meeting and regenerate its summary when done")
 
-    Button(action: onCopyMarkdown) {
-      Image(systemName: "doc.on.doc")
-    }
-    .disabled(isGeneratingNotes)
-    .help("Copy meeting as Markdown")
+      Button(
+        session.exportedMarkdownPath == nil ? "Export to Obsidian" : "Re-export",
+        action: onExport
+      )
+      .disabled(isGeneratingNotes)
 
-    Button(action: onRevealAudio) {
-      Image(systemName: "waveform.path.badge.plus")
-    }
-    .help("Reveal retained meeting audio")
+      Menu {
+        Button(
+          session.notesMarkdown == nil ? "Retry Summary" : "Regenerate Summary",
+          systemImage: "arrow.clockwise",
+          action: onRegenerateNotes
+        )
+        .disabled(isGeneratingNotes)
 
-    if let exportedPath = session.exportedMarkdownPath,
-       FileManager.default.fileExists(atPath: exportedPath) {
-      Button("Open in Obsidian", action: onOpenExport)
-    }
-    Button(
-      session.exportedMarkdownPath == nil ? "Export" : "Re-export",
-      action: onExport
-    )
-    .disabled(isGeneratingNotes)
+        Button("Copy as Markdown", systemImage: "doc.on.doc", action: onCopyMarkdown)
+          .disabled(isGeneratingNotes)
 
-    Button(role: .destructive, action: onDelete) {
-      Image(systemName: "trash")
+        if let exportedPath = session.exportedMarkdownPath,
+           FileManager.default.fileExists(atPath: exportedPath) {
+          Button("Open in Obsidian", systemImage: "arrow.up.forward.app", action: onOpenExport)
+        }
+
+        Button("Show Audio in Finder", systemImage: "waveform", action: onRevealAudio)
+
+        Divider()
+
+        Button("Delete Meeting…", systemImage: "trash", role: .destructive, action: onDelete)
+          .disabled(isGeneratingNotes)
+      } label: {
+        if isGeneratingNotes {
+          ProgressView().controlSize(.small)
+        } else {
+          Image(systemName: "ellipsis.circle")
+        }
+      }
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .help("More actions")
+      .accessibilityLabel("More meeting actions")
     }
-    .disabled(isGeneratingNotes)
-    .help("Delete meeting")
   }
 
   private func commitTitle() {
@@ -805,10 +434,10 @@ private struct MeetingDetailView: View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
         Text(block.displayName)
-          .font(.caption.weight(.semibold))
+          .font(.callout.weight(.semibold))
           .foregroundStyle(block.source == .microphone ? .blue : .purple)
         Text(MeetingTranscriptFormatter.timestamp(block.startTime))
-          .font(.caption2.monospacedDigit())
+          .font(.footnote.monospacedDigit())
           .foregroundStyle(.tertiary)
       }
       Text(block.text)
@@ -823,7 +452,7 @@ private struct MeetingDetailView: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 5) {
       Text("\(source.displayName) • Live")
-        .font(.caption.weight(.semibold))
+        .font(.callout.weight(.semibold))
         .foregroundStyle(source == .microphone ? .blue : .purple)
       Text(text)
         .foregroundStyle(.secondary)

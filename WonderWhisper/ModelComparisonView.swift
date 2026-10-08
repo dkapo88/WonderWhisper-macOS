@@ -39,20 +39,81 @@ struct ModelComparisonView: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
-      controls
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(Divider(), alignment: .bottom)
+    SettingsPage {
+      Section {
+        TextEditor(text: $rawText)
+          .font(.body)
+          .scrollContentBackground(.hidden)
+          .frame(minHeight: 140)
+          .accessibilityLabel("Raw text to compare")
+      } header: {
+        Text("Raw text")
+      } footer: {
+        Text("Paste a raw transcript. Each selected model cleans it up with the Dictation prompt.")
+          .settingsFootnote()
+      }
 
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          inputSection
-          selectedModelSection
-          resultsSection
+      Section {
+        if vm.favoriteOpenRouterModels.isEmpty {
+          Text("Add favorite models in Settings → Models to compare them.")
+            .foregroundStyle(.secondary)
+        } else {
+          ForEach(vm.favoriteOpenRouterModels) { model in
+            modelRow(model)
+          }
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      } header: {
+        HStack {
+          Text("Models")
+          Spacer()
+          Button(selectedModelIDs.count == vm.favoriteOpenRouterModels.count
+            ? "Clear Selection"
+            : "Select All"
+          ) {
+            if selectedModelIDs.count == vm.favoriteOpenRouterModels.count {
+              clearSelectedModels()
+            } else {
+              selectAllModels()
+            }
+          }
+          .buttonStyle(.borderless)
+          .controlSize(.small)
+          .disabled(vm.favoriteOpenRouterModels.isEmpty || isProcessing)
+        }
+      }
+
+      Section {
+        if results.isEmpty {
+          Text(isProcessing ? "Processing…" : "Results appear here after you run a comparison.")
+            .foregroundStyle(.secondary)
+        } else {
+          ForEach(results) { result in
+            resultView(result)
+          }
+        }
+      } header: {
+        Text("Results")
+      }
+    }
+    .toolbar {
+      ToolbarItemGroup(placement: .primaryAction) {
+        Picker("Run mode", selection: $runMode) {
+          ForEach(ModelComparisonRunMode.allCases) { mode in
+            Text(mode.title).tag(mode)
+          }
+        }
+        .pickerStyle(.segmented)
+        .disabled(isProcessing)
+        .help("Run models at the same time or one after another")
+
+        Button {
+          Task { await runComparison() }
+        } label: {
+          Label("Compare", systemImage: "play")
+            .labelStyle(.titleAndIcon)
+        }
+        .disabled(!canProcess)
+        .help("Run the raw text through every selected model")
       }
     }
     .onAppear(perform: ensureInitialSelection)
@@ -61,201 +122,74 @@ struct ModelComparisonView: View {
     }
   }
 
-  private var controls: some View {
-    HStack(spacing: 12) {
-      Menu {
-        if vm.favoriteOpenRouterModels.isEmpty {
-          Text("No favorite models")
-        } else {
-          Button {
-            selectAllModels()
-          } label: {
-            Label("Select All", systemImage: "checkmark.circle")
-          }
-
-          Button {
-            clearSelectedModels()
-          } label: {
-            Label("Clear Selection", systemImage: "xmark.circle")
-          }
-          .disabled(selectedModelIDs.isEmpty)
-
-          Divider()
-
-          ForEach(vm.favoriteOpenRouterModels) { model in
-            Button {
-              toggle(model)
-            } label: {
-              HStack {
-                if selectedModelIDs.contains(model.id) {
-                  Image(systemName: "checkmark")
-                }
-                Text(model.name)
-              }
-            }
-          }
-        }
-      } label: {
-        Label(modelSelectionTitle, systemImage: "list.bullet.rectangle")
+  private func modelRow(_ model: FavoriteOpenRouterModel) -> some View {
+    let isSelected = Binding(
+      get: { selectedModelIDs.contains(model.id) },
+      set: { newValue in
+        if newValue != selectedModelIDs.contains(model.id) { toggle(model) }
       }
-      .menuStyle(.borderlessButton)
-      .disabled(vm.favoriteOpenRouterModels.isEmpty || isProcessing)
-
-      Picker("Run mode", selection: $runMode) {
-        ForEach(ModelComparisonRunMode.allCases) { mode in
-          Text(mode.title).tag(mode)
+    )
+    return HStack(spacing: DesignTokens.Spacing.small) {
+      Toggle(isOn: isSelected) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(model.name)
+          Text(model.id)
+            .font(.footnote.monospaced())
+            .foregroundStyle(.secondary)
         }
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .frame(width: 220)
+      .toggleStyle(.checkbox)
       .disabled(isProcessing)
+      .layoutPriority(1)
 
       Spacer()
 
-      Button {
-        Task { await runComparison() }
-      } label: {
-        if isProcessing {
-          ProgressView()
-            .controlSize(.small)
-        } else {
-          Label("Process", systemImage: "play.fill")
+      Text("Reasoning")
+        .foregroundStyle(.secondary)
+      Picker("Reasoning", selection: reasoningBinding(for: model.id)) {
+        ForEach(OpenRouterReasoningMode.allCases, id: \.self) { mode in
+          Text(mode.displayName).tag(mode)
         }
       }
-      .buttonStyle(.borderedProminent)
-      .disabled(!canProcess)
-    }
-  }
-
-  private var inputSection: some View {
-    GroupBox("Raw Text") {
-      TextEditor(text: $rawText)
-        .font(.body)
-        .scrollContentBackground(.hidden)
-        .frame(minHeight: 160)
-        .padding(6)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .fill(Color(nsColor: .textBackgroundColor))
-        )
-    }
-  }
-
-  private var selectedModelSection: some View {
-    GroupBox("Models") {
-      if selectedModels.isEmpty {
-        Text("Select one or more favorite models to compare.")
-          .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
-      } else {
-        VStack(alignment: .leading, spacing: 8) {
-          ForEach(selectedModels) { model in
-            HStack(spacing: 12) {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(model.name)
-                  .font(.callout.weight(.medium))
-                Text(model.id)
-                  .font(.caption2)
-                  .foregroundColor(.secondary)
-                  .textSelection(.enabled)
-              }
-
-              Spacer()
-
-              Picker("Reasoning", selection: reasoningBinding(for: model.id)) {
-                ForEach(OpenRouterReasoningMode.allCases, id: \.self) { mode in
-                  Text(mode.displayName).tag(mode)
-                }
-              }
-              .labelsHidden()
-              .frame(width: 180)
-              .disabled(isProcessing)
-            }
-            .padding(.vertical, 4)
-          }
-        }
-      }
-    }
-  }
-
-  private var resultsSection: some View {
-    GroupBox("Output Comparison") {
-      if results.isEmpty {
-        Text("Results will appear after processing.")
-          .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
-      } else {
-        VStack(alignment: .leading, spacing: 12) {
-          ForEach(results) { result in
-            resultView(result)
-          }
-        }
-      }
+      .labelsHidden()
+      .fixedSize()
+      .disabled(isProcessing || !isSelected.wrappedValue)
+      .accessibilityLabel("Reasoning for \(model.name)")
     }
   }
 
   private func resultView(_ result: ModelComparisonResult) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
+      HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xSmall) {
         Text(result.modelName)
           .font(.headline)
-        Text(result.modelID)
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .lineLimit(1)
         Spacer()
-        Label(String(format: "%.2fs", result.duration), systemImage: "timer")
-          .font(.caption.weight(.semibold))
-          .foregroundColor(.secondary)
-        Text(result.reasoning.displayName)
-          .font(.caption.weight(.semibold))
-          .foregroundColor(.secondary)
-      }
-
-      if let error = result.errorMessage {
-        Text(error)
-          .foregroundColor(.red)
-          .textSelection(.enabled)
-      } else {
-        Text(result.output.isEmpty ? "(empty)" : result.output)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .textSelection(.enabled)
-
-        HStack {
-          Spacer()
+        Text("\(String(format: "%.2f", result.duration)) s · Reasoning \(result.reasoning.displayName)")
+          .font(.footnote.monospacedDigit())
+          .foregroundStyle(.secondary)
+        if result.succeeded {
           Button {
             copy(result.output)
           } label: {
-            Label("Copy", systemImage: "doc.on.doc")
+            Image(systemName: "doc.on.doc")
           }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .buttonStyle(.borderless)
+          .help("Copy output")
+          .accessibilityLabel("Copy \(result.modelName) output")
         }
       }
-    }
-    .padding(12)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(Color(nsColor: .windowBackgroundColor))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 8)
-        .stroke(Color.secondary.opacity(0.12))
-    )
-  }
 
-  private var modelSelectionTitle: String {
-    switch selectedModelIDs.count {
-    case 0:
-      return "Select Models"
-    case 1:
-      return selectedModels.first?.name ?? "1 Model"
-    default:
-      return "\(selectedModelIDs.count) Models"
+      if let error = result.errorMessage {
+        StatusBadge(.error, error)
+          .textSelection(.enabled)
+      } else {
+        Text(result.output.isEmpty ? "No output." : result.output)
+          .foregroundStyle(result.output.isEmpty ? .secondary : .primary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .textSelection(.enabled)
+      }
     }
+    .padding(.vertical, DesignTokens.Spacing.xxSmall)
   }
 
   private func toggle(_ model: FavoriteOpenRouterModel) {

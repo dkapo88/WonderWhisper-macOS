@@ -375,24 +375,20 @@ private final class WaveformView: NSView {
         // backdrop as a rectangle whenever its mask is imperfect, which is the faint
         // square that kept showing behind the pill.
         bodyLayer.colors = [
-            NSColor(srgbRed: 0.16, green: 0.17, blue: 0.20, alpha: 0.97).cgColor,
-            NSColor(srgbRed: 0.07, green: 0.07, blue: 0.09, alpha: 0.97).cgColor
+            OverlayPalette.pillBodyTop.cgColor,
+            OverlayPalette.pillBodyBottom.cgColor
         ]
         bodyLayer.startPoint = CGPoint(x: 0.5, y: 0)
         bodyLayer.endPoint = CGPoint(x: 0.5, y: 1)
         bodyLayer.cornerCurve = .continuous
-        bodyLayer.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        bodyLayer.borderWidth = 0.5
+        bodyLayer.borderColor = OverlayPalette.hairline.cgColor
+        bodyLayer.borderWidth = OverlayPalette.hairlineWidth
         bodyLayer.zPosition = 0
         root.addSublayer(bodyLayer)
 
         // Warm signal ramp: amber into a soft coral, which reads as active and
         // premium against the near-black capsule without the alarm of pure red.
-        tintLayer.colors = [
-            NSColor(srgbRed: 1.00, green: 0.82, blue: 0.35, alpha: 1).cgColor,
-            NSColor(srgbRed: 1.00, green: 0.58, blue: 0.31, alpha: 1).cgColor,
-            NSColor(srgbRed: 0.99, green: 0.40, blue: 0.42, alpha: 1).cgColor
-        ]
+        tintLayer.colors = OverlayPalette.signalRamp.map(\.cgColor)
         // Diagonal ramp so tall columns pick up more of the hot end of the gradient.
         tintLayer.startPoint = CGPoint(x: 0, y: 1)
         tintLayer.endPoint = CGPoint(x: 1, y: 0)
@@ -546,7 +542,7 @@ private final class CircleButton: NSView {
             bg = NSColor.white.withAlphaComponent(alpha)
         case .finish:
             let alpha: CGFloat = isPressed ? 0.94 : (isHovered ? 0.88 : 0.78)
-            bg = NSColor(srgbRed: 0.42, green: 0.60, blue: 0.98, alpha: alpha)
+            bg = OverlayPalette.accent(alpha: alpha)
         }
         bg.setFill()
         let path = NSBezierPath(ovalIn: bounds)

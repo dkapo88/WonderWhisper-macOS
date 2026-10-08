@@ -219,13 +219,13 @@ private final class TranscriptContentView: NSView {
     wantsLayer = true
     // Translucent enough to sit *on top of* the content rather than blanking it out,
     // while staying dark enough to keep white text legible over a bright background.
-    layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
-    layer?.cornerRadius = 12
+    layer?.backgroundColor = OverlayPalette.textBackdrop.cgColor
+    layer?.cornerRadius = DesignTokens.Radius.panel
     layer?.cornerCurve = .continuous
 
     // Subtle border
-    layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
-    layer?.borderWidth = 0.5
+    layer?.borderColor = OverlayPalette.textBackdropStroke.cgColor
+    layer?.borderWidth = OverlayPalette.hairlineWidth
 
     addSubview(scrollView)
   }

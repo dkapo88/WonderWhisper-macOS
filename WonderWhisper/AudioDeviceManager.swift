@@ -68,6 +68,7 @@ enum AudioDeviceManager {
         var result: [AudioDeviceInfo] = []
 
         for uid in [preferredUID].compactMap({ $0 }) + stored.map(\.uid) + available.map(\.uid) {
+            guard isUserSelectableInput(uid: uid) else { continue }
             guard seen.insert(uid).inserted else { continue }
             result.append(
                 availableByUID[uid]
@@ -76,6 +77,12 @@ enum AudioDeviceManager {
             )
         }
         return result
+    }
+
+    /// Core Audio creates private `CADefaultDeviceAggregate-*` devices (for example around the
+    /// meeting system-audio tap). They are not real microphones, so they never appear in pickers.
+    static func isUserSelectableInput(uid: String) -> Bool {
+        !uid.hasPrefix("CADefaultDeviceAggregate")
     }
 
     static func promoted(
@@ -120,7 +127,8 @@ enum AudioDeviceManager {
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
         var result: [AudioDeviceInfo] = []
         for id in ids {
-            if inputChannelCount(deviceID: id) > 0, let uid = deviceUID(from: id), let name = deviceName(from: id) {
+            if inputChannelCount(deviceID: id) > 0, let uid = deviceUID(from: id), let name = deviceName(from: id),
+               isUserSelectableInput(uid: uid) {
                 result.append(AudioDeviceInfo(uid: uid, name: name))
             }
         }

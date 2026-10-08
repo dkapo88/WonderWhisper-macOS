@@ -520,13 +520,13 @@ private struct MeetingOverlayView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(
       .regularMaterial,
-      in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+      in: RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
     )
     .overlay {
-      RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
+        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
     }
-    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous))
   }
 
   private func transcript(_ session: MeetingSession) -> some View {
@@ -587,13 +587,13 @@ private struct MeetingOverlayView: View {
           ContentUnavailableView(
             "Live context is off",
             systemImage: "books.vertical",
-            description: Text("Enable it in Meetings to search your Obsidian vault.")
+            description: Text("Turn it on in Settings → Meetings to search your Obsidian vault.")
           )
         } else if coordinator.obsidianVaultPath == nil {
           ContentUnavailableView(
             "No Obsidian vault selected",
             systemImage: "folder.badge.questionmark",
-            description: Text("Choose your vault in the Meetings sidebar.")
+            description: Text("Choose your vault in Settings → Meetings.")
           )
         } else if coordinator.contextCards.isEmpty {
           HStack(spacing: 8) {
@@ -663,7 +663,7 @@ private struct MeetingOverlayView: View {
             }
           }
           .padding(10)
-          .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
+          .background(.quinary, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
         }
       }
       .padding(.horizontal, 14)
@@ -700,7 +700,7 @@ private struct MeetingManualNotesView: View {
           .disabled(coordinator.isStopping)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+      .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
     }
     .padding(.horizontal, 14)
     .padding(.bottom, 14)
@@ -755,11 +755,11 @@ private struct MeetingAutoStartToastView: View {
     .padding(.vertical, 10)
     .background(
       .regularMaterial,
-      in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+      in: RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
     )
     .overlay {
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
+        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
     }
   }
 }
