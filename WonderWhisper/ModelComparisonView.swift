@@ -140,14 +140,18 @@ struct ModelComparisonView: View {
       }
       .toggleStyle(.checkbox)
       .disabled(isProcessing)
+      .layoutPriority(1)
 
       Spacer()
 
+      Text("Reasoning")
+        .foregroundStyle(.secondary)
       Picker("Reasoning", selection: reasoningBinding(for: model.id)) {
         ForEach(OpenRouterReasoningMode.allCases, id: \.self) { mode in
           Text(mode.displayName).tag(mode)
         }
       }
+      .labelsHidden()
       .fixedSize()
       .disabled(isProcessing || !isSelected.wrappedValue)
       .accessibilityLabel("Reasoning for \(model.name)")

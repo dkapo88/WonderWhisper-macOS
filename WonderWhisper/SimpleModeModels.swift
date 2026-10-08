@@ -85,7 +85,7 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     case .meetings: return "Recorded meetings, transcripts, and notes"
     case .vocabulary: return "Names and spellings for every mode"
     case .history: return "Recent dictations"
-    case .comparison: return "Run one recording through several models"
+    case .comparison: return "Run the same text through several models"
     }
   }
 
