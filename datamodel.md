@@ -655,13 +655,14 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `settingsSync.deviceID` | String | Random per-Mac ID written into the iCloud settings file. Never synced |
 | `settingsSync.localState` | Data (JSON `[String: SettingsSyncLocalRecord]`) | Per synced key: value fingerprint and `modifiedAt` this Mac last agreed with iCloud; used to detect local edits and prevent echo uploads. Never synced |
 | `settingsSync.lastSyncedAt` | Date | Last successful sync, shown in Settings → General. Never synced |
+| `settingsSync.clock` | Int (ms) | Hybrid logical clock: highest edit timestamp issued or seen, so new edits always sort after anything already received even if another Mac's clock is fast. Never synced |
 
 ### iCloud Settings File
 
 When iCloud settings sync is on, the keys listed in `SettingsSyncRegistry.synced` are mirrored to
 `~/Library/Mobile Documents/com~apple~CloudDocs/WonderWhisper/settings.json` (iCloud Drive →
 WonderWhisper). Keychain values are never read. Format (`SettingsSyncDocument`, dates are
-milliseconds since 1970):
+integer milliseconds since 1970):
 
 ```json
 {
@@ -680,7 +681,10 @@ milliseconds since 1970):
 Value types are `bool`, `int`, `double`, `string`, `strings` and `data` (base64 of the same bytes
 UserDefaults holds, e.g. JSON-encoded `SimplePromptSettings`). A missing `value` records a reset to
 default (key removed). Unknown keys and unreadable entries are ignored but preserved; a file with a
-newer `schemaVersion` is applied but never overwritten.
+newer `schemaVersion` is applied but never overwritten. Each sync reads, merges and writes inside
+one `NSFileCoordinator` write, folding in unresolved iCloud conflict versions (`NSFileVersion`)
+per key and marking them resolved only after the merged file is saved. Received values must match
+the key's `SettingsSyncRegistry.Expectation` (type, range, decodable JSON) or this Mac keeps its own.
 
 ### Keychain Storage
 
@@ -786,6 +790,8 @@ struct AppConfig {
 - **v1.21 (October 8, 2026)**: Added opt-in iCloud settings sync: allowlisted UserDefaults keys
   mirrored per key (last writer wins) to `iCloud Drive/WonderWhisper/settings.json`, plus
   `settingsSync.*` local sync state keys.
+- **v1.21.1 (October 8, 2026)**: Added `settingsSync.clock` (hybrid logical clock), integer
+  millisecond dates, per-key value validation, and transactional merges with conflict versions.
 - **v1.20 (July 26, 2026)**: Added persisted per-chat Beeper snooze deadlines and an in-memory,
   chat-keyed response accumulator for burst coalescing and expiry/resume flushes.
 - **v1.19 (July 16, 2026)**: Added Codex task creation, desktop-routed continuation, dated working directories, automatic desktop pinning, clipboard context, and ambient projectless-task response monitoring.

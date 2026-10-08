@@ -29,12 +29,18 @@ favorite/selected models, transcription engine/language, meeting models and prom
 and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` documents what stays
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
 debug flags). API keys never leave the Keychain. Each key carries `modifiedAt` + `deviceID` and
-merges last-writer-wins; local edits are stamped when the defaults change is observed and uploaded
-after a 2 s debounce; remote edits arrive via `NSFilePresenter` plus a 30 s poll and are applied
-through `SettingsSyncLiveApply.swift`. Echo is prevented by value fingerprints, not flags. First
-enable asks "Use iCloud Settings" or "Replace iCloud with This Mac's Settings" if a file exists.
-To sync a new preference, add its existing key to the registry and, if a view model caches it,
-re-read it in `SettingsSyncLiveApply.swift`. Tests use temp folders only (`SettingsSyncTests`).
+merges last-writer-wins; timestamps come from a hybrid logical clock (never earlier than anything
+already seen), so clock skew can't make an older edit win. Local edits, including resets, are
+stamped when the defaults change is observed and uploaded after a 2 s debounce. Each sync reads,
+merges (including unresolved iCloud conflict versions) and writes inside one coordinated
+transaction. Remote edits arrive via `NSFilePresenter` plus a 30 s poll, are validated against the
+key's `Expectation` (type, range, decodable JSON), and are applied as one batch through
+`SettingsSyncLiveApply.swift` / `DictationViewModel.withSyncedSettingsBatch`. Echo is prevented by
+value fingerprints, not flags; turning sync off cancels any in-flight sync. First enable asks
+"Use iCloud Settings" or "Replace iCloud with This Mac's Settings" (authoritative) if a file
+exists. To sync a new preference, add its existing key and expectation to the registry and, if a
+view model caches it, re-read it in `SettingsSyncLiveApply.swift`. Tests use temp folders only
+(`SettingsSyncTests`).
 
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
@@ -145,6 +151,9 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
   `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
   last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
   per-Mac.
+- 2026-10-08: Hardened iCloud settings sync: batch live apply, hybrid logical clock and an
+  authoritative "Replace iCloud", single coordinated read-merge-write with iCloud conflict
+  versions, timestamped resets, cancellation on disable, and per-key validation of received values.
 - 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
   components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
   (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).
