@@ -3893,11 +3893,15 @@ final class DictationViewModel: ObservableObject {
         guard beeperEnabled, beeperResponseMonitoringEnabled else { return }
         guard !chatIDs.isEmpty else { return }
 
-        beeperResponseMonitorTasks = chatIDs.map { chatID in
-            let settings = currentBeeperSettings(chatID: chatID)
-            return Task { [weak self] in
-                guard let self else { return }
-                await self.monitorConfiguredBeeperChat(settings: settings)
+        // Long-lived: started without iCloud-sync remote-apply provenance, so its own later
+        // writes (e.g. clearing an expired mute) count as this Mac's edits.
+        beeperResponseMonitorTasks = SettingsSyncProvenance.withoutRemoteApply {
+            chatIDs.map { chatID in
+                let settings = currentBeeperSettings(chatID: chatID)
+                return Task { [weak self] in
+                    guard let self else { return }
+                    await self.monitorConfiguredBeeperChat(settings: settings)
+                }
             }
         }
     }
@@ -4110,8 +4114,11 @@ final class DictationViewModel: ObservableObject {
         codexSeenAgentMessageIDs.removeAll()
         codexKnownThreadUpdates.removeAll()
         guard codexEnabled, codexMonitorProjectlessTasks else { return }
-        codexMonitorTask = Task { [weak self] in
-            await self?.monitorCodexProjectlessTasks()
+        // Long-lived: started without iCloud-sync remote-apply provenance.
+        codexMonitorTask = SettingsSyncProvenance.withoutRemoteApply {
+            Task { [weak self] in
+                await self?.monitorCodexProjectlessTasks()
+            }
         }
     }
 
