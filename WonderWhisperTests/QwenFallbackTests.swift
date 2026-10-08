@@ -10,6 +10,9 @@ private final class StubProvider: TranscriptionProvider {
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String { name }
 }
 
+/// The non-default Parakeet model (v3 here, Ultra after the FluidAudio 0.17 bump).
+private let multilingual = ParakeetModelKind.allCases.first { $0 != .unified } ?? .unified
+
 struct QwenFallbackTests {
   private let qwenSettings = TranscriptionSettings(
     endpoint: URL(string: "https://localhost")!,
@@ -26,8 +29,8 @@ struct QwenFallbackTests {
   }
 
   @Test func usesAnyDownloadedParakeetWhenSelectedIsMissing() {
-    let choice = QwenASRFallback.choice(selectedParakeet: .unified) { $0 == .v3 }
-    #expect(choice == .parakeet(.v3))
+    let choice = QwenASRFallback.choice(selectedParakeet: .unified) { $0 == multilingual }
+    #expect(choice == .parakeet(multilingual))
   }
 
   @Test func fallsBackToGroqWithoutParakeet() {
@@ -47,10 +50,10 @@ struct QwenFallbackTests {
     #expect(groqSettings.language == "en")
     #expect(groqSettings.vocabularyTerms == ["Hapana"])
 
-    let pkProvider = QwenASRFallback.provider(for: .parakeet(.v3), groq: groq) { parakeet }
+    let pkProvider = QwenASRFallback.provider(for: .parakeet(multilingual), groq: groq) { parakeet }
     #expect(try await pkProvider?.transcribe(fileURL: file, settings: qwenSettings) == "parakeet")
-    let pkSettings = QwenASRFallback.settings(for: .parakeet(.v3), from: qwenSettings)
-    #expect(pkSettings.model == "parakeet-v3")
+    let pkSettings = QwenASRFallback.settings(for: .parakeet(multilingual), from: qwenSettings)
+    #expect(pkSettings.model == "parakeet-\(multilingual.rawValue)")
     #expect(pkSettings.language == "en")
 
     #expect(QwenASRFallback.provider(for: .groq, groq: nil) { parakeet } == nil)
