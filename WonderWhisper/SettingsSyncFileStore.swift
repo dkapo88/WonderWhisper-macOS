@@ -44,16 +44,19 @@ struct SettingsSyncFileStore: Sendable {
     /// First upload after the user saw no file: if a document has appeared since, stop so
     /// the user can be asked which copy to keep instead of silently merging.
     var requireNoDocument = false
-    /// Cloud entries stamped later than this are treated as clock-skewed: ignored for merging
-    /// (but kept in the file) so a fast clock can't win forever or poison this Mac's clock.
-    var horizon: Date = .distantFuture
+    /// Cloud entries with a counter above this are corrupt (honest counters only ever grow by
+    /// one per edit). They are ignored for merging and never raise this Mac's counter; a local
+    /// value for the same key replaces them.
+    var counterCeiling: Int64 = SettingsSyncDocument.maxCounter
   }
 
   struct TransactionOutcome: Sendable {
     /// Nil when the transaction stopped early (cancelled or a document appeared).
     var merge: SettingsSyncMerger.Result?
-    /// Synced keys whose cloud entry was ignored because its timestamp is past the horizon.
-    var futureKeys: Set<String> = []
+    /// Keys whose cloud entry was ignored because its counter is above the ceiling.
+    var invalidCounterKeys: Set<String> = []
+    /// Highest valid counter in the cloud document (after merging), for the Lamport counter.
+    var highestCounter: Int64 = 0
     var wrote = false
     var schemaTooNew = false
     var documentAppeared = false
@@ -237,16 +240,17 @@ struct SettingsSyncFileStore: Sendable {
     }
     outcome.schemaTooNew = (remote?.schemaVersion ?? 0) > SettingsSyncDocument.currentSchemaVersion
 
-    // Set clock-skewed entries aside for the merge; put them back afterwards unless replaced.
-    var skewed: [String: SettingsSyncDocument.Entry] = [:]
+    // Set corrupt (over-the-ceiling) entries aside for the merge; put them back afterwards
+    // unless a local value replaced them.
+    var invalid: [String: SettingsSyncDocument.Entry] = [:]
     if var visible = remote {
-      for (key, entry) in visible.entries where entry.modifiedAt > input.horizon {
-        skewed[key] = entry
+      for (key, entry) in visible.entries where entry.counter > input.counterCeiling {
+        invalid[key] = entry
         visible.entries[key] = nil
       }
       remote = visible
     }
-    outcome.futureKeys = Set(skewed.keys).intersection(input.local.keys)
+    outcome.invalidCounterKeys = Set(invalid.keys)
 
     var result = SettingsSyncMerger.merge(
       local: input.local,
@@ -254,7 +258,8 @@ struct SettingsSyncFileStore: Sendable {
       deviceID: input.deviceID,
       authoritative: input.authoritative
     )
-    for (key, entry) in skewed where result.document.entries[key] == nil {
+    outcome.highestCounter = result.document.entries.values.map(\.counter).max() ?? 0
+    for (key, entry) in invalid where result.document.entries[key] == nil {
       result.document.entries[key] = entry
     }
     if result.document.devices[input.deviceID] == nil

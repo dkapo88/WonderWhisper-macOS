@@ -193,7 +193,8 @@ enum SettingsSyncRegistry {
     SettingsSyncStateKey.deviceID: "sync metadata",
     SettingsSyncStateKey.localState: "sync metadata",
     SettingsSyncStateKey.lastSyncedAt: "sync metadata",
-    SettingsSyncStateKey.clock: "sync metadata",
+    SettingsSyncStateKey.counter: "sync metadata",
+    SettingsSyncStateKey.legacyClock: "sync metadata (schema 1, deleted on launch)",
     SettingsSyncStateKey.firstEnableMode: "sync metadata"
   ]
 
@@ -249,8 +250,10 @@ enum SettingsSyncStateKey {
   static let deviceID = "settingsSync.deviceID"
   static let localState = "settingsSync.localState"
   static let lastSyncedAt = "settingsSync.lastSyncedAt"
-  /// Highest timestamp seen in milliseconds, for the hybrid logical clock.
-  static let clock = "settingsSync.clock"
+  /// This Mac's Lamport counter: highest counter issued or accepted.
+  static let counter = "settingsSync.counter"
+  /// Schema 1 wall-clock "clock"; only referenced so it can be deleted.
+  static let legacyClock = "settingsSync.clock"
   /// The unfinished first-enable choice, kept until a sync succeeds.
   static let firstEnableMode = "settingsSync.firstEnableMode"
 }
