@@ -297,7 +297,7 @@ actor DictationController {
         fileURL: URL,
         settings: TranscriptionSettings
     ) async throws -> String {
-        let choice = QwenASRFallback.choice()
+        let choice = QwenASRFallback.choice(language: settings.language)
         AppLog.dictation.error("Qwen unusable (\(qwenError.localizedDescription, privacy: .public)); falling back to \(choice.label, privacy: .public)")
         guard let fallback = QwenASRFallback.provider(for: choice, groq: fileFallbackTranscriber) else {
             await reportRecoveryFailure("Qwen failed and no fallback engine is available.")

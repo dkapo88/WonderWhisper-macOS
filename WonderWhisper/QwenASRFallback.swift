@@ -20,16 +20,20 @@ enum QwenASRFallback {
     }
   }
 
-  /// Prefers the user's selected Parakeet model, then any other downloaded one.
+  /// Prefers the user's selected Parakeet model, then any other downloaded one,
+  /// but only models that can transcribe `language` (the dictation's language
+  /// setting). An English-only model never gets non-English speech: if no
+  /// downloaded Parakeet model fits, Groq Whisper (multilingual) is used.
   static func choice(
+    language: String?,
     selectedParakeet: ParakeetModelKind = ParakeetModelKind.selected,
     parakeetPresent: (ParakeetModelKind) -> Bool = { ParakeetManager.modelsPresent(for: $0) }
   ) -> Choice {
-    if ParakeetManager.isLinked {
-      if parakeetPresent(selectedParakeet) { return .parakeet(selectedParakeet) }
-      if let other = ParakeetModelKind.allCases.first(where: parakeetPresent) {
-        return .parakeet(other)
-      }
+    guard ParakeetManager.isLinked else { return .groq }
+    let candidates = [selectedParakeet] + ParakeetModelKind.allCases
+    for kind in candidates
+    where kind.qwenFallbackSupports(language: language) && parakeetPresent(kind) {
+      return .parakeet(kind)
     }
     return .groq
   }
@@ -79,5 +83,21 @@ enum QwenASRFallback {
     default:
       return "Qwen failed its load check, so this dictation used \(choice.label)."
     }
+  }
+}
+
+extension ParakeetModelKind {
+  /// Unified is the only English-only Parakeet model; every other kind (v3
+  /// here, Ultra after the FluidAudio 0.17 bump) is multilingual. Keyed off
+  /// `.unified`, which exists on both branches, so it merges cleanly.
+  var isEnglishOnly: Bool { self == .unified }
+
+  /// Whether this model can transcribe `language` (a Settings language code
+  /// such as "en-US", "fr" or "auto"). Auto-detect and English fit every
+  /// model; anything else needs a multilingual one.
+  func qwenFallbackSupports(language: String?) -> Bool {
+    guard isEnglishOnly else { return true }
+    guard let hint = QwenASRManager.languageHint(for: language) else { return true }
+    return hint == "en"
   }
 }

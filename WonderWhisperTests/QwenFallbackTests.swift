@@ -24,17 +24,44 @@ struct QwenFallbackTests {
   )
 
   @Test func prefersSelectedParakeetWhenDownloaded() {
-    let choice = QwenASRFallback.choice(selectedParakeet: .unified) { _ in true }
+    let choice = QwenASRFallback.choice(language: "en", selectedParakeet: .unified) { _ in true }
     #expect(choice == .parakeet(.unified))
   }
 
   @Test func usesAnyDownloadedParakeetWhenSelectedIsMissing() {
-    let choice = QwenASRFallback.choice(selectedParakeet: .unified) { $0 == multilingual }
+    let choice = QwenASRFallback.choice(language: "en", selectedParakeet: .unified) { $0 == multilingual }
     #expect(choice == .parakeet(multilingual))
   }
 
   @Test func fallsBackToGroqWithoutParakeet() {
-    #expect(QwenASRFallback.choice(selectedParakeet: .unified) { _ in false } == .groq)
+    #expect(QwenASRFallback.choice(language: "en", selectedParakeet: .unified) { _ in false } == .groq)
+  }
+
+  /// Review finding 1: French with Unified selected and both models downloaded
+  /// used to pick English-only Unified.
+  @Test func nonEnglishSkipsEnglishOnlyParakeet() {
+    for language in ["fr", "fr-FR", "zh", "de_DE"] {
+      let both = QwenASRFallback.choice(language: language, selectedParakeet: .unified) { _ in true }
+      #expect(both == .parakeet(multilingual), "language \(language)")
+      let onlyUnified = QwenASRFallback.choice(
+        language: language, selectedParakeet: .unified
+      ) { $0 == .unified }
+      #expect(onlyUnified == .groq, "language \(language)")
+    }
+  }
+
+  @Test func englishAndAutoKeepTheSelectedModel() {
+    for language in ["en", "en-US", "auto", nil] as [String?] {
+      let choice = QwenASRFallback.choice(language: language, selectedParakeet: .unified) { _ in true }
+      #expect(choice == .parakeet(.unified), "language \(language ?? "nil")")
+    }
+  }
+
+  @Test func englishOnlyCapabilityIsKindAgnostic() {
+    #expect(ParakeetModelKind.unified.isEnglishOnly)
+    #expect(ParakeetModelKind.allCases.filter(\.isEnglishOnly) == [.unified])
+    #expect(multilingual.qwenFallbackSupports(language: "ja"))
+    #expect(!ParakeetModelKind.unified.qwenFallbackSupports(language: "ja"))
   }
 
   @Test func providerAndSettingsMatchChoice() async throws {
