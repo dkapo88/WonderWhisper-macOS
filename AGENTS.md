@@ -28,10 +28,10 @@ in `SettingsSyncRegistry.synced` travel (vocabulary, Dictation/Command prompts a
 favorite/selected models, transcription engine/language, meeting models and prompt, Beeper chats
 and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` documents what stays
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
-debug flags). API keys never leave the Keychain. Each key carries `modifiedAt` + `deviceID` and
-merges last-writer-wins; timestamps come from a hybrid logical clock (never earlier than anything
-already seen, and never trusting anything over 24 h ahead of wall time), so clock skew can't
-make an older edit win. Local edits, including resets, are
+debug flags). API keys never leave the Keychain. Each key carries a Lamport `counter` + `deviceID`
+and merges last-writer-wins on `(counter, deviceID)`. Every edit is stamped `max(local counter,
+highest counter seen in the file) + 1`, and wall time is display-only, so clock skew can't change a
+winner. Counters more than 10^9 ahead are rejected as corrupt. Local edits, including resets, are
 stamped when the defaults change is observed and uploaded after a 2 s debounce. Each sync reads,
 merges (including unresolved iCloud conflict versions) and writes inside one coordinated
 transaction. Remote edits arrive via `NSFilePresenter` plus a 30 s poll, are validated against the
@@ -42,6 +42,15 @@ value fingerprints, not flags; turning sync off cancels any in-flight sync. Firs
 exists. To sync a new preference, add its existing key and expectation to the registry and, if a
 view model caches it, re-read it in `SettingsSyncLiveApply.swift`. Tests use temp folders only
 (`SettingsSyncTests`).
+
+### Test Isolation
+Under the test runner (`AppConfig.isTestRun`), `AppConfig.defaults` is a wiped scratch suite and
+`AppStoragePaths.appSupportRoot()` resolves to a process-specific scratch directory
+(`$TMPDIR/WonderWhisperTests-<pid>/Application Support/HermesWhisper`), so tests that build real
+stores (history, Hermes chat, meetings) never touch the user's data. Preference helpers default
+to `AppConfig.defaults`, never `.standard`. `TestIsolationTests` guards this; keep new storage
+under `appSupportRoot()`. Model caches (Parakeet/FluidAudio, Qwen) still use their shared
+locations.
 
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
@@ -152,6 +161,10 @@ This repository includes Cursor-specific rules in `.cursor/rules/` covering proj
   `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
   last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
   per-Mac.
+- 2026-10-08: Replaced sync's wall-clock ordering and 24 h skew horizon with a Lamport counter
+  (settings file schema 2), retried pending conflict versions on unchanged files, recomputed
+  notices every sync, dropped the deferred reset cleanup, and isolated all app storage and
+  preferences from real user data under the test runner.
 - 2026-10-08: Hardened iCloud settings sync: batch live apply, hybrid logical clock and an
   authoritative "Replace iCloud", single coordinated read-merge-write with iCloud conflict
   versions, timestamped resets, cancellation on disable, and per-key validation of received values.
