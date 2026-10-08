@@ -185,7 +185,7 @@ final class MeetingCoordinator: ObservableObject {
       if liveObsidianContextEnabled {
         contextError = nil
         contextStatus = obsidianVaultPath == nil
-          ? "Choose an Obsidian vault in Meetings."
+          ? "Choose an Obsidian vault in Settings → Meetings."
           : "Listening for useful topics…"
         refreshVaultIndexIfNeeded()
         if let activeSession {
@@ -904,7 +904,7 @@ final class MeetingCoordinator: ObservableObject {
     cancelContextTasks()
     contextCards.removeAll()
     seenContextTerms.removeAll()
-    contextStatus = "Choose an Obsidian vault in Meetings."
+    contextStatus = "Choose an Obsidian vault in Settings → Meetings."
   }
 
   func chooseObsidianExportFolder() {
@@ -1262,7 +1262,7 @@ final class MeetingCoordinator: ObservableObject {
         suppressedFamilyMissingSince = nil
         resetDetectionState()
       }
-      lastError = "Add a Soniox API key in Settings before using Soniox for meetings."
+      lastError = "Add a Soniox API key in Settings → Transcription before using Soniox for meetings."
       statusMessage = "Soniox API key required"
       return
     }
@@ -1826,7 +1826,7 @@ final class MeetingCoordinator: ObservableObject {
       return
     }
     guard let folder = obsidianVaultURL else {
-      contextStatus = "Choose an Obsidian vault in Meetings."
+      contextStatus = "Choose an Obsidian vault in Settings → Meetings."
       return
     }
     isContextSearching = true

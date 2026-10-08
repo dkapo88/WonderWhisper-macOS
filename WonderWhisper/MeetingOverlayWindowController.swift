@@ -587,13 +587,13 @@ private struct MeetingOverlayView: View {
           ContentUnavailableView(
             "Live context is off",
             systemImage: "books.vertical",
-            description: Text("Enable it in Meetings to search your Obsidian vault.")
+            description: Text("Turn it on in Settings → Meetings to search your Obsidian vault.")
           )
         } else if coordinator.obsidianVaultPath == nil {
           ContentUnavailableView(
             "No Obsidian vault selected",
             systemImage: "folder.badge.questionmark",
-            description: Text("Choose your vault in the Meetings sidebar.")
+            description: Text("Choose your vault in Settings → Meetings.")
           )
         } else if coordinator.contextCards.isEmpty {
           HStack(spacing: 8) {

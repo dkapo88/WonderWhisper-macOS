@@ -217,7 +217,7 @@ enum QwenASRError: Error, LocalizedError {
     case .decodeFailed:
       return "Could not decode audio for Qwen3-ASR."
     case .modelNotDownloaded:
-      return "Download Qwen3-ASR 0.6B in Settings before dictating."
+      return "Download Qwen3-ASR 0.6B in Settings → Transcription before dictating."
     }
   }
 }
