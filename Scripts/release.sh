@@ -68,6 +68,7 @@ xcodebuild archive -project WonderWhisper.xcodeproj -scheme WonderWhisper \
   -configuration Release -archivePath build/WonderWhisper.xcarchive -derivedDataPath build/ \
   -destination "generic/platform=macOS" \
   -skipPackagePluginValidation \
+  -onlyUsePackageVersionsFromResolvedFile \
   ARCHS=arm64 EXCLUDED_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
   MARKETING_VERSION="$TAG" CURRENT_PROJECT_VERSION="$BUILD_VERSION"
 

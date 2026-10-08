@@ -140,6 +140,10 @@ Use `open "WonderWhisper.xcodeproj"` to launch Xcode. For a CLI build, run `xcod
 the Sparkle appcast. TAG must be `YYYY-MM-DD` with an optional `.N` same-day revision.
 Release archives are Apple Silicon only (`ARCHS=arm64 EXCLUDED_ARCHS=x86_64`). speech-swift/MLX
 cannot compile for x86_64, so never let the generic “Any Mac” destination build both slices.
+The committed `WonderWhisper.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+records the reviewed dependency graph. The release archive uses
+`-onlyUsePackageVersionsFromResolvedFile`; copy the tested candidate's lockfile when integrating
+worktrees, then commit it before releasing.
 
 Versioning is derived from the tag, not stored in the project: `2026-07-26` yields
 `CFBundleShortVersionString = 2026-07-26` and `CFBundleVersion = 2026072600` (`.1` -> `...01`).
@@ -186,6 +190,8 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Committed the tested package lockfile and made release archives enforce it so
+  stale worktree package caches cannot change the reviewed dependency versions.
 - 2026-10-08: Released 2026-10-08.1 with FluidAudio 0.17.7, Parakeet Ultra and vocabulary
   boosting, opt-in iCloud settings sync, verified Qwen loads with safe transcription fallback,
   and Sparkle 2.10.0.
