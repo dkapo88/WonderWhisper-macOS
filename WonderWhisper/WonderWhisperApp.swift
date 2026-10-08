@@ -22,7 +22,7 @@ struct WonderWhisperApp: App {
     @State private var hermesResponseWindow: HermesResponseWindowController? = nil
     @State private var meetingOverlay: MeetingOverlayWindowController? = nil
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: SettingsRouter.mainWindowID) {
             ContentView(vm: vm)
                 .onAppear {
                     if menuBar == nil { menuBar = MenuBarController(viewModel: vm) }
@@ -46,6 +46,11 @@ struct WonderWhisperApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesMenuItem()
             }
+        }
+
+        // Native Settings window: Cmd+, and the app menu's "Settings…" item come for free.
+        Settings {
+            SettingsRootView(vm: vm)
         }
     }
 }

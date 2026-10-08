@@ -17,41 +17,30 @@ struct PermissionsView: View {
   }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 18) {
-        header
-
-        VStack(alignment: .leading, spacing: 12) {
-          ForEach(requiredPermissions) { permission in
-            PermissionRow(
-              permission: permission,
-              isGranted: permissions.isGranted(permission),
-              isRequesting: isRequestingMicrophone && permission == .microphone,
-              requestAction: { request(permission) },
-              settingsAction: { permission.openSettings() }
-            )
-          }
+    SettingsPage {
+      Section {
+        ForEach(requiredPermissions) { permission in
+          PermissionRow(
+            permission: permission,
+            isGranted: permissions.isGranted(permission),
+            isRequesting: isRequestingMicrophone && permission == .microphone,
+            requestAction: { request(permission) },
+            settingsAction: { permission.openSettings() }
+          )
         }
+      } header: {
+        Text("macOS permissions")
+      } footer: {
+        Text("WonderWhisper needs these for dictation, meeting audio, context capture, "
+          + "shortcuts, and text insertion. Status refreshes when you return to the app.")
+          .settingsFootnote()
       }
-      .padding(24)
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onAppear(perform: refresh)
     .onReceive(
       NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
     ) { _ in
       refresh()
-    }
-  }
-
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Text("Permissions")
-        .font(.title2.weight(.semibold))
-      Text("WonderWhisper needs these macOS permissions for dictation, meeting audio, context capture, hotkeys, and text insertion.")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
@@ -92,6 +81,14 @@ struct PermissionsView: View {
   }
 }
 
+extension PermissionsView {
+  /// Titles of required permissions that are not granted yet, for the main-window banner.
+  static func missingPermissionTitles() -> [String] {
+    let status = AppPermissionStatus.current()
+    return AppPermission.allCases.filter { !status.isGranted($0) }.map(\.title)
+  }
+}
+
 private struct PermissionRow: View {
   let permission: AppPermission
   let isGranted: Bool
@@ -100,54 +97,28 @@ private struct PermissionRow: View {
   let settingsAction: () -> Void
 
   var body: some View {
-    GroupBox {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .top, spacing: 12) {
-          Image(systemName: isGranted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-            .font(.title3)
-            .foregroundStyle(isGranted ? .green : .orange)
-            .frame(width: 24)
-
-          VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-              Text(permission.title)
-                .font(.headline)
-
-              Text(isGranted ? "Enabled" : "Needs access")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(isGranted ? .green : .orange)
+    LabeledContent {
+      if isGranted {
+        StatusBadge(.ok, "Enabled")
+      } else {
+        HStack(spacing: DesignTokens.Spacing.xSmall) {
+          StatusBadge(.warning, "Needs access")
+          Button(action: requestAction) {
+            if isRequesting {
+              ProgressView().controlSize(.small)
+            } else {
+              Text("Request")
             }
-
-            Text(permission.detail)
-              .font(.callout)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
           }
-
-          Spacer(minLength: 12)
-        }
-
-        if !isGranted {
-          HStack(spacing: 10) {
-            Button(action: requestAction) {
-              if isRequesting {
-                ProgressView()
-                  .controlSize(.small)
-              } else {
-                Label(permission.requestTitle, systemImage: "lock.open")
-              }
-            }
-            .disabled(isRequesting)
-
-            Button(action: settingsAction) {
-              Label("Open Settings", systemImage: "gearshape")
-            }
-            .buttonStyle(.borderless)
-          }
-          .padding(.leading, 36)
+          .disabled(isRequesting)
+          .accessibilityLabel(permission.requestTitle)
+          Button("Open Settings…", action: settingsAction)
+            .accessibilityLabel("Open System Settings for \(permission.title)")
         }
       }
-      .padding(.vertical, 4)
+    } label: {
+      Text(permission.title)
+      Text(permission.detail)
     }
   }
 }
@@ -191,10 +162,10 @@ private enum AppPermission: String, CaseIterable, Identifiable {
 
   var title: String {
     switch self {
-    case .microphone: return "Microphone access"
-    case .screenRecording: return "Screen recording access"
-    case .accessibility: return "Accessibility access"
-    case .inputMonitoring: return "Input Monitoring access"
+    case .microphone: return "Microphone"
+    case .screenRecording: return "Screen Recording"
+    case .accessibility: return "Accessibility"
+    case .inputMonitoring: return "Input Monitoring"
     }
   }
 

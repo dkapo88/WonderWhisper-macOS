@@ -5,76 +5,108 @@
 //  Created by Dane Kapoor on 4/9/25.
 //
 
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var vm: DictationViewModel
-    private let simpleItems = SimpleSidebarItem.displayOrder
+  @ObservedObject var vm: DictationViewModel
+  @Environment(\.openSettings) private var openSettings
+  @Environment(\.openWindow) private var openWindow
+  @State private var missingPermissions: [String] = []
 
-    var body: some View {
-        NavigationSplitView {
-            List(selection: Binding<SimpleSidebarItem?>(
-                get: { vm.simpleSidebarSelection },
-                set: { newValue in
-                    guard let newValue else { return }
-                    vm.simpleSidebarSelection = newValue
-                }
-            )) {
-                ForEach(simpleItems, id: \.self) { item in
-                    Label(item.title, systemImage: item.systemImage)
-                        .tag(item)
-                }
+  var body: some View {
+    NavigationSplitView {
+      List(selection: selectionBinding) {
+        ForEach(SimpleSidebarItem.Group.allCases) { group in
+          Section(group.title) {
+            ForEach(group.items) { item in
+              Label(item.title, systemImage: item.systemImage)
+                .tag(item)
             }
-            .listStyle(.sidebar)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("WonderWhisper")
-        } detail: {
-            switch vm.simpleSidebarSelection {
-            case .dictation:
-                SimplePromptEditorView(vm: vm, kind: .dictation)
-                    .navigationTitle("Dictation")
-            case .command:
-                SimplePromptEditorView(vm: vm, kind: .command)
-                    .navigationTitle("Command")
-            case .codex:
-                CodexIntegrationView(vm: vm)
-                    .navigationTitle("Codex")
-            case .hermes:
-                HermesAgentView(vm: vm)
-                    .navigationTitle("Hermes")
-            case .beeper:
-                BeeperIntegrationView(vm: vm)
-                    .navigationTitle("Beeper")
-            case .meetings:
-                MeetingView(
-                    coordinator: vm.meetingCoordinator,
-                    favoriteModels: vm.favoriteOpenRouterModels
-                )
-                    .navigationTitle("Meetings")
-            case .vocabulary:
-                VocabularyView(vm: vm)
-                    .navigationTitle("Vocabulary")
-            case .history:
-                SimpleHistoryView(vm: vm)
-                    .navigationTitle("History")
-            case .comparison:
-                ModelComparisonView(vm: vm)
-                    .navigationTitle("Compare")
-            case .microphone:
-                MicrophoneSelectionView(vm: vm)
-                    .navigationTitle("Microphone")
-            case .permissions:
-                PermissionsView()
-                    .navigationTitle("Permissions")
-            case .settings:
-                SimpleModeSettingsView(vm: vm)
-                    .navigationTitle("Settings")
-            }
+          }
         }
-        .frame(minWidth: 780, minHeight: 500)
+      }
+      .listStyle(.sidebar)
+      .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        settingsButton
+      }
+    } detail: {
+      VStack(spacing: 0) {
+        if !missingPermissions.isEmpty {
+          PermissionsBanner(missing: missingPermissions) {
+            SettingsRouter.shared.show(.permissions)
+          }
+        }
+        detail
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+      .navigationTitle(vm.simpleSidebarSelection.title)
+      .navigationSubtitle(vm.simpleSidebarSelection.subtitle)
     }
+    .frame(minWidth: 780, minHeight: 500)
+    .onAppear {
+      SettingsRouter.shared.openSettingsAction = openSettings
+      SettingsRouter.shared.openWindowAction = openWindow
+      refreshPermissions()
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+    ) { _ in
+      refreshPermissions()
+    }
+  }
+
+  private var selectionBinding: Binding<SimpleSidebarItem?> {
+    Binding(
+      get: { vm.simpleSidebarSelection },
+      set: { newValue in
+        guard let newValue else { return }
+        vm.simpleSidebarSelection = newValue
+      }
+    )
+  }
+
+  private var settingsButton: some View {
+    Button {
+      SettingsRouter.shared.openSettingsWindow()
+    } label: {
+      Label("Settings", systemImage: "gearshape")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.borderless)
+    .foregroundStyle(.secondary)
+    .padding(.horizontal, DesignTokens.Spacing.medium)
+    .padding(.vertical, DesignTokens.Spacing.small)
+    .help("Open Settings (⌘,)")
+  }
+
+  @ViewBuilder
+  private var detail: some View {
+    switch vm.simpleSidebarSelection {
+    case .dictation:
+      SimplePromptEditorView(vm: vm, kind: .dictation)
+    case .command:
+      SimplePromptEditorView(vm: vm, kind: .command)
+    case .hermes:
+      HermesAgentView(vm: vm)
+    case .meetings:
+      MeetingView(coordinator: vm.meetingCoordinator)
+    case .vocabulary:
+      VocabularyView(vm: vm)
+    case .history:
+      SimpleHistoryView(vm: vm)
+    case .comparison:
+      ModelComparisonView(vm: vm)
+    }
+  }
+
+  private func refreshPermissions() {
+    missingPermissions = PermissionsView.missingPermissionTitles()
+  }
 }
 
 #Preview {
-    ContentView(vm: DictationViewModel())
+  ContentView(vm: DictationViewModel())
 }

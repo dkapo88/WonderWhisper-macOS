@@ -1,12 +1,5 @@
 import SwiftUI
 
-private enum HermesAgentSection: String, CaseIterable, Identifiable {
-  case chat = "Chat"
-  case settings = "Settings"
-
-  var id: String { rawValue }
-}
-
 private enum HermesSessionListScope: String, CaseIterable, Identifiable {
   case active = "Active"
   case archive = "Archive"
@@ -20,48 +13,50 @@ enum HermesChatScrollBehavior {
 
 struct HermesAgentView: View {
   @ObservedObject var vm: DictationViewModel
-  @State private var selectedSection: HermesAgentSection = .chat
   @State private var sessionListScope: HermesSessionListScope = .active
-  @State private var hermesKeyInput: String = ""
-  @State private var isTestingHermes: Bool = false
-  @State private var hasSavedKey: Bool = false
   @State private var showClearActiveConfirmation: Bool = false
   @State private var pendingDeleteSession: HermesChatSession?
   @State private var textReplyDrafts: [UUID: String] = [:]
-  @State private var setupPromptCopied: Bool = false
 
-  private let keychain = KeychainService()
   private let chatBottomID = HermesChatScrollBehavior.bottomAnchorID
   private let sessionListWidth: CGFloat = 280
   private let messageSideInset: CGFloat = 64
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      sectionPicker
+    chatSection
+      .toolbar {
+        ToolbarItemGroup(placement: .primaryAction) {
+          if vm.hermesIsSending {
+            ProgressView().controlSize(.small)
+          }
+          Button {
+            sessionListScope = .active
+            vm.startNewHermesSessionRecording()
+          } label: {
+            Label("New Session", systemImage: "plus")
+          }
+          .disabled(!vm.hermesAgentEnabled)
+          .help(vm.hermesAgentEnabled
+            ? "Record a new Hermes session"
+            : "Turn on Hermes in Settings → Integrations")
 
-      switch selectedSection {
-      case .chat:
-        chatSection
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-          .layoutPriority(1)
-      case .settings:
-        ScrollView {
-          settingsSection
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 24)
+          if !vm.activeHermesSessions.isEmpty {
+            Button {
+              showClearActiveConfirmation = true
+            } label: {
+              Label("Archive Active", systemImage: "archivebox")
+            }
+            .help("Archive all active Hermes sessions")
+          }
+
+          Button {
+            SettingsRouter.shared.show(.integrations, integration: .hermes)
+          } label: {
+            Label("Hermes Settings", systemImage: "gearshape")
+          }
+          .help("Hermes settings")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .layoutPriority(1)
       }
-    }
-    .padding(.horizontal, 24)
-    .padding(.top, 12)
-    .padding(.bottom, 24)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .onAppear {
-      selectedSection = .chat
-      refreshKeyStatus()
-    }
     .onChange(of: sessionListScope) { _, _ in
       selectFirstDisplayedSession()
     }
@@ -101,88 +96,43 @@ struct HermesAgentView: View {
     }
   }
 
-  private var sectionPicker: some View {
-    Picker("Hermes section", selection: $selectedSection) {
-      ForEach(HermesAgentSection.allCases) { section in
-        Text(section.rawValue).tag(section)
-      }
-    }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .accessibilityLabel("Hermes section")
-    .frame(maxWidth: 160)
-  }
-
   private var chatSection: some View {
-    GroupBox {
-      VStack(alignment: .leading, spacing: 14) {
-        chatToolbar
+    Group {
+      if vm.hermesSessions.isEmpty {
+        emptyChatView
+      } else {
+        HStack(alignment: .top, spacing: 0) {
+          sessionListView
+            .frame(width: sessionListWidth)
+            .frame(maxHeight: .infinity)
+            .padding(DesignTokens.Spacing.small)
 
-        if vm.hermesSessions.isEmpty {
-          emptyChatView
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          HStack(alignment: .top, spacing: 14) {
-            sessionListView
-              .frame(width: sessionListWidth)
-              .frame(maxHeight: .infinity)
+          Divider()
 
-            Divider()
-              .frame(maxHeight: .infinity)
-
-            selectedSessionView
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-              .layoutPriority(1)
-          }
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+          selectedSessionView
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(DesignTokens.Spacing.medium)
+            .layoutPriority(1)
         }
       }
-      .padding(.top, 4)
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
-  private var chatToolbar: some View {
-    HStack(spacing: 10) {
-      Label("Chat", systemImage: "bubble.left.and.bubble.right.fill")
-        .font(.headline)
-
-      if vm.hermesIsSending {
-        ProgressView()
-          .controlSize(.small)
-      }
-
-      Spacer()
-
-      Button(action: {
-        sessionListScope = .active
-        vm.startNewHermesSessionRecording()
-      }) {
-        Label("New", systemImage: "plus.circle.fill")
-      }
-      .disabled(!vm.hermesAgentEnabled)
-
-      if !vm.activeHermesSessions.isEmpty {
-        Button(action: { showClearActiveConfirmation = true }) {
-          Label("Clear Active", systemImage: "archivebox")
-        }
-        .help("Archive all active Hermes sessions")
-      }
-    }
-  }
-
   private var emptyChatView: some View {
-    VStack(spacing: 10) {
-      Image(systemName: "bubble.left.and.bubble.right")
-        .font(.system(size: 34, weight: .regular))
-        .foregroundColor(.secondary)
-
-      Text("No Hermes messages yet.")
-        .font(.callout.weight(.medium))
-        .foregroundColor(.secondary)
+    ContentUnavailableView {
+      Label("No Hermes sessions yet", systemImage: "bubble.left.and.bubble.right")
+    } description: {
+      Text(vm.hermesAgentEnabled
+        ? "Use the Hermes shortcut or New Session to start talking."
+        : "Turn on Hermes in Settings → Integrations to start a session.")
+    } actions: {
+      if !vm.hermesAgentEnabled {
+        Button("Open Hermes Settings") {
+          SettingsRouter.shared.show(.integrations, integration: .hermes)
+        }
+      }
     }
-    .frame(maxWidth: .infinity, minHeight: 280)
   }
 
   private var sessionListView: some View {
@@ -590,281 +540,12 @@ struct HermesAgentView: View {
     }
   }
 
-  private var settingsSection: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      setupPromptSection
-      connectionSection
-      contextSection
-      hotkeySection
-    }
-  }
-
-  private var setupPromptSection: some View {
-    GroupBox("Setup prompt") {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .firstTextBaseline) {
-          Text("Copy this prompt and give it to Hermes to get the settings values for this app.")
-            .font(.callout)
-            .foregroundColor(.secondary)
-          Spacer()
-          Button {
-            HermesResponseClipboard.copyRaw(Self.hermesSetupPrompt)
-            setupPromptCopied = true
-            Task { @MainActor in
-              try? await Task.sleep(nanoseconds: 1_500_000_000)
-              setupPromptCopied = false
-            }
-          } label: {
-            Label(
-              setupPromptCopied ? "Copied" : "Copy Prompt",
-              systemImage: setupPromptCopied ? "checkmark" : "doc.on.doc"
-            )
-          }
-        }
-
-        Text(Self.hermesSetupPrompt)
-          .font(.system(.caption, design: .monospaced))
-          .textSelection(.enabled)
-          .padding(10)
-          .frame(maxWidth: 720, alignment: .leading)
-          .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-              .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
-          )
-      }
-      .padding(.top, 4)
-    }
-  }
-
-  private var connectionSection: some View {
-    GroupBox("Connection") {
-      VStack(alignment: .leading, spacing: 12) {
-        Toggle("Enable Hermes agent", isOn: $vm.hermesAgentEnabled)
-
-        TextField("Hermes API base URL", text: $vm.hermesBaseURLString)
-          .textFieldStyle(.roundedBorder)
-          .frame(maxWidth: 440)
-
-        HStack(alignment: .top, spacing: 12) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text("Conversation prefix")
-              .font(.caption)
-              .foregroundColor(.secondary)
-            TextField(AppConfig.defaultHermesConversationName, text: $vm.hermesConversationName)
-              .textFieldStyle(.roundedBorder)
-              .frame(maxWidth: 240)
-              .help("Used as the prefix for new Hermes conversation names.")
-          }
-
-          VStack(alignment: .leading, spacing: 4) {
-            Text("Agent profile")
-              .font(.caption)
-              .foregroundColor(.secondary)
-            TextField("Default profile", text: $vm.hermesProfileName)
-              .textFieldStyle(.roundedBorder)
-              .frame(maxWidth: 190)
-              .help("Leave blank for the server default. Set this to the profile/model name advertised by /v1/models.")
-          }
-        }
-
-        Text("A typed profile is sent as the Hermes API model and checked during Test connection.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        HStack(spacing: 8) {
-          Text("Timeout")
-            .font(.callout)
-
-          TextField(
-            "\(Int(HermesAgentSettings.defaultTimeout / 60))",
-            value: hermesTimeoutMinutesBinding,
-            format: .number
-          )
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 72)
-
-          Text("minutes")
-            .font(.callout)
-            .foregroundColor(.secondary)
-        }
-        .help("Hermes request timeout, in whole minutes.")
-
-        HStack(spacing: 6) {
-          Text(hasSavedKey ? "Bearer key: Saved" : "Bearer key: Not saved")
-            .font(.callout.weight(.semibold))
-            .foregroundColor(hasSavedKey ? .green : .secondary)
-          if hasSavedKey {
-            Image(systemName: "checkmark.seal.fill")
-              .foregroundColor(.green)
-          }
-        }
-
-        HStack(spacing: 10) {
-          SecureField("Hermes API server key", text: $hermesKeyInput)
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 320)
-
-          Button("Save key") {
-            vm.saveHermesApiKey(hermesKeyInput)
-            hermesKeyInput = ""
-            refreshKeyStatus()
-          }
-          .disabled(hermesKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-          Button(action: testHermesConnection) {
-            if isTestingHermes {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Label("Test", systemImage: "bolt.horizontal.circle")
-            }
-          }
-          .disabled(isTestingHermes)
-        }
-
-        if let status = vm.hermesConnectionStatus {
-          Label(status, systemImage: statusIcon)
-            .font(.callout)
-            .foregroundColor(statusColor)
-            .textSelection(.enabled)
-        }
-
-        Text("Enter your local gateway or remote Hermes server URL. URLs ending in `/v1` also work.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .textSelection(.enabled)
-      }
-      .padding(.top, 4)
-    }
-  }
-
-  private var hotkeySection: some View {
-    GroupBox("Dedicated Hotkey") {
-      VStack(alignment: .leading, spacing: 10) {
-        Picker("Activation key", selection: hermesSelectionBinding) {
-          Text("None").tag(HotkeyManager.Selection?.none)
-          ForEach(HotkeyManager.Selection.allCases, id: \.self) { option in
-            Text(hotkeyTitle(for: option))
-              .tag(Optional(option))
-              .disabled(isReserved(option))
-          }
-        }
-        .labelsHidden()
-        .frame(maxWidth: 300)
-
-        if let selection = vm.hermesSelection {
-          HStack {
-            Text("Current: \(selection.displayName)")
-              .font(.caption)
-              .foregroundColor(.secondary)
-            Spacer()
-            Button("Clear") {
-              vm.setHermesSelection(nil)
-            }
-            .buttonStyle(.borderless)
-          }
-        } else {
-          Text("No Hermes hotkey assigned.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
-
-        Text("Hermes uses its own hotkey and no longer takes over the Command shortcut.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      .padding(.top, 4)
-    }
-  }
-
-  private var contextSection: some View {
-    GroupBox("Context") {
-      VStack(alignment: .leading, spacing: 10) {
-        Toggle("Screen text context", isOn: $vm.hermesScreenContextEnabled)
-          .toggleStyle(.checkbox)
-        Toggle("Screenshot image", isOn: $vm.hermesScreenshotEnabled)
-          .toggleStyle(.checkbox)
-        Toggle("Copied text / clipboard", isOn: $vm.hermesClipboardContextEnabled)
-          .toggleStyle(.checkbox)
-        HStack(spacing: 8) {
-          Text("Copied text timeout")
-            .font(.callout)
-          TextField(
-            "\(Int(HermesClipboardContextPolicy.defaultRetentionWindow))",
-            value: $vm.hermesClipboardTimeoutSeconds,
-            format: .number.precision(.fractionLength(0))
-          )
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 72)
-          Text("seconds")
-            .font(.callout)
-            .foregroundColor(.secondary)
-          Stepper(
-            "",
-            value: $vm.hermesClipboardTimeoutSeconds,
-            in: HermesClipboardContextPolicy.minimumRetentionWindow...HermesClipboardContextPolicy.maximumRetentionWindow,
-            step: 1
-          )
-          .labelsHidden()
-        }
-        .disabled(!vm.hermesClipboardContextEnabled)
-        Toggle("LLM post-processing", isOn: $vm.hermesPostProcessingEnabled)
-          .toggleStyle(.checkbox)
-
-        Text("Copied text is included only when the Hermes hotkey starts recording within the configured timeout.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      .padding(.top, 4)
-    }
-  }
-
-  private var hermesSelectionBinding: Binding<HotkeyManager.Selection?> {
-    Binding(
-      get: { vm.hermesSelection },
-      set: { vm.setHermesSelection($0) }
-    )
-  }
-
   private func textReplyDraftBinding(for sessionID: UUID) -> Binding<String> {
     Binding(
       get: { textReplyDrafts[sessionID] ?? "" },
       set: { textReplyDrafts[sessionID] = $0 }
     )
   }
-
-  private static let hermesSetupPrompt = """
-I am setting up WonderWhisper, a macOS voice client that connects to a Hermes Agent API server.
-
-Please help me find the exact connection settings I should enter in the WonderWhisper settings page:
-
-1. Hermes API base URL
-   * Give me the base URL for the Hermes API server.
-   * Tell me whether I should enter the root URL or the `/v1` URL.
-   * Confirm whether the URL is local-only, LAN/VPN-only, or publicly reachable.
-
-2. API server key
-   * Tell me whether this Hermes server requires a bearer API key.
-   * If a key already exists, tell me where to retrieve it securely.
-   * If I need to create one, give me the exact command or config steps.
-   * Do not print a production secret unless I explicitly ask you to reveal it.
-
-3. Conversation prefix
-   * Recommend a short conversation prefix for this Mac client.
-   * Explain whether the prefix affects session persistence, routing, or only naming.
-
-4. Agent profile
-   * List the available Hermes agent profiles/models from `/v1/models`.
-   * Tell me what value to put in the Agent profile field.
-   * If the field should be blank to use the server default profile, say that clearly.
-
-Please return the answer as a small table with these exact fields:
-* Hermes API base URL
-* API key source or creation command
-* Conversation prefix
-* Agent profile
-* Notes
-"""
 
   private func sendTextReply(for session: HermesChatSession) {
     let text = textReplyDrafts[session.id] ?? ""
@@ -876,24 +557,6 @@ Please return the answer as a small table with these exact fields:
     // him why; this only stops the text going with it.
     guard vm.sendHermesTextReply(trimmed, to: session.id) else { return }
     textReplyDrafts[session.id] = ""
-  }
-
-  private var statusIcon: String {
-    switch vm.hermesConnectionSucceeded {
-    case true: return "checkmark.circle.fill"
-    case false: return "xmark.octagon.fill"
-    case nil: return "info.circle.fill"
-    case .some: return "info.circle.fill"
-    }
-  }
-
-  private var statusColor: Color {
-    switch vm.hermesConnectionSucceeded {
-    case true: return .green
-    case false: return .red
-    case nil: return .secondary
-    case .some: return .secondary
-    }
   }
 
   private func roleTitle(for role: HermesChatMessage.Role) -> String {
@@ -968,20 +631,6 @@ Please return the answer as a small table with these exact fields:
     vm.selectHermesSession(displayedSessions.first?.id)
   }
 
-  private func hotkeyTitle(for option: HotkeyManager.Selection) -> String {
-    if option == vm.simpleDictation.selection {
-      return "\(option.displayName) (Dictation)"
-    }
-    if option == vm.simpleCommand.selection {
-      return "\(option.displayName) (Command)"
-    }
-    return option.displayName
-  }
-
-  private func isReserved(_ option: HotkeyManager.Selection) -> Bool {
-    option == vm.simpleDictation.selection || option == vm.simpleCommand.selection
-  }
-
   private func scrollChatToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
     let scroll = {
       if animated {
@@ -1000,45 +649,6 @@ Please return the answer as a small table with these exact fields:
       }
     }
   }
-
-  private func refreshKeyStatus() {
-    hasSavedKey = keychain.getSecret(forKey: AppConfig.hermesAPIKeyAlias) != nil
-  }
-
-  private func testHermesConnection() {
-    refreshKeyStatus()
-    isTestingHermes = true
-    Task {
-      await vm.testHermesConnection()
-      await MainActor.run {
-        refreshKeyStatus()
-        isTestingHermes = false
-      }
-    }
-  }
-
-  private var hermesTimeoutMinutesBinding: Binding<Int> {
-    Binding(
-      get: {
-        let minutes = Int((vm.hermesTimeoutSeconds / 60).rounded())
-        return Self.clampedHermesTimeoutMinutes(minutes)
-      },
-      set: { minutes in
-        let clampedMinutes = Self.clampedHermesTimeoutMinutes(minutes)
-        vm.hermesTimeoutSeconds = Double(clampedMinutes * 60)
-      }
-    )
-  }
-
-  private static func clampedHermesTimeoutMinutes(_ minutes: Int) -> Int {
-    min(max(minutes, hermesTimeoutMinuteRange.lowerBound), hermesTimeoutMinuteRange.upperBound)
-  }
-
-  private static let hermesTimeoutMinuteRange: ClosedRange<Int> = {
-    let lower = max(1, Int((HermesAgentSettings.minimumTimeout / 60).rounded(.up)))
-    let upper = max(lower, Int(HermesAgentSettings.maximumTimeout / 60))
-    return lower...upper
-  }()
 
   private static let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()

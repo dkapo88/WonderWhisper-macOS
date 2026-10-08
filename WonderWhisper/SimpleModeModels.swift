@@ -23,33 +23,44 @@ enum SimplePromptKind: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SimpleSidebarItem: String, CaseIterable, Identifiable {
-  case codex
-  case hermes
-  case beeper
-  case meetings
   case history
-  case comparison
+  case meetings
   case dictation
   case command
+  case hermes
   case vocabulary
-  case microphone
-  case permissions
-  case settings
+  case comparison
 
-  static let displayOrder: [SimpleSidebarItem] = [
-    .history,
-    .dictation,
-    .command,
-    .meetings,
-    .codex,
-    .beeper,
-    .hermes,
-    .vocabulary,
-    .microphone,
-    .comparison,
-    .permissions,
-    .settings
-  ]
+  /// Sidebar groups, in display order. Configuration lives in the Settings window (Cmd+,);
+  /// the sidebar holds work surfaces only.
+  enum Group: String, CaseIterable, Identifiable {
+    case library
+    case modes
+    case agents
+    case tools
+
+    var id: String { rawValue }
+
+    var title: String {
+      switch self {
+      case .library: return "Library"
+      case .modes: return "Modes"
+      case .agents: return "Agents"
+      case .tools: return "Tools"
+      }
+    }
+
+    var items: [SimpleSidebarItem] {
+      switch self {
+      case .library: return [.history, .meetings]
+      case .modes: return [.dictation, .command]
+      case .agents: return [.hermes]
+      case .tools: return [.vocabulary, .comparison]
+      }
+    }
+  }
+
+  static let displayOrder: [SimpleSidebarItem] = Group.allCases.flatMap(\.items)
 
   var id: String { rawValue }
 
@@ -57,33 +68,36 @@ enum SimpleSidebarItem: String, CaseIterable, Identifiable {
     switch self {
     case .dictation: return "Dictation"
     case .command: return "Command"
-    case .codex: return "Codex"
     case .hermes: return "Hermes"
-    case .beeper: return "Beeper"
     case .meetings: return "Meetings"
     case .vocabulary: return "Vocabulary"
     case .history: return "History"
     case .comparison: return "Compare"
-    case .microphone: return "Microphone"
-    case .permissions: return "Permissions"
-    case .settings: return "Settings"
+    }
+  }
+
+  /// One-line description shown as the window subtitle.
+  var subtitle: String {
+    switch self {
+    case .dictation: return "How dictation is cleaned up before it's inserted"
+    case .command: return "How selected or on-screen text is transformed"
+    case .hermes: return "Conversations with your Hermes agent"
+    case .meetings: return "Recorded meetings, transcripts, and notes"
+    case .vocabulary: return "Names and spellings for every mode"
+    case .history: return "Recent dictations"
+    case .comparison: return "Run one recording through several models"
     }
   }
 
   var systemImage: String {
     switch self {
-    case .dictation: return "mic.fill"
+    case .dictation: return "mic"
     case .command: return "wand.and.stars"
-    case .codex: return "terminal.fill"
     case .hermes: return "sparkles"
-    case .beeper: return "paperplane.fill"
-    case .meetings: return "person.2.wave.2.fill"
-    case .vocabulary: return "book.closed"
-    case .history: return "clock.arrow.circlepath"
-    case .comparison: return "rectangle.split.3x1"
-    case .microphone: return "waveform"
-    case .permissions: return "checkmark.shield"
-    case .settings: return "gearshape.fill"
+    case .meetings: return "person.2"
+    case .vocabulary: return "character.book.closed"
+    case .history: return "clock"
+    case .comparison: return "square.split.2x1"
     }
   }
 }
