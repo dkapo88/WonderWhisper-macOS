@@ -53,6 +53,8 @@ struct SettingsSyncFileStore: Sendable {
     var repairedKeys: Set<String> = []
     /// A new version was needed but counters are at the ceiling.
     var exhausted = false
+    var needsReservation = false
+    var reservationFloor: SettingsSyncVersion?
   }
 
   /// Backup of a blocked entry's raw JSON, next to settings.json.
@@ -217,7 +219,9 @@ struct SettingsSyncFileStore: Sendable {
     outcome.pendingConflicts = plan.pendingConflicts
     outcome.blockedKeys = plan.blockedKeys
     outcome.exhausted = plan.exhausted
-    guard !plan.documentAppeared else { return outcome }
+    outcome.needsReservation = plan.needsReservation
+    outcome.reservationFloor = plan.reservationFloor
+    guard !plan.documentAppeared, !plan.needsReservation else { return outcome }
     // Keep a copy of every undecodable entry before anything can replace it.
     for (key, raw) in plan.blockedRaw {
       let backup = blockedBackupURL(for: key)

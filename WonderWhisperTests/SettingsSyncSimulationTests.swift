@@ -42,6 +42,9 @@ struct SettingsSyncSimulationTests {
     #expect(coverage.loggedEdits > 4_000)
     #expect(coverage.inFlightEdits > 500)
     #expect(coverage.inFlightUndos > 50)
+    #expect(coverage.unagreedInFlightEdits > 500)
+    #expect(coverage.firstEnableInFlightEdits > 500)
+    #expect(coverage.readdedInFlightEdits > 200)
     #expect(coverage.conflictVersions > 200)
     #expect(coverage.suppressedHops > 500)
     #expect(coverage.allowlistChanges > 500)
@@ -122,12 +125,18 @@ private struct Simulation {
     var expectedClock: SettingsSyncVersion?
     /// Keys this Mac has agreed state for (set by a completed sync, cleared on enable).
     var knownKeys: Set<String> = []
+    /// Independent observations of genuine edits to keys awaiting their first baseline.
+    var transactionSnapshot: SettingsSyncEngine.Values?
+    var deferredEdits: Set<String> = []
   }
 
   struct Coverage: CustomStringConvertible {
     var loggedEdits = 0
     var inFlightEdits = 0
     var inFlightUndos = 0
+    var unagreedInFlightEdits = 0
+    var firstEnableInFlightEdits = 0
+    var readdedInFlightEdits = 0
     var conflictVersions = 0
     var suppressedHops = 0
     var allowlistChanges = 0
@@ -140,6 +149,9 @@ private struct Simulation {
       loggedEdits += other.loggedEdits
       inFlightEdits += other.inFlightEdits
       inFlightUndos += other.inFlightUndos
+      unagreedInFlightEdits += other.unagreedInFlightEdits
+      firstEnableInFlightEdits += other.firstEnableInFlightEdits
+      readdedInFlightEdits += other.readdedInFlightEdits
       conflictVersions += other.conflictVersions
       suppressedHops += other.suppressedHops
       allowlistChanges += other.allowlistChanges
@@ -151,7 +163,8 @@ private struct Simulation {
 
     var description: String {
       "edits \(loggedEdits), in-flight \(inFlightEdits) (undos \(inFlightUndos)), conflicts "
-        + "\(conflictVersions), suppressed hops \(suppressedHops), allowlist changes "
+        + "\(conflictVersions), un-agreed in-flight \(unagreedInFlightEdits), first-enable "
+        + "\(firstEnableInFlightEdits), re-added \(readdedInFlightEdits), suppressed hops \(suppressedHops), allowlist changes "
         + "\(allowlistChanges), schema-1 rewrites \(schemaOneRewrites), relaunches "
         + "\(relaunches), replace \(replaceChoices), adopt \(adoptChoices)"
     }
@@ -291,17 +304,27 @@ private struct Simulation {
     let mac = macs[index]
     let versioned = mac.enabled && mac.allowlist.contains(key) && mac.knownKeys.contains(key)
     note(index)
-    guard versioned, old?.fingerprint != value?.fingerprint else { return }
+    guard old?.fingerprint != value?.fingerprint else { return }
+    if inFlight {
+      coverage.inFlightEdits += 1
+      if mac.transactionSnapshot?[key] == .some(value) { coverage.inFlightUndos += 1 }
+    }
+    if !versioned {
+      if inFlight, mac.enabled, mac.allowlist.contains(key) {
+        macs[index].deferredEdits.insert(key)
+        coverage.unagreedInFlightEdits += 1
+        if mac.firstEnableMode != nil {
+          coverage.firstEnableInFlightEdits += 1
+        } else {
+          coverage.readdedInFlightEdits += 1
+        }
+      }
+      return
+    }
     let expected = successor(macs[index].expectedClock, mac.id)
     macs[index].expectedClock = expected
     log(key, expected, value)
     coverage.loggedEdits += 1
-    if inFlight {
-      coverage.inFlightEdits += 1
-      if macs[index].engine.records[key]?.fingerprint == value?.fingerprint {
-        coverage.inFlightUndos += 1
-      }
-    }
     let actual = macs[index].engine.pending[key]?.version
     if actual != expected {
       failure = "\(mac.id) edit of \(key) got version \(String(describing: actual)), "
@@ -346,7 +369,8 @@ private struct Simulation {
   /// Installs an app version that doesn't sync `droppableKey`, or the current one again.
   mutating func changeAllowlist(_ index: Int) throws {
     let key = SettingsSyncSimulationTests.droppableKey
-    if macs[index].allowlist.contains(key) {
+    let readding = !macs[index].allowlist.contains(key)
+    if !readding {
       // Its edits of the key that never reached any file are discarded with the key (decided
       // from what was written to files, not from the engine).
       let stored = everStored[key] ?? []
@@ -361,6 +385,7 @@ private struct Simulation {
     coverage.allowlistChanges += 1
     trace.append("\(macs[index].id) allowlist \(macs[index].allowlist.sorted())")
     try relaunch(index)
+    if readding { try sync(index, interleave: true) }
   }
 
   /// An old app version rewrites the file in schema 1 (counters lost, values kept). Only in a
@@ -439,35 +464,54 @@ private struct Simulation {
     let mode = mac.firstEnableMode ?? .normal
     trace.append("\(mac.id) sync \(mode.rawValue)\(mac.online ? "" : " (offline)")")
     let snapshot = syncedValues(mac)
-    let snapshotVersion = mac.engine.latest
+    macs[index].transactionSnapshot = snapshot
+    macs[index].deferredEdits = []
+    macs[index].engine.beginTransaction(snapshot)
     let candidates = mac.engine.candidates(snapshot, mode: mode.mergeMode)
-    // Edits interleave only on keys this Mac already has agreed state for: an edit to a key
-    // that is still unknown is (correctly) stamped at the first observation after completion,
-    // which this independent model doesn't predict.
-    let interleavable = mac.knownKeys.intersection(mac.allowlist)
-    let canInterleave = interleave && mode == .normal && !interleavable.isEmpty
-    if canInterleave {
-      for _ in 0..<Int.random(in: 0...2, using: &rng) {
-        edit(index, among: interleavable, inFlight: true)
-      }
-    }
+    let interleavable = mac.allowlist
+    let awaitingBaseline = mac.allowlist.subtracting(mac.knownKeys)
+    let canInterleave = interleave && !interleavable.isEmpty
 
-    // Independent expectation of what this merge must stamp (computed before planning).
-    let visible = try visibleDocument(macs[index])
+    // The oracle independently decides which explicit/initial values need a batch stamp.
+    let visible = try visibleDocument(mac)
     let combinedMax = visible?.highestVersion
-    let expectedStamp = successor([mac.expectedClock, combinedMax].compactMap { $0 }.max(), mac.id)
     var expectedStamped: [String: SettingsSyncValue?] = [:]
     for key in mac.allowlist {
       let value = snapshot[key] ?? nil
       let inCloud = visible?.entries[key] != nil
       switch mode {
-      case .preferLocal, .resetOrdering:
+      case .preferLocal:
         if value != nil || inCloud { expectedStamped[key] = value }
       case .preferCloud:
         if value != nil, !inCloud { expectedStamped[key] = value }
       case .normal, .initialUpload:
         if value != nil, !inCloud, !mac.knownKeys.contains(key) { expectedStamped[key] = value }
       }
+    }
+
+    var versionFloor = mac.expectedClock
+    var reserved: SettingsSyncVersion?
+    if mode.mergeMode != .normal {
+      reserved = successor(macs[index].expectedClock, mac.id)
+      macs[index].expectedClock = reserved
+      let actual = macs[index].engine.reserveVersion(after: nil)
+      if actual != reserved { failure = "incorrect explicit reservation"; return }
+    }
+    let floor = [versionFloor, combinedMax].compactMap { $0 }.max()
+    if !expectedStamped.isEmpty,
+       reserved == nil || (reserved?.counter ?? 0) <= (floor?.counter ?? 0) {
+      versionFloor = macs[index].expectedClock
+      reserved = successor([versionFloor, combinedMax].compactMap { $0 }.max(), mac.id)
+      macs[index].expectedClock = reserved
+      let actual = macs[index].engine.reserveVersion(after: combinedMax)
+      if actual != reserved { failure = "incorrect retry reservation"; return }
+    }
+    let expectedStamp = reserved
+    let snapshotVersion = macs[index].expectedClock
+    if canInterleave {
+      let count = Int.random(in: awaitingBaseline.isEmpty ? 0...2 : 1...2, using: &rng)
+      let editKeys = awaitingBaseline.isEmpty ? interleavable : awaitingBaseline
+      for _ in 0..<count { edit(index, among: editKeys, inFlight: true) }
     }
 
     var input = SettingsSyncTransaction.Input(
@@ -477,7 +521,8 @@ private struct Simulation {
       timestamp: Date(timeIntervalSince1970: 0)
     )
     input.mode = mode.mergeMode
-    input.localVersion = snapshotVersion
+    input.localVersion = versionFloor
+    input.reservedVersion = reserved
     input.requireNoDocument = mode == .initialUpload
     let file = macs[index].online ? cloud.file : macs[index].replica
     let conflicts = macs[index].online ? cloud.conflicts : []
@@ -488,10 +533,15 @@ private struct Simulation {
     )
     if plan.documentAppeared {
       macs[index].engine.reset()
+      macs[index].expectedClock = nil
+      macs[index].knownKeys = []
+      macs[index].transactionSnapshot = nil
+      macs[index].deferredEdits = []
       macs[index].firstEnableMode = Bool.random(using: &rng) ? .preferCloud : .preferLocal
       trace.append("\(mac.id) document appeared; re-choosing")
       return
     }
+    if plan.needsReservation { failure = "unreserved transaction"; return }
     guard var merge = plan.merge else { return }
     if var document = plan.write {
       if fabricateRelays {
@@ -507,10 +557,12 @@ private struct Simulation {
       if Set(actual.keys) != Set(expectedStamped.keys)
         || merge.stamped.values.contains(where: { $0.version != expectedStamp }) {
         failure = "\(mac.id) \(mode.rawValue) stamped \(merge.stamped.mapValues(\.version)), "
-          + "expected \(expectedStamped.keys.sorted()) at \(expectedStamp)"
+          + "expected \(expectedStamped.keys.sorted()) at \(String(describing: expectedStamp))"
         return
       }
-      for (key, value) in expectedStamped { log(key, expectedStamp, value) }
+      if let expectedStamp {
+        for (key, value) in expectedStamped { log(key, expectedStamp, value) }
+      }
       let data = try document.encoded()
       recordStored(document)
       if macs[index].online {
@@ -520,17 +572,25 @@ private struct Simulation {
       } else {
         macs[index].replica = data
       }
-      // The clock adopts this transaction's versions only at completion: an edit made while
-      // the transaction runs is stamped from the clock as it was (it can share a counter
-      // with a stamp on a different key; versions are only ever compared within one key).
     }
-    macs[index].firstEnableMode = nil
     if canInterleave {
       for _ in 0..<Int.random(in: 0...2, using: &rng) {
         edit(index, among: interleavable, inFlight: true)
       }
     }
     note(index)
+    // Predict deferred genuine edits from the independent observations, never from pending
+    // versions returned by the engine. A fabricated relay still cannot enter this log.
+    macs[index].expectedClock = [macs[index].expectedClock, merge.document.highestVersion]
+      .compactMap { $0 }.max()
+    if !macs[index].deferredEdits.isEmpty {
+      let expected = successor(macs[index].expectedClock, mac.id)
+      macs[index].expectedClock = expected
+      for key in macs[index].deferredEdits {
+        log(key, expected, macs[index].values[key] ?? nil)
+        coverage.loggedEdits += 1
+      }
+    }
     let completion = macs[index].engine.complete(
       merge,
       candidates: candidates,
@@ -540,7 +600,10 @@ private struct Simulation {
       isValid: { _, _ in true }
     )
     for (key, value) in completion.apply { macs[index].values[key] = .some(value) }
+    macs[index].firstEnableMode = nil
     macs[index].knownKeys = macs[index].allowlist
+    macs[index].transactionSnapshot = nil
+    macs[index].deferredEdits = []
     macs[index].expectedClock = [macs[index].expectedClock, merge.document.highestVersion]
       .compactMap { $0 }.max()
     if macs[index].engine.latest != macs[index].expectedClock {

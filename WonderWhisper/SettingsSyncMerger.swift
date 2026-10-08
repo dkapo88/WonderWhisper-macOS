@@ -13,9 +13,7 @@ enum SettingsSyncMerger {
     /// "Replace iCloud": stamp this Mac's whole batch, unchanged values and resets included,
     /// above every version in the file and its conflict versions.
     case replace
-    /// "Reset Sync Ordering": like `replace`, but in a new epoch, so the batch orders above
-    /// everything before even when counters are exhausted.
-    case resetOrdering
+
   }
 
   /// This Mac's view of one setting: its current value and the version it carries, or nil
@@ -54,7 +52,8 @@ enum SettingsSyncMerger {
     localVersion: SettingsSyncVersion? = nil,
     mode: Mode = .normal,
     lockedKeys: Set<String> = [],
-    forceStampKeys: Set<String> = []
+    forceStampKeys: Set<String> = [],
+    reservedVersion: SettingsSyncVersion? = nil
   ) -> Result {
     var result = Result(document: remote ?? SettingsSyncDocument())
     if remote == nil { result.documentChanged = true }
@@ -62,9 +61,8 @@ enum SettingsSyncMerger {
     let highest = ([localVersion, result.document.highestVersion]
       + local.values.map(\.version)).compactMap { $0 }.max()
     let stamp: SettingsSyncVersion?
-    if mode == .resetOrdering {
-      let epoch = min((highest?.epoch ?? 0) + 1, SettingsSyncDocument.maxEpoch)
-      stamp = SettingsSyncVersion(1, deviceID, epoch: epoch)
+    if let reservedVersion {
+      stamp = reservedVersion
     } else if let highest {
       stamp = highest.successor(writer: deviceID)
     } else {
@@ -75,7 +73,7 @@ enum SettingsSyncMerger {
       guard let mine = local[key] else { continue }
       let theirs = result.document.entries[key]
 
-      if mode == .replace || mode == .resetOrdering || forceStampKeys.contains(key) {
+      if mode == .replace || forceStampKeys.contains(key) {
         // Whole batch, including values equal to the cloud's and resets of cloud keys.
         if mine.value == nil, theirs == nil, !forceStampKeys.contains(key) { continue }
         guard let stamp else {

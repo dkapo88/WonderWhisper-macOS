@@ -6,12 +6,34 @@ import Foundation
 /// every change, so a relaunch never loses or re-stamps a pending edit.
 struct SettingsSyncEngine: Codable, Equatable, Sendable {
   var deviceID: String
-  /// Highest version issued or accepted (the Lamport clock, with its epoch).
+  /// Highest version issued or accepted (the Lamport clock).
   var latest: SettingsSyncVersion?
   /// Per key: the value and version this Mac agrees with the cloud on.
   var records: [String: SettingsSyncLocalRecord] = [:]
   /// Per key: a genuine local edit not yet uploaded, stamped with its version when observed.
   var pending: [String: SettingsSyncLocalRecord] = [:]
+  /// Observations for keys awaiting their first baseline. Kept through IO retries and saved
+  /// with the engine so an undo, or a relaunch during adoption, cannot lose a genuine edit.
+  var unagreedObservations: [String: SettingsSyncLocalRecord] = [:]
+  var unagreedEdits: Set<String> = []
+
+  mutating func beginTransaction(_ snapshot: Values) {
+    for (key, value) in snapshot where records[key] == nil {
+      if unagreedObservations[key] == nil {
+        unagreedObservations[key] = SettingsSyncLocalRecord(
+          fingerprint: value?.fingerprint, version: nil
+        )
+      }
+    }
+  }
+
+  /// Reserve a transaction's batch from this Mac's clock before IO can interleave an edit.
+  /// A newer cloud file may require a larger reservation; the transaction then retries
+  /// without writing. Consumed counters are never reused, even after an IO failure.
+  mutating func reserveVersion(after floor: SettingsSyncVersion?) -> SettingsSyncVersion? {
+    adopt(floor)
+    return nextVersion()
+  }
 
   init(deviceID: String) {
     self.deviceID = deviceID
@@ -27,23 +49,30 @@ struct SettingsSyncEngine: Codable, Equatable, Sendable {
     var rejected: Set<String> = []
   }
 
-  /// The Lamport counter (within the current epoch).
+  /// The Lamport counter.
   var counter: Int64 { latest?.counter ?? 0 }
 
-  /// True when no further version can be created: the user has to reset sync ordering.
+  /// True when no further version can be created. No version may be reused.
   var isExhausted: Bool { counter >= SettingsSyncDocument.maxCounter }
 
   /// Stamps every synced key whose value differs from what was agreed (resets included) with a
-  /// new version, at the moment the change is seen. Only keys with an agreed record count:
-  /// before the first sync there is nothing to edit against. Returns true if anything changed.
+  /// new version when seen. Un-agreed keys track edits and undos during a transaction, then
+  /// receive a version above the completed baseline. Returns true if anything changed.
   /// When counters are exhausted nothing is stamped (the change stays local, unversioned).
   @discardableResult
   mutating func noteLocalChanges(_ current: Values) -> Bool {
     var changed = false
     var stamp: SettingsSyncVersion?
     for key in current.keys.sorted() {
-      guard let record = records[key] else { continue }
       let fingerprint = (current[key] ?? nil)?.fingerprint
+      guard let record = records[key] else {
+        if let observation = unagreedObservations[key], observation.fingerprint != fingerprint {
+          unagreedObservations[key]?.fingerprint = fingerprint
+          unagreedEdits.insert(key)
+          changed = true
+        }
+        continue
+      }
       if let edit = pending[key] {
         // Unchanged since it was stamped (a nil fingerprint is a recorded reset).
         if edit.fingerprint == fingerprint { continue }
@@ -105,48 +134,61 @@ struct SettingsSyncEngine: Codable, Equatable, Sendable {
     })
 
     var completion = Completion()
-    for key in result.applyLocally.keys.sorted() {
-      guard let value = result.applyLocally[key] else { continue }
+    let previouslyUnagreed = Set(candidates.keys.filter { records[$0] == nil })
+    let deferredEdits = previouslyUnagreed.filter { key in
+      unagreedEdits.contains(key)
+        || (current[key] ?? nil)?.fingerprint != (snapshot[key] ?? nil)?.fingerprint
+    }
+    // Adopt the transaction before issuing any previously unversioned genuine edit. Unlike
+    // old exhausted edits, these are observations made during this particular transaction.
+    adopt(result.document.highestVersion)
+    var deferredStamp: SettingsSyncVersion?
+    for key in candidates.keys.sorted() {
+      guard let candidate = candidates[key] else { continue }
       let now = (current[key] ?? nil)?.fingerprint
-      if inFlight.contains(key) || now != (snapshot[key] ?? nil)?.fingerprint {
-        continue  // edited here while the transaction ran: that edit is newer, keep it
-      }
-      if let record = records[key], record.fingerprint != now, pending[key] == nil {
-        // A local change that couldn't be versioned (counters exhausted): keep it until the
-        // user resets sync ordering, rather than overwrite it.
-        continue
-      }
-      guard isValid(key, value) else {
+      let cloudValue = result.document.entries[key]?.value
+      let hasRemoteApply = result.applyLocally[key] != nil
+      let invalid = hasRemoteApply && !isValid(key, cloudValue)
+      let oldRecord = records[key]
+      if invalid {
         completion.rejected.insert(key)
-        if records[key] == nil {
+        if oldRecord == nil {
           records[key] = SettingsSyncLocalRecord(fingerprint: now, version: nil)
         }
         continue
       }
-      if let agreed = result.agreed[key] { records[key] = agreed }
-      completion.apply[key] = .some(value)
-    }
-    for (key, candidate) in candidates where result.applyLocally[key] == nil {
       if let agreed = result.agreed[key] {
+        // Establish the baseline even when the local value was edited during file IO.
         records[key] = agreed
-      } else if records[key] == nil {
-        // Blocked, or absent everywhere: remember what is here, unversioned.
+      } else if oldRecord == nil {
         records[key] = SettingsSyncLocalRecord(
-          fingerprint: candidate.value?.fingerprint,
-          version: candidate.version
+          fingerprint: candidate.value?.fingerprint, version: candidate.version
         )
       }
+      if deferredEdits.contains(key) {
+        if deferredStamp == nil { deferredStamp = nextVersion() }
+        if let deferredStamp {
+          pending[key] = SettingsSyncLocalRecord(fingerprint: now, version: deferredStamp)
+        }
+        continue
+      }
+      if inFlight.contains(key) || now != (snapshot[key] ?? nil)?.fingerprint { continue }
+      if let oldRecord, oldRecord.fingerprint != now, pending[key] == nil {
+        // Exhausted edits stay local and unversioned. Accepting a Replace must never promote
+        // one into a fresh operation above that Replace.
+        continue
+      }
+      if hasRemoteApply { completion.apply[key] = .some(cloudValue) }
     }
-    // Settle pending edits by VERSION, never by value: an edit is done once the agreed record
-    // carries its version or a newer one. In-flight edits are always kept.
-    for (key, edit) in pending where !inFlight.contains(key) {
+    for (key, edit) in pending where !inFlight.contains(key) && !deferredEdits.contains(key) {
       if let agreedVersion = records[key]?.version, let version = edit.version,
          agreedVersion >= version {
         pending[key] = nil
       }
     }
-    adopt(result.document.highestVersion)
     for record in records.values { adopt(record.version) }
+    unagreedObservations = [:]
+    unagreedEdits = []
     return completion
   }
 
@@ -162,6 +204,8 @@ struct SettingsSyncEngine: Codable, Equatable, Sendable {
   mutating func retain(keys: Set<String>) {
     records = records.filter { keys.contains($0.key) }
     pending = pending.filter { keys.contains($0.key) }
+    unagreedObservations = unagreedObservations.filter { keys.contains($0.key) }
+    unagreedEdits.formIntersection(keys)
   }
 
   /// True when any value differs from what was agreed, or an edit is pending.
@@ -177,6 +221,8 @@ struct SettingsSyncEngine: Codable, Equatable, Sendable {
     latest = nil
     records = [:]
     pending = [:]
+    unagreedObservations = [:]
+    unagreedEdits = []
   }
 
   /// The next version, or nil when the counter would pass `maxCounter`.

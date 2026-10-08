@@ -30,20 +30,21 @@ and monitoring, hotkeys, general UX toggles); `SettingsSyncRegistry.excluded` do
 per Mac (microphones, folder paths, integration on/off and connection settings, history/state,
 debug flags). API keys never leave the Keychain.
 
-Ordering invariant: each value carries a version `(epoch, Lamport counter, writer deviceID)`
-(`SettingsSyncVersion`), created only when a Mac observes a genuine local edit (or carries out an
-explicit choice: first enable, Repair, Reset Sync Ordering) and never changed afterwards. Received, agreed, persisted and
-re-uploaded values keep their original version; per key the higher version wins, and equal values
-keep the higher version. New versions are stamped `max(counter, highest seen) + 1` when the edit is
-observed (resets and undos included) and persisted at once, so a relaunch never re-stamps them.
-Completion settles pending edits by version, so an edit made while a sync's file IO runs (even an
-undo back to the old value) survives. Wall time is display-only. Counters must be integers in
-`0...2^40`; at the ceiling nothing is stamped (no version is ever reused) and Settings offers
-"Reset Sync Ordering", which writes this Mac's settings in a new epoch. An entry that can't be
-decoded is preserved verbatim, backed up as `settings.blocked-<key>.json`, and blocks its key
-(named in Settings) until "Repair" or "Replace iCloud" rewrites it at a version above the file. "Use iCloud" adopts every cloud key, resets
-included; "Replace iCloud" stamps the whole local batch above every counter in the file and its
-conflict versions. Writes that view models make as a side effect of applying received settings
+Ordering invariant: each value carries an immutable `(Lamport counter, writer deviceID)`
+version (`SettingsSyncVersion`) created by a genuine edit or explicit first-enable/Repair choice.
+Received, agreed, persisted and relayed values retain that version; the higher version wins per
+key. The engine reserves explicit batch stamps before writing IO and persists its clock; if the
+coordinated read finds a newer maximum, it retries without writing after reserving above that
+maximum. Genuine edits and undos to un-agreed keys during adoption or allowlist re-addition are
+tracked across IO/retries and versioned above the completed baseline. Counters must be integers in
+`0...2^40`. At the ceiling sync shows a blocked error and never reuses versions. Recovery is sync
+off/on followed by "Replace iCloud" when the file maximum is below the ceiling; a file at the
+ceiling requires restoring an earlier backup. The file format is schema 3, which older schema-2
+builds must never overwrite. No ordering reset feature remains. "Use iCloud" adopts every cloud
+key, resets included; "Replace iCloud" stamps the whole batch above every file/conflict maximum.
+Undecodable entries are backed up as `settings.blocked-<key>.json` and block their keys until
+Repair or Replace.
+Writes that view models make as a side effect of applying received settings
 (including deferred `Task` hops, however late they run) carry task-local provenance with no time
 window and are dropped by `AppConfig.defaults` (`SyncProvenanceUserDefaults`), so they never count
 as edits; long-lived workers a `didSet` starts (Beeper/Codex monitors) are created through
@@ -180,12 +181,16 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Simplified sync ordering to counter/writer versions and schema 3; reserved batch
+  stamps before writes and retained first-baseline edits/undos. Expanded the independent
+  simulation to interleave edits during
+  first enable and allowlist re-addition.
 - 2026-10-08: Added opt-in iCloud settings sync (Settings → General) through
   `iCloud Drive/WonderWhisper/settings.json`, with an explicit key allowlist, per-key
   last-writer-wins merge, a first-enable keep-which-copy choice, and live apply; API keys stay
   per-Mac.
 - 2026-10-08: Settled in-flight sync edits by version, removed the provenance time window, capped
-  counters at 2^40 with a "Reset Sync Ordering" epoch recovery, added Repair for blocked iCloud
+  counters at 2^40, added Repair for blocked iCloud
   entries (with raw backups), dropped allowlist-removed keys from sync state, and rebuilt the
   simulation oracle as an independent operation log.
 - 2026-10-08: Made sync versions immutable `(counter, writer)` pairs created only by genuine edits,

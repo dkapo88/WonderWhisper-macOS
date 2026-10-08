@@ -44,15 +44,8 @@ struct SettingsSyncSection: View {
       }
 
       if sync.isEnabled, sync.isOrderingExhausted {
-        LabeledContent {
-          Button("Reset Sync Ordering") {
-            Task { await sync.resetSyncOrdering() }
-          }
-          .disabled(sync.isSyncing)
-        } label: {
-          StatusBadge(.error, "Sync can't record more changes.")
-          Text("Resetting starts fresh with this Mac's settings on every Mac.")
-        }
+        Text(SettingsSyncService.exhaustedMessage)
+          .settingsFootnote()
       }
 
       if let notice = sync.notice {

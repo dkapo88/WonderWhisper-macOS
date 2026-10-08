@@ -35,16 +35,12 @@ final class SettingsSyncService: ObservableObject {
     case preferLocal
     /// First enable when no file existed; stops and asks if one has appeared since.
     case initialUpload
-    /// "Reset Sync Ordering": this Mac's settings in a new ordering epoch (the recovery when
-    /// version counters are exhausted).
-    case resetOrdering
 
     var mergeMode: SettingsSyncMerger.Mode {
       switch self {
       case .normal, .initialUpload: return .normal
       case .preferCloud: return .adopt
       case .preferLocal: return .replace
-      case .resetOrdering: return .resetOrdering
       }
     }
   }
@@ -83,7 +79,7 @@ final class SettingsSyncService: ObservableObject {
   /// Settings whose iCloud entry couldn't be read. They don't sync until repaired; the raw entry
   /// is backed up next to settings.json.
   @Published private(set) var blockedKeys: [String] = []
-  /// Version counters are at the ceiling; nothing new can sync until the user resets ordering.
+  /// Version counters are at the ceiling; new changes are blocked.
   @Published private(set) var isOrderingExhausted = false
 
   /// Called on the main actor, once per sync, with every key whose value was replaced by a
@@ -94,9 +90,11 @@ final class SettingsSyncService: ObservableObject {
   /// for anything that can happen while a sync is in flight (iCloud replacing the file, the
   /// user turning sync off).
   var beforeTransactionForTesting: (() async -> Void)?
+  /// Test seam after snapshot/reservation, while the transaction is in flight.
+  var afterSnapshotForTesting: (() async -> Void)?
 
   var deviceID: String { engine.deviceID }
-  /// This Mac's Lamport counter: highest counter issued or accepted (in the current epoch).
+  /// This Mac's Lamport counter: highest counter issued or accepted.
   var counter: Int64 { engine.counter }
   /// Highest version this Mac has issued or accepted.
   var latestVersion: SettingsSyncVersion? { engine.latest }
@@ -234,7 +232,8 @@ final class SettingsSyncService: ObservableObject {
     }.value
     guard !isEnabled, !isAwaitingFirstEnableChoice else { return }
     switch peek {
-    case .success(.document):
+    case .success(.document(let document)):
+      blockedKeys = document.opaqueEntries.keys.sorted()
       isAwaitingFirstEnableChoice = true
     case .success(.missing), .failure(SettingsSyncFileStore.StoreError.corrupt):
       // The transaction re-checks: if a valid file appears meanwhile it stops and asks.
@@ -266,15 +265,6 @@ final class SettingsSyncService: ObservableObject {
   func repairBlockedKeys(_ keys: Set<String>? = nil) async {
     pendingRepairKeys.formUnion(keys ?? Set(blockedKeys))
     await sync(mode: .normal)
-  }
-
-  /// "Reset Sync Ordering": when version counters are exhausted, write this Mac's settings in a
-  /// new ordering epoch that every Mac adopts. Settings changed on other Macs but not yet
-  /// synced are replaced by this Mac's.
-  func resetSyncOrdering() async {
-    guard isEnabled else { return }
-    pendingFirstEnableMode = .resetOrdering
-    await sync(mode: .resetOrdering)
   }
 
   // MARK: - Enable / disable
@@ -364,32 +354,67 @@ final class SettingsSyncService: ObservableObject {
     }
 
     noteLocalChanges()
-    let snapshot = readLocalValues()
-    let snapshotVersion = engine.latest
-    let candidates = engine.candidates(snapshot, mode: mode.mergeMode)
-    var input = SettingsSyncTransaction.Input(
-      local: candidates,
-      deviceID: deviceID,
-      deviceName: deviceName,
-      timestamp: currentTime()
-    )
-    input.mode = mode.mergeMode
-    input.localVersion = engine.latest
-    input.requireNoDocument = mode == .initialUpload
-    input.repairKeys = pendingRepairKeys
-
-    let presenter = self.presenter
-    let transaction = await Task.detached {
-      Result { try store.transact(input, cancellation: token, presenter: presenter) }
-    }.value
-    guard stillCurrent() else { return }
-
-    let outcome: SettingsSyncFileStore.TransactionOutcome
-    switch transaction {
-    case .success(let value):
-      outcome = value
-    case .failure(let error):
-      lastError = error.localizedDescription
+    var snapshot = readLocalValues()
+    engine.beginTransaction(snapshot)
+    var versionFloor = engine.latest
+    var reservedVersion: SettingsSyncVersion?
+    if mode.mergeMode != .normal || !pendingRepairKeys.isEmpty {
+      reservedVersion = engine.reserveVersion(after: nil)
+    }
+    var snapshotVersion = engine.latest
+    saveEngine()
+    var candidates = engine.candidates(snapshot, mode: mode.mergeMode)
+    var finished: SettingsSyncFileStore.TransactionOutcome?
+    // If iCloud installed a newer counter, reserve above it and retry the coordinated read.
+    // No write or conflict resolution happens until the reservation has been checked.
+    for _ in 0..<4 {
+      var input = SettingsSyncTransaction.Input(
+        local: candidates,
+        deviceID: deviceID,
+        deviceName: deviceName,
+        timestamp: currentTime()
+      )
+      input.mode = mode.mergeMode
+      input.localVersion = versionFloor
+      input.reservedVersion = reservedVersion
+      input.requireNoDocument = mode == .initialUpload
+      input.repairKeys = pendingRepairKeys
+      if let hook = afterSnapshotForTesting {
+        await hook()
+        guard stillCurrent() else { return }
+      }
+      let presenter = self.presenter
+      let transactionInput = input
+      let transaction = await Task.detached {
+        Result { try store.transact(transactionInput, cancellation: token, presenter: presenter) }
+      }.value
+      guard stillCurrent() else { return }
+      let outcome: SettingsSyncFileStore.TransactionOutcome
+      switch transaction {
+      case .success(let value): outcome = value
+      case .failure(let error):
+        lastError = error.localizedDescription
+        return
+      }
+      guard outcome.needsReservation else {
+        finished = outcome
+        break
+      }
+      noteLocalChanges()
+      snapshot = readLocalValues()
+      versionFloor = engine.latest
+      reservedVersion = engine.reserveVersion(after: outcome.reservationFloor)
+      snapshotVersion = engine.latest
+      candidates = engine.candidates(snapshot, mode: mode.mergeMode)
+      saveEngine()
+      guard reservedVersion != nil else {
+        isOrderingExhausted = true
+        lastError = Self.exhaustedMessage
+        return
+      }
+    }
+    guard let outcome = finished else {
+      lastError = "iCloud settings changed during sync. Try Sync Now again."
       return
     }
     if outcome.cancelled { return }
@@ -480,8 +505,9 @@ final class SettingsSyncService: ObservableObject {
     return parts.isEmpty ? nil : parts.joined(separator: " ")
   }
 
-  static let exhaustedMessage = "iCloud sync has run out of room to order changes. Choose "
-    + "Reset Sync Ordering to start fresh with this Mac's settings."
+  static let exhaustedMessage = "iCloud sync is blocked at the counter limit. Turn sync off, "
+    + "then on and choose Replace iCloud with This Mac's Settings. If the iCloud file itself "
+    + "is at the limit, restore an earlier backup before replacing it."
 
   private func readLocalValues() -> SettingsSyncEngine.Values {
     var values: SettingsSyncEngine.Values = [:]

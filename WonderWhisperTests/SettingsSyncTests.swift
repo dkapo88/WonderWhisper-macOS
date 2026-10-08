@@ -1493,6 +1493,149 @@ struct SettingsSyncTests {
     return ((raw as? [String: Any])?["entries"] as? [String: Any])?[key] as? [String: Any]
   }
 
+  // MARK: - Round 6
+
+  @Test func firstCloudAdoptionVersionsAnEditMadeDuringIO() {
+    var engine = SettingsSyncEngine(deviceID: "A")
+    let snapshot: SettingsSyncEngine.Values = ["vocab.custom": .some(.string("before"))]
+    let candidates = engine.candidates(snapshot, mode: .adopt)
+    let cloud = SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("cloud"), counter: 10, deviceID: "B")
+    ])
+    let result = SettingsSyncMerger.merge(local: candidates, remote: cloud, deviceID: "A", mode: .adopt)
+    let current: SettingsSyncEngine.Values = ["vocab.custom": .some(.string("edited during IO"))]
+    engine.noteLocalChanges(current)
+    let completion = engine.complete(
+      result, candidates: candidates, snapshot: snapshot, snapshotVersion: nil,
+      current: current, isValid: { _, _ in true }
+    )
+    #expect(completion.apply.isEmpty)
+    #expect(engine.records["vocab.custom"]?.version == SettingsSyncVersion(10, "B"))
+    #expect(engine.pending["vocab.custom"]?.version == SettingsSyncVersion(11, "A"))
+    let next = SettingsSyncMerger.merge(
+      local: engine.candidates(current, mode: .normal), remote: cloud, deviceID: "A"
+    )
+    #expect(next.document.entries["vocab.custom"]?.value == .string("edited during IO"))
+  }
+
+  @Test(arguments: [false, true])
+  func firstAdoptionAndReaddedKeysKeepInFlightUndos(readded: Bool) {
+    let key = "vocab.custom"
+    let value = SettingsSyncValue.string("before")
+    let snapshot: SettingsSyncEngine.Values = [key: .some(value)]
+    var engine = SettingsSyncEngine(deviceID: "A")
+    if readded {
+      engine.records[key] = .init(fingerprint: value.fingerprint, version: .init(1, "A"))
+      engine.retain(keys: [])
+    }
+    engine.beginTransaction(snapshot)
+    let candidates = engine.candidates(snapshot, mode: .adopt)
+    let cloud = SettingsSyncDocument(entries: [
+      key: .init(value: .string("cloud"), counter: 10, deviceID: "B")
+    ])
+    let result = SettingsSyncMerger.merge(local: candidates, remote: cloud, deviceID: "A", mode: .adopt)
+    engine.noteLocalChanges([key: .some(.string("changed"))])
+    engine.noteLocalChanges(snapshot)
+    let completion = engine.complete(
+      result, candidates: candidates, snapshot: snapshot, snapshotVersion: nil,
+      current: snapshot, isValid: { _, _ in true }
+    )
+    #expect(completion.apply.isEmpty)
+    #expect(engine.pending[key]?.version == SettingsSyncVersion(11, "A"))
+    #expect(engine.pending[key]?.fingerprint == value.fingerprint)
+  }
+
+  @Test func repairReservesItsStampBeforeAnInFlightEdit() async throws {
+    let harness = try Harness()
+    let (mac, defaults) = try Self.mac(harness, "A")
+    defaults.set("original", forKey: "vocab.custom")
+    await mac.setEnabled(true)
+    var cloud = try harness.readDocument()
+    cloud.entries["transcription.language"] = .init(value: .string("en"), counter: 10, deviceID: "B")
+    cloud.entries["vocab.custom"] = nil
+    cloud.opaqueEntries["vocab.custom"] = Data("{\"counter\":-1}".utf8)
+    try cloud.encoded().write(to: harness.fileURL, options: .atomic)
+    await mac.syncNow()
+    #expect(mac.counter == 10)
+    mac.afterSnapshotForTesting = { [weak mac] in
+      mac?.afterSnapshotForTesting = nil
+      #expect(mac?.counter == 11)
+      defaults.set("edit during repair", forKey: "vocab.custom")
+      mac?.noteLocalChanges()
+      #expect(mac?.counter == 12)
+    }
+    await mac.repairBlockedKeys()
+    #expect(defaults.string(forKey: "vocab.custom") == "edit during repair")
+    await mac.syncNow()
+    #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("edit during repair"))
+    #expect(try harness.readDocument().entries["vocab.custom"]?.version == SettingsSyncVersion(12, "A"))
+  }
+
+  @Test(arguments: [false, true])
+  func firstEnableChoicesKeepAnEditDuringTheTransaction(replace: Bool) async throws {
+    let harness = try Harness()
+    let (macA, defaultsA) = try Self.mac(harness, "A")
+    defaultsA.set("cloud", forKey: "vocab.custom")
+    await macA.setEnabled(true)
+    let (macB, defaultsB) = try Self.mac(harness, "B")
+    defaultsB.set("before", forKey: "vocab.custom")
+    await macB.setEnabled(true)
+    macB.afterSnapshotForTesting = { [weak macB] in
+      macB?.afterSnapshotForTesting = nil
+      defaultsB.set("during IO", forKey: "vocab.custom")
+      macB?.noteLocalChanges()
+    }
+    await macB.resolveFirstEnable(replace ? .replaceCloud : .useCloud)
+    #expect(defaultsB.string(forKey: "vocab.custom") == "during IO")
+    await macB.syncNow()
+    await macA.syncNow()
+    #expect(defaultsA.string(forKey: "vocab.custom") == "during IO")
+  }
+
+  @Test func replaceNeverPromotesAnExhaustedEditFromAnotherMac() async throws {
+    let harness = try Harness()
+    let (macA, defaultsA) = try Self.mac(harness, "A")
+    let (macB, defaultsB) = try Self.mac(harness, "B")
+    defaultsA.set("start", forKey: "vocab.custom")
+    await macA.setEnabled(true)
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.useCloud)
+    var b = try JSONDecoder().decode(
+      SettingsSyncEngine.self, from: #require(defaultsB.data(forKey: SettingsSyncStateKey.localState))
+    )
+    b.latest = SettingsSyncVersion(SettingsSyncDocument.maxCounter, "B")
+    defaultsB.set(try JSONEncoder().encode(b), forKey: SettingsSyncStateKey.localState)
+    let relaunchedB = harness.makeService(defaultsB, name: "B")
+    defaultsB.set("stale unversioned edit", forKey: "vocab.custom")
+    relaunchedB.noteLocalChanges()
+    await macA.setEnabled(false)
+    defaultsA.set("explicit replacement", forKey: "vocab.custom")
+    await macA.setEnabled(true)
+    await macA.resolveFirstEnable(.replaceCloud)
+    await relaunchedB.syncNow()
+    await relaunchedB.syncNow()
+    let cloud = try harness.readDocument()
+    #expect(cloud.entries["vocab.custom"]?.value == .string("explicit replacement"))
+    #expect(relaunchedB.isOrderingExhausted)
+    let state = try JSONDecoder().decode(
+      SettingsSyncEngine.self,
+      from: #require(defaultsB.data(forKey: SettingsSyncStateKey.localState))
+    )
+    #expect(state.pending.isEmpty)
+  }
+
+  @Test func schemaThreeOmitsRemovedOrderingFieldsAndBlocksOlderWriters() throws {
+    let document = SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("x"), counter: 1, deviceID: "A")
+    ])
+    let root = try #require(JSONSerialization.jsonObject(with: document.encoded()) as? [String: Any])
+    #expect(root["schemaVersion"] as? Int == 3)
+    let entries = try #require(root["entries"] as? [String: [String: Any]])
+    #expect(Set(entries["vocab.custom"]?.keys ?? [:].keys) == ["value", "counter", "deviceID"])
+    // Older schema-2 builds see 3 as newer and follow the existing never-write guard.
+    #expect(SettingsSyncDocument.currentSchemaVersion > 2)
+  }
+
   // MARK: - Round 5
 
   /// R5-1: an edit made while a sync's file IO runs (here X → Y → X, an undo) gets a newer
@@ -1572,59 +1715,36 @@ struct SettingsSyncTests {
     #expect(store.string(forKey: "beeper.response.filterKeywords") == "monitor write")
   }
 
-  /// R5-3: counters have an absolute ceiling (2^40). At the ceiling no version is reused: the
-  /// Mac stops stamping, says so, and "Reset Sync Ordering" recovers in a new epoch that every
-  /// other Mac adopts.
-  @Test func exhaustedCountersNeverReuseVersionsAndResetRecovers() async throws {
+  @Test func exhaustedCountersNeverReuseVersionsOrOverwriteTheCloud() async throws {
     #expect(SettingsSyncDocument.maxCounter == 1 << 40)
     var engine = SettingsSyncEngine(deviceID: "A")
     engine.latest = SettingsSyncVersion(SettingsSyncDocument.maxCounter, "Z")
     engine.records["vocab.custom"] = SettingsSyncLocalRecord(fingerprint: nil, version: nil)
     engine.noteLocalChanges(["vocab.custom": .some(.string("x"))])
     #expect(engine.pending.isEmpty)
+    #expect(engine.reserveVersion(after: nil) == nil)
     #expect(engine.isExhausted)
 
     let harness = try Harness()
-    let (macA, defaultsA) = try Self.mac(harness, "A")
-    let (macB, defaultsB) = try Self.mac(harness, "B")
-    defaultsA.set("start", forKey: "vocab.custom")
-    await macA.setEnabled(true)
-    await macB.setEnabled(true)
-    await macB.resolveFirstEnable(.useCloud)
-
-    // Someone wrote a (valid) entry at the ceiling: both Macs accept it...
+    let (mac, defaults) = try Self.mac(harness, "A")
+    defaults.set("start", forKey: "vocab.custom")
+    await mac.setEnabled(true)
     var document = try harness.readDocument()
     document.entries["vocab.custom"] = .init(
-      value: .string("at ceiling"),
-      counter: SettingsSyncDocument.maxCounter,
-      deviceID: "Z"
+      value: .string("at ceiling"), counter: SettingsSyncDocument.maxCounter, deviceID: "Z"
     )
     try document.encoded().write(to: harness.fileURL, options: .atomic)
-    await macA.syncNow()
-    await macB.syncNow()
-    #expect(defaultsB.string(forKey: "vocab.custom") == "at ceiling")
-
-    // ...and now no new version fits: A says so instead of reusing one.
-    defaultsA.set("can't order this", forKey: "vocab.custom")
-    macA.noteLocalChanges()
-    await macA.syncNow()
-    #expect(macA.isOrderingExhausted)
-    #expect(macA.lastError == SettingsSyncService.exhaustedMessage)
+    await mac.syncNow()
+    defaults.set("local", forKey: "vocab.custom")
+    mac.noteLocalChanges()
+    await mac.syncNow()
+    #expect(mac.isOrderingExhausted)
+    #expect(mac.lastError == SettingsSyncService.exhaustedMessage)
+    await mac.setEnabled(false)
+    await mac.setEnabled(true)
+    await mac.resolveFirstEnable(.replaceCloud)
+    #expect(mac.isOrderingExhausted)
     #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("at ceiling"))
-
-    await macA.resetSyncOrdering()
-    let reset = try #require(try harness.readDocument().entries["vocab.custom"])
-    #expect(reset.version == SettingsSyncVersion(1, "A", epoch: 1))
-    #expect(reset.value == .string("can't order this"))
-    #expect(!macA.isOrderingExhausted)
-
-    await macB.syncNow()
-    #expect(defaultsB.string(forKey: "vocab.custom") == "can't order this")
-    defaultsB.set("b after reset", forKey: "vocab.custom")
-    macB.noteLocalChanges()
-    await macB.syncNow()
-    #expect(try harness.readDocument().entries["vocab.custom"]?.version
-      == SettingsSyncVersion(2, "B", epoch: 1))
   }
 
   /// R5-3: a counter above the ceiling is an invalid entry (blocked, repairable).

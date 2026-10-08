@@ -2,8 +2,8 @@ import Foundation
 
 /// Contents of `iCloud Drive/WonderWhisper/settings.json`.
 ///
-/// Every synced preference is stored with the version (`epoch`, Lamport `counter`, writer
-/// `deviceID`) of the genuine edit that produced it; `epoch` is omitted when 0. For one setting
+/// Every synced preference is stored with the version (Lamport `counter`, writer
+/// `deviceID`) of the genuine edit that produced it. For one setting
 /// the higher version wins; two Macs editing different settings never overwrite each other.
 /// Wall-clock time is never used for ordering. A nil `value` records that the setting was reset
 /// to its default.
@@ -14,43 +14,38 @@ import Foundation
 /// repairs them.
 ///
 /// Schema 2 replaced schema 1's wall-clock `modifiedAt` with `counter`. Schema 1 entries are
-/// read with counter 0 (their ordering is discarded; their values are kept).
+/// read with counter 0 (their ordering is discarded; their values are kept). Schema 3 protects
+/// the simplified counter format from older development builds that only write schema 2.
 struct SettingsSyncDocument: Equatable, Sendable {
-  static let currentSchemaVersion = 2
+  static let currentSchemaVersion = 3
 
   /// Largest counter accepted (2^40). Counters only grow by one per edit, so honest use can't
   /// reach it; anything above is an invalid entry (preserved, key blocked until repaired). A
-  /// Mac that would have to stamp above it stops and asks the user to reset sync ordering
+  /// Mac that would have to stamp above it stops and blocks further changes
   /// rather than reuse a version.
   static let maxCounter: Int64 = 1 << 40
-
-  /// Largest ordering epoch accepted. Each "Reset Sync Ordering" adds one.
-  static let maxEpoch: Int64 = 1 << 30
 
   struct Entry: Equatable, Sendable {
     var value: SettingsSyncValue?
     var counter: Int64
     /// The device that made the edit (not necessarily the device that last wrote the file).
     var deviceID: String
-    var epoch: Int64 = 0
 
-    init(value: SettingsSyncValue?, counter: Int64, deviceID: String, epoch: Int64 = 0) {
+    init(value: SettingsSyncValue?, counter: Int64, deviceID: String) {
       self.value = value
       self.counter = counter
       self.deviceID = deviceID
-      self.epoch = epoch
     }
 
     init(value: SettingsSyncValue?, version: SettingsSyncVersion) {
       self.init(
         value: value,
         counter: version.counter,
-        deviceID: version.writer,
-        epoch: version.epoch
+        deviceID: version.writer
       )
     }
 
-    var version: SettingsSyncVersion { SettingsSyncVersion(counter, deviceID, epoch: epoch) }
+    var version: SettingsSyncVersion { SettingsSyncVersion(counter, deviceID) }
   }
 
   struct Device: Codable, Equatable, Sendable {
@@ -168,22 +163,12 @@ extension SettingsSyncDocument.Entry: Codable {
     case value
     case counter
     case deviceID
-    case epoch
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     value = try container.decodeIfPresent(SettingsSyncValue.self, forKey: .value)
     deviceID = try container.decode(String.self, forKey: .deviceID)
-    let epoch = try container.decodeIfPresent(Int64.self, forKey: .epoch) ?? 0
-    guard (0...SettingsSyncDocument.maxEpoch).contains(epoch) else {
-      throw DecodingError.dataCorruptedError(
-        forKey: .epoch,
-        in: container,
-        debugDescription: "Epoch \(epoch) is outside the supported range."
-      )
-    }
-    self.epoch = epoch
     // Missing in schema 1 (ordering discarded). JSONDecoder throws, rather than traps, on a
     // number that doesn't fit Int64; the range check rejects negatives and absurd values.
     let counter = try container.decodeIfPresent(Int64.self, forKey: .counter) ?? 0
@@ -202,7 +187,6 @@ extension SettingsSyncDocument.Entry: Codable {
     try container.encodeIfPresent(value, forKey: .value)
     try container.encode(counter, forKey: .counter)
     try container.encode(deviceID, forKey: .deviceID)
-    if epoch != 0 { try container.encode(epoch, forKey: .epoch) }
   }
 }
 

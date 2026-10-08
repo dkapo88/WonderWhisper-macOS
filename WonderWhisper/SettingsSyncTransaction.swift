@@ -15,10 +15,13 @@ enum SettingsSyncTransaction {
     var mode: SettingsSyncMerger.Mode = .normal
     /// Highest version this Mac has issued or accepted; new versions are stamped above it.
     var localVersion: SettingsSyncVersion?
+    /// Allocated and persisted by the engine BEFORE the writing transaction. A stale or
+    /// missing reservation causes a read-only retry, never a transaction-created version.
+    var reservedVersion: SettingsSyncVersion?
     /// First upload after the user saw no file: if a document has appeared since, stop so
     /// the user can be asked which copy to keep instead of silently merging.
     var requireNoDocument = false
-    /// Blocked keys the user chose to repair (replace/reset modes repair every blocked key).
+    /// Blocked keys the user chose to repair (Replace repairs every blocked key).
     var repairKeys: Set<String> = []
   }
 
@@ -49,6 +52,8 @@ enum SettingsSyncTransaction {
     var blockedRaw: [String: Data] = [:]
     /// A new version was needed but counters are at the ceiling; nothing explicit was done.
     var exhausted = false
+    var needsReservation = false
+    var reservationFloor: SettingsSyncVersion?
   }
 
   static func plan(
@@ -80,7 +85,7 @@ enum SettingsSyncTransaction {
         if plan.blockedRaw[key] == nil { plan.blockedRaw[key] = raw }
       }
     }
-    let repairing = input.mode == .replace || input.mode == .resetOrdering
+    let repairing = input.mode == .replace
       ? blocked
       : blocked.intersection(input.repairKeys)
     let stillBlocked = blocked.subtracting(repairing)
@@ -116,12 +121,26 @@ enum SettingsSyncTransaction {
       localVersion: input.localVersion,
       mode: input.mode,
       lockedKeys: stillBlocked,
-      forceStampKeys: repairing
+      forceStampKeys: repairing,
+      reservedVersion: input.reservedVersion
     )
+    let floor = ([input.localVersion, remote?.highestVersion]
+      + input.local.values.map(\.version)).compactMap { $0 }.max()
+    if !result.stamped.isEmpty, !plan.schemaTooNew,
+       input.reservedVersion == nil
+        || (input.reservedVersion?.counter ?? 0) <= (floor?.counter ?? 0) {
+      plan.needsReservation = true
+      plan.reservationFloor = floor
+      plan.repairedKeys = []
+      plan.blockedKeys = blocked
+      plan.incorporated = []
+      plan.pendingConflicts = conflicts.count
+      return plan
+    }
     plan.exhausted = result.exhausted
     if result.exhausted, !repairing.isEmpty || input.mode == .replace {
       // An explicit choice that can't be carried out without reusing a version: change
-      // nothing (blocked entries stay preserved) and let the user reset sync ordering.
+      // nothing (blocked entries stay preserved) and keep the counter-ceiling error visible.
       plan.repairedKeys = []
       plan.blockedKeys = blocked
       plan.incorporated = []
