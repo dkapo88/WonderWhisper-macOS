@@ -231,7 +231,13 @@ actor DictationController {
             AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
             await Self.waitUntilFileIsStable(fileURL)
             AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(settings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
-            return try await transcriber.transcribe(fileURL: fileURL, settings: settings)
+            do {
+                return try await transcriber.transcribe(fileURL: fileURL, settings: settings)
+            } catch let qwenError as QwenASRError where qwenError.shouldFallBack {
+                // Qwen failed its load check or decoded garbage. Never paste that: re-transcribe
+                // the same recording with Parakeet (if downloaded) or the injected Groq fallback.
+                return try await recoverFromUnusableQwen(qwenError, fileURL: fileURL, settings: settings)
+            }
         }
 
         // Streaming providers: finalize, but never let a thrown finalizer lose the utterance —
@@ -281,6 +287,36 @@ actor DictationController {
         }
 
         return transcript
+    }
+
+    /// Qwen leg of the finalize safety net. Picks Parakeet when a model is downloaded, else the
+    /// injected Groq `fileFallbackTranscriber`, and tells the user which engine ran. Throws the
+    /// original Qwen error when no fallback can produce text, so garbage is never inserted.
+    private func recoverFromUnusableQwen(
+        _ qwenError: QwenASRError,
+        fileURL: URL,
+        settings: TranscriptionSettings
+    ) async throws -> String {
+        let choice = QwenASRFallback.choice()
+        AppLog.dictation.error("Qwen unusable (\(qwenError.localizedDescription, privacy: .public)); falling back to \(choice.label, privacy: .public)")
+        guard let fallback = QwenASRFallback.provider(for: choice, groq: fileFallbackTranscriber) else {
+            await reportRecoveryFailure("Qwen failed and no fallback engine is available.")
+            throw qwenError
+        }
+        let recovered: String
+        do {
+            recovered = try await fallback.transcribe(
+                fileURL: fileURL,
+                settings: QwenASRFallback.settings(for: choice, from: settings)
+            )
+        } catch {
+            AppLog.dictation.error("Qwen fallback (\(choice.label, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
+            await reportRecoveryFailure("Qwen failed and \(choice.label) fallback failed: \(error.localizedDescription)")
+            throw qwenError
+        }
+        AppLog.dictation.log("Recovered \(recovered.count) chars via Qwen fallback \(choice.label, privacy: .public)")
+        await reportRecoveryFailure(QwenASRFallback.userNotice(for: qwenError, choice: choice))
+        return recovered
     }
 
     /// A file-capable transcriber used to recover an empty streaming result. Soniox cannot
