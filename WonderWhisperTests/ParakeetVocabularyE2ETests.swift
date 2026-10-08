@@ -54,6 +54,33 @@ struct ParakeetVocabularyE2ETests {
     #expect(Self.hits(boostedWarm.text) >= Self.hits(plainWarm.text))
   }
 
+  /// Review P1 with real models: disabling boosting after it was configured
+  /// must not reload Unified on the transcription path, and the next
+  /// transcription is unboosted.
+  @Test(.enabled(if: isEnabled))
+  func disablingBoostingDoesNotReloadUnified() async throws {
+    let wav = try Self.makeSpeechClip()
+    final class Flag: @unchecked Sendable { var on = true }
+    let flag = Flag()
+    let provider = ParakeetTranscriptionProvider(
+      waitsForVocabularyModel: true,
+      boostingEnabled: { flag.on }
+    )
+    let plain = try await Self.run(provider, model: "parakeet-unified", terms: [], wav: wav)
+    let boosted = try await Self.run(provider, model: "parakeet-unified", terms: Self.terms, wav: wav)
+    flag.on = false
+    let off = try await Self.run(provider, model: "parakeet-unified", terms: Self.terms, wav: wav)
+    try ([
+      "p1 plain \(plain.ms)ms: \(plain.text)",
+      "p1 boosted \(boosted.ms)ms: \(boosted.text)",
+      "p1 disabled (neutralized, no reload) \(off.ms)ms: \(off.text)",
+    ].joined(separator: "\n") + "\n").write(toFile: Self.outputPath + ".p1", atomically: true, encoding: .utf8)
+
+    #expect(off.text == plain.text)
+    // A reload of Unified takes seconds; neutralizing is a ~10 ms configure.
+    #expect(off.ms < 5_000)
+  }
+
   /// The live-meeting path: stream the clip through a boosted
   /// StreamingUnifiedAsrManager, collect tokens as the meeting service does,
   /// then map the rescored final text back onto them.

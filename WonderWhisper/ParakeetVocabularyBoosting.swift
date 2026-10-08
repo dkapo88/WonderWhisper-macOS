@@ -70,6 +70,10 @@ enum ParakeetVocabularyBoosting {
   }
 }
 
+enum ParakeetVocabularyBoostingError: Error {
+  case ctcModelNotLoaded
+}
+
 #if canImport(FluidAudio)
 extension ParakeetVocabularyBoosting {
   static func vocabularyContext(for terms: [String]) -> CustomVocabularyContext {

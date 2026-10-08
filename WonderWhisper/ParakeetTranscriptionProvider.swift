@@ -10,11 +10,38 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var asrManager: AsrManager?
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
     private var unifiedManager: UnifiedAsrManager? {
-        // A fresh (or released) manager starts without vocabulary boosting.
-        didSet { boostedTerms = [] }
+        didSet {
+            // Drop boosting bookkeeping for a released manager.
+            if let old = oldValue, old !== unifiedManager {
+                let boosting = self.boosting
+                Task { await boosting.forget(old) }
+            }
+        }
     }
-    // Vocabulary terms currently configured on `unifiedManager` (empty = none).
-    private var boostedTerms: [String] = []
+    // Serializes vocabulary configuration with Unified inference (see
+    // ParakeetBoostingCoordinator for the invariants).
+    private let boosting = ParakeetBoostingCoordinator<UnifiedAsrManager>(
+        configure: { manager, terms in
+            // Only reached once the CTC model reported ready (or, for an
+            // empty "neutralize" call, after a previous successful boost).
+            guard let ctcModels = await ParakeetCtcModelStore.shared.modelsIfLoaded() else {
+                throw ParakeetVocabularyBoostingError.ctcModelNotLoaded
+            }
+            try await manager.configureVocabularyBoosting(
+                vocabulary: ParakeetVocabularyBoosting.vocabularyContext(for: terms),
+                ctcModels: ctcModels
+            )
+        },
+        ctcReady: { wait in
+            let store = ParakeetCtcModelStore.shared
+            return wait ? await store.modelsIfAvailable() != nil : await store.modelsIfLoaded() != nil
+        },
+        log: { AppLog.dictation.log("[ParakeetVocab] \($0)") }
+    )
+    // An unboosted Unified manager loading in the background after boosting
+    // was turned off; swapped in only once loaded.
+    private var replacementTask: Task<Void, Never>?
+    private let boostingEnabled: @Sendable () -> Bool
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
     // Idle unload after inactivity to balance memory and reliability
@@ -35,7 +62,11 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // tests do, so their output is consistently boosted.
     private let waitsForVocabularyModel: Bool
 
-    init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {
+    init(
+        modelsDirectory: URL? = nil,
+        waitsForVocabularyModel: Bool = false,
+        boostingEnabled: @escaping @Sendable () -> Bool = { ParakeetVocabularyBoosting.isEnabled() }
+    ) {
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
         } else {
@@ -43,6 +74,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             self.modelsDirectory = ParakeetManager.effectiveModelsDirectory
         }
         self.waitsForVocabularyModel = waitsForVocabularyModel
+        self.boostingEnabled = boostingEnabled
     }
 
     // Public warm-up to preload models on recording start
@@ -50,13 +82,18 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         do {
             let kind = preferredKind()
             try await ensureModelsLoaded(kind: kind)
-            if kind == .unified {
+            if kind == .unified, let mgr = unifiedManager {
                 // Load the CTC model and configure boosting while the user is
-                // still speaking so the transcription after stop finds it ready.
-                await applyVocabularyBoosting(
-                    terms: ParakeetVocabularyBoosting.currentTerms(),
-                    waitForModel: true
-                )
+                // still speaking. Preferences are re-read after the (slow) CTC
+                // load, and the result is dropped if a transcription ran first.
+                let enabled = boostingEnabled
+                let outcome = await boosting.prepare(mgr) {
+                    ParakeetVocabularyBoosting.termsToBoost(
+                        enabled: enabled(),
+                        terms: ParakeetVocabularyBoosting.currentTerms()
+                    )
+                }
+                handleBoostingOutcome(outcome, manager: mgr)
             }
             scheduleIdleUnload()
         } catch {
@@ -179,14 +216,24 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         scheduleIdleUnload()
         switch kind {
         case .unified:
-            await applyVocabularyBoosting(
-                terms: settings.vocabularyTerms,
-                waitForModel: waitsForVocabularyModel
-            )
-            // Turning boosting off reloads the manager; make sure one is resident.
-            if unifiedManager == nil { try await ensureModelsLoaded(kind: .unified) }
             guard let mgr = unifiedManager else { throw ProviderError.notImplemented }
-            return try await transcribeUnified(mgr: mgr, fileURL: fileURL)
+            let desired = ParakeetVocabularyBoosting.termsToBoost(
+                enabled: boostingEnabled(),
+                terms: settings.vocabularyTerms
+            )
+            if waitsForVocabularyModel, !desired.isEmpty {
+                // Off the dictation path: wait for the CTC model outside the
+                // coordinator's critical section.
+                _ = await ParakeetCtcModelStore.shared.modelsIfAvailable()
+            }
+            // Boosting is aligned and inference runs with no configuration able
+            // to interleave. Boosting never throws or reloads ASR here; only
+            // the decode itself can fail.
+            let (text, outcome) = try await boosting.run(on: mgr, desired: desired) {
+                try await self.transcribeUnified(mgr: mgr, fileURL: fileURL)
+            }
+            handleBoostingOutcome(outcome, manager: mgr)
+            return text
         case .ultra:
             guard let mgr = asrManager else { throw ProviderError.notImplemented }
             return try await transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
@@ -195,54 +242,50 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // MARK: - Vocabulary boosting (Unified only)
 
-    /// Bring the Unified manager's vocabulary boosting in line with the
-    /// Vocabulary list and the Settings toggle. Never throws: when the CTC model
-    /// is missing (a background download starts), still loading and
-    /// `waitForModel` is false, or configuring fails, the transcription simply
-    /// runs without boosting.
-    private func applyVocabularyBoosting(terms: [String], waitForModel: Bool) async {
-        let desired = ParakeetVocabularyBoosting.termsToBoost(
-            enabled: ParakeetVocabularyBoosting.isEnabled(),
-            terms: terms
-        )
-        guard let mgr = unifiedManager, desired != boostedTerms else { return }
+    private func handleBoostingOutcome(
+        _ outcome: ParakeetBoostingCoordinator<UnifiedAsrManager>.Outcome,
+        manager: UnifiedAsrManager
+    ) {
+        switch outcome {
+        case .configured(let terms):
+            log.notice("[ParakeetVocab] boosting configured terms=\(terms.count, privacy: .public)")
+            AppLog.dictation.log("[ParakeetVocab] boosting configured terms=\(terms.count)")
+        case .neutralized:
+            scheduleUnboostedReplacement(for: manager)
+        case .unchanged, .skipped, .stale:
+            break
+        }
+    }
 
-        if desired.isEmpty {
-            // FluidAudio has no "disable boosting" call; drop the manager so
-            // the next load starts clean.
-            AppLog.dictation.log("[ParakeetVocab] boosting off; reloading Unified without it")
-            unifiedManager = nil
-            loadedKind = nil
+    /// After boosting is turned off, a neutralized manager still runs a CTC
+    /// pass per transcription. Load a clean manager in the background and swap
+    /// it in only once it has loaded and boosting is still off. Dictation keeps
+    /// using the neutralized manager meanwhile; a failed load changes nothing.
+    private func scheduleUnboostedReplacement(for old: UnifiedAsrManager) {
+        guard replacementTask == nil else { return }
+        replacementTask = Task { [weak self] in
+            defer { self?.replacementTask = nil }
+            let fresh = UnifiedAsrManager()
             do {
-                try await ensureModelsLoaded(kind: .unified)
+                try await fresh.loadModels(to: ParakeetManager.modelsDirectory)
             } catch {
-                let message = (error as NSError).localizedDescription
-                AppLog.dictation.error("[ParakeetVocab] Unified reload failed: \(message)")
+                AppLog.dictation.error(
+                    "[ParakeetVocab] unboosted replacement failed to load: \(error.localizedDescription)"
+                )
+                return
             }
-            return
-        }
-
-        let store = ParakeetCtcModelStore.shared
-        let loaded = waitForModel ? await store.modelsIfAvailable() : await store.modelsIfLoaded()
-        guard let ctcModels = loaded else {
-            AppLog.dictation.log("[ParakeetVocab] CTC model not ready; transcribing without boosting")
-            return
-        }
-        let started = Date()
-        do {
-            try await mgr.configureVocabularyBoosting(
-                vocabulary: ParakeetVocabularyBoosting.vocabularyContext(for: desired),
-                ctcModels: ctcModels
-            )
-            // Only record it if the manager wasn't swapped while we awaited.
-            if mgr === unifiedManager { boostedTerms = desired }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            log.notice("[ParakeetVocab] boosting configured terms=\(desired.count, privacy: .public) in \(ms, privacy: .public)ms")
-            AppLog.dictation.log("[ParakeetVocab] boosting configured terms=\(desired.count) in \(ms)ms")
-        } catch {
-            let message = (error as NSError).localizedDescription
-            log.error("[ParakeetVocab] configure failed: \(message, privacy: .public)")
-            AppLog.dictation.error("[ParakeetVocab] configure failed; transcribing without boosting: \(message)")
+            guard let self else { return }
+            let swapped = await self.boosting.exclusive { () -> Bool in
+                let stillOff = ParakeetVocabularyBoosting.termsToBoost(
+                    enabled: self.boostingEnabled(),
+                    terms: ParakeetVocabularyBoosting.currentTerms()
+                ).isEmpty
+                guard stillOff, self.unifiedManager === old,
+                      await self.boosting.configuredTerms(of: old) == [] else { return false }
+                self.unifiedManager = fresh
+                return true
+            }
+            AppLog.dictation.log("[ParakeetVocab] unboosted replacement swapped=\(swapped)")
         }
     }
 
