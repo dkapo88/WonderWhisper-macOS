@@ -135,6 +135,19 @@ private actor MeetingSingleStreamIngress {
   }
 }
 
+/// The parts of FluidAudio's `StreamingUnifiedAsrManager` the meeting service
+/// drives per source. A protocol so finalization ordering is testable with
+/// fake streams.
+protocol MeetingParakeetStream: Actor {
+  func appendAudio(_ buffer: AVAudioPCMBuffer) throws
+  func processBufferedAudio() async throws
+  func finish() async throws -> String
+  func consumeTokenTimings() -> [TokenTiming]
+  func cleanup() async
+}
+
+extension StreamingUnifiedAsrManager: MeetingParakeetStream {}
+
 actor MeetingTranscriptionService {
   typealias TokenHandler = @Sendable ([MeetingTranscriptToken]) async -> Void
   typealias PreviewHandler = @Sendable (MeetingAudioSource, String) async -> Void
@@ -148,8 +161,8 @@ actor MeetingTranscriptionService {
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
   private let correctionHandler: CorrectionHandler
-  private var systemManager: StreamingUnifiedAsrManager?
-  private var microphoneManager: StreamingUnifiedAsrManager?
+  private var systemManager: (any MeetingParakeetStream)?
+  private var microphoneManager: (any MeetingParakeetStream)?
   // Parakeet sources with vocabulary boosting configured, and the live tokens
   // emitted for them (kept so the rescored text can be mapped back at finish).
   private var boostedSources: Set<MeetingAudioSource> = []
@@ -273,6 +286,19 @@ actor MeetingTranscriptionService {
     case .sonioxSeparate:
       try await finishSeparateSoniox()
     }
+  }
+
+  /// Test seam: install ready Parakeet streams (skipping model loading) and
+  /// mark which sources have vocabulary boosting.
+  func installParakeetStreamsForTesting(
+    system: any MeetingParakeetStream,
+    microphone: any MeetingParakeetStream,
+    boostedSources: Set<MeetingAudioSource>
+  ) {
+    systemManager = system
+    microphoneManager = microphone
+    self.boostedSources = boostedSources
+    isReady = true
   }
 
   func cleanup() async {
@@ -474,31 +500,27 @@ actor MeetingTranscriptionService {
 
   private func finishParakeet() async throws {
     var failures: [String] = []
-    do {
-      if let systemManager {
-        let finalText = try await systemManager.finish()
-        await emitParakeet(
-          await systemManager.consumeTokenTimings(),
-          source: .systemAudio
-        )
-        await emitVocabularyCorrections(rescoredText: finalText, source: .systemAudio)
+    var rescoredTexts: [(source: MeetingAudioSource, text: String)] = []
+    let streams: [(MeetingAudioSource, (any MeetingParakeetStream)?)] = [
+      (.systemAudio, systemManager),
+      (.microphone, microphoneManager),
+    ]
+    // Finish and drain EVERY source before mapping any vocabulary correction:
+    // the speaker-crossing guard in MeetingVocabularyCorrector.apply can only
+    // see the other source's final tokens once they have all been emitted.
+    for (source, stream) in streams {
+      guard let stream else { continue }
+      do {
+        let finalText = try await stream.finish()
+        await emitParakeet(await stream.consumeTokenTimings(), source: source)
+        rescoredTexts.append((source, finalText))
+      } catch {
+        recoverySources.insert(source)
+        failures.append("\(source.displayName): \(error.localizedDescription)")
       }
-    } catch {
-      recoverySources.insert(.systemAudio)
-      failures.append("System audio: \(error.localizedDescription)")
     }
-    do {
-      if let microphoneManager {
-        let finalText = try await microphoneManager.finish()
-        await emitParakeet(
-          await microphoneManager.consumeTokenTimings(),
-          source: .microphone
-        )
-        await emitVocabularyCorrections(rescoredText: finalText, source: .microphone)
-      }
-    } catch {
-      recoverySources.insert(.microphone)
-      failures.append("Microphone: \(error.localizedDescription)")
+    for (source, text) in rescoredTexts {
+      await emitVocabularyCorrections(rescoredText: text, source: source)
     }
     if !failures.isEmpty {
       throw ProviderError.networkError(failures.joined(separator: "; "))
