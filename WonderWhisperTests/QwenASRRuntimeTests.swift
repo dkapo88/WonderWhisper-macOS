@@ -461,4 +461,63 @@ struct QwenASRRuntimeTests {
       _ = try await runtime.transcribe(samples: [0.1], language: nil, context: nil)
     }
   }
+
+  /// Review finding 2: a 1.5 s tail chunk that decodes to ~1,000 chars fits
+  /// the joined 16.5 s budget but must fail against its own length.
+  @Test func badShortTailChunkIsCaughtPerChunk() async throws {
+    let engine = TailGarbageEngine(tailSampleCount: 24_000)
+    let samples = [Float](repeating: 0.1, count: 16_000 * 15 + 24_000)
+    let ranges = QwenASRManager.transcriptionChunkRanges(sampleCount: samples.count)
+    #expect(ranges.map(\.count) == [16_000 * 15, 24_000])
+
+    let joined = TailGarbageEngine.headText + " " + TailGarbageEngine.tailText
+    #expect(joined.count > 1_000)
+    #expect(
+      QwenASRManager.degenerateReason(joined, sampleCount: samples.count) == nil,
+      "the old whole-recording check let this through"
+    )
+
+    let outcome = QwenASRRuntime.decodeChunks(
+      samples: samples, ranges: ranges, engine: engine, language: nil, context: nil
+    )
+    guard case .degenerate(_, let chunk, _) = outcome else {
+      Issue.record("expected the tail chunk to be rejected, got \(outcome)")
+      return
+    }
+    #expect(chunk == 1)
+
+    let runtime = QwenASRRuntime(
+      loader: SingleEngineLoader(engine: engine),
+      modelDirectory: { scratchDir },
+      canary: { QwenCanary(samples: [Float](repeating: 0, count: 16_000)) }
+    )
+    await #expect(throws: QwenASRError.self) {
+      _ = try await runtime.transcribe(samples: samples, language: nil, context: nil)
+    }
+  }
+}
+
+/// 15 s chunks decode normally; the short tail decodes to ~1,000 chars; the
+/// 1 s canary decodes to the expected sentence.
+private final class TailGarbageEngine: QwenASREngine, @unchecked Sendable {
+  static let headText = "Please move the planning meeting to Thursday and send the notes."
+  static let tailText = (0..<160).map { "token\($0)" }.joined(separator: " ")
+  let tailSampleCount: Int
+
+  init(tailSampleCount: Int) { self.tailSampleCount = tailSampleCount }
+
+  func decode(samples: [Float], language: String?, context: String?, maxTokens: Int) -> String {
+    if samples.count == tailSampleCount { return Self.tailText }
+    if samples.count == 16_000 { return QwenCanary.expectedText }
+    return Self.headText
+  }
+
+  func unload() {}
+}
+
+private struct SingleEngineLoader: QwenASREngineLoader {
+  let engine: QwenASREngine
+  func verifyFiles(directory: URL) throws -> String { "fake" }
+  func load(directory: URL, log: (String) -> Void) throws -> QwenASREngine { engine }
+  func clearCache() {}
 }

@@ -107,38 +107,69 @@ actor QwenASRRuntime {
     var retriedRetired = false
     while true {
       let box = try await readyEngine(respectCooldown: true)
-      let text: String
+      let outcome: ChunkedDecode
       do {
-        text = try await inference.run { () throws -> String in
+        outcome = try await inference.run { () throws -> ChunkedDecode in
           guard !box.retired else { throw InternalError.retired }
-          var parts: [String] = []
-          for range in ranges {
-            let part = box.engine.decode(
-              samples: Array(samples[range]),
-              language: language,
-              context: context,
-              maxTokens: QwenASRManager.chunkMaxTokens
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !part.isEmpty { parts.append(part) }
-          }
-          return parts.joined(separator: " ")
+          return Self.decodeChunks(
+            samples: samples,
+            ranges: ranges,
+            engine: box.engine,
+            language: language,
+            context: context
+          )
         }
       } catch InternalError.retired where !retriedRetired {
         retriedRetired = true
         continue
       }
-      if let reason = QwenASRManager.degenerateReason(text, sampleCount: samples.count) {
+      switch outcome {
+      case .text(let text):
+        return text
+      case .degenerate(let reason, let chunk, let part):
         record(
-          "degenerate decode load#\(box.generation) (\(reason)) length=\(text.count) "
-            + "preview=\"\(text.prefix(60))\" — retiring model, reloading for next time",
+          "degenerate decode load#\(box.generation) chunk \(chunk + 1)/\(ranges.count) "
+            + "(\(reason)) length=\(part.count) preview=\"\(part.prefix(60))\" "
+            + "— retiring model, reloading for next time",
           error: true
         )
         await invalidate(box, reason: "degenerate decode: \(reason)")
         Task { try? await self.warmUp() }
         throw QwenASRError.degenerateTranscript(reason)
       }
-      return text
     }
+  }
+
+  enum ChunkedDecode: Equatable {
+    case text(String)
+    case degenerate(reason: String, chunk: Int, part: String)
+  }
+
+  /// Decodes each chunk and validates it against its OWN sample count before
+  /// joining. Checking only the joined text against the whole recording let a
+  /// 1 s tail that decoded to 1,000+ chars hide inside a 16 s budget.
+  /// Runs on the inference queue.
+  nonisolated static func decodeChunks(
+    samples: [Float],
+    ranges: [Range<Int>],
+    engine: QwenASREngine,
+    language: String?,
+    context: String?
+  ) -> ChunkedDecode {
+    var parts: [String] = []
+    for (index, range) in ranges.enumerated() {
+      let part = engine.decode(
+        samples: Array(samples[range]),
+        language: language,
+        context: context,
+        maxTokens: QwenASRManager.chunkMaxTokens
+      ).trimmingCharacters(in: .whitespacesAndNewlines)
+      if let reason = QwenASRManager.degenerateReason(part, sampleCount: range.count) {
+        return .degenerate(reason: reason, chunk: index, part: part)
+      }
+      if !part.isEmpty { parts.append(part) }
+    }
+    return .text(parts.joined(separator: " "))
   }
 
   func currentHealth() -> QwenASRHealth { health }
