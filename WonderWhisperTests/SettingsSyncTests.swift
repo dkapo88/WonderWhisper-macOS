@@ -260,13 +260,19 @@ struct SettingsSyncTests {
     let remote = SettingsSyncDocument(entries: [
       "vocab.custom": .init(value: .string("remote"), counter: 100, deviceID: "AAAA")
     ])
-    let local = [
-      "vocab.custom": SettingsSyncMerger.LocalEntry(value: .string("local"), counter: 100)
-    ]
-    let higher = SettingsSyncMerger.merge(local: local, remote: remote, deviceID: "ZZZZ")
+    func merge(_ writer: String) -> SettingsSyncMerger.Result {
+      SettingsSyncMerger.merge(
+        local: ["vocab.custom": .init(value: .string("local"),
+                                      version: SettingsSyncVersion(100, writer))],
+        remote: remote,
+        deviceID: writer,
+        localCounter: 100
+      )
+    }
+    let higher = merge("ZZZZ")
     #expect(higher.documentChanged)
     #expect(higher.applyLocally.isEmpty)
-    let lower = SettingsSyncMerger.merge(local: local, remote: remote, deviceID: "0000")
+    let lower = merge("0000")
     #expect(!lower.documentChanged)
     #expect(lower.applyLocally["vocab.custom"] == .some(.string("remote")))
   }
@@ -434,6 +440,8 @@ struct SettingsSyncTests {
     #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("Luis"))
   }
 
+  /// Unknown keys are kept; an entry with an unknown value type can't be verified, so it is
+  /// preserved verbatim and its key is left alone (this Mac keeps its own value).
   @Test func unknownKeysAndValueTypesAreIgnoredButKept() async throws {
     let harness = try Harness()
     try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
@@ -461,9 +469,11 @@ struct SettingsSyncTests {
 
     #expect(defaults.string(forKey: "vocab.custom") == "cloud")
     #expect(defaults.object(forKey: "future.setting") == nil)
+    #expect(defaults.string(forKey: "vocab.spelling") == "mine")
     let document = try harness.readDocument()
     #expect(document.entries["future.setting"]?.value == .string("x"))
-    #expect(document.entries["vocab.spelling"]?.value == .string("mine"))
+    #expect(document.entries["vocab.spelling"] == nil)
+    #expect(document.opaqueEntries["vocab.spelling"] != nil, "unverifiable entry was dropped")
     #expect(document.devices.count == 2)
   }
 
@@ -852,7 +862,7 @@ struct SettingsSyncTests {
     let token = SettingsSyncCancellation()
     token.cancel()
     let input = SettingsSyncFileStore.TransactionInput(
-      local: ["vocab.custom": .init(value: .string("x"), counter: 1)],
+      local: ["vocab.custom": .init(value: .string("x"), version: SettingsSyncVersion(1, "A"))],
       deviceID: "A",
       deviceName: "Mac A",
       timestamp: harness.clock
@@ -948,7 +958,10 @@ struct SettingsSyncTests {
     Self.requireSendable(SettingsSyncCancellation.self)
     Self.requireSendable(SettingsSyncDocument.self)
     #expect(SettingsSyncRegistry.excluded[SettingsSyncStateKey.enabled] != nil)
-    #expect(SettingsSyncRegistry.excluded[SettingsSyncStateKey.counter] != nil)
+    #expect(SettingsSyncRegistry.excluded[SettingsSyncStateKey.localState] != nil)
+    Self.requireSendable(SettingsSyncEngine.self)
+    Self.requireSendable(SettingsSyncVersion.self)
+    Self.requireSendable(SettingsSyncTransaction.Plan.self)
   }
 
   private nonisolated static func requireSendable<T: Sendable>(_: T.Type) {}
@@ -977,6 +990,8 @@ struct SettingsSyncTests {
     """
     let document = try SettingsSyncDocument.decode(Data(json.utf8))
     #expect(Set(document.entries.keys) == ["llm.model"])
+    #expect(Set(document.opaqueEntries.keys)
+      == ["vocab.custom", "vocab.spelling", "transcription.language", "llm.temperature"])
     #expect(document.devices.isEmpty)
     #expect(SettingsSyncDocument.millis(Date(timeIntervalSince1970: 1e300))
       == SettingsSyncDocument.maxMillis)
@@ -994,6 +1009,7 @@ struct SettingsSyncTests {
     #expect(mac.isEnabled)
     #expect(defaults.string(forKey: "llm.model") == "ok")
     #expect(defaults.string(forKey: "vocab.custom") == "mine")
+    #expect(try harness.readDocument().opaqueEntries.count == 4, "malformed entries were lost")
   }
 
   /// R2-2: a conflict version that can't be read yet keeps its offline edits for a later sync:
@@ -1094,78 +1110,330 @@ struct SettingsSyncTests {
 
   // MARK: - Round 3: Lamport ordering
 
-  /// R3: counters far above this Mac's counter are corrupt: ignored for merging, never adopted
-  /// (so later edits keep small counters), replaced by a local value, and reported.
-  @Test func invalidCountersNeverPoisonTheCounter() async throws {
-    let harness = try Harness()
+  // MARK: - Round 4: immutable versions, explicit first-enable modes
+
+  /// Builds a service whose device ID is fixed, so version tie-breaks are predictable.
+  private static func mac(
+    _ harness: Harness,
+    _ id: String,
+    conflicts: SettingsSyncConflictSource = .none
+  ) throws -> (SettingsSyncService, UserDefaults) {
     let defaults = try harness.makeDefaults()
-    defaults.set("mine", forKey: "vocab.custom")
-    let mac = harness.makeService(defaults, name: "Mac A")
-    await mac.setEnabled(true)
-    let before = mac.counter
-
-    var document = try harness.readDocument()
-    let poisoned = before + SettingsSyncService.maxCounterJump + 1
-    document.entries["future.setting"] = .init(value: .string("x"), counter: poisoned,
-                                               deviceID: "BROKEN")
-    document.entries["vocab.custom"] = .init(value: .string("poisoned"), counter: poisoned,
-                                             deviceID: "BROKEN")
-    try document.encoded().write(to: harness.fileURL, options: .atomic)
-
-    await mac.syncNow()
-    #expect(defaults.string(forKey: "vocab.custom") == "mine")
-    #expect(mac.counter < before + 10, "an invalid counter was adopted: \(mac.counter)")
-    #expect(mac.notice?.contains("invalid ordering") == true)
-    let healed = try harness.readDocument()
-    #expect(healed.entries["vocab.custom"]?.value == .string("mine"))
-    #expect((healed.entries["vocab.custom"]?.counter ?? .max) < before + 10)
-    #expect(healed.entries["future.setting"]?.counter == poisoned, "unknown keys are preserved")
-
-    defaults.set("later edit", forKey: "vocab.custom")
-    mac.noteLocalChanges()
-    await mac.syncNow()
-    let saved = try harness.readDocument()
-    #expect(saved.entries["vocab.custom"]?.value == .string("later edit"))
-    #expect((saved.entries["vocab.custom"]?.counter ?? .max) < before + 10)
-
-    await mac.setEnabled(false)
-    #expect(defaults.object(forKey: SettingsSyncStateKey.counter) == nil)
+    defaults.set(id, forKey: SettingsSyncStateKey.deviceID)
+    return (harness.makeService(defaults, name: "Mac \(id)", conflicts: conflicts), defaults)
   }
 
-  /// R3: a persisted counter outside the valid range is treated as corrupt (reset and
-  /// re-learned from the file) instead of overflowing or saturating, and the schema-1 wall
-  /// clock key is deleted on launch.
-  @Test func persistedCounterIsClampedAndLegacyClockDeleted() async throws {
+  /// R4-1: a Mac that relays another Mac's value keeps that value's original version, so it
+  /// can't reverse a newer edit or resurrect a reset.
+  @Test func relayedValueKeepsItsOriginalVersion() async throws {
     let harness = try Harness()
-    let defaults = try harness.makeDefaults()
-    defaults.set(NSNumber(value: Int64.max), forKey: SettingsSyncStateKey.counter)
-    let year2100Millis = NSNumber(value: Int64(4_102_444_800_000))
-    defaults.set(year2100Millis, forKey: SettingsSyncStateKey.legacyClock)
-    defaults.set("mine", forKey: "vocab.custom")
-    let mac = harness.makeService(defaults, name: "Mac A")
-    #expect(mac.counter == 0)
+    let (macA, defaultsA) = try Self.mac(harness, "A")
+    defaultsA.set("base", forKey: "vocab.custom")
+    await macA.setEnabled(true)
+    var macs: [(SettingsSyncService, UserDefaults)] = [(macA, defaultsA)]
+    for id in ["B", "C", "Z"] {
+      let (mac, defaults) = try Self.mac(harness, id)
+      await mac.setEnabled(true)
+      await mac.resolveFirstEnable(.useCloud)
+      macs.append((mac, defaults))
+    }
+    let (macB, defaultsB) = macs[1]
+    let (macC, defaultsC) = macs[2]
+    let (macZ, defaultsZ) = macs[3]
 
-    // At the limit, "+ 1" stays well inside Int64.
-    let atLimit = SettingsSyncDocument(entries: [
-      "vocab.custom": .init(value: .string("x"), counter: SettingsSyncDocument.maxCounter,
-                            deviceID: "Z")
-    ])
-    let replaced = SettingsSyncMerger.merge(
-      local: ["vocab.custom": .init(value: .string("y"), counter: 0)],
-      remote: atLimit,
-      deviceID: "A",
-      authoritative: true
-    )
-    #expect(replaced.document.entries["vocab.custom"]?.counter
-      == SettingsSyncDocument.maxCounter + 1)
-    #expect(defaults.object(forKey: SettingsSyncStateKey.legacyClock) == nil)
+    // Concurrent edits at the same counter: B sets a value, C resets it. (2,C) > (2,B).
+    defaultsB.set("b", forKey: "vocab.custom")
+    macB.noteLocalChanges()
+    defaultsC.removeObject(forKey: "vocab.custom")
+    macC.noteLocalChanges()
+    #expect(macB.pendingVersion(for: "vocab.custom") == SettingsSyncVersion(2, "B"))
+    #expect(macC.pendingVersion(for: "vocab.custom") == SettingsSyncVersion(2, "C"))
+
+    await macB.syncNow()
+    await macZ.syncNow()  // Z relays B's value...
+    #expect(defaultsZ.string(forKey: "vocab.custom") == "b")
+    await macC.syncNow()
+    await macZ.syncNow()  // ...but must not re-upload it as (2,Z) over C's (2,C) reset.
+    for (mac, _) in macs { await mac.syncNow() }
+
+    let entry = try #require(try harness.readDocument().entries["vocab.custom"])
+    #expect(entry.value == nil)
+    #expect(entry.version == SettingsSyncVersion(2, "C"))
+    for (_, defaults) in macs {
+      #expect(defaults.object(forKey: "vocab.custom") == nil)
+    }
+  }
+
+  /// R4-2: "Use iCloud" adopts every cloud key, resets included, even against schema-1 entries
+  /// at counter 0 and a local device ID that would win a tie.
+  @Test func useICloudAdoptsEveryCloudKeyIncludingResets() async throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    let json = """
+    {
+      "schemaVersion": 1,
+      "entries": {
+        "vocab.custom": {"value": {"type": "string", "value": "from v1"},
+          "modifiedAt": 1000, "deviceID": "OLD"},
+        "transcription.language": {"modifiedAt": 1000, "deviceID": "OLD"}
+      },
+      "devices": {"OLD": {"name": "Old Mac", "lastWriteAt": 1000}}
+    }
+    """
+    try Data(json.utf8).write(to: harness.fileURL)
+    let (mac, defaults) = try Self.mac(harness, "ZZZZ")
+    defaults.set("mine", forKey: "vocab.custom")
+    defaults.set("de", forKey: "transcription.language")
+    defaults.set("local/only", forKey: "llm.model")
 
     await mac.setEnabled(true)
-    defaults.set("edit", forKey: "vocab.custom")
+    await mac.resolveFirstEnable(.useCloud)
+
+    #expect(defaults.string(forKey: "vocab.custom") == "from v1")
+    #expect(defaults.object(forKey: "transcription.language") == nil)
+    let document = try harness.readDocument()
+    #expect(document.entries["vocab.custom"]?.value == .string("from v1"))
+    #expect(document.entries["vocab.custom"]?.version == SettingsSyncVersion(0, "OLD"))
+    #expect(document.entries["transcription.language"].map { $0.value == nil } == true)
+    #expect(document.entries["llm.model"]?.value == .string("local/only"))
+  }
+
+  /// R4-3: "Replace iCloud" stamps the whole batch (identical values included) above every
+  /// counter in the file and in its conflict versions, so an older offline edit can't win.
+  @Test func replaceStampsWholeBatchAboveFileAndConflicts() async throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    try SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("cloud"), counter: 1, deviceID: "X"),
+      "transcription.language": .init(value: .string("fr"), counter: 100, deviceID: "X")
+    ]).encoded().write(to: harness.fileURL)
+    let conflicts = FakeConflictVersions()
+    conflicts.add(try SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("older offline"), counter: 99, deviceID: "Y")
+    ]).encoded())
+
+    let (mac, defaults) = try Self.mac(harness, "B", conflicts: conflicts.source)
+    defaults.set("this mac", forKey: "vocab.custom")
+    defaults.set("fr", forKey: "transcription.language")
+    await mac.setEnabled(true)
+    await mac.resolveFirstEnable(.replaceCloud)
+
+    let document = try harness.readDocument()
+    #expect(document.entries["vocab.custom"]?.value == .string("this mac"))
+    #expect(document.entries["vocab.custom"]?.version == SettingsSyncVersion(101, "B"))
+    #expect(document.entries["transcription.language"]?.version == SettingsSyncVersion(101, "B"))
+    #expect(conflicts.resolvedCount == 1)
+    #expect(defaults.string(forKey: "vocab.custom") == "this mac")
+    await mac.syncNow()
+    #expect(defaults.string(forKey: "vocab.custom") == "this mac")
+  }
+
+  /// R4-4: a pending edit is persisted with its version when observed; after a relaunch it is
+  /// uploaded with that same version, not re-stamped (which would let it win by device ID).
+  @Test func pendingEditSurvivesRelaunchWithItsVersion() async throws {
+    let harness = try Harness()
+    let (macZ, defaultsZ) = try Self.mac(harness, "Z")
+    defaultsZ.set("base", forKey: "vocab.custom")
+    await macZ.setEnabled(true)
+    let (macB, defaultsB) = try Self.mac(harness, "B")
+    await macB.setEnabled(true)
+    await macB.resolveFirstEnable(.useCloud)
+
+    defaultsB.set("b edit", forKey: "vocab.custom")
+    macB.noteLocalChanges()
+    #expect(macB.pendingVersion(for: "vocab.custom") == SettingsSyncVersion(2, "B"))
+    defaultsZ.set("z edit", forKey: "vocab.custom")
+    macZ.noteLocalChanges()
+    await macZ.syncNow()  // (2,Z) is in the cloud; it beats (2,B)
+
+    let relaunchedB = harness.makeService(defaultsB, name: "Mac B")
+    #expect(relaunchedB.pendingVersion(for: "vocab.custom") == SettingsSyncVersion(2, "B"))
+    relaunchedB.noteLocalChanges()
+    await relaunchedB.syncNow()
+
+    let entry = try #require(try harness.readDocument().entries["vocab.custom"])
+    #expect(entry.version == SettingsSyncVersion(2, "Z"))
+    #expect(defaultsB.string(forKey: "vocab.custom") == "z edit")
+  }
+
+  /// R4-5: equal values keep the higher version, so a recovered older edit can't win.
+  @Test func equalValuesKeepTheHigherVersion() throws {
+    let remote = SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("X"), counter: 5, deviceID: "B")
+    ])
+    let local = ["vocab.custom": SettingsSyncMerger.LocalCandidate(
+      value: .string("X"),
+      version: SettingsSyncVersion(100, "A")
+    )]
+    let merged = SettingsSyncMerger.merge(
+      local: local,
+      remote: remote,
+      deviceID: "A",
+      localCounter: 100
+    )
+    #expect(merged.documentChanged)
+    #expect(merged.document.entries["vocab.custom"]?.version == SettingsSyncVersion(100, "A"))
+
+    // Through a whole transaction, with an older offline edit recovered from a conflict.
+    let offline = try SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("Y"), counter: 50, deviceID: "C")
+    ]).encoded()
+    let plan = SettingsSyncTransaction.plan(
+      SettingsSyncTransaction.Input(
+        local: local,
+        deviceID: "A",
+        deviceName: "Mac A",
+        timestamp: Date(timeIntervalSince1970: 0),
+        localCounter: 100
+      ),
+      current: .contents(try remote.encoded()),
+      conflicts: [offline]
+    )
+    #expect(plan.write?.entries["vocab.custom"]?.value == .string("X"))
+    #expect(plan.write?.entries["vocab.custom"]?.version == SettingsSyncVersion(100, "A"))
+    #expect(plan.incorporated == [0])
+  }
+
+  /// R4-6: deferred view-model saves triggered by a received reset are suppressed (they carry
+  /// remote-apply provenance), so they can't become local edits; a genuine edit made afterwards
+  /// is still persisted.
+  @Test func deferredSavesAfterAReceivedResetAreNotLocalEdits() async throws {
+    let defaults = AppConfig.defaults
+    let keys: Set<String> = ["simple.model.selected", "simple.dictation.settings"]
+    defer { keys.forEach { defaults.removeObject(forKey: $0) } }
+    let vm = DictationViewModel()
+
+    var settings = vm.simpleDictation
+    settings.header = "Received header"
+    defaults.set(try JSONEncoder().encode(settings), forKey: "simple.dictation.settings")
+    defaults.set("received/model", forKey: "simple.model.selected")
+    vm.applySyncedSettings(changedKeys: keys)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(vm.simpleSelectedModel == "received/model")
+
+    // A received reset: the view model falls back to defaults and its deferred hops would
+    // persist them. With provenance they are dropped.
+    keys.forEach { defaults.removeObject(forKey: $0) }
+    vm.applySyncedSettings(changedKeys: keys)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(vm.simpleSelectedModel == SimpleModeDefaults.defaultModelID)
+    for key in keys {
+      #expect(defaults.object(forKey: key) == nil, "\(key) was re-saved by a deferred hop")
+    }
+
+    // A genuine edit afterwards is a fresh task without provenance: it is written.
+    vm.simpleSelectedModel = "user/choice"
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(defaults.string(forKey: "simple.model.selected") == "user/choice")
+  }
+
+  /// R4-6: the provenance-aware store drops writes to synced keys inside an apply (including
+  /// from tasks spawned there), and passes everything else through.
+  @Test func provenanceSuppressesOnlySyncedWritesDuringApply() async throws {
+    let suite = "ww.provenance.tests.\(UUID().uuidString)"
+    let store = try #require(SyncProvenanceUserDefaults(suiteName: suite))
+    defer { store.removePersistentDomain(forName: suite) }
+    store.set("before", forKey: "vocab.custom")
+
+    let spawned: Task<Void, Never> = SettingsSyncProvenance.applyingRemoteSettings {
+      store.set("during", forKey: "vocab.custom")
+      store.set(true, forKey: "llm.enabled")
+      store.set(3, forKey: "history.maxEntries")
+      store.set(0.5, forKey: "llm.temperature")
+      store.removeObject(forKey: "vocab.custom")
+      store.set("allowed", forKey: "simple.sidebar.selection")  // not synced
+      return Task { store.set("from hop", forKey: "vocab.spelling") }
+    }
+    await spawned.value
+    #expect(store.string(forKey: "vocab.custom") == "before")
+    #expect(store.object(forKey: "llm.enabled") == nil)
+    #expect(store.object(forKey: "history.maxEntries") == nil)
+    #expect(store.object(forKey: "llm.temperature") == nil)
+    #expect(store.object(forKey: "vocab.spelling") == nil)
+    #expect(store.string(forKey: "simple.sidebar.selection") == "allowed")
+
+    store.set("after", forKey: "vocab.custom")  // outside the scope: a genuine edit
+    #expect(store.string(forKey: "vocab.custom") == "after")
+  }
+
+  /// R4-7: a legitimate counter far above this Mac's (here 5e9) is accepted, never treated as
+  /// corrupt and overwritten; this Mac's next edit is ordered after it.
+  @Test func legitimateHighCounterIsAcceptedByAFreshMac() async throws {
+    let harness = try Harness()
+    let (mac, defaults) = try Self.mac(harness, "A")
+    defaults.set("mine", forKey: "vocab.custom")
+    await mac.setEnabled(true)
+
+    var document = try harness.readDocument()
+    document.entries["vocab.custom"] = .init(value: .string("remote"), counter: 5_000_000_000,
+                                             deviceID: "X")
+    try document.encoded().write(to: harness.fileURL, options: .atomic)
+    await mac.syncNow()
+    #expect(defaults.string(forKey: "vocab.custom") == "remote")
+    #expect(try harness.readDocument().entries["vocab.custom"]?.counter == 5_000_000_000)
+    #expect(mac.counter == 5_000_000_000)
+
+    defaults.set("next", forKey: "vocab.custom")
     mac.noteLocalChanges()
-    await mac.syncNow()  // must not trap on + 1
-    #expect(mac.counter <= SettingsSyncDocument.maxCounter)
-    #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("edit"))
+    await mac.syncNow()
+    #expect(try harness.readDocument().entries["vocab.custom"]?.version
+      == SettingsSyncVersion(5_000_000_001, "A"))
+  }
+
+  /// R4-7: a conflict version is validated on its own before combining. An over-limit counter
+  /// keeps it unresolved (preserved) and it never eclipses healthy data.
+  @Test func overLimitConflictIsKeptAndNeverEclipsesHealthyData() async throws {
+    let harness = try Harness()
+    let conflicts = FakeConflictVersions()
+    let (mac, defaults) = try Self.mac(harness, "A", conflicts: conflicts.source)
+    defaults.set("healthy", forKey: "vocab.custom")
+    await mac.setEnabled(true)
+
+    let overLimit = """
+    {"schemaVersion": 2, "entries": {"vocab.custom": {"value": {"type": "string",
+      "value": "eclipse"}, "counter": 1152921504606846976, "deviceID": "BAD"}}, "devices": {}}
+    """
+    conflicts.add(Data(overLimit.utf8))
+    await mac.syncNow()
+
+    #expect(defaults.string(forKey: "vocab.custom") == "healthy")
+    #expect(try harness.readDocument().entries["vocab.custom"]?.value == .string("healthy"))
+    #expect(conflicts.resolvedCount == 0)
+    #expect(conflicts.finishCount == 0)
+    #expect(conflicts.remainingCount == 1)
+    #expect(mac.notice?.contains("Waiting to merge 1") == true)
+  }
+
+  /// R4-7: a cloud entry whose provenance can't be established (here a counter of 1e20) is
+  /// preserved verbatim and its key is never overwritten, not even by "Replace iCloud".
+  @Test func unverifiableCloudEntryIsPreservedAndNeverOverwritten() async throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    let json = """
+    {"schemaVersion": 2, "entries": {
+      "vocab.custom": {"value": {"type": "string", "value": "unverifiable"}, "counter": 1e20,
+        "deviceID": "X"},
+      "transcription.language": {"value": {"type": "string", "value": "fr"}, "counter": 3,
+        "deviceID": "X"}}, "devices": {}}
+    """
+    try Data(json.utf8).write(to: harness.fileURL)
+    let (mac, defaults) = try Self.mac(harness, "A")
+    defaults.set("mine", forKey: "vocab.custom")
+    await mac.setEnabled(true)
+    await mac.resolveFirstEnable(.replaceCloud)
+
+    #expect(defaults.string(forKey: "vocab.custom") == "mine")
+    #expect(mac.notice?.contains("couldn't be read") == true)
+    let raw = try #require(
+      try JSONSerialization.jsonObject(with: Data(contentsOf: harness.fileURL)) as? [String: Any]
+    )
+    let entries = try #require(raw["entries"] as? [String: Any])
+    let preserved = try #require(entries["vocab.custom"] as? [String: Any])
+    #expect((preserved["counter"] as? Double) == 1e20)
+    #expect((preserved["value"] as? [String: Any])?["value"] as? String == "unverifiable")
+    // The other key was replaced as usual (locked keys are skipped, nothing else is).
+    #expect(try harness.readDocument().entries["transcription.language"].map { $0.value == nil }
+      == true)
   }
 
   /// R3: a Mac whose wall clock is two days behind, after choosing "Use iCloud", takes the
@@ -1341,7 +1609,7 @@ struct SettingsSyncTests {
       beforeCommit: { token.cancel() }  // sync turned off while encoding/preparing
     )
     let input = SettingsSyncFileStore.TransactionInput(
-      local: ["vocab.custom": .init(value: .string("x"), counter: 1)],
+      local: ["vocab.custom": .init(value: .string("x"), version: SettingsSyncVersion(1, "A"))],
       deviceID: "A",
       deviceName: "Mac A",
       timestamp: harness.clock
@@ -1416,6 +1684,38 @@ struct SettingsSyncTests {
     try await Task.sleep(for: .milliseconds(100))
     #expect(vm.responseWindowFontSize == 25)
     #expect(defaults.object(forKey: key) as? Double == 25)
+  }
+
+  /// Earlier standalone state keys are deleted on launch, and counters at the limit never
+  /// overflow (`+ 1` saturates instead of trapping).
+  @Test func legacyStateIsDeletedAndCountersNeverOverflow() throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    defaults.set(NSNumber(value: Int64.max), forKey: SettingsSyncStateKey.legacyCounter)
+    let year2100Millis = NSNumber(value: Int64(4_102_444_800_000))
+    defaults.set(year2100Millis, forKey: SettingsSyncStateKey.legacyClock)
+    _ = harness.makeService(defaults, name: "Mac A")
+    #expect(defaults.object(forKey: SettingsSyncStateKey.legacyCounter) == nil)
+    #expect(defaults.object(forKey: SettingsSyncStateKey.legacyClock) == nil)
+
+    var engine = SettingsSyncEngine(deviceID: "A")
+    engine.counter = SettingsSyncDocument.maxCounter
+    engine.records["vocab.custom"] = SettingsSyncLocalRecord(fingerprint: nil, version: nil)
+    engine.noteLocalChanges(["vocab.custom": .some(.string("x"))])
+    #expect(engine.counter == SettingsSyncDocument.maxCounter)
+
+    let atLimit = SettingsSyncDocument(entries: [
+      "vocab.custom": .init(value: .string("x"), counter: SettingsSyncDocument.maxCounter,
+                            deviceID: "Z")
+    ])
+    let replaced = SettingsSyncMerger.merge(
+      local: ["vocab.custom": .init(value: .string("y"), version: nil)],
+      remote: atLimit,
+      deviceID: "A",
+      localCounter: 0,
+      mode: .replace
+    )
+    #expect(replaced.document.entries["vocab.custom"]?.counter == SettingsSyncDocument.maxCounter)
   }
 
   @Test func statusLineReadsNaturally() {
