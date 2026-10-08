@@ -24,6 +24,17 @@ struct TestIsolationTests {
     #expect(root.hasSuffix("/" + AppConfig.appSupportDirectoryName))
   }
 
+  /// Parakeet providers built by the view model get an empty scratch models folder instead of
+  /// discovering the shared FluidAudio models, unless model tests are explicitly opted in.
+  @Test(.enabled(if: !AppConfig.runsModelTests))
+  func parakeetModelsResolveToAScratchFolder() throws {
+    let models = Self.resolved(try #require(AppConfig.testScratchParakeetModels))
+    let scratch = Self.resolved(try #require(AppConfig.testScratchApplicationSupport))
+      .replacingOccurrences(of: "/Application Support", with: "")
+    #expect(models.hasPrefix(scratch + "/"))
+    #expect(models.contains("WonderWhisperTests-\(ProcessInfo.processInfo.processIdentifier)"))
+  }
+
   @Test func preferenceDefaultsAreTheScratchSuite() {
     #expect(AppConfig.isTestRun)
     #expect(AppConfig.defaults !== UserDefaults.standard)

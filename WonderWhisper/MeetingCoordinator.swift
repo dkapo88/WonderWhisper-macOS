@@ -316,7 +316,11 @@ final class MeetingCoordinator: ObservableObject {
   private let noteGenerator = MeetingNoteGenerator()
   private let vaultIndex = MeetingVaultIndex()
   private let contextSummarizer = MeetingContextSummarizer()
-  private let transcriptRecovery = MeetingTranscriptRecoveryService()
+  // Unit tests never build the production recovery transcriber: it discovers the shared
+  // Parakeet models outside the test scratch folder.
+  private let transcriptRecovery = AppConfig.testScratchParakeetModels == nil
+    ? MeetingTranscriptRecoveryService()
+    : MeetingTranscriptRecoveryService { _ in "" }
   private let sonioxAsyncRecovery = MeetingSonioxAsyncRecoveryService()
   private let audioLevelGate = MeetingAudioLevelGate()
 

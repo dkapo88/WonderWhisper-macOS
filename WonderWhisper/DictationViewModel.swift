@@ -772,7 +772,7 @@ final class DictationViewModel: ObservableObject {
         let transcriber: TranscriptionProvider
         let transcriberSettings: TranscriptionSettings
         if activeTranscriptionModel.lowercased().contains("parakeet") {
-            transcriber = ParakeetTranscriptionProvider()
+            transcriber = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
             transcriberSettings = TranscriptionSettings(
                 endpoint: URL(string: "https://localhost")!,
                 model: activeTranscriptionModel,
@@ -5404,7 +5404,7 @@ final class DictationViewModel: ObservableObject {
 
         let provider: TranscriptionProvider
         if model.lowercased().contains("parakeet") {
-            provider = ParakeetTranscriptionProvider()
+            provider = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
         } else if QwenASRManager.isQwenModel(model) {
             provider = QwenASRTranscriptionProvider()
         } else if model == "groq-streaming" {
