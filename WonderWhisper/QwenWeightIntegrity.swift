@@ -95,8 +95,13 @@ enum QwenWeightIntegrity {
 
     let fileSize: Int64
     do {
-      fileSize = Int64(try handle.seekToEnd())
+      guard let size = Int64(exactly: try handle.seekToEnd()) else {
+        throw Failure.badHeader(name, "file size out of range")
+      }
+      fileSize = size
       try handle.seek(toOffset: 0)
+    } catch let failure as Failure {
+      throw failure
     } catch {
       throw Failure.unreadable(name, error.localizedDescription)
     }
@@ -108,15 +113,20 @@ enum QwenWeightIntegrity {
       throw Failure.unreadable(name, error.localizedDescription)
     }
     guard lengthBytes.count == 8 else { throw Failure.badHeader(name, "file shorter than 8 bytes") }
-    let headerLength = lengthBytes.enumerated().reduce(UInt64(0)) { acc, pair in
+    let rawHeaderLength = lengthBytes.enumerated().reduce(UInt64(0)) { acc, pair in
       acc | (UInt64(pair.element) << (8 * UInt64(pair.offset)))
     }
-    guard headerLength > 0, headerLength <= maxHeaderBytes else {
-      throw Failure.badHeader(name, "header length \(headerLength)")
+    // Bound the header before any arithmetic: after this it fits in Int64 with room to spare.
+    guard rawHeaderLength > 0, rawHeaderLength <= maxHeaderBytes else {
+      throw Failure.badHeader(name, "header length \(rawHeaderLength)")
     }
-    guard Int64(8 + headerLength) <= fileSize else {
-      throw Failure.truncated(file: name, fileSize: fileSize, needed: Int64(8 + headerLength))
+    let headerLength = Int64(rawHeaderLength)
+    let dataStart = 8 + headerLength
+    guard dataStart <= fileSize else {
+      throw Failure.truncated(file: name, fileSize: fileSize, needed: dataStart)
     }
+    // Bytes actually present after the header. Every tensor range must fit in it.
+    let payload = fileSize - dataStart
 
     let headerData: Data
     do {
@@ -134,24 +144,39 @@ enum QwenWeightIntegrity {
     var tensors = 0
     for (key, value) in header where key != "__metadata__" {
       guard let entry = value as? [String: Any],
-            let offsets = entry["data_offsets"] as? [NSNumber],
-            offsets.count == 2
+            let offsets = entry["data_offsets"] as? [Any],
+            offsets.count == 2,
+            let begin = offset(offsets[0]),
+            let end = offset(offsets[1])
       else {
-        throw Failure.badHeader(name, "tensor \(key) has no data_offsets")
+        throw Failure.badHeader(name, "tensor \(key) has invalid data_offsets")
       }
-      let begin = offsets[0].int64Value
-      let end = offsets[1].int64Value
-      guard begin >= 0, end >= begin else {
+      guard begin <= end else {
         throw Failure.badHeader(name, "tensor \(key) has offsets \(begin)..\(end)")
+      }
+      guard end <= payload else {
+        // `end` is at most 2^53 and dataStart at most 64 MB + 8, so this cannot overflow.
+        throw Failure.truncated(file: name, fileSize: fileSize, needed: dataStart + end)
       }
       maxEnd = max(maxEnd, end)
       tensors += 1
     }
-    let needed = 8 + Int64(headerLength) + maxEnd
-    guard needed <= fileSize else {
-      throw Failure.truncated(file: name, fileSize: fileSize, needed: needed)
-    }
+    let needed = dataStart + maxEnd  // <= fileSize, checked per tensor above
     return ShardReport(file: name, fileSize: fileSize, dataEnd: needed, tensorCount: tensors)
+  }
+
+  /// A non-negative integral offset no larger than 2^53, or nil. Rejects
+  /// booleans, strings, fractions, negatives and values that would overflow
+  /// later arithmetic.
+  static func offset(_ value: Any) -> Int64? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID()
+    else { return nil }
+    let double = number.doubleValue
+    guard double.isFinite, double >= 0, double <= 9_007_199_254_740_992,
+          double.rounded(.towardZero) == double
+    else { return nil }
+    return Int64(double)
   }
 
   /// "name=bytes" for every regular file in the model directory, for load logs.

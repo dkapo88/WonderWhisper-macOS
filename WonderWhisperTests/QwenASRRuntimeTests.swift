@@ -192,6 +192,112 @@ struct QwenLoadCheckTests {
   }
 }
 
+// MARK: - Integrity parser fuzzing (review finding 5)
+
+/// Malformed headers must throw a structural failure, never trap. The original
+/// parser died with SIGTRAP on `data_offsets: [0, Int64.max]`.
+struct QwenWeightIntegrityFuzzTests {
+  private static func shard(lengthField: UInt64, header: Data, payload: Int) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("qwen-fuzz-\(UUID().uuidString).safetensors")
+    var data = Data()
+    var length = lengthField.littleEndian
+    withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+    data.append(header)
+    data.append(Data(repeating: 0, count: payload))
+    try data.write(to: url)
+    return url
+  }
+
+  private static func shard(json: String, payload: Int = 64) throws -> URL {
+    let header = Data(json.utf8)
+    return try shard(lengthField: UInt64(header.count), header: header, payload: payload)
+  }
+
+  private static func expectStructuralFailure(_ url: URL, _ label: String) {
+    defer { try? FileManager.default.removeItem(at: url) }
+    do {
+      _ = try QwenWeightIntegrity.verifyShard(at: url)
+      Issue.record("\(label): accepted a malformed shard")
+    } catch is QwenWeightIntegrity.Failure {
+      // expected
+    } catch {
+      Issue.record("\(label): unexpected error \(error)")
+    }
+  }
+
+  @Test func overflowingOffsetsThrowInsteadOfTrapping() throws {
+    let cases = [
+      "[0,9223372036854775807]",
+      "[9223372036854775807,9223372036854775807]",
+      "[0,18446744073709551615]",
+      "[0,1e300]",
+      "[0,9007199254740993]",
+    ]
+    for offsets in cases {
+      let url = try Self.shard(json: #"{"w":{"dtype":"F32","shape":[1],"data_offsets":\#(offsets)}}"#)
+      Self.expectStructuralFailure(url, offsets)
+    }
+  }
+
+  @Test func negativeReversedAndNonNumericOffsetsThrow() throws {
+    let cases = [
+      "[-8,0]", "[0,-1]", "[16,8]", "[0]", "[0,8,16]", "[\"0\",\"8\"]", "[true,8]",
+      "[0.5,8]", "[0,null]", "{}", "\"0-8\"",
+    ]
+    for offsets in cases {
+      let url = try Self.shard(json: #"{"w":{"dtype":"F32","shape":[1],"data_offsets":\#(offsets)}}"#)
+      Self.expectStructuralFailure(url, offsets)
+    }
+  }
+
+  @Test func offsetsPastThePayloadAreTruncation() throws {
+    let url = try Self.shard(json: #"{"w":{"dtype":"F32","shape":[16],"data_offsets":[0,64]}}"#, payload: 32)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(throws: QwenWeightIntegrity.Failure.self) { try QwenWeightIntegrity.verifyShard(at: url) }
+  }
+
+  @Test func hugeTruncatedAndNonJSONHeadersThrow() throws {
+    Self.expectStructuralFailure(
+      try Self.shard(lengthField: UInt64.max, header: Data("{}".utf8), payload: 8), "UInt64.max length"
+    )
+    Self.expectStructuralFailure(
+      try Self.shard(lengthField: UInt64(Int64.max), header: Data("{}".utf8), payload: 8), "Int64.max length"
+    )
+    Self.expectStructuralFailure(
+      try Self.shard(lengthField: 60 * 1024 * 1024, header: Data("{}".utf8), payload: 8), "length past EOF"
+    )
+    Self.expectStructuralFailure(
+      try Self.shard(lengthField: 0, header: Data(), payload: 8), "zero length"
+    )
+    Self.expectStructuralFailure(try Self.shard(json: "not json at all"), "non-JSON")
+    Self.expectStructuralFailure(try Self.shard(json: "[1,2,3]"), "JSON array")
+    Self.expectStructuralFailure(try Self.shard(json: #"{"w":5}"#), "tensor not an object")
+    let tiny = FileManager.default.temporaryDirectory
+      .appendingPathComponent("qwen-fuzz-tiny-\(UUID().uuidString).safetensors")
+    try Data([1, 2, 3]).write(to: tiny)
+    Self.expectStructuralFailure(tiny, "shorter than 8 bytes")
+  }
+
+  @Test func randomBytesNeverTrap() throws {
+    var generator = SystemRandomNumberGenerator()
+    for iteration in 0..<300 {
+      let length = Int.random(in: 0...256, using: &generator)
+      var bytes = (0..<length).map { _ in UInt8.random(in: 0...255, using: &generator) }
+      // Half the time, make the length field plausible so the JSON path is exercised.
+      if iteration.isMultiple(of: 2), bytes.count >= 8 {
+        let headerLength = UInt64(Int.random(in: 0...(bytes.count - 8), using: &generator))
+        for i in 0..<8 { bytes[i] = UInt8((headerLength >> (8 * UInt64(i))) & 0xFF) }
+      }
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("qwen-fuzz-rand-\(UUID().uuidString).safetensors")
+      try Data(bytes).write(to: url)
+      _ = try? QwenWeightIntegrity.verifyShard(at: url)
+      try? FileManager.default.removeItem(at: url)
+    }
+  }
+}
+
 // MARK: - Runtime state machine
 
 @Suite(.serialized)
