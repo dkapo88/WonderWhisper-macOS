@@ -69,10 +69,10 @@ struct OpenRouterModelBrowserView: View {
   }
   
   private var headerView: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: DesignTokens.Spacing.small) {
       HStack {
         Text("Browse Models")
-          .font(.title2.weight(.semibold))
+          .font(.title3.weight(.semibold))
         Spacer()
         Button("Done") {
           dismiss()
@@ -92,137 +92,122 @@ struct OpenRouterModelBrowserView: View {
       HStack(spacing: 12) {
         Image(systemName: "magnifyingglass")
           .foregroundColor(.secondary)
-        TextField("Search models...", text: $searchText)
+        TextField("Search models", text: $searchText)
           .textFieldStyle(.plain)
+          .accessibilityLabel("Search models")
         
         if !searchText.isEmpty {
           Button(action: { searchText = "" }) {
             Image(systemName: "xmark.circle.fill")
-              .foregroundColor(.secondary)
+              .foregroundStyle(.secondary)
           }
           .buttonStyle(.plain)
+          .accessibilityLabel("Clear search")
         }
       }
-      .padding(8)
-      .background(Color(nsColor: .controlBackgroundColor))
-      .cornerRadius(6)
+      .padding(DesignTokens.Spacing.xSmall)
+      .background(
+        Color(nsColor: .controlBackgroundColor),
+        in: RoundedRectangle(cornerRadius: DesignTokens.Radius.control)
+      )
       
       HStack {
         Text("Sort by:")
           .font(.callout)
           .foregroundColor(.secondary)
         
-        Picker("Sort", selection: $sortOrder) {
+        Picker("Sort by", selection: $sortOrder) {
           ForEach(SortOrder.allCases, id: \.self) { order in
             Text(order.displayName).tag(order)
           }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel("Sort models by")
         .frame(maxWidth: 250)
         
         Spacer()
         
         Text("\(filteredModels.count) models")
-          .font(.callout)
-          .foregroundColor(.secondary)
+          .foregroundStyle(.secondary)
       }
     }
-    .padding(20)
+    .padding(DesignTokens.Spacing.medium)
   }
   
   private var loadingView: some View {
-    VStack(spacing: 16) {
-      ProgressView()
-        .scaleEffect(1.2)
-      Text("Loading models from \(catalog.rawValue)...")
-        .font(.callout)
-        .foregroundColor(.secondary)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    ProgressView("Loading models from \(catalog.rawValue)…")
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
-  
+
   private func errorView(_ message: String) -> some View {
-    VStack(spacing: 16) {
-      Image(systemName: "exclamationmark.triangle.fill")
-        .font(.system(size: 48))
-        .foregroundColor(.orange)
-      Text("Failed to load models")
-        .font(.headline)
+    ContentUnavailableView {
+      Label("Couldn't load models", systemImage: "exclamationmark.triangle")
+    } description: {
       Text(message)
-        .font(.callout)
-        .foregroundColor(.secondary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 40)
-      Button("Retry") {
-        loadModels()
-      }
+    } actions: {
+      Button("Retry") { loadModels() }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
-  
+
   private var modelListView: some View {
-    ScrollView {
-      LazyVStack(spacing: 0) {
-        ForEach(filteredModels) { model in
-          modelRow(model)
-          Divider()
-        }
+    List(filteredModels) { model in
+      modelRow(model)
+    }
+    .listStyle(.inset)
+    .overlay {
+      if filteredModels.isEmpty {
+        ContentUnavailableView.search(text: searchText)
       }
     }
   }
-  
+
   private func modelRow(_ model: OpenRouterModel) -> some View {
     let isFavorite = vm.favoriteOpenRouterModels.contains { $0.id == model.id }
-    
-    return HStack(alignment: .top, spacing: 12) {
-      VStack(alignment: .leading, spacing: 6) {
+
+    return HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxSmall) {
         Text(model.displayName)
-          .font(.callout.weight(.semibold))
-        
+          .font(.body.weight(.semibold))
+
         Text(model.id)
-          .font(.caption)
-          .foregroundColor(.secondary)
-        
+          .font(.footnote.monospaced())
+          .foregroundStyle(.secondary)
+
         if let description = model.description {
           Text(description)
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .font(.callout)
+            .foregroundStyle(.secondary)
             .lineLimit(2)
         }
-        
-        HStack(spacing: 12) {
+
+        HStack(spacing: DesignTokens.Spacing.small) {
           Label(model.costSummary, systemImage: "dollarsign.circle")
-            .font(.caption2)
-            .foregroundColor(.secondary)
-          
           Label("\(model.contextLength.formatted()) tokens", systemImage: "text.alignleft")
-            .font(.caption2)
-            .foregroundColor(.secondary)
         }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
       }
-      
+
       Spacer()
-      
-      Button(action: {
+
+      Button {
         toggleFavorite(model)
-      }) {
-        HStack(spacing: 4) {
-          Image(systemName: isFavorite ? "star.fill" : "star")
-            .foregroundColor(isFavorite ? .yellow : .secondary)
-          Text(isFavorite ? "Favorited" : "Add to Favorites")
-            .font(.caption.weight(.medium))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(isFavorite ? Color.yellow.opacity(0.15) : Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(6)
+      } label: {
+        Label(
+          isFavorite ? "Favorite" : "Add to Favorites",
+          systemImage: isFavorite ? "star.fill" : "star"
+        )
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.bordered)
+      .tint(isFavorite ? .yellow : nil)
+      .accessibilityLabel(
+        isFavorite ? "Remove \(model.displayName) from favorites" : "Add \(model.displayName) to favorites"
+      )
     }
-    .padding(12)
-    .contentShape(Rectangle())
+    .padding(.vertical, DesignTokens.Spacing.xxSmall)
   }
-  
+
   private func toggleFavorite(_ model: OpenRouterModel) {
     if vm.favoriteOpenRouterModels.contains(where: { $0.id == model.id }) {
       vm.removeFavoriteOpenRouterModel(id: model.id)
