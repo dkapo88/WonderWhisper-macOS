@@ -24,6 +24,8 @@ enum QwenASRFallback {
   /// but only models that can transcribe `language` (the dictation's language
   /// setting). An English-only model never gets non-English speech: if no
   /// downloaded Parakeet model fits, Groq Whisper (multilingual) is used.
+  /// Auto-detect preserves the selected downloaded model, even Unified: there
+  /// is no explicit language to rule it out. Try another only if it is missing.
   static func choice(
     language: String?,
     selectedParakeet: ParakeetModelKind = ParakeetModelKind.selected,
@@ -50,6 +52,34 @@ enum QwenASRFallback {
     }
   }
 
+  /// Returns usable recovery text or throws a user-facing error. In particular,
+  /// missing Groq credentials must never return the failed Qwen transcript.
+  static func transcribe(
+    fileURL: URL,
+    choice: Choice,
+    settings: TranscriptionSettings,
+    groq: TranscriptionProvider?
+  ) async throws -> String {
+    guard let fallback = provider(for: choice, groq: groq) else {
+      throw QwenFallbackError.unavailable
+    }
+    if let groq = fallback as? GroqTranscriptionProvider, !groq.hasAPIKey {
+      throw QwenFallbackError.unavailable
+    }
+    do {
+      return try await fallback.transcribe(
+        fileURL: fileURL, settings: self.settings(for: choice, from: settings)
+      )
+    } catch let error as ProviderError {
+      if choice == .groq, case .missingAPIKey = error {
+        throw QwenFallbackError.unavailable
+      }
+      throw QwenFallbackError.failed(error.localizedDescription)
+    } catch {
+      throw QwenFallbackError.failed(error.localizedDescription)
+    }
+  }
+
   /// Settings the fallback engine accepts for this recording. Language and
   /// vocabulary carry over; endpoint and model are rewritten.
   static func settings(for choice: Choice, from settings: TranscriptionSettings) -> TranscriptionSettings {
@@ -68,7 +98,7 @@ enum QwenASRFallback {
         endpoint: AppConfig.groqAudioTranscriptions,
         model: AppConfig.defaultTranscriptionModel,
         timeout: max(settings.timeout, 30),
-        language: settings.language,
+        language: QwenASRManager.languageHint(for: settings.language) ?? "auto",
         vocabularyTerms: settings.vocabularyTerms,
         context: settings.context
       )
@@ -87,17 +117,40 @@ enum QwenASRFallback {
 }
 
 extension ParakeetModelKind {
-  /// Unified is the only English-only Parakeet model; every other kind (v3
-  /// here, Ultra after the FluidAudio 0.17 bump) is multilingual. Keyed off
-  /// `.unified`, which exists on both branches, so it merges cleanly.
+  /// Stable across the sibling v3 → Ultra rename; capability lives in this
+  /// Qwen-owned file rather than coupling recovery to either case name.
   var isEnglishOnly: Bool { self == .unified }
 
-  /// Whether this model can transcribe `language` (a Settings language code
-  /// such as "en-US", "fr" or "auto"). Auto-detect and English fit every
-  /// model; anything else needs a multilingual one.
+  /// https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3 lists these 25 languages.
+  /// FluidInference's Ultra card was unreachable on 2026-10-08; assume the
+  /// same v3 language set for Ultra until that card can be verified.
+  var qwenFallbackLanguages: Set<String> {
+    if isEnglishOnly { return ["en"] }
+    return [
+      "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it",
+      "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"
+    ]
+  }
+
   func qwenFallbackSupports(language: String?) -> Bool {
-    guard isEnglishOnly else { return true }
     guard let hint = QwenASRManager.languageHint(for: language) else { return true }
-    return hint == "en"
+    return qwenFallbackLanguages.contains(hint)
+  }
+}
+
+/// Recovery errors reach finalize's caller before any insertion can run.
+enum QwenFallbackError: Error, LocalizedError, Equatable {
+  case unavailable
+  case failed(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .unavailable:
+      return "Qwen failed. No downloaded Parakeet model supports this language. "
+        + "Add a Groq API key in Settings → Transcription to recover this dictation. "
+        + "Nothing was pasted."
+    case .failed(let reason):
+      return "Qwen failed and transcription recovery failed: \(reason). Nothing was pasted."
+    }
   }
 }

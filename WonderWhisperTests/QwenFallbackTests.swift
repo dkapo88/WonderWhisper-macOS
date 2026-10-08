@@ -40,7 +40,7 @@ struct QwenFallbackTests {
   /// Review finding 1: French with Unified selected and both models downloaded
   /// used to pick English-only Unified.
   @Test func nonEnglishSkipsEnglishOnlyParakeet() {
-    for language in ["fr", "fr-FR", "zh", "de_DE"] {
+    for language in ["fr", "fr-FR", "de_DE", "pt-BR", "uk"] {
       let both = QwenASRFallback.choice(language: language, selectedParakeet: .unified) { _ in true }
       #expect(both == .parakeet(multilingual), "language \(language)")
       let onlyUnified = QwenASRFallback.choice(
@@ -60,8 +60,66 @@ struct QwenFallbackTests {
   @Test func englishOnlyCapabilityIsKindAgnostic() {
     #expect(ParakeetModelKind.unified.isEnglishOnly)
     #expect(ParakeetModelKind.allCases.filter(\.isEnglishOnly) == [.unified])
-    #expect(multilingual.qwenFallbackSupports(language: "ja"))
+    #expect(!multilingual.qwenFallbackSupports(language: "ja"))
     #expect(!ParakeetModelKind.unified.qwenFallbackSupports(language: "ja"))
+  }
+
+  @Test func unsupportedLanguagesNeverChooseParakeet() {
+    #expect(multilingual.qwenFallbackLanguages.count == 25)
+    #expect(ParakeetModelKind.unified.qwenFallbackLanguages == ["en"])
+    for language in ["zh", "zh-Hans", "ar", "ja", "th", "ko", "hi"] {
+      for selected in ParakeetModelKind.allCases {
+        #expect(QwenASRFallback.choice(language: language, selectedParakeet: selected) {
+          _ in true
+        } == .groq, "language \(language), selected \(selected)")
+      }
+    }
+    for language in multilingual.qwenFallbackLanguages {
+      #expect(multilingual.qwenFallbackSupports(language: language))
+    }
+  }
+
+  @Test func autoUsesSelectedModelAndOnlySwitchesWhenMissing() {
+    for language in ["auto", " AUTO ", "", nil] as [String?] {
+      for selected in ParakeetModelKind.allCases {
+        #expect(QwenASRFallback.choice(language: language, selectedParakeet: selected) {
+          _ in true
+        } == .parakeet(selected))
+        let other = ParakeetModelKind.allCases.first { $0 != selected } ?? selected
+        #expect(QwenASRFallback.choice(language: language, selectedParakeet: selected) {
+          $0 == other
+        } == .parakeet(other))
+      }
+    }
+  }
+
+  @Test func groqLanguageUsesISO6391AndAutoStaysAuto() {
+    for (input, expected) in [("pt-BR", "pt"), ("zh-Hans", "zh"), ("de_DE", "de"),
+                              ("auto", "auto"), ("", "auto")] {
+      let settings = TranscriptionSettings(
+        endpoint: qwenSettings.endpoint, model: "qwen-local", language: input
+      )
+      #expect(QwenASRFallback.settings(for: .groq, from: settings).language == expected)
+    }
+  }
+
+  @Test func missingGroqKeyAndNoCompatibleModelThrowsWithoutReturningText() async {
+    let choice = QwenASRFallback.choice(language: "zh-Hans", selectedParakeet: .unified) {
+      _ in true
+    }
+    let noKey = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { nil }))
+    let emptyKey = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { "  " }))
+    for groq in [nil, MissingKeyProvider(), noKey, emptyKey] as [TranscriptionProvider?] {
+      await #expect(throws: QwenFallbackError.unavailable) {
+        _ = try await QwenASRFallback.transcribe(
+          fileURL: URL(fileURLWithPath: "/dev/null"), choice: choice,
+          settings: qwenSettings, groq: groq
+        )
+      }
+    }
+    let message = QwenFallbackError.unavailable.localizedDescription
+    #expect(message.contains("Groq API key"))
+    #expect(message.contains("Nothing was pasted"))
   }
 
   @Test func providerAndSettingsMatchChoice() async throws {
@@ -91,5 +149,11 @@ struct QwenFallbackTests {
     #expect(QwenASRError.degenerateTranscript("x").shouldFallBack)
     #expect(!QwenASRError.modelNotDownloaded.shouldFallBack)
     #expect(!QwenASRError.emptyAudio.shouldFallBack)
+  }
+}
+
+private final class MissingKeyProvider: TranscriptionProvider {
+  func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
+    throw ProviderError.missingAPIKey
   }
 }

@@ -291,7 +291,7 @@ actor DictationController {
 
     /// Qwen leg of the finalize safety net. Picks Parakeet when a model is downloaded, else the
     /// injected Groq `fileFallbackTranscriber`, and tells the user which engine ran. Throws the
-    /// original Qwen error when no fallback can produce text, so garbage is never inserted.
+    /// recovery error when no fallback can produce text, so garbage is never inserted.
     private func recoverFromUnusableQwen(
         _ qwenError: QwenASRError,
         fileURL: URL,
@@ -299,20 +299,18 @@ actor DictationController {
     ) async throws -> String {
         let choice = QwenASRFallback.choice(language: settings.language)
         AppLog.dictation.error("Qwen unusable (\(qwenError.localizedDescription, privacy: .public)); falling back to \(choice.label, privacy: .public)")
-        guard let fallback = QwenASRFallback.provider(for: choice, groq: fileFallbackTranscriber) else {
-            await reportRecoveryFailure("Qwen failed and no fallback engine is available.")
-            throw qwenError
-        }
         let recovered: String
         do {
-            recovered = try await fallback.transcribe(
+            recovered = try await QwenASRFallback.transcribe(
                 fileURL: fileURL,
-                settings: QwenASRFallback.settings(for: choice, from: settings)
+                choice: choice,
+                settings: settings,
+                groq: fileFallbackTranscriber
             )
         } catch {
             AppLog.dictation.error("Qwen fallback (\(choice.label, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
-            await reportRecoveryFailure("Qwen failed and \(choice.label) fallback failed: \(error.localizedDescription)")
-            throw qwenError
+            await reportRecoveryFailure(error.localizedDescription)
+            throw error
         }
         AppLog.dictation.log("Recovered \(recovered.count) chars via Qwen fallback \(choice.label, privacy: .public)")
         await reportRecoveryFailure(QwenASRFallback.userNotice(for: qwenError, choice: choice))

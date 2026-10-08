@@ -10,6 +10,12 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         self.client = client
     }
 
+    /// Recovery must check credentials before a cached result can bypass authentication.
+    var hasAPIKey: Bool {
+        guard let key = client.apiKeyProvider() else { return false }
+        return !KeychainService.normalizedSecret(key).isEmpty
+    }
+
     struct Response: Decodable {
         let text: String?
     }
