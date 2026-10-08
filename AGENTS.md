@@ -30,7 +30,7 @@ Audio's private `CADefaultDeviceAggregate-*` devices are never listed.
   surfaces; new settings should follow that pattern. `SettingsRouter.shared.show(_:)` opens a
   specific tab. Moving a control never changes its UserDefaults/Keychain key. Scratchpad, Pro
   mode, and file transcription workflows have been removed; keep new work within these surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
+- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Parakeet runs English Parakeet Unified (default) or multilingual Parakeet Ultra (`parakeet.version`), and Unified rescores toward the Vocabulary list via FluidAudio CTC boosting (`ParakeetVocabularyBoosting`). Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
   supplies the selected microphone. Parakeet Unified remains the free on-device default with
@@ -124,6 +124,17 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-08: Bumped FluidAudio 0.15.4 → 0.17.7 (now statically links the prebuilt Rust
+  `NemoTextProcessing.xcframework`, a `.a`, so there is no extra binary to sign). Parakeet v3 is replaced by Parakeet Ultra; the picker reads
+  "English (Unified)" / "Multilingual (Ultra)", `parakeet.version` stays the key and a stored
+  `v3` reads as `ultra`. Old v3 files stay on disk.
+- 2026-10-08: Parakeet Unified now boosts the Vocabulary list (CTC 110M rescoring) for
+  dictation, meeting recovery and live Parakeet meetings (corrections land at finish). On by
+  default when the list has terms; toggle in Settings → Transcription
+  (`parakeet.vocabularyBoosting.enabled`). Best-effort: dictation never waits on the CTC model.
+- 2026-10-08: Released 2026-10-08: native Settings window (Cmd+,) with 8 grouped-Form tabs,
+  Meeting settings moved to Settings → Meetings, sidebar cut from 12 items to 7, and small UI
+  bug fixes.
 - 2026-10-08: Added a native Settings window (Cmd+,) with grouped-Form tabs and shared settings
   components; moved Meeting settings out of the meeting-list footer into Settings → Meetings
   (trigger apps as an in-form list) with a slim Meetings toolbar (auto-detect, gear, Start).

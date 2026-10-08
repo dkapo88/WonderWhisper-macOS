@@ -250,16 +250,20 @@ actor MeetingTranscriptRecoveryService {
 }
 
 private actor MeetingParakeetUnifiedFileTranscriber {
-  private let provider = ParakeetTranscriptionProvider()
-  private let settings = TranscriptionSettings(
-    endpoint: URL(fileURLWithPath: "/"),
-    model: "parakeet-unified",
-    timeout: 600,
-    language: "en",
-    context: "meeting-tail-recovery"
-  )
+  // Recovery is off the dictation hot path, so it waits for the CTC model.
+  private let provider = ParakeetTranscriptionProvider(waitsForVocabularyModel: true)
 
   func transcribe(_ url: URL) async throws -> String {
-    try await provider.transcribe(fileURL: url, settings: settings)
+    // Read the Vocabulary list per file so recovery boosts the same terms as
+    // live meetings; the provider applies the Settings toggle itself.
+    let settings = TranscriptionSettings(
+      endpoint: URL(fileURLWithPath: "/"),
+      model: "parakeet-unified",
+      timeout: 600,
+      language: "en",
+      vocabularyTerms: ParakeetVocabularyBoosting.currentTerms(),
+      context: "meeting-tail-recovery"
+    )
+    return try await provider.transcribe(fileURL: url, settings: settings)
   }
 }

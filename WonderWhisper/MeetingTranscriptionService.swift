@@ -135,9 +135,23 @@ private actor MeetingSingleStreamIngress {
   }
 }
 
+/// The parts of FluidAudio's `StreamingUnifiedAsrManager` the meeting service
+/// drives per source. A protocol so finalization ordering is testable with
+/// fake streams.
+protocol MeetingParakeetStream: Actor {
+  func appendAudio(_ buffer: AVAudioPCMBuffer) throws
+  func processBufferedAudio() async throws
+  func finish() async throws -> String
+  func consumeTokenTimings() -> [TokenTiming]
+  func cleanup() async
+}
+
+extension StreamingUnifiedAsrManager: MeetingParakeetStream {}
+
 actor MeetingTranscriptionService {
   typealias TokenHandler = @Sendable ([MeetingTranscriptToken]) async -> Void
   typealias PreviewHandler = @Sendable (MeetingAudioSource, String) async -> Void
+  typealias CorrectionHandler = @Sendable ([MeetingTokenCorrection]) async -> Void
 
   private static let maximumPendingChunks = 6_000
 
@@ -146,8 +160,13 @@ actor MeetingTranscriptionService {
   nonisolated private let singleStreamIngress = MeetingSingleStreamIngress()
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
-  private var systemManager: StreamingUnifiedAsrManager?
-  private var microphoneManager: StreamingUnifiedAsrManager?
+  private let correctionHandler: CorrectionHandler
+  private var systemManager: (any MeetingParakeetStream)?
+  private var microphoneManager: (any MeetingParakeetStream)?
+  // Parakeet sources with vocabulary boosting configured, and the live tokens
+  // emitted for them (kept so the rescored text can be mapped back at finish).
+  private var boostedSources: Set<MeetingAudioSource> = []
+  private var boostedTokens: [MeetingAudioSource: [MeetingTranscriptToken]] = [:]
   private var sonioxProviders: [MeetingAudioSource: SonioxStreamingProvider] = [:]
   private var sourceOffsets: [MeetingAudioSource: TimeInterval] = [:]
   private var sonioxEndTimes: [MeetingAudioSource: TimeInterval] = [:]
@@ -163,12 +182,14 @@ actor MeetingTranscriptionService {
     engine: MeetingTranscriptionEngine = .parakeet,
     timelineOffset: TimeInterval = 0,
     tokenHandler: @escaping TokenHandler,
-    previewHandler: @escaping PreviewHandler = { _, _ in }
+    previewHandler: @escaping PreviewHandler = { _, _ in },
+    correctionHandler: @escaping CorrectionHandler = { _ in }
   ) {
     self.engine = engine
     self.timelineOffset = max(0, timelineOffset)
     self.tokenHandler = tokenHandler
     self.previewHandler = previewHandler
+    self.correctionHandler = correctionHandler
   }
 
   func prepare() async throws {
@@ -267,6 +288,19 @@ actor MeetingTranscriptionService {
     }
   }
 
+  /// Test seam: install ready Parakeet streams (skipping model loading) and
+  /// mark which sources have vocabulary boosting.
+  func installParakeetStreamsForTesting(
+    system: any MeetingParakeetStream,
+    microphone: any MeetingParakeetStream,
+    boostedSources: Set<MeetingAudioSource>
+  ) {
+    systemManager = system
+    microphoneManager = microphone
+    self.boostedSources = boostedSources
+    isReady = true
+  }
+
   func cleanup() async {
     if let systemManager { await systemManager.cleanup() }
     if let microphoneManager { await microphoneManager.cleanup() }
@@ -276,6 +310,8 @@ actor MeetingTranscriptionService {
     await singleStreamIngress.reset()
     systemManager = nil
     microphoneManager = nil
+    boostedSources.removeAll()
+    boostedTokens.removeAll()
     sonioxProviders.removeAll()
     pendingChunks.removeAll()
     sourceOffsets.removeAll()
@@ -297,7 +333,52 @@ actor MeetingTranscriptionService {
     // Loading sequentially avoids two managers racing the same model download.
     try await system.loadModels(to: ParakeetManager.modelsDirectory)
     try await microphone.loadModels(to: ParakeetManager.modelsDirectory)
+    await configureVocabularyBoosting(system: system, microphone: microphone)
     AppLog.dictation.log("MeetingTranscription: two Parakeet Unified streams ready")
+  }
+
+  /// Best-effort: configure both streams before any audio is appended so the
+  /// rescored transcript covers the whole meeting. Any failure leaves the
+  /// meeting unboosted; it never fails preparation.
+  private func configureVocabularyBoosting(
+    system: StreamingUnifiedAsrManager,
+    microphone: StreamingUnifiedAsrManager
+  ) async {
+    let terms = ParakeetVocabularyBoosting.currentTermsToBoost()
+    guard !terms.isEmpty else { return }
+    guard let ctcModels = await ParakeetCtcModelStore.shared.modelsIfAvailable() else {
+      AppLog.dictation.log("MeetingTranscription: CTC model unavailable; meeting not boosted")
+      return
+    }
+    let vocabulary = ParakeetVocabularyBoosting.vocabularyContext(for: terms)
+    for (source, manager) in [(MeetingAudioSource.systemAudio, system), (.microphone, microphone)] {
+      do {
+        try await manager.configureVocabularyBoosting(vocabulary: vocabulary, ctcModels: ctcModels)
+        boostedSources.insert(source)
+      } catch {
+        AppLog.dictation.error(
+          "MeetingTranscription: \(source.displayName) boosting failed: \(error.localizedDescription)"
+        )
+      }
+    }
+    AppLog.dictation.log(
+      "MeetingTranscription: vocabulary boosting terms=\(terms.count) sources=\(self.boostedSources.count)"
+    )
+  }
+
+  /// Map a boosted source's rescored final text back onto its live tokens.
+  private func emitVocabularyCorrections(rescoredText: String, source: MeetingAudioSource) async {
+    guard boostedSources.contains(source),
+          let tokens = boostedTokens[source], !tokens.isEmpty else { return }
+    let corrections = MeetingVocabularyCorrector.corrections(
+      rawTokens: tokens,
+      rescoredText: rescoredText
+    )
+    AppLog.dictation.log(
+      "MeetingTranscription: \(source.displayName) vocabulary corrections=\(corrections.count)"
+    )
+    guard !corrections.isEmpty else { return }
+    await correctionHandler(corrections)
   }
 
   private func prepareSingleStreamSoniox() async throws {
@@ -419,29 +500,27 @@ actor MeetingTranscriptionService {
 
   private func finishParakeet() async throws {
     var failures: [String] = []
-    do {
-      if let systemManager {
-        _ = try await systemManager.finish()
-        await emitParakeet(
-          await systemManager.consumeTokenTimings(),
-          source: .systemAudio
-        )
+    var rescoredTexts: [(source: MeetingAudioSource, text: String)] = []
+    let streams: [(MeetingAudioSource, (any MeetingParakeetStream)?)] = [
+      (.systemAudio, systemManager),
+      (.microphone, microphoneManager),
+    ]
+    // Finish and drain EVERY source before mapping any vocabulary correction:
+    // the speaker-crossing guard in MeetingVocabularyCorrector.apply can only
+    // see the other source's final tokens once they have all been emitted.
+    for (source, stream) in streams {
+      guard let stream else { continue }
+      do {
+        let finalText = try await stream.finish()
+        await emitParakeet(await stream.consumeTokenTimings(), source: source)
+        rescoredTexts.append((source, finalText))
+      } catch {
+        recoverySources.insert(source)
+        failures.append("\(source.displayName): \(error.localizedDescription)")
       }
-    } catch {
-      recoverySources.insert(.systemAudio)
-      failures.append("System audio: \(error.localizedDescription)")
     }
-    do {
-      if let microphoneManager {
-        _ = try await microphoneManager.finish()
-        await emitParakeet(
-          await microphoneManager.consumeTokenTimings(),
-          source: .microphone
-        )
-      }
-    } catch {
-      recoverySources.insert(.microphone)
-      failures.append("Microphone: \(error.localizedDescription)")
+    for (source, text) in rescoredTexts {
+      await emitVocabularyCorrections(rescoredText: text, source: source)
     }
     if !failures.isEmpty {
       throw ProviderError.networkError(failures.joined(separator: "; "))
@@ -548,16 +627,18 @@ actor MeetingTranscriptionService {
   ) async {
     guard !timings.isEmpty else { return }
     let offset = sourceOffsets[source] ?? 0
-    await tokenHandler(
-      timings.map {
-        MeetingTranscriptToken(
-          source: source,
-          startTime: offset + $0.startTime,
-          endTime: offset + $0.endTime,
-          text: $0.token
-        )
-      }
-    )
+    let tokens = timings.map {
+      MeetingTranscriptToken(
+        source: source,
+        startTime: offset + $0.startTime,
+        endTime: offset + $0.endTime,
+        text: $0.token
+      )
+    }
+    if boostedSources.contains(source) {
+      boostedTokens[source, default: []].append(contentsOf: tokens)
+    }
+    await tokenHandler(tokens)
   }
 
   private func emitSoniox(
