@@ -193,7 +193,7 @@ enum SettingsSyncRegistry {
     SettingsSyncStateKey.deviceID: "sync metadata",
     SettingsSyncStateKey.localState: "sync metadata",
     SettingsSyncStateKey.lastSyncedAt: "sync metadata",
-    SettingsSyncStateKey.counter: "sync metadata",
+    SettingsSyncStateKey.legacyCounter: "sync metadata (round-3 format, deleted on launch)",
     SettingsSyncStateKey.legacyClock: "sync metadata (schema 1, deleted on launch)",
     SettingsSyncStateKey.firstEnableMode: "sync metadata"
   ]
@@ -248,10 +248,11 @@ enum SettingsSyncRegistry {
 enum SettingsSyncStateKey {
   static let enabled = "settingsSync.enabled"
   static let deviceID = "settingsSync.deviceID"
+  /// The whole `SettingsSyncEngine` (agreed records, pending edits, counter) as JSON.
   static let localState = "settingsSync.localState"
   static let lastSyncedAt = "settingsSync.lastSyncedAt"
-  /// This Mac's Lamport counter: highest counter issued or accepted.
-  static let counter = "settingsSync.counter"
+  /// Round-3 standalone counter; the engine state in `localState` now holds it. Deleted.
+  static let legacyCounter = "settingsSync.counter"
   /// Schema 1 wall-clock "clock"; only referenced so it can be deleted.
   static let legacyClock = "settingsSync.clock"
   /// The unfinished first-enable choice, kept until a sync succeeds.

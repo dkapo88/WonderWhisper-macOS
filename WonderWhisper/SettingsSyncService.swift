@@ -4,21 +4,20 @@ import AppKit
 /// Keeps the allowlisted preferences (`SettingsSyncRegistry`) in step across Macs through a
 /// JSON file in iCloud Drive.
 ///
-/// Ordering model: a Lamport counter, not wall time.
-/// - Every edit is stamped `max(this Mac's counter, highest counter seen in the file) + 1`, so
-///   an edit made after receiving another Mac's change always orders after it. Equal counters
-///   (concurrent edits) are broken by device ID, identically on every Mac.
-/// - Wall time is display-only (the "last synced" line, a device's last write); clock skew
-///   cannot affect which edit wins.
-/// - Counters above `this Mac's counter + 10^9` (or `SettingsSyncDocument.maxCounter`) are
-///   corrupt: ignored for merging, never adopted into this Mac's counter.
+/// Ordering model (see `SettingsSyncVersion`):
+/// - A version is `(Lamport counter, writer device)`. It is created only when this Mac observes
+///   a genuine local edit (or carries out an explicit first-enable choice) and never changes
+///   afterwards. Received, merged, agreed, persisted and re-uploaded values keep their original
+///   version. Per key the higher version wins; wall time is display-only.
+/// - New versions are stamped `max(this Mac's counter, highest counter seen) + 1`, at the moment
+///   the edit is observed, and persisted immediately (so a relaunch never re-stamps them).
+/// - "Use iCloud" adopts every cloud key, resets included. "Replace iCloud" stamps the whole
+///   local batch above every counter in the file and its conflict versions.
 ///
-/// Flow: local edits are noticed through `UserDefaults.didChangeNotification`, stamped right
-/// away and uploaded after a short debounce. Cloud edits are noticed through an
-/// `NSFilePresenter` plus a slow poll, then merged per key inside one coordinated transaction.
-/// No echo: a key only counts as changed when its value fingerprint differs from what this Mac
-/// last agreed with the cloud. Turning sync off bumps a generation and cancels any in-flight
-/// transaction, so a sync already running can neither apply nor write afterwards.
+/// This class is the async shell: notifications, polling, the file transaction off the main
+/// thread, and writing received values. The logic lives in `SettingsSyncEngine` (per-Mac state)
+/// and `SettingsSyncTransaction` (read-merge-write planning), which the simulation tests drive
+/// directly.
 @MainActor
 final class SettingsSyncService: ObservableObject {
   enum FirstEnableChoice: Sendable {
@@ -30,16 +29,21 @@ final class SettingsSyncService: ObservableObject {
 
   enum Mode: String, Sendable {
     case normal
-    /// "Use iCloud settings": this Mac's values lose to anything already in iCloud.
+    /// "Use iCloud settings".
     case preferCloud
-    /// "Replace iCloud": this Mac's values (and resets) win whatever the counters say.
+    /// "Replace iCloud with this Mac's settings".
     case preferLocal
     /// First enable when no file existed; stops and asks if one has appeared since.
     case initialUpload
-  }
 
-  /// How far above this Mac's counter a cloud counter may be before it is treated as corrupt.
-  static let maxCounterJump: Int64 = 1_000_000_000
+    var mergeMode: SettingsSyncMerger.Mode {
+      switch self {
+      case .normal, .initialUpload: return .normal
+      case .preferCloud: return .adopt
+      case .preferLocal: return .replace
+      }
+    }
+  }
 
   static let shared: SettingsSyncService = {
     if AppConfig.isTestRun {
@@ -82,13 +86,13 @@ final class SettingsSyncService: ObservableObject {
   /// user turning sync off).
   var beforeTransactionForTesting: (() async -> Void)?
 
-  let deviceID: String
+  var deviceID: String { engine.deviceID }
+  /// This Mac's Lamport counter: highest counter issued or accepted.
+  var counter: Int64 { engine.counter }
   /// Number of files written by this instance; lets tests prove there is no echo.
   private(set) var writeCount = 0
   /// Keys whose received values failed validation in the most recent sync.
   private(set) var lastRejectedKeys: Set<String> = []
-  /// This Mac's Lamport counter: highest counter issued or accepted.
-  private(set) var counter: Int64
   /// Conflict versions left unmerged by the latest sync; retried even if the file is unchanged.
   private(set) var pendingConflictCount = 0
 
@@ -103,18 +107,16 @@ final class SettingsSyncService: ObservableObject {
   private let localDebounce: Duration
   private let remoteDebounce: Duration
   private let pollInterval: TimeInterval
+  private let keys: Set<String>
 
-  private var localState: [String: SettingsSyncLocalRecord]
-  /// Counter each not-yet-uploaded local edit was stamped with when first seen (including
-  /// removals, whose fingerprint is nil), so it keeps its place in the order.
-  private var pendingEdits: [String: SettingsSyncLocalRecord] = [:]
+  private var engine: SettingsSyncEngine
   private var generation = 0
   private var cancellation = SettingsSyncCancellation()
   private var started = false
   private var requestedMode: Mode?
-  /// The first-enable choice until a transaction has fully completed it. Persisted, so a
+  /// The first-enable choice until a transaction has fully carried it out. Persisted, so a
   /// download wait, an IO failure or a relaunch can't turn "Replace iCloud" into an ordinary
-  /// merge with empty state.
+  /// merge.
   private var pendingFirstEnableMode: Mode? {
     didSet {
       if let pendingFirstEnableMode {
@@ -153,24 +155,24 @@ final class SettingsSyncService: ObservableObject {
     self.localDebounce = localDebounce
     self.remoteDebounce = remoteDebounce
     self.pollInterval = pollInterval
+    self.keys = SettingsSyncRegistry.syncedKeys
 
+    let deviceID: String
     if let stored = defaults.string(forKey: SettingsSyncStateKey.deviceID), !stored.isEmpty {
       deviceID = stored
     } else {
       deviceID = UUID().uuidString
       defaults.set(deviceID, forKey: SettingsSyncStateKey.deviceID)
     }
+    var engine = Self.loadEngine(from: defaults) ?? SettingsSyncEngine(deviceID: deviceID)
+    engine.deviceID = deviceID
+    self.engine = engine
     isEnabled = defaults.bool(forKey: SettingsSyncStateKey.enabled)
     isICloudAvailable = SettingsSyncFileStore.isICloudDriveAvailable(root: iCloudRoot)
     lastSyncedAt = defaults.object(forKey: SettingsSyncStateKey.lastSyncedAt) as? Date
-    let storedCounter = (defaults.object(forKey: SettingsSyncStateKey.counter) as? NSNumber)?
-      .int64Value ?? 0
-    // Out of range can only mean corruption: start over and re-learn from the file (an honest
-    // counter is always ≤ the highest one in the file plus local edits).
-    counter = (0...SettingsSyncDocument.maxCounter).contains(storedCounter) ? storedCounter : 0
-    // Schema 1 used a wall-clock "clock"; its ordering metadata is discarded.
+    // Earlier schemas kept these separately; the engine state now holds everything.
     defaults.removeObject(forKey: SettingsSyncStateKey.legacyClock)
-    localState = Self.loadLocalState(from: defaults)
+    defaults.removeObject(forKey: SettingsSyncStateKey.legacyCounter)
     pendingFirstEnableMode = defaults.string(forKey: SettingsSyncStateKey.firstEnableMode)
       .flatMap(Mode.init(rawValue:))
   }
@@ -250,10 +252,9 @@ final class SettingsSyncService: ObservableObject {
     cancellation = SettingsSyncCancellation()
     isEnabled = true
     defaults.set(true, forKey: SettingsSyncStateKey.enabled)
-    localState = [:]
-    pendingEdits = [:]
+    engine.reset()
+    saveEngine()
     pendingFirstEnableMode = mode == .normal ? nil : mode
-    saveLocalState()
     beginObserving()
     await sync(mode: mode)
   }
@@ -268,10 +269,8 @@ final class SettingsSyncService: ObservableObject {
     isEnabled = false
     defaults.set(false, forKey: SettingsSyncStateKey.enabled)
     // Forget what was agreed: turning sync back on asks again instead of guessing.
-    localState = [:]
-    pendingEdits = [:]
-    saveLocalState()
-    setCounter(0)
+    engine.reset()
+    saveEngine()
     pendingConflictCount = 0
     stopObserving()
     lastError = nil
@@ -331,16 +330,16 @@ final class SettingsSyncService: ObservableObject {
 
     noteLocalChanges()
     let snapshot = readLocalValues()
-    let local = localEntries(snapshot: snapshot, mode: mode, stamp: checkedIncrement(counter))
-    var input = SettingsSyncFileStore.TransactionInput(
-      local: local,
+    let candidates = engine.candidates(snapshot, mode: mode.mergeMode)
+    var input = SettingsSyncTransaction.Input(
+      local: candidates,
       deviceID: deviceID,
       deviceName: deviceName,
       timestamp: currentTime()
     )
-    input.authoritative = mode == .preferLocal
+    input.mode = mode.mergeMode
+    input.localCounter = engine.counter
     input.requireNoDocument = mode == .initialUpload
-    input.counterCeiling = counterCeiling()
 
     let presenter = self.presenter
     let transaction = await Task.detached {
@@ -369,10 +368,22 @@ final class SettingsSyncService: ObservableObject {
     lastSeenModificationDate = store.modificationDate()
     pendingConflictCount = outcome.pendingConflicts
     if outcome.wrote { writeCount += 1 }
-    adoptCounter(outcome.highestCounter)
 
-    let applied = applyCloudValues(result, local: local, snapshot: snapshot)
-    notice = Self.notice(for: outcome, rejected: lastRejectedKeys)
+    let completion = engine.complete(
+      result,
+      candidates: candidates,
+      snapshot: snapshot,
+      current: readLocalValues(),
+      isValid: { SettingsSyncRegistry.isValid($1, for: $0) }
+    )
+    // Record first (engine), then write: the defaults change notification then finds nothing
+    // new to stamp.
+    saveEngine()
+    for (key, value) in completion.apply {
+      SettingsSyncValue.write(value, key: key, to: defaults)
+    }
+    lastRejectedKeys = completion.rejected
+    notice = Self.notice(for: outcome, rejected: completion.rejected)
 
     lastSyncedAt = currentTime()
     defaults.set(lastSyncedAt, forKey: SettingsSyncStateKey.lastSyncedAt)
@@ -380,6 +391,7 @@ final class SettingsSyncService: ObservableObject {
     lastError = outcome.schemaTooNew
       ? "iCloud settings were saved by a newer WonderWhisper. Update this Mac to sync changes."
       : nil
+    let applied = Set(completion.apply.keys)
     if !applied.isEmpty {
       onRemoteChangesApplied?(applied)
     }
@@ -394,10 +406,10 @@ final class SettingsSyncService: ObservableObject {
       parts.append("The iCloud settings file was unreadable, so it was moved to \(backup) "
         + "and replaced with this Mac's settings.")
     }
-    if !outcome.invalidCounterKeys.isEmpty {
-      let count = outcome.invalidCounterKeys.count
-      parts.append("Ignored \(count) setting\(count == 1 ? "" : "s") in iCloud with invalid "
-        + "ordering data.")
+    if !outcome.lockedKeys.isEmpty {
+      let count = outcome.lockedKeys.count
+      parts.append("\(count) setting\(count == 1 ? "" : "s") in iCloud couldn't be read and "
+        + "\(count == 1 ? "was" : "were") left unchanged.")
     }
     if !rejected.isEmpty {
       let count = rejected.count
@@ -411,163 +423,37 @@ final class SettingsSyncService: ObservableObject {
     return parts.isEmpty ? nil : parts.joined(separator: " ")
   }
 
-  /// Writes newer, valid cloud values into UserDefaults and records what this Mac now agrees
-  /// with. Returns the keys that changed.
-  private func applyCloudValues(
-    _ result: SettingsSyncMerger.Result,
-    local: [String: SettingsSyncMerger.LocalEntry],
-    snapshot: [String: SettingsSyncValue?]
-  ) -> Set<String> {
-    var applied: Set<String> = []
-    var rejected: Set<String> = []
-    for key in result.applyLocally.keys.sorted() {
-      guard let value = result.applyLocally[key] else { continue }
-      let current = SettingsSyncValue.read(key, from: defaults)
-      if current?.fingerprint != (snapshot[key] ?? nil)?.fingerprint {
-        // Edited on this Mac while the transaction ran; the edit is newer, keep it.
-        continue
-      }
-      guard SettingsSyncRegistry.isValid(value, for: key) else {
-        // Keep this Mac's value. Without a record it stays "older than the cloud", so it is
-        // only uploaded (replacing the bad value) once the user edits it here.
-        rejected.insert(key)
-        if localState[key] == nil {
-          localState[key] = SettingsSyncLocalRecord(
-            fingerprint: current?.fingerprint,
-            counter: current == nil ? SettingsSyncMerger.noOpinion : 0
-          )
-        }
-        continue
-      }
-      // Record first, so the defaults change notification finds nothing new to upload.
-      if let record = result.agreed[key] { localState[key] = record }
-      SettingsSyncValue.write(value, key: key, to: defaults)
-      applied.insert(key)
-    }
-    for (key, entry) in local where result.applyLocally[key] == nil {
-      // Absent here and never agreed in the cloud: no opinion, so a later cloud value wins.
-      localState[key] = result.agreed[key] ?? SettingsSyncLocalRecord(
-        fingerprint: entry.value?.fingerprint,
-        counter: entry.value == nil ? SettingsSyncMerger.noOpinion : entry.counter
-      )
-    }
-    saveLocalState()
-    for (key, edit) in pendingEdits {
-      if let record = localState[key], record.fingerprint == edit.fingerprint {
-        pendingEdits[key] = nil
-      }
-    }
-    lastRejectedKeys = rejected
-    if let highest = localState.values.map(\.counter).max() { adoptCounter(highest) }
-    return applied
-  }
-
-  private func localEntries(
-    snapshot: [String: SettingsSyncValue?],
-    mode: Mode,
-    stamp: Int64
-  ) -> [String: SettingsSyncMerger.LocalEntry] {
-    var entries: [String: SettingsSyncMerger.LocalEntry] = [:]
-    for key in SettingsSyncRegistry.syncedKeys {
-      let value = snapshot[key] ?? nil
-      let entryCounter: Int64
-      switch mode {
-      case .preferLocal, .initialUpload:
-        entryCounter = stamp
-      case .preferCloud:
-        entryCounter = value == nil ? SettingsSyncMerger.noOpinion : 0
-      case .normal:
-        let fingerprint = value?.fingerprint
-        if let record = localState[key] {
-          if record.fingerprint == fingerprint {
-            entryCounter = record.counter
-          } else if let edit = pendingEdits[key], edit.fingerprint == fingerprint {
-            entryCounter = edit.counter
-          } else {
-            entryCounter = stamp
-          }
-        } else {
-          entryCounter = value == nil ? SettingsSyncMerger.noOpinion : 0
-        }
-      }
-      entries[key] = SettingsSyncMerger.LocalEntry(value: value, counter: entryCounter)
-    }
-    return entries
-  }
-
-  private func readLocalValues() -> [String: SettingsSyncValue?] {
-    var values: [String: SettingsSyncValue?] = [:]
-    for key in SettingsSyncRegistry.syncedKeys {
+  private func readLocalValues() -> SettingsSyncEngine.Values {
+    var values: SettingsSyncEngine.Values = [:]
+    for key in keys {
       values[key] = .some(SettingsSyncValue.read(key, from: defaults))
     }
     return values
   }
 
-  /// Stamps synced settings that changed since the last sync with the next counter, at the
-  /// moment the change is seen (including removals). Runs on every defaults change
+  /// Stamps every synced setting that changed since the last sync (resets included) with a new
+  /// version at the moment it is seen, and persists it at once. Runs on every defaults change
   /// notification (cheap: hashes ~70 small values).
   func noteLocalChanges() {
     guard isEnabled else { return }
-    var stamp: Int64?
-    for key in SettingsSyncRegistry.syncedKeys {
-      guard let record = localState[key] else { continue }
-      let fingerprint = SettingsSyncValue.read(key, from: defaults)?.fingerprint
-      if record.fingerprint == fingerprint {
-        pendingEdits[key] = nil
-        continue
-      }
-      // A pending record with a nil fingerprint is a recorded removal, distinct from "none".
-      if let pending = pendingEdits[key], pending.fingerprint == fingerprint { continue }
-      let next = stamp ?? nextCounter()
-      stamp = next
-      pendingEdits[key] = SettingsSyncLocalRecord(fingerprint: fingerprint, counter: next)
+    if engine.noteLocalChanges(readLocalValues()) {
+      saveEngine()
     }
   }
 
   /// True when any synced value differs from what this Mac last agreed with the cloud.
   func hasLocalChanges() -> Bool {
-    SettingsSyncRegistry.syncedKeys.contains { key in
-      let fingerprint = SettingsSyncValue.read(key, from: defaults)?.fingerprint
-      guard let record = localState[key] else { return fingerprint != nil }
-      return record.fingerprint != fingerprint
-    }
+    engine.hasLocalChanges(readLocalValues())
   }
 
-  // MARK: - Lamport counter
+  /// The version of the pending (not yet uploaded) edit for a key, if any.
+  func pendingVersion(for key: String) -> SettingsSyncVersion? {
+    engine.pending[key]?.version
+  }
 
   /// Wall time, whole milliseconds. Display-only.
   private func currentTime() -> Date {
     SettingsSyncDocument.date(millis: SettingsSyncDocument.millis(now()))
-  }
-
-  private func checkedIncrement(_ value: Int64) -> Int64 {
-    min(value, SettingsSyncDocument.maxCounter - 1) + 1
-  }
-
-  private func nextCounter() -> Int64 {
-    setCounter(checkedIncrement(counter))
-    return counter
-  }
-
-  /// Raises this Mac's counter to a counter it has accepted (never lowers it).
-  private func adoptCounter(_ seen: Int64) {
-    guard seen > counter, seen <= counterCeiling() else { return }
-    setCounter(seen)
-  }
-
-  /// Highest cloud counter accepted as genuine: `counter + maxCounterJump`, capped.
-  private func counterCeiling() -> Int64 {
-    let (sum, overflow) = counter.addingReportingOverflow(Self.maxCounterJump)
-    return overflow ? SettingsSyncDocument.maxCounter : min(sum, SettingsSyncDocument.maxCounter)
-  }
-
-  private func setCounter(_ value: Int64) {
-    counter = value
-    if value == 0 {
-      defaults.removeObject(forKey: SettingsSyncStateKey.counter)
-    } else {
-      defaults.set(NSNumber(value: value), forKey: SettingsSyncStateKey.counter)
-    }
   }
 
   // MARK: - Observation
@@ -651,16 +537,15 @@ final class SettingsSyncService: ObservableObject {
 
   // MARK: - Persistence of sync state
 
-  private static func loadLocalState(
-    from defaults: UserDefaults
-  ) -> [String: SettingsSyncLocalRecord] {
-    guard let data = defaults.data(forKey: SettingsSyncStateKey.localState) else { return [:] }
-    // Schema-1 records (wall-clock dates) fail to decode and are dropped, as intended.
-    return (try? JSONDecoder().decode([String: SettingsSyncLocalRecord].self, from: data)) ?? [:]
+  private static func loadEngine(from defaults: UserDefaults) -> SettingsSyncEngine? {
+    guard let data = defaults.data(forKey: SettingsSyncStateKey.localState) else { return nil }
+    // Earlier formats fail to decode and are dropped: no users shipped with them.
+    return try? JSONDecoder().decode(SettingsSyncEngine.self, from: data)
   }
 
-  private func saveLocalState() {
-    guard let data = try? JSONEncoder().encode(localState) else { return }
+  /// Persists the whole engine (agreed records, pending edits with their versions, counter).
+  private func saveEngine() {
+    guard let data = try? JSONEncoder().encode(engine) else { return }
     defaults.set(data, forKey: SettingsSyncStateKey.localState)
   }
 }

@@ -33,38 +33,21 @@ struct SettingsSyncFileStore: Sendable {
     }
   }
 
-  /// Everything one sync needs to merge, prepared on the main actor.
-  struct TransactionInput: Sendable {
-    var local: [String: SettingsSyncMerger.LocalEntry]
-    var deviceID: String
-    var deviceName: String
-    var timestamp: Date
-    /// "Replace iCloud with this Mac's settings".
-    var authoritative = false
-    /// First upload after the user saw no file: if a document has appeared since, stop so
-    /// the user can be asked which copy to keep instead of silently merging.
-    var requireNoDocument = false
-    /// Cloud entries with a counter above this are corrupt (honest counters only ever grow by
-    /// one per edit). They are ignored for merging and never raise this Mac's counter; a local
-    /// value for the same key replaces them.
-    var counterCeiling: Int64 = SettingsSyncDocument.maxCounter
-  }
+  typealias TransactionInput = SettingsSyncTransaction.Input
 
   struct TransactionOutcome: Sendable {
     /// Nil when the transaction stopped early (cancelled or a document appeared).
     var merge: SettingsSyncMerger.Result?
-    /// Keys whose cloud entry was ignored because its counter is above the ceiling.
-    var invalidCounterKeys: Set<String> = []
-    /// Highest valid counter in the cloud document (after merging), for the Lamport counter.
-    var highestCounter: Int64 = 0
     var wrote = false
     var schemaTooNew = false
     var documentAppeared = false
     var cancelled = false
     var quarantinedAs: String?
     var resolvedConflicts = 0
-    /// Conflict versions left unresolved because they couldn't be read yet; retried next sync.
+    /// Conflict versions left unresolved (unreadable or unverifiable); retried every sync.
     var pendingConflicts = 0
+    /// Keys whose cloud entry couldn't be decoded; preserved and never overwritten.
+    var lockedKeys: Set<String> = []
   }
 
   let directory: URL
@@ -203,94 +186,44 @@ struct SettingsSyncFileStore: Sendable {
       return outcome
     }
 
-    var remote: SettingsSyncDocument?
-    var unreadable: Data?
+    var current = SettingsSyncTransaction.CurrentFile.missing
+    var currentBytes: Data?
     if FileManager.default.fileExists(atPath: url.path) {
-      let data: Data
       do {
-        data = try Data(contentsOf: url)
+        currentBytes = try Data(contentsOf: url)
       } catch {
         throw StoreError.readFailed(error.localizedDescription)
       }
-      do {
-        remote = try SettingsSyncDocument.decode(data)
-      } catch {
-        unreadable = data
-      }
+      current = .contents(currentBytes ?? Data())
     }
-
-    // Only versions actually folded in may be resolved. One that can't be read or decoded yet
-    // (still downloading, transient IO) stays unresolved so its offline edits get another try.
-    var incorporated: [SettingsSyncConflictSource.Version] = []
-    var pending = 0
-    for version in conflicts.unresolved(url) {
-      guard let data = version.data,
-            let document = try? SettingsSyncDocument.decode(data) else {
-        pending += 1
-        continue
-      }
-      incorporated.append(version)
-      remote = remote.map { SettingsSyncMerger.combine($0, document) } ?? document
-    }
-    outcome.pendingConflicts = pending
-
-    if input.requireNoDocument, remote != nil {
-      outcome.documentAppeared = true
-      return outcome
-    }
-    outcome.schemaTooNew = (remote?.schemaVersion ?? 0) > SettingsSyncDocument.currentSchemaVersion
-
-    // Set corrupt (over-the-ceiling) entries aside for the merge; put them back afterwards
-    // unless a local value replaced them.
-    var invalid: [String: SettingsSyncDocument.Entry] = [:]
-    if var visible = remote {
-      for (key, entry) in visible.entries where entry.counter > input.counterCeiling {
-        invalid[key] = entry
-        visible.entries[key] = nil
-      }
-      remote = visible
-    }
-    outcome.invalidCounterKeys = Set(invalid.keys)
-
-    var result = SettingsSyncMerger.merge(
-      local: input.local,
-      remote: remote,
-      deviceID: input.deviceID,
-      authoritative: input.authoritative
+    let versions = conflicts.unresolved(url)
+    let plan = SettingsSyncTransaction.plan(
+      input,
+      current: current,
+      conflicts: versions.map(\.data)
     )
-    outcome.highestCounter = result.document.entries.values.map(\.counter).max() ?? 0
-    for (key, entry) in invalid where result.document.entries[key] == nil {
-      result.document.entries[key] = entry
-    }
-    if result.document.devices[input.deviceID] == nil
-      || !incorporated.isEmpty
-      || unreadable != nil {
-      result.documentChanged = true
-    }
-
-    guard result.documentChanged, !outcome.schemaTooNew else {
-      result.documentChanged = false
-      outcome.merge = result
+    outcome.documentAppeared = plan.documentAppeared
+    outcome.schemaTooNew = plan.schemaTooNew
+    outcome.pendingConflicts = plan.pendingConflicts
+    outcome.lockedKeys = plan.lockedKeys
+    guard !plan.documentAppeared else { return outcome }
+    guard let document = plan.write else {
+      outcome.merge = plan.merge
       return outcome
     }
 
     // Prepare everything first...
-    result.document.schemaVersion = SettingsSyncDocument.currentSchemaVersion
-    result.document.devices[input.deviceID] = SettingsSyncDocument.Device(
-      name: input.deviceName,
-      lastWriteAt: input.timestamp
-    )
     let encoded: Data
     do {
-      encoded = try result.document.encoded()
+      encoded = try document.encoded()
     } catch {
       throw StoreError.writeFailed(error.localizedDescription)
     }
-    let backup = unreadable.map { _ in
-      directory.appendingPathComponent(
+    let backup = plan.quarantine
+      ? directory.appendingPathComponent(
         "settings.unreadable-\(SettingsSyncDocument.millis(input.timestamp) / 1000).json"
       )
-    }
+      : nil
     beforeCommit?()
 
     // ...then claim the commit atomically against `cancel()`. Past this point the save is
@@ -299,7 +232,8 @@ struct SettingsSyncFileStore: Sendable {
       outcome.cancelled = true
       return outcome
     }
-    if let unreadable, let backup, (try? unreadable.write(to: backup, options: .atomic)) != nil {
+    if let backup, let currentBytes,
+       (try? currentBytes.write(to: backup, options: .atomic)) != nil {
       outcome.quarantinedAs = backup.lastPathComponent
     }
     do {
@@ -308,13 +242,14 @@ struct SettingsSyncFileStore: Sendable {
       throw StoreError.writeFailed(error.localizedDescription)
     }
     outcome.wrote = true
-    incorporated.forEach { $0.resolve() }
-    outcome.resolvedConflicts = incorporated.count
-    // Removing other versions is blanket; only do it once nothing is left unmerged.
-    if !incorporated.isEmpty, pending == 0 {
+    // Resolve exactly the versions that were incorporated. The blanket cleanup of other
+    // versions only runs when nothing is left unmerged.
+    plan.incorporated.forEach { versions[$0].resolve() }
+    outcome.resolvedConflicts = plan.incorporated.count
+    if !plan.incorporated.isEmpty, plan.pendingConflicts == 0 {
       conflicts.finish(url)
     }
-    outcome.merge = result
+    outcome.merge = plan.merge
     return outcome
   }
 }

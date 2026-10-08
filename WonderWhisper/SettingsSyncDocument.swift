@@ -2,30 +2,42 @@ import Foundation
 
 /// Contents of `iCloud Drive/WonderWhisper/settings.json`.
 ///
-/// Every synced preference is stored with its own Lamport `counter` and writer `deviceID`, so
-/// two Macs editing different settings never overwrite each other; for the same setting the
-/// edit with the higher (counter, deviceID) wins. Wall-clock time is never used for ordering.
-/// A nil `value` records that the setting was reset to its default.
+/// Every synced preference is stored with the version (Lamport `counter` + writer `deviceID`)
+/// of the genuine edit that produced it. For one setting the higher version wins; two Macs
+/// editing different settings never overwrite each other. Wall-clock time is never used for
+/// ordering. A nil `value` records that the setting was reset to its default.
+///
+/// Entries this build can't decode (an unknown value type, a counter outside `0...2^53`) are
+/// kept verbatim in `opaqueEntries` and written back unchanged: their provenance can't be
+/// established, so their keys are left alone rather than overwritten.
 ///
 /// Schema 2 replaced schema 1's wall-clock `modifiedAt` with `counter`. Schema 1 entries are
 /// read with counter 0 (their ordering is discarded; their values are kept).
 struct SettingsSyncDocument: Equatable, Sendable {
   static let currentSchemaVersion = 2
 
-  /// Largest counter accepted (2^53, exact in every JSON implementation). Counters are only
-  /// ever incremented by one per edit, so this is unreachable honestly; keeping far below
-  /// Int64.max means `+ 1` can never overflow.
+  /// Largest counter accepted (2^53, exact in every JSON implementation). Counters only grow
+  /// by one per edit, so this is unreachable honestly; staying far below Int64.max means
+  /// `+ 1` can never overflow.
   static let maxCounter: Int64 = 1 << 53
 
   struct Entry: Equatable, Sendable {
     var value: SettingsSyncValue?
     var counter: Int64
+    /// The device that made the edit (not necessarily the device that last wrote the file).
     var deviceID: String
 
-    /// Ordering for last-writer-wins: higher counter, then higher device ID.
-    func isNewer(than other: Entry) -> Bool {
-      SettingsSyncMerger.isNewer(counter, deviceID, than: other.counter, other.deviceID)
+    init(value: SettingsSyncValue?, counter: Int64, deviceID: String) {
+      self.value = value
+      self.counter = counter
+      self.deviceID = deviceID
     }
+
+    init(value: SettingsSyncValue?, version: SettingsSyncVersion) {
+      self.init(value: value, counter: version.counter, deviceID: version.writer)
+    }
+
+    var version: SettingsSyncVersion { SettingsSyncVersion(counter, deviceID) }
   }
 
   struct Device: Codable, Equatable, Sendable {
@@ -36,6 +48,8 @@ struct SettingsSyncDocument: Equatable, Sendable {
   var schemaVersion: Int
   var entries: [String: Entry]
   var devices: [String: Device]
+  /// Raw JSON of entries that couldn't be decoded, preserved byte-for-byte in meaning.
+  var opaqueEntries: [String: Data] = [:]
 
   init(
     schemaVersion: Int = SettingsSyncDocument.currentSchemaVersion,
@@ -47,16 +61,42 @@ struct SettingsSyncDocument: Equatable, Sendable {
     self.devices = devices
   }
 
+  /// Highest counter among decoded entries (0 when empty).
+  var highestCounter: Int64 { entries.values.map(\.counter).max() ?? 0 }
+
   // MARK: - Encoding
 
   static func decode(_ data: Data) throws -> SettingsSyncDocument {
-    try makeDecoder().decode(SettingsSyncDocument.self, from: data)
+    var document = try makeDecoder().decode(SettingsSyncDocument.self, from: data)
+    // Keep every entry the typed decoder dropped, as raw JSON.
+    if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let rawEntries = root["entries"] as? [String: Any] {
+      for (key, raw) in rawEntries where document.entries[key] == nil {
+        if let bytes = try? JSONSerialization.data(
+          withJSONObject: raw,
+          options: [.fragmentsAllowed, .sortedKeys]
+        ) {
+          document.opaqueEntries[key] = bytes
+        }
+      }
+    }
+    return document
   }
 
   func encoded() throws -> Data {
     let encoder = Self.makeEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    return try encoder.encode(self)
+    let typed = try encoder.encode(self)
+    guard !opaqueEntries.isEmpty else { return typed }
+    guard var root = try JSONSerialization.jsonObject(with: typed) as? [String: Any] else {
+      return typed
+    }
+    var entries = root["entries"] as? [String: Any] ?? [:]
+    for (key, bytes) in opaqueEntries where entries[key] == nil {
+      entries[key] = try JSONSerialization.jsonObject(with: bytes, options: [.fragmentsAllowed])
+    }
+    root["entries"] = entries
+    return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
   }
 
   /// Dates (display-only metadata such as a device's last write) are whole milliseconds since
@@ -87,8 +127,7 @@ struct SettingsSyncDocument: Equatable, Sendable {
     return decoder
   }
 
-  /// Largest timestamp accepted anywhere (about the year 33658). Keeps every conversion and
-  /// `+ 1` on timestamps far from Int64 overflow.
+  /// Largest display timestamp accepted (about the year 33658).
   static let maxMillis: Int64 = 1_000_000_000_000_000
 
   /// Milliseconds for a raw value, or nil if it isn't a finite number within ±`maxMillis`.
@@ -150,8 +189,8 @@ extension SettingsSyncDocument: Codable {
     case devices
   }
 
-  /// Decodes leniently: an entry or device this build can't read (a value type from a newer
-  /// version, a hand-edited typo) is dropped instead of failing the whole file.
+  /// Decodes leniently: an entry or device this build can't read is skipped here instead of
+  /// failing the whole file (`decode(_:)` then keeps skipped entries as opaque raw JSON).
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
