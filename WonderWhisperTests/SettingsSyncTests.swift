@@ -744,7 +744,7 @@ struct SettingsSyncTests {
       ],
       devices: ["OFFLINE": .init(name: "Offline Mac", lastWriteAt: harness.clock)]
     )
-    conflicts.versions = [try losingVersion.encoded()]
+    conflicts.add(try losingVersion.encoded())
     harness.tick()
     await mac.syncNow()
 
@@ -764,7 +764,7 @@ struct SettingsSyncTests {
     let future = SettingsSyncDocument(schemaVersion: SettingsSyncDocument.currentSchemaVersion + 1)
     try future.encoded().write(to: harness.fileURL)
     let conflicts = FakeConflictVersions()
-    conflicts.versions = [try SettingsSyncDocument().encoded()]
+    conflicts.add(try SettingsSyncDocument().encoded())
     let defaults = try harness.makeDefaults()
     let mac = harness.makeService(defaults, name: "Mac A", conflicts: conflicts.source)
     await mac.setEnabled(true)
@@ -947,6 +947,265 @@ struct SettingsSyncTests {
 
   private nonisolated static func requireSendable<T: Sendable>(_: T.Type) {}
 
+  // MARK: - Review round 2 regressions
+
+  /// R2-1: a syntactically valid but absurd timestamp must be rejected, not trap in Int64(_:).
+  @Test func malformedTimestampsAreRejectedWithoutCrashing() async throws {
+    let json = """
+    {
+      "schemaVersion": 1,
+      "entries": {
+        "vocab.custom": {"value": {"type": "string", "value": "huge"}, "modifiedAt": 1e20,
+          "deviceID": "X"},
+        "vocab.spelling": {"value": {"type": "string", "value": "tiny"}, "modifiedAt": -1e20,
+          "deviceID": "X"},
+        "transcription.language": {"value": {"type": "string", "value": "max"},
+          "modifiedAt": 1.7e308, "deviceID": "X"},
+        "llm.model": {"value": {"type": "string", "value": "ok"}, "modifiedAt": 1000,
+          "deviceID": "X"}
+      },
+      "devices": {"X": {"name": "Broken Mac", "lastWriteAt": 1e20}}
+    }
+    """
+    let document = try SettingsSyncDocument.decode(Data(json.utf8))
+    #expect(Set(document.entries.keys) == ["llm.model"])
+    #expect(document.devices.isEmpty)
+    #expect(SettingsSyncDocument.millis(Date(timeIntervalSince1970: 1e300))
+      == SettingsSyncDocument.maxMillis)
+    #expect(SettingsSyncDocument.checkedMillis(.infinity) == nil)
+
+    // End to end: a Mac syncing against that file keeps working.
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    try Data(json.utf8).write(to: harness.fileURL)
+    let defaults = try harness.makeDefaults()
+    defaults.set("mine", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+    await mac.resolveFirstEnable(.useCloud)
+    #expect(mac.isEnabled)
+    #expect(defaults.string(forKey: "llm.model") == "ok")
+    #expect(defaults.string(forKey: "vocab.custom") == "mine")
+  }
+
+  /// R2-2: a conflict version that can't be read yet keeps its offline edits for a later sync:
+  /// only incorporated versions are resolved, and no blanket removal runs while one is pending.
+  @Test func unreadableConflictVersionIsKeptForRetry() async throws {
+    let harness = try Harness()
+    let conflicts = FakeConflictVersions()
+    let defaults = try harness.makeDefaults()
+    defaults.set("en", forKey: "transcription.language")
+    defaults.set("mine", forKey: "vocab.spelling")
+    let mac = harness.makeService(defaults, name: "Mac A", conflicts: conflicts.source)
+    await mac.setEnabled(true)
+
+    harness.tick()
+    func version(_ key: String, _ value: String) throws -> Data {
+      try SettingsSyncDocument(entries: [
+        key: .init(value: .string(value), modifiedAt: harness.clock, deviceID: "OFFLINE")
+      ]).encoded()
+    }
+    conflicts.add(try version("transcription.language", "fr"))
+    let stillDownloading = conflicts.add(nil)
+    harness.tick()
+    await mac.syncNow()
+
+    #expect(defaults.string(forKey: "transcription.language") == "fr")
+    #expect(conflicts.resolvedCount == 1)
+    #expect(conflicts.finishCount == 0, "must not remove versions while one is unmerged")
+    #expect(conflicts.remainingCount == 1)
+
+    // The version becomes readable later; its edit is merged and only then is all cleaned up.
+    conflicts.setData(stillDownloading, try version("vocab.spelling", "offline edit"))
+    harness.tick()
+    await mac.syncNow()
+    #expect(defaults.string(forKey: "vocab.spelling") == "offline edit")
+    #expect(conflicts.resolvedCount == 2)
+    #expect(conflicts.finishCount == 1)
+    #expect(conflicts.remainingCount == 0)
+  }
+
+  /// R2-3: "Replace iCloud" stays "Replace iCloud" through a download wait, a failed write and
+  /// a relaunch, instead of degrading into a merge that lets the cloud overwrite this Mac.
+  @Test func replaceICloudSurvivesDownloadWaitFailedWriteAndRelaunch() async throws {
+    let harness = try Harness()
+    let defaultsA = try harness.makeDefaults()
+    let defaultsB = try harness.makeDefaults()
+    defaultsA.set("cloud vocab", forKey: "vocab.custom")
+    defaultsA.set("fr", forKey: "transcription.language")
+    let macA = harness.makeService(defaultsA, name: "Mac A")
+    await macA.setEnabled(true)
+
+    harness.tick()
+    defaultsB.set("this mac", forKey: "vocab.custom")
+    let macB = harness.makeService(defaultsB, name: "Mac B")
+    await macB.setEnabled(true)
+    #expect(macB.isAwaitingFirstEnableChoice)
+
+    // iCloud evicts the file to a placeholder after the dialog opened.
+    let fm = FileManager.default
+    let parked = harness.root.appendingPathComponent("parked.json")
+    let placeholder = harness.folder.appendingPathComponent(".settings.json.icloud")
+    try fm.moveItem(at: harness.fileURL, to: parked)
+    try Data().write(to: placeholder)
+    await macB.resolveFirstEnable(.replaceCloud)
+    #expect(macB.isEnabled)
+    #expect(defaultsB.string(forKey: "vocab.custom") == "this mac")
+
+    // Relaunch while still waiting, then the download lands but the folder isn't writable.
+    let relaunchedB = harness.makeService(defaultsB, name: "Mac B")
+    try fm.removeItem(at: placeholder)
+    try fm.moveItem(at: parked, to: harness.fileURL)
+    try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: harness.folder.path)
+    defer {
+      try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: harness.folder.path)
+    }
+    harness.tick()
+    await relaunchedB.syncNow()
+    #expect(relaunchedB.lastError != nil)
+    #expect(defaultsB.string(forKey: "vocab.custom") == "this mac")
+
+    // Writable again: the original choice still applies.
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: harness.folder.path)
+    harness.tick()
+    await relaunchedB.syncNow()
+    #expect(relaunchedB.lastError == nil)
+    #expect(defaultsB.string(forKey: "vocab.custom") == "this mac")
+    let document = try harness.readDocument()
+    #expect(document.entries["vocab.custom"]?.value == .string("this mac"))
+    #expect(document.entries["transcription.language"]?.value == nil)
+
+    harness.tick()
+    await macA.syncNow()
+    #expect(defaultsA.string(forKey: "vocab.custom") == "this mac")
+    #expect(defaultsA.object(forKey: "transcription.language") == nil)
+  }
+
+  /// R2-4: entries dated far in the future (unknown keys included) are ignored for merging and
+  /// never advance this Mac's clock, so later edits keep sane timestamps.
+  @Test func farFutureTimestampsDoNotPoisonTheClock() async throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    defaults.set("mine", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+
+    let year2100 = Date(timeIntervalSince1970: 4_102_444_800)
+    var document = try harness.readDocument()
+    document.entries["future.setting"] = .init(value: .string("x"), modifiedAt: year2100,
+                                               deviceID: "SKEWED")
+    document.entries["vocab.custom"] = .init(value: .string("from 2100"), modifiedAt: year2100,
+                                             deviceID: "SKEWED")
+    try document.encoded().write(to: harness.fileURL, options: .atomic)
+
+    harness.tick()
+    await mac.syncNow()
+    #expect(defaults.string(forKey: "vocab.custom") == "mine")
+    #expect(mac.notice?.contains("in the future") == true)
+
+    harness.tick()
+    defaults.set("later edit", forKey: "vocab.custom")
+    mac.noteLocalChanges()
+    await mac.syncNow()
+    let saved = try harness.readDocument()
+    let stamp = try #require(saved.entries["vocab.custom"]?.modifiedAt)
+    #expect(saved.entries["vocab.custom"]?.value == .string("later edit"))
+    #expect(stamp <= harness.clock.addingTimeInterval(SettingsSyncService.maxClockSkew))
+    #expect(saved.entries["future.setting"] != nil, "unknown keys are still preserved")
+
+    await mac.setEnabled(false)
+    #expect(defaults.object(forKey: SettingsSyncStateKey.clock) == nil)
+  }
+
+  /// R2-4: a clock already persisted far ahead (by an older build) is recovered on launch.
+  @Test func clockPersistedFarAheadIsRecovered() async throws {
+    let harness = try Harness()
+    let defaults = try harness.makeDefaults()
+    let year2100 = SettingsSyncDocument.millis(Date(timeIntervalSince1970: 4_102_444_800))
+    defaults.set(NSNumber(value: year2100), forKey: SettingsSyncStateKey.clock)
+    defaults.set("mine", forKey: "vocab.custom")
+    let mac = harness.makeService(defaults, name: "Mac A")
+    await mac.setEnabled(true)
+    let stamp = try #require(try harness.readDocument().entries["vocab.custom"]?.modifiedAt)
+    #expect(stamp <= harness.clock.addingTimeInterval(SettingsSyncService.maxClockSkew))
+  }
+
+  /// R2-5: cancelling after the merge is prepared but before the commit stops the save, the
+  /// quarantine backup and the conflict cleanup.
+  @Test func cancelInsideTheCommitGapStopsTheWrite() throws {
+    let harness = try Harness()
+    try FileManager.default.createDirectory(at: harness.folder, withIntermediateDirectories: true)
+    let corrupt = Data("{ broken".utf8)
+    try corrupt.write(to: harness.fileURL)
+    let conflicts = FakeConflictVersions()
+    conflicts.add(try SettingsSyncDocument(entries: [
+      "llm.model": .init(value: .string("offline"), modifiedAt: harness.clock, deviceID: "O")
+    ]).encoded())
+    let token = SettingsSyncCancellation()
+    let store = SettingsSyncFileStore(
+      directory: harness.folder,
+      conflicts: conflicts.source,
+      beforeCommit: { token.cancel() }  // sync turned off while encoding/preparing
+    )
+    let input = SettingsSyncFileStore.TransactionInput(
+      local: ["vocab.custom": .init(value: .string("x"), modifiedAt: harness.clock)],
+      deviceID: "A",
+      deviceName: "Mac A",
+      timestamp: harness.clock
+    )
+    let outcome = try store.transact(input, cancellation: token)
+
+    #expect(outcome.cancelled)
+    #expect(!outcome.wrote)
+    #expect(try Data(contentsOf: harness.fileURL) == corrupt)
+    let names = try FileManager.default.contentsOfDirectory(atPath: harness.folder.path)
+    #expect(!names.contains { $0.hasPrefix("settings.unreadable-") })
+    #expect(conflicts.resolvedCount == 0)
+    #expect(conflicts.finishCount == 0)
+  }
+
+  /// R2-6: a received reset (key removed) puts live settings back to their launch defaults
+  /// without the property side effects recreating the removed keys.
+  @Test func receivedResetsRestoreLaunchDefaults() async throws {
+    let defaults = AppConfig.defaults
+    let keys: Set<String> = [
+      AppConfig.responseWindowFontSizeKey, "history.maxEntries",
+      "pasteShortcut.keyCode", "pasteShortcut.modifiers"
+    ]
+    defer { keys.forEach { defaults.removeObject(forKey: $0) } }
+    let vm = DictationViewModel()
+    // Retention only moves between values at or above the loaded page, so no real history
+    // entry can ever be trimmed by this test.
+    try #require(vm.history.entries.count <= DictationViewModel.defaultHistoryMaxEntries)
+
+    defaults.set(21.0, forKey: AppConfig.responseWindowFontSizeKey)
+    defaults.set(1000, forKey: "history.maxEntries")
+    defaults.set(9, forKey: "pasteShortcut.keyCode")
+    defaults.set(256, forKey: "pasteShortcut.modifiers")
+    vm.applySyncedSettings(changedKeys: keys)
+    #expect(vm.responseWindowFontSize == 21)
+    #expect(vm.history.maxEntries == 1000)
+    #expect(vm.pasteShortcut == HotkeyManager.Shortcut(keyCode: 9, modifiers: 256))
+
+    keys.forEach { defaults.removeObject(forKey: $0) }
+    vm.applySyncedSettings(changedKeys: keys)
+    #expect(vm.responseWindowFontSize == DictationViewModel.defaultResponseWindowFontSize)
+    #expect(vm.history.maxEntries == DictationViewModel.defaultHistoryMaxEntries)
+    #expect(vm.pasteShortcut == DictationViewModel.defaultPasteShortcut)
+    // Checked before yielding the main actor: the didSet writes must already be undone.
+    for key in keys {
+      #expect(defaults.object(forKey: key) == nil, "\(key) was recreated")
+    }
+
+    // And still gone after deferred persistence hops. The paste shortcut is left out here:
+    // other suites running in parallel create view models whose init writes it to the shared
+    // scratch defaults.
+    try await Task.sleep(for: .milliseconds(100))
+    for key in [AppConfig.responseWindowFontSizeKey, "history.maxEntries"] {
+      #expect(defaults.object(forKey: key) == nil, "\(key) was recreated later")
+    }
+  }
+
   @Test func statusLineReadsNaturally() {
     let date = Date()
     let text = { SettingsSyncSection.statusText(lastSyncedAt: date, deviceCount: $0) }
@@ -957,33 +1216,47 @@ struct SettingsSyncTests {
 }
 
 /// Stands in for `NSFileVersion` conflict versions, which only iCloud itself can create.
+/// Each version has an identity; resolving one removes only that one. `finish` mirrors
+/// `removeOtherVersionsOfItem` and clears everything.
 private final class FakeConflictVersions: @unchecked Sendable {
   private let lock = NSLock()
-  private var storedVersions: [Data] = []
+  private var stored: [(id: UUID, data: Data?)] = []
   private var resolved = 0
   private var finished = 0
 
-  var versions: [Data] {
-    get { lock.withLock { storedVersions } }
-    set { lock.withLock { storedVersions = newValue } }
+  @discardableResult
+  func add(_ data: Data?) -> UUID {
+    let id = UUID()
+    lock.withLock { stored.append((id, data)) }
+    return id
   }
 
+  func setData(_ id: UUID, _ data: Data?) {
+    lock.withLock {
+      if let index = stored.firstIndex(where: { $0.id == id }) { stored[index].data = data }
+    }
+  }
+
+  var remainingCount: Int { lock.withLock { stored.count } }
   var resolvedCount: Int { lock.withLock { resolved } }
   var finishCount: Int { lock.withLock { finished } }
 
   var source: SettingsSyncConflictSource {
     SettingsSyncConflictSource(
       unresolved: { [self] _ in
-        versions.map { data in
-          SettingsSyncConflictSource.Version(data: data) { [self] in
-            lock.withLock { resolved += 1 }
+        lock.withLock { stored }.map { version in
+          SettingsSyncConflictSource.Version(data: version.data) { [self] in
+            lock.withLock {
+              resolved += 1
+              stored.removeAll { $0.id == version.id }
+            }
           }
         }
       },
       finish: { [self] _ in
         lock.withLock {
           finished += 1
-          storedVersions = []
+          stored = []
         }
       }
     )
