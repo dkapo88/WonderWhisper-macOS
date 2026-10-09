@@ -199,7 +199,7 @@ final class HermesAgentAPIClient {
   }
 
   private func perform(_ request: URLRequest) async throws -> HermesHTTPResponse {
-    // URLSession handles both http and https here: ATS allows arbitrary/local
+    // URLSession handles both http and https here: ATS allows arbitrary
     // loads (see Info.plist), and these calls are unary request/response.
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse else {
