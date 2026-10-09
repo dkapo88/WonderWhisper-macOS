@@ -390,6 +390,29 @@ private final class MeetingBubbleInteractionNSView: NSView {
   }
 }
 
+/// Makes the header bar drag the borderless companion panel. `isMovableByWindowBackground`
+/// alone no longer moves windows whose content is an `NSHostingView` (macOS 27), so the header
+/// hands the mouse-down to AppKit's native window drag instead.
+private struct MeetingOverlayDragHandle: NSViewRepresentable {
+  func makeNSView(context: Context) -> MeetingOverlayDragHandleNSView {
+    MeetingOverlayDragHandleNSView()
+  }
+
+  func updateNSView(_ view: MeetingOverlayDragHandleNSView, context: Context) {}
+}
+
+private final class MeetingOverlayDragHandleNSView: NSView {
+  override var mouseDownCanMoveWindow: Bool { true }
+
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+    true
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    window?.performDrag(with: event)
+  }
+}
+
 enum MeetingOverlayTab: Hashable {
   case transcript
   case context
@@ -461,6 +484,7 @@ private struct MeetingOverlayView: View {
             .background(Color.primary.opacity(0.055), in: Capsule(style: .continuous))
             .fixedSize(horizontal: true, vertical: false)
           }
+          .allowsHitTesting(false)
           Button {
             coordinator.minimizeMeetingOverlayForCurrentSession()
           } label: {
@@ -497,6 +521,7 @@ private struct MeetingOverlayView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
+        .background(MeetingOverlayDragHandle())
         .background(Color.primary.opacity(0.025))
 
         Divider()
