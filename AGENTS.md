@@ -190,6 +190,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-12: Released 2026-10-12. Meeting companion drags by its header (`performDrag`), since
+  `isMovableByWindowBackground` stopped working on macOS 27.2. Dropped `NSAllowsLocalNetworking`,
+  which overrode `NSAllowsArbitraryLoads` and blocked plain-HTTP Hermes on Tailscale IPs.
 - 2026-10-08: Committed the tested package lockfile and made release archives enforce it so
   stale worktree package caches cannot change the reviewed dependency versions.
 - 2026-10-08: Released 2026-10-08.1 with FluidAudio 0.17.7, Parakeet Ultra and vocabulary
