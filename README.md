@@ -34,7 +34,7 @@ Hermes is now an optional integration—not the identity of the app. WonderWhisp
 
 WonderWhisper can start a meeting manually or automatically when it confirms a Google Meet, Slack Huddle, or another configured calling app. During the meeting it keeps separate microphone and system-audio tracks, so headphones and output volume do not determine whether remote speakers are captured.
 
-![WonderWhisper meeting library with manual notes and generated summary](docs/assets/screenshots/meeting-library.png)
+![The meeting companion during a call: live transcript, Obsidian context cards, and the minimized recording pill](docs/assets/screenshots/meeting-companion.png)
 
 The meeting workflow includes:
 
@@ -42,12 +42,25 @@ The meeting workflow includes:
 - Automatic detection with editable trigger apps and conservative start/stop confirmation.
 - Free on-device transcription with Parakeet Unified by default.
 - Optional Soniox V5 live transcription, including an echo-reduced mixed-stream beta and a source-separated fallback.
-- A floating companion with **Transcript**, **Context**, and **Notes** tabs.
-- A draggable minimized recording bubble with a live audio visualizer.
+- A floating companion with **Transcript**, **Context**, and **Notes** tabs. Drag it by its header.
+- A compact recording pill when minimized, showing elapsed time and live audio level. Click to reopen, drag to move.
 - Manual notes that save continuously and are included in the final meeting summary.
 - Optional generated summaries, decisions, and action items through OpenRouter.
 - Local Obsidian search with links and bounded excerpts for live context.
 - Markdown export to a chosen folder inside your Obsidian vault.
+
+### Walkthrough: your first meeting
+
+1. Open **Settings → Meetings**. Pick a transcription engine (Parakeet needs no key) and, if you
+   use Obsidian, choose your vault root and export folder.
+2. Join a call. If automatic detection is on, WonderWhisper confirms the call and shows a
+   "Recording meeting" toast with **Keep** and **Discard**. Otherwise press **Start meeting** in
+   the Meetings tab.
+3. The companion opens beside your call. **Transcript** follows both sides of the conversation,
+   **Context** surfaces related notes from your vault, and **Notes** takes your own bullet points.
+4. Collapse the companion to the recording pill when you need the screen back.
+5. Press **Stop**. The meeting appears in the Meetings library with your notes, an optional
+   generated summary, and an **Export** button that writes Markdown into your vault.
 
 Stopping a meeting ends capture immediately. Final transcript tokens, recovery, generated notes, and export continue safely in the background.
 
@@ -85,8 +98,8 @@ Transcription and language-model processing are separate choices.
 
 | Engine | Where it runs | Best for |
 | --- | --- | --- |
-| **Parakeet Unified / V3** | On device | Private, free transcription; Unified is the default and V3 adds multilingual coverage. |
-| **Qwen3-ASR 0.6B** | On device | Offline file transcription after you stop recording. Multilingual MLX model; first use downloads about 1 GB. Not used for meetings. |
+| **Parakeet Unified / Ultra** | On device | Private, free transcription. Unified (English, punctuated) is the default and boosts words from your Vocabulary list; Ultra adds multilingual coverage. |
+| **Qwen3-ASR 0.6B** | On device | Offline file transcription after you stop recording. Multilingual MLX model; first use downloads about 1 GB. The model verifies itself on load, and dictation falls back to Parakeet or Groq if it misbehaves. Not used for meetings. |
 | **Groq Whisper Large V3 Turbo** | Cloud | Fast batch transcription through Groq. |
 | **Soniox V5** | Cloud | Low-latency streaming dictation and optional live meeting transcription. |
 | **OpenRouter Voice** | Cloud | Choosing supported speech-to-text models through OpenRouter. |
@@ -95,6 +108,33 @@ Transcription and language-model processing are separate choices.
 OpenRouter powers optional dictation cleanup, Command Mode, meeting summaries, and live context. Models are selected from your favourites in Settings. Reasoning can be omitted, disabled, or enabled at a small level; **Omit** offers the broadest compatibility, while **Off** should only be used with models that accept reasoning-free requests.
 
 API credentials are stored in macOS Keychain. You only need keys for the providers and integrations you enable.
+
+### Vocabulary
+
+Add names, jargon, and product terms under **Vocabulary** in the sidebar. Parakeet Unified uses
+the list to rescore recognition on device, including in meetings, and Groq, Soniox, and
+OpenRouter cleanup receive it as spelling hints. Toggle on-device boosting in **Settings → Transcription**.
+
+## Where things live
+
+The main window holds the things you work in, grouped in the sidebar:
+
+| Group | Surfaces |
+| --- | --- |
+| **Library** | History, Meetings |
+| **Modes** | Dictation, Command |
+| **Agents** | Hermes chat |
+| **Tools** | Vocabulary, Compare |
+
+Everything you configure lives in the native Settings window (**Cmd+,** or the menu bar icon),
+with tabs for General, Transcription, Models, Audio, Meetings, Shortcuts, Integrations, and
+Permissions.
+
+### iCloud settings sync
+
+Turn on **Settings → General → Sync settings with iCloud** to share vocabulary, prompts, model
+choices, and preferences across your Macs. It is off by default. API keys, permissions, and
+device-specific settings such as microphones and hotkeys stay on each Mac.
 
 ## Privacy model
 
@@ -125,12 +165,12 @@ brew install --cask dkapo88/tap/wonderwhisper
 
 1. Download the latest signed and notarized DMG from [GitHub Releases](https://github.com/dkapo88/WonderWhisper-macOS/releases/latest).
 2. Drag **WonderWhisper.app** into Applications.
-3. Open **Permissions** in the sidebar and grant the capabilities you use:
+3. Open **Settings → Permissions** and grant the capabilities you use:
    - Microphone
    - Screen & System Audio Recording
    - Accessibility
    - Input Monitoring
-4. Choose a transcription engine in Settings. Parakeet is the no-key, on-device default.
+4. Choose a transcription engine in **Settings → Transcription**. Parakeet is the no-key, on-device default.
 5. Add API keys only for optional cloud providers or integrations.
 
 Either way, grant the permissions in step 3 on first launch.
@@ -152,7 +192,7 @@ Because the application filename changed, remove the old `/Applications/HermesWh
 
 ### Codex
 
-The Codex tab uses the local Codex App Server bundled with the desktop app; no separate API key is
+The Codex integration (**Settings → Integrations → Codex**) uses the local Codex App Server bundled with the desktop app; no separate API key is
 required. A dedicated hotkey creates a task in a prompt-named folder under today's
 `~/Documents/Codex/YYYY-MM-DD/` directory, or replies to the frontmost Codex response window.
 Replies use Codex Desktop's local task bridge so both sides of the follow-up remain visible in the
@@ -161,11 +201,11 @@ projectless tasks created from either app for completed responses.
 
 ### Beeper
 
-WonderWhisper can send transcribed voice messages into configured Beeper chats and monitor replies through Beeper Desktop's local API. Beeper Desktop must be running with its Desktop API enabled. Chat IDs, labels, shortcuts, and response polling are configured in the Beeper sidebar tab.
+WonderWhisper can send transcribed voice messages into configured Beeper chats and monitor replies through Beeper Desktop's local API. Beeper Desktop must be running with its Desktop API enabled. Chat IDs, labels, shortcuts, and response polling are configured in **Settings → Integrations → Beeper**.
 
 ### Hermes Agent
 
-The Hermes tab connects to an OpenAI-compatible Hermes Agent `/v1` server. It supports parallel sessions, voice or typed replies, persistent local conversation history, and independent response windows. Configure the server URL, bearer token, conversation prefix, and optional agent profile under **Hermes → Settings**.
+The Hermes tab connects to an OpenAI-compatible Hermes Agent `/v1` server. It supports parallel sessions, voice or typed replies, persistent local conversation history, and independent response windows. Configure the server URL, bearer token, conversation prefix, and optional agent profile under **Settings → Integrations → Hermes**. Plain `http://` URLs work for servers on your local network or Tailscale (for example `http://100.x.x.x:8642/v1`).
 
 ## Build from source
 
@@ -218,6 +258,7 @@ Core orchestration lives in `DictationViewModel` and `MeetingCoordinator`. Trans
 ## Troubleshooting
 
 - **A hotkey does nothing:** verify Accessibility and Input Monitoring permissions, then check the shortcut is not claimed by another app.
+- **The meeting companion will not move:** drag it by the header bar with the title and timer. The minimized pill drags from anywhere.
 - **A meeting has microphone text but no system audio:** grant Screen & System Audio Recording permission and restart WonderWhisper.
 - **Automatic detection is delayed:** supported browser calls require both calling-page evidence and microphone activity; automatic starts are intentionally conservative.
 - **A local model is not ready:** the first Parakeet run may need time to prepare model assets.
