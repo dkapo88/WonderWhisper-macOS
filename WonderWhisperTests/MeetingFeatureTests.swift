@@ -283,8 +283,8 @@ struct MeetingFeatureTests {
       near: companionFrame
     )
 
-    #expect(origin.x == 920)
-    #expect(origin.y == 368)
+    #expect(origin.x == 860)
+    #expect(origin.y == 382)
   }
 
   @Test func obsidianPreferencesMigrateCombinedFolderIntoVaultAndExportPaths() throws {

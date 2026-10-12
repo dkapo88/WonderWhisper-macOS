@@ -10,7 +10,10 @@ private final class MeetingOverlayPanel: NSPanel {
 enum MeetingOverlayLayout {
   static let defaultSize = NSSize(width: 360, height: 480)
   static let minimumSize = NSSize(width: 300, height: 320)
-  static let bubbleSize = NSSize(width: 64, height: 64)
+  static let bubbleSize = NSSize(
+    width: MeetingRecordingPill.size.width,
+    height: MeetingRecordingPill.size.height
+  )
   static let edgeInset: CGFloat = 16
 
   static func bubbleOrigin(in visibleFrame: NSRect, near frame: NSRect) -> NSPoint {
@@ -270,7 +273,6 @@ private struct MeetingOverlayBubbleContainerView: View {
 private struct MeetingOverlayBubbleView: View {
   @ObservedObject var coordinator: MeetingCoordinator
   let session: MeetingSession
-  private let barMultipliers: [CGFloat] = [0.58, 0.84, 1, 0.76, 0.5]
 
   private var audioLevel: CGFloat {
     CGFloat(coordinator.liveAudioLevels.values.max() ?? 0)
@@ -278,30 +280,7 @@ private struct MeetingOverlayBubbleView: View {
 
   var body: some View {
     ZStack {
-      ZStack {
-        Circle()
-          .fill(.regularMaterial)
-        Circle()
-          .strokeBorder(Color.red.opacity(0.5), lineWidth: 1.5)
-
-        HStack(alignment: .center, spacing: 2.5) {
-          ForEach(barMultipliers.indices, id: \.self) { index in
-            Capsule()
-              .fill(index.isMultiple(of: 2) ? Color.blue : Color.purple)
-              .frame(
-                width: 3.5,
-                height: 5 + 21 * audioLevel * barMultipliers[index]
-              )
-          }
-        }
-        .animation(.easeOut(duration: 0.12), value: audioLevel)
-
-        Circle()
-          .fill(.red)
-          .frame(width: 8, height: 8)
-          .overlay(Circle().stroke(.white.opacity(0.8), lineWidth: 1))
-          .offset(x: 20, y: -20)
-      }
+      MeetingRecordingPill(startedAt: session.startedAt, level: audioLevel)
 
       MeetingBubbleInteractionView(
         toolTip: "Restore \(session.title)",
@@ -413,49 +392,6 @@ private final class MeetingOverlayDragHandleNSView: NSView {
   }
 }
 
-enum MeetingOverlayTab: Hashable {
-  case transcript
-  case context
-  case notes
-}
-
-/// The Transcript / Context / Notes selector, deliberately holding no reference to
-/// `MeetingCoordinator`.
-///
-/// Inline in `MeetingOverlayView.body`, this control was bound straight to `@State` via
-/// `$selectedTab`. A `Binding` carries closures, so SwiftUI could never prove the Picker
-/// unchanged, and every one of `MeetingCoordinator`'s 43 published properties re-entered the
-/// AppKit `NSSegmentedControl` sizing path behind `.pickerStyle(.segmented)` — measured at
-/// roughly twice the CPU per publish of having no tab control at all. Extracted here, the view
-/// value is a tab plus a callback and compares equal across publishes, so the subtree
-/// short-circuits. `.equatable()` at the call site makes that short-circuit explicit and pinned
-/// by test rather than dependent on SwiftUI's implicit view comparison.
-struct MeetingOverlayTabPicker: View, Equatable {
-  static let maxWidth: CGFloat = 320
-
-  let selection: MeetingOverlayTab
-  let onSelect: (MeetingOverlayTab) -> Void
-
-  static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.selection == rhs.selection
-  }
-
-  var body: some View {
-    Picker("View", selection: Binding(get: { selection }, set: onSelect)) {
-      Text("Transcript").tag(MeetingOverlayTab.transcript)
-      Text("Context").tag(MeetingOverlayTab.context)
-      Text("Notes").tag(MeetingOverlayTab.notes)
-    }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .controlSize(.small)
-    // One flex frame, not two: the enclosing VStack already centers this, so the old
-    // `.frame(maxWidth: .infinity)` was redundant. Measured as no CPU difference either way —
-    // this is cleanup, not the fix. Geometry is unchanged (control 214.5pt wide, centered).
-    .frame(maxWidth: Self.maxWidth)
-  }
-}
-
 private struct MeetingOverlayView: View {
   @ObservedObject var coordinator: MeetingCoordinator
   @State private var selectedTab: MeetingOverlayTab = .transcript
@@ -463,73 +399,22 @@ private struct MeetingOverlayView: View {
   var body: some View {
     VStack(spacing: 0) {
       if let session = coordinator.activeSession {
-        HStack(spacing: 8) {
-          Spacer(minLength: 0)
-          TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 5) {
-              Circle()
-                .fill(.red)
-                .frame(width: 6, height: 6)
-              Text(
-                MeetingTranscriptFormatter.timestamp(
-                  context.date.timeIntervalSince(session.startedAt)
-                )
-              )
-              .monospacedDigit()
-            }
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(0.055), in: Capsule(style: .continuous))
-            .fixedSize(horizontal: true, vertical: false)
-          }
-          .allowsHitTesting(false)
-          Button {
-            coordinator.minimizeMeetingOverlayForCurrentSession()
-          } label: {
-            Image(systemName: "minus")
-              .font(.system(size: 12, weight: .semibold))
-              .frame(width: 30, height: 30)
-              .background(Color.primary.opacity(0.065), in: Circle())
-              .contentShape(Circle())
-          }
-          .buttonStyle(.plain)
-          .help("Minimize meeting companion")
-          Button {
-            Task { await coordinator.stopMeeting() }
-          } label: {
-            HStack(spacing: 5) {
-              Image(systemName: "stop.fill")
-                .font(.system(size: 8, weight: .bold))
-              Text(coordinator.isStopping ? "Stopping" : "Stop")
-                .font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(.red)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(Color.red.opacity(0.11), in: Capsule(style: .continuous))
-            .overlay {
-              Capsule(style: .continuous)
-                .strokeBorder(Color.red.opacity(0.18), lineWidth: 1)
-            }
-            .contentShape(Capsule(style: .continuous))
-            .fixedSize(horizontal: true, vertical: false)
-          }
-          .buttonStyle(.plain)
-          .disabled(coordinator.isStopping)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        MeetingCompanionHeader(
+          title: session.title,
+          startedAt: session.startedAt,
+          isStopping: coordinator.isStopping,
+          onMinimize: coordinator.minimizeMeetingOverlayForCurrentSession,
+          onStop: { Task { await coordinator.stopMeeting() } }
+        )
         .background(MeetingOverlayDragHandle())
-        .background(Color.primary.opacity(0.025))
-
-        Divider()
 
         MeetingOverlayTabPicker(selection: selectedTab) { selectedTab = $0 }
           .equatable()
           .padding(.horizontal, 14)
-          .padding(.vertical, 10)
+          .padding(.bottom, 10)
+
+        Divider()
+          .opacity(0.6)
 
         if selectedTab == .transcript {
           transcript(session)
@@ -539,7 +424,11 @@ private struct MeetingOverlayView: View {
           notes(session)
         }
       } else {
-        ContentUnavailableView("No active meeting", systemImage: "person.2.slash")
+        MeetingCompanionEmptyState(
+          systemImage: "person.2.slash",
+          title: "No active meeting",
+          message: "Start a meeting from the menu bar."
+        )
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -558,39 +447,35 @@ private struct MeetingOverlayView: View {
     let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
     return ScrollViewReader { proxy in
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        LazyVStack(alignment: .leading, spacing: 14) {
           let previewSources = MeetingAudioSource.allCases.filter {
             !(coordinator.liveTranscriptPreviews[$0] ?? "").isEmpty
           }
           if blocks.isEmpty, previewSources.isEmpty {
-            Text("Listening…")
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, alignment: .leading)
+            MeetingCompanionStatusRow(text: "Listening…")
           }
           ForEach(blocks) { block in
-            VStack(alignment: .leading, spacing: 3) {
-              Text("\(block.displayName) • \(MeetingTranscriptFormatter.timestamp(block.startTime))")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(block.source == .microphone ? .blue : .purple)
-              Text(block.text)
-                .textSelection(.enabled)
-            }
+            MeetingSpeakerTurnView(
+              speaker: block.displayName,
+              timestamp: MeetingTranscriptFormatter.timestamp(block.startTime),
+              text: block.text,
+              tint: tint(for: block.source)
+            )
             .id(block.id)
           }
           ForEach(previewSources, id: \.self) { source in
-            VStack(alignment: .leading, spacing: 3) {
-              Text("\(source.displayName) • Live")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(source == .microphone ? .blue : .purple)
-              Text(coordinator.liveTranscriptPreviews[source] ?? "")
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            }
+            MeetingSpeakerTurnView(
+              speaker: source.displayName,
+              timestamp: "Live",
+              text: coordinator.liveTranscriptPreviews[source] ?? "",
+              tint: tint(for: source),
+              isLive: true
+            )
             .id("live-\(source.rawValue)")
           }
         }
         .padding(.horizontal, 14)
-        .padding(.bottom, 14)
+        .padding(.vertical, 12)
       }
       .onChange(of: session.transcriptTokens.count) { _, _ in
         guard let last = blocks.last else { return }
@@ -605,94 +490,58 @@ private struct MeetingOverlayView: View {
     }
   }
 
+  private func tint(for source: MeetingAudioSource) -> Color {
+    source == .microphone ? MeetingCompanionStyle.microphoneTint : MeetingCompanionStyle.remoteTint
+  }
+
   private var context: some View {
     ScrollView {
-      LazyVStack(alignment: .leading, spacing: 12) {
+      LazyVStack(alignment: .leading, spacing: 10) {
         if !coordinator.liveObsidianContextEnabled {
-          ContentUnavailableView(
-            "Live context is off",
+          MeetingCompanionEmptyState(
             systemImage: "books.vertical",
-            description: Text("Turn it on in Settings → Meetings to search your Obsidian vault.")
+            title: "Live context is off",
+            message: "Turn it on in Settings → Meetings to search your Obsidian vault."
           )
         } else if coordinator.obsidianVaultPath == nil {
-          ContentUnavailableView(
-            "No Obsidian vault selected",
+          MeetingCompanionEmptyState(
             systemImage: "folder.badge.questionmark",
-            description: Text("Choose your vault in Settings → Meetings.")
+            title: "No Obsidian vault selected",
+            message: "Choose your vault in Settings → Meetings."
           )
-        } else if coordinator.contextCards.isEmpty {
-          HStack(spacing: 8) {
-            if coordinator.isContextSearching {
-              ProgressView()
-                .controlSize(.small)
-            }
-            Text(coordinator.contextStatus)
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-        } else if coordinator.isContextSearching {
-          HStack(spacing: 8) {
-            ProgressView()
-              .controlSize(.small)
-            Text(coordinator.contextStatus)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+        } else if coordinator.contextCards.isEmpty || coordinator.isContextSearching {
+          MeetingCompanionStatusRow(
+            text: coordinator.contextStatus,
+            isBusy: coordinator.isContextSearching
+          )
         }
 
         if let error = coordinator.contextError {
-          Text(error)
-            .font(.caption)
+          Label(error, systemImage: "exclamationmark.triangle.fill")
+            .font(.system(size: 12))
             .foregroundStyle(.orange)
             .fixedSize(horizontal: false, vertical: true)
         }
 
         ForEach(coordinator.contextCards) { card in
-          VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-              Text(card.term)
-                .font(.headline)
-              Spacer()
-              if let externalURL = card.externalURL {
-                Button("Open ticket ↗") {
-                  NSWorkspace.shared.open(externalURL)
-                }
-                .controlSize(.small)
-              }
+          MeetingContextCardView(
+            term: card.term,
+            summary: card.summary,
+            chips: card.matches.map {
+              MeetingContextChip(id: $0.id, title: $0.title, path: $0.path)
+            },
+            hasTicket: card.externalURL != nil,
+            onOpenTicket: {
+              if let url = card.externalURL { NSWorkspace.shared.open(url) }
+            },
+            onOpenChip: { chip in
+              MeetingObsidianExporter.open(URL(fileURLWithPath: chip.path))
             }
-            Text(card.summary)
-              .font(.callout)
-              .textSelection(.enabled)
-            if !card.matches.isEmpty {
-              LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 110, maximum: 180), spacing: 6)],
-                alignment: .leading,
-                spacing: 6
-              ) {
-                ForEach(card.matches) { match in
-                  Button {
-                    MeetingObsidianExporter.open(URL(fileURLWithPath: match.path))
-                  } label: {
-                    Label(match.title, systemImage: "doc.text")
-                      .font(.caption)
-                      .lineLimit(1)
-                      .padding(.horizontal, 7)
-                      .padding(.vertical, 4)
-                      .frame(maxWidth: .infinity, alignment: .leading)
-                      .background(.quaternary.opacity(0.55), in: Capsule())
-                  }
-                  .buttonStyle(.plain)
-                  .help(match.path)
-                }
-              }
-            }
-          }
-          .padding(10)
-          .background(.quinary, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
+          )
         }
       }
       .padding(.horizontal, 14)
-      .padding(.bottom, 14)
+      .padding(.vertical, 12)
     }
   }
 
@@ -725,10 +574,17 @@ private struct MeetingManualNotesView: View {
           .disabled(coordinator.isStopping)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
+      .background(
+        Color.primary.opacity(0.035),
+        in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+      )
+      .overlay {
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+          .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+      }
     }
     .padding(.horizontal, 14)
-    .padding(.bottom, 14)
+    .padding(.vertical, 12)
     .onChange(of: session.id, initial: true) { _, _ in
       draft = session.manualNotesMarkdown ?? ""
     }
