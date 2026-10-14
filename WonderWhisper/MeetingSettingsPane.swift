@@ -1,13 +1,15 @@
 import SwiftUI
 
 /// Settings → Meetings: transcription, detection, trigger apps, AI notes, live context,
-/// companion, and Obsidian export. Replaces the collapsible footer under the meeting list.
+/// companion, Obsidian export, and webhooks. Replaces the collapsible footer under the meeting
+/// list.
 struct MeetingSettingsPane: View {
   @ObservedObject var coordinator: MeetingCoordinator
   let favoriteModels: [FavoriteOpenRouterModel]
   @State private var customTriggerBundleID = ""
   @State private var showingSummaryPromptEditor = false
   @State private var summaryPromptDraft = ""
+  @State private var webhookEditorTarget: WebhookEditorTarget?
 
   var body: some View {
     SettingsPage {
@@ -17,6 +19,10 @@ struct MeetingSettingsPane: View {
       notesSection
       liveContextSection
       obsidianSection
+      webhooksSection
+      if !coordinator.webhooks.deliveries.isEmpty {
+        recentDeliveriesSection
+      }
     }
     .onAppear { coordinator.refreshLiveMicrophoneApplications() }
     .sheet(isPresented: $showingSummaryPromptEditor) {
@@ -27,6 +33,13 @@ struct MeetingSettingsPane: View {
           coordinator.notePrompt = MeetingNoteGenerator.resolvedPrompt(summaryPromptDraft)
           showingSummaryPromptEditor = false
         }
+      )
+    }
+    .sheet(item: $webhookEditorTarget) { target in
+      MeetingWebhookEditorSheet(
+        webhooks: coordinator.webhooks,
+        endpoint: target.endpoint,
+        onClose: { webhookEditorTarget = nil }
       )
     }
   }
@@ -275,4 +288,102 @@ struct MeetingSettingsPane: View {
       Text("Obsidian")
     }
   }
+
+  // MARK: - Webhooks
+
+  private var webhooksSection: some View {
+    Section {
+      ForEach(coordinator.webhooks.endpoints) { endpoint in
+        webhookRow(endpoint)
+      }
+      HStack {
+        Spacer()
+        Button("Add Webhook…") {
+          webhookEditorTarget = WebhookEditorTarget(endpoint: nil)
+        }
+      }
+    } header: {
+      Text("Webhooks")
+    } footer: {
+      Text("When a meeting note finishes, WonderWhisper POSTs it as JSON (the same Markdown as "
+        + "the Obsidian export) to every enabled webhook, retrying up to 5 times. Endpoints and "
+        + "their Keychain secrets stay on this Mac.")
+        .settingsFootnote()
+    }
+  }
+
+  private func webhookRow(_ endpoint: MeetingWebhookEndpoint) -> some View {
+    LabeledContent {
+      HStack(spacing: DesignTokens.Spacing.xSmall) {
+        Button("Send Test") { coordinator.webhooks.sendTest(to: endpoint.id) }
+          .accessibilityLabel("Send a test to \(endpoint.displayName)")
+        Button("Edit…") {
+          webhookEditorTarget = WebhookEditorTarget(endpoint: endpoint)
+        }
+        .accessibilityLabel("Edit \(endpoint.displayName)")
+        Toggle(
+          "Enabled",
+          isOn: Binding(
+            get: { endpoint.isEnabled },
+            set: { coordinator.webhooks.setEnabled($0, for: endpoint.id) }
+          )
+        )
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .accessibilityLabel("Enable \(endpoint.displayName)")
+      }
+    } label: {
+      Text(endpoint.displayName)
+      Text(endpoint.url)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      if let record = coordinator.webhooks.latestRecord(forEndpoint: endpoint.id) {
+        webhookResult(record)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func webhookResult(_ record: MeetingWebhookDeliveryRecord) -> some View {
+    let prefix = record.event == .test ? "Test: " : ""
+    let text = prefix + MeetingWebhookStatusFormatter.text(for: record)
+    switch record.state {
+    case .delivered:
+      StatusBadge(.ok, text)
+    case .failed:
+      StatusBadge(.error, text)
+    case .sending, .retrying:
+      StatusBadge(.neutral, text)
+    }
+  }
+
+  private var recentDeliveriesSection: some View {
+    Section {
+      DisclosureGroup("Recent deliveries") {
+        ForEach(coordinator.webhooks.deliveries.prefix(25)) { record in
+          LabeledContent {
+            if record.state == .failed {
+              Button("Retry") { coordinator.retryWebhookDelivery(record) }
+                .accessibilityLabel("Retry \(record.noteTitle)")
+            }
+          } label: {
+            Text(record.event == .test ? "Test delivery" : record.noteTitle)
+              .lineLimit(1)
+            webhookResult(record)
+            Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
+          }
+        }
+      }
+    } footer: {
+      Text("Only delivery results are kept, never the note content, secrets or header values.")
+        .settingsFootnote()
+    }
+  }
+}
+
+/// Which endpoint the webhook editor sheet is showing; nil endpoint means a new one.
+private struct WebhookEditorTarget: Identifiable {
+  let id = UUID()
+  let endpoint: MeetingWebhookEndpoint?
 }

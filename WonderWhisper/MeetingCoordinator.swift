@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Combine
 
 enum MeetingIngestionBacklogPolicy {
   // Each source is framed into ten 100 ms chunks per second. Bound the shared
@@ -323,6 +324,10 @@ final class MeetingCoordinator: ObservableObject {
     : MeetingTranscriptRecoveryService { _ in "" }
   private let sonioxAsyncRecovery = MeetingSonioxAsyncRecoveryService()
   private let audioLevelGate = MeetingAudioLevelGate()
+  /// Webhook endpoints and deliveries. Its changes are forwarded to this object's
+  /// `objectWillChange`, so views observing the coordinator also refresh on webhook updates.
+  let webhooks = MeetingWebhookCenter()
+  private var webhookChangeForwarding: AnyCancellable?
 
   private var transcriber: MeetingTranscriptionService?
   private var preparationTask: Task<Void, Error>?
@@ -376,6 +381,12 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   init() {
+    webhookChangeForwarding = webhooks.objectWillChange.sink { [weak self] _ in
+      self?.objectWillChange.send()
+    }
+    webhooks.onFinalFailure = { [weak self] message in
+      self?.lastError = message
+    }
     Task { [weak self] in
       guard let self else { return }
       let loaded = await store.loadAll()
@@ -854,7 +865,12 @@ final class MeetingCoordinator: ObservableObject {
     }
 
     replace(session)
-    await persist(session)
+    let persisted = await persist(session)
+    if Self.shouldSendCompletedWebhook(persisted: persisted, isCancelled: Task.isCancelled) {
+      // Enqueues background deliveries and returns at once, so a slow webhook never delays
+      // "Meeting saved".
+      webhooks.send(session, event: .noteCompleted)
+    }
     finalizationTasks.removeValue(forKey: sessionID)
     if finalizationTasks.isEmpty,
        activeSessionID == nil,
@@ -1126,6 +1142,39 @@ final class MeetingCoordinator: ObservableObject {
     guard activeSessionID == nil, selectedSession?.id == sessionID else { return }
     statusMessage = status
     lastError = error
+  }
+
+  func canSendToWebhooks(_ session: MeetingSession) -> Bool {
+    guard let current = self.session(withID: session.id) else { return false }
+    return current.status.isTerminal
+      && current.id != activeSessionID
+      && finalizationTasks[current.id] == nil
+      && !noteGenerationSessionIDs.contains(current.id)
+  }
+
+  /// Manually sends a finished note to one endpoint, or to every enabled endpoint when
+  /// `endpointID` is nil.
+  func sendToWebhooks(_ session: MeetingSession, endpointID: UUID? = nil) {
+    guard canSendToWebhooks(session), let current = self.session(withID: session.id) else {
+      lastError = "Wait for the meeting note to finish before sending it to a webhook."
+      return
+    }
+    let targets = endpointID.map { [$0] }
+    let started = webhooks.send(current, event: .noteResent, endpointIDs: targets)
+    statusMessage = started == 0 ? "No webhook to send to" : "Sending to webhook"
+  }
+
+  /// Resends the note behind a delivery record to the same endpoint.
+  func retryWebhookDelivery(_ record: MeetingWebhookDeliveryRecord) {
+    if record.event == .test {
+      webhooks.sendTest(to: record.endpointID)
+      return
+    }
+    guard let current = session(withID: record.noteID) else {
+      lastError = "That meeting no longer exists."
+      return
+    }
+    sendToWebhooks(current, endpointID: record.endpointID)
   }
 
   func openExportedNote(_ session: MeetingSession) {
@@ -1985,12 +2034,22 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  private func persist(_ session: MeetingSession) async {
+  /// Saves the session, reporting failures through `lastError`. Returns whether it was saved.
+  @discardableResult
+  private func persist(_ session: MeetingSession) async -> Bool {
     do {
       try await store.save(session)
+      return true
     } catch {
       lastError = "Meeting could not be saved: \(error.localizedDescription)"
+      return false
     }
+  }
+
+  /// The completed-note webhook only goes out for a note that is actually on disk, and never
+  /// from a cancelled finalization.
+  nonisolated static func shouldSendCompletedWebhook(persisted: Bool, isCancelled: Bool) -> Bool {
+    persisted && !isCancelled
   }
 
   private func replace(_ session: MeetingSession) {
