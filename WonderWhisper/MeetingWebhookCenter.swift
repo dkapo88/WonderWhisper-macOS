@@ -16,8 +16,9 @@ final class MeetingWebhookCenter: ObservableObject {
   private let deliveryService: MeetingWebhookDeliveryService
   private let log: MeetingWebhookDeliveryLog
   private let payloadBuilder: MeetingWebhookPayloadBuilder
+  /// Running sends, keyed by send ID (one task delivers all parts of a send in order).
   private var tasks: [UUID: (endpointID: UUID, task: Task<Void, Never>)] = [:]
-  /// Why a delivery was cancelled, keyed by delivery ID, so its final record says so.
+  /// Why a send was cancelled, keyed by send ID, so its final records say so.
   private var cancellationReasons: [UUID: String] = [:]
   private var logGeneration = 0
 
@@ -129,8 +130,8 @@ final class MeetingWebhookCenter: ObservableObject {
   }
 
   private func cancelDeliveries(for endpointID: UUID, reason: String) {
-    for (deliveryID, entry) in tasks where entry.endpointID == endpointID {
-      cancellationReasons[deliveryID] = reason
+    for (sendID, entry) in tasks where entry.endpointID == endpointID {
+      cancellationReasons[sendID] = reason
       entry.task.cancel()
     }
   }
@@ -138,7 +139,7 @@ final class MeetingWebhookCenter: ObservableObject {
   // MARK: - Sending
 
   /// Sends a finished note to the given endpoints (all enabled ones when nil). Returns the
-  /// number of deliveries started.
+  /// number of sends started (one per endpoint, however many parts each has).
   @discardableResult
   func send(
     _ session: MeetingSession,
@@ -163,8 +164,13 @@ final class MeetingWebhookCenter: ObservableObject {
     enqueue(MeetingWebhookPayloadBuilder.sampleSession(), event: .test, endpoint: endpoint)
   }
 
+  /// The record describing the endpoint's newest send (for a split send, its current or
+  /// failed part, or the last part once all were delivered).
   func latestRecord(forEndpoint id: UUID) -> MeetingWebhookDeliveryRecord? {
-    deliveries.first { $0.endpointID == id }
+    guard let newest = deliveries.first(where: { $0.endpointID == id }) else { return nil }
+    return MeetingWebhookStatusFormatter.representative(
+      of: deliveries.filter { $0.endpointID == id && $0.sendKey == newest.sendKey }
+    )
   }
 
   func latestRecords(forNote noteID: UUID) -> [MeetingWebhookDeliveryRecord] {
@@ -177,25 +183,30 @@ final class MeetingWebhookCenter: ObservableObject {
     event: MeetingWebhookEvent,
     endpoint: MeetingWebhookEndpoint
   ) -> Bool {
-    let deliveryID = UUID()
+    let sendID = UUID()
     let now = Date()
+    let failure = { (message: String) in
+      self.record(failure: message, sendID: sendID, endpoint: endpoint, session: session,
+                  event: event, now: now)
+    }
     guard let url = MeetingWebhookURLValidator.validate(endpoint.url).url else {
-      record(failure: "Invalid URL", deliveryID: deliveryID, endpoint: endpoint,
-             session: session, event: event, now: now)
+      failure("Invalid URL")
       return false
     }
-    let payload = payloadBuilder.payload(
-      for: session,
-      event: event,
-      deliveryID: deliveryID,
-      sentAt: now
-    )
-    let body: Data
+    let payloads: [MeetingWebhookPayload]
     do {
-      body = try MeetingWebhookPayloadBuilder.encode(payload)
+      payloads = try payloadBuilder.payloads(
+        for: session,
+        event: event,
+        endpoint: endpoint,
+        sendID: sendID,
+        sentAt: now
+      )
+    } catch let error as MeetingWebhookPayloadSplitter.SplitError {
+      failure(error.message)
+      return false
     } catch {
-      record(failure: "Could not encode the payload", deliveryID: deliveryID,
-             endpoint: endpoint, session: session, event: event, now: now)
+      failure("Could not build the payload")
       return false
     }
     let signingSecret: String?
@@ -205,43 +216,47 @@ final class MeetingWebhookCenter: ObservableObject {
       customHeaders = try store.headers(for: endpoint.id)
     } catch {
       // Never send without the endpoint's auth headers or signature.
-      record(failure: MeetingWebhookCredentialsError.userMessage, deliveryID: deliveryID,
-             endpoint: endpoint, session: session, event: event, now: now)
+      failure(MeetingWebhookCredentialsError.userMessage)
       return false
     }
-    let job = MeetingWebhookDeliveryJob(
-      deliveryID: deliveryID,
-      endpoint: endpoint,
-      url: url,
-      event: event,
-      noteID: session.id,
-      noteTitle: session.title,
-      body: body,
-      signingSecret: signingSecret,
-      customHeaders: customHeaders,
-      userAgent: payloadBuilder.appInfo.userAgent
-    )
+    let jobs = payloads.enumerated().map { offset, payload in
+      MeetingWebhookDeliveryJob(
+        deliveryID: payload.deliveryId,
+        sendID: sendID,
+        partIndex: offset + 1,
+        partTotal: payloads.count,
+        endpoint: endpoint,
+        url: url,
+        event: event,
+        noteID: session.id,
+        noteTitle: session.title,
+        body: MeetingWebhookPayloadBuilder.encode(payload),
+        signingSecret: signingSecret,
+        customHeaders: customHeaders,
+        userAgent: payloadBuilder.appInfo.userAgent
+      )
+    }
     let service = deliveryService
     let task = Task.detached(priority: .utility) { [weak self] in
-      let final = await service.deliver(job) { [weak self] record in
+      let records = await service.deliverParts(jobs) { [weak self] record in
         await self?.apply(record)
       }
-      await self?.finish(final)
+      await self?.finish(sendID: sendID, records: records)
     }
-    tasks[deliveryID] = (endpoint.id, task)
+    tasks[sendID] = (endpoint.id, task)
     return true
   }
 
   private func record(
     failure message: String,
-    deliveryID: UUID,
+    sendID: UUID,
     endpoint: MeetingWebhookEndpoint,
     session: MeetingSession,
     event: MeetingWebhookEvent,
     now: Date
   ) {
     let failed = MeetingWebhookDeliveryRecord(
-      id: deliveryID,
+      id: sendID,
       endpointID: endpoint.id,
       endpointName: endpoint.displayName,
       noteID: session.id,
@@ -253,28 +268,38 @@ final class MeetingWebhookCenter: ObservableObject {
       lastStatusCode: nil,
       lastError: message,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      sendID: sendID
     )
     apply(failed)
-    finish(failed)
+    finish(sendID: sendID, records: [failed])
   }
 
   private func apply(_ incoming: MeetingWebhookDeliveryRecord) {
     var record = incoming
-    if record.state == .failed, let reason = cancellationReasons[record.id] {
+    if record.state == .failed, let reason = cancellationReasons[record.sendKey] {
       record.lastError = reason
     }
     deliveries = MeetingWebhookDeliveryLog.upserting(record, into: deliveries)
     persistLog()
   }
 
-  private func finish(_ record: MeetingWebhookDeliveryRecord) {
-    tasks.removeValue(forKey: record.id)
-    // A delivery the user cancelled (endpoint removed or disabled) is not an error to surface.
-    let wasCancelledByUser = cancellationReasons.removeValue(forKey: record.id) != nil
-    guard record.state == .failed, record.event != .test, !wasCancelledByUser else { return }
-    let reason = MeetingWebhookStatusFormatter.failureReason(for: record)
-    onFinalFailure?("Webhook \(record.endpointName) failed: \(reason)")
+  private func finish(sendID: UUID, records: [MeetingWebhookDeliveryRecord]) {
+    tasks.removeValue(forKey: sendID)
+    // A send the user cancelled (endpoint removed, disabled or edited) is not an error to
+    // surface.
+    let wasCancelledByUser = cancellationReasons.removeValue(forKey: sendID) != nil
+    guard let failed = records.first(where: { $0.state == .failed }),
+          failed.event != .test,
+          !wasCancelledByUser else { return }
+    let reason = MeetingWebhookStatusFormatter.failureReason(for: failed)
+    if failed.isPartOfSplit, let index = failed.partIndex, let total = failed.partTotal {
+      onFinalFailure?(
+        "Webhook \(failed.endpointName) failed at part \(index) of \(total): \(reason)"
+      )
+    } else {
+      onFinalFailure?("Webhook \(failed.endpointName) failed: \(reason)")
+    }
   }
 
   private func persistLog() {

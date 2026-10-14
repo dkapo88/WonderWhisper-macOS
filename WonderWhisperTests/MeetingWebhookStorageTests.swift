@@ -315,6 +315,115 @@ struct MeetingWebhookStorageTests {
       center.deleteEndpoint(endpoint.id)
     }
   }
+
+  // MARK: - Split sends
+
+  private static func longFinishedSession() -> MeetingSession {
+    MeetingSession(
+      title: "Planning",
+      endedAt: Date(),
+      recordedDuration: 60,
+      status: .completed,
+      notesMarkdown: (0..<40)
+        .map { "## Topic \($0)\n\n" + String(repeating: "Detail. ", count: 30) }
+        .joined(separator: "\n\n")
+    )
+  }
+
+  private static func bodyJSON(_ request: URLRequest) -> [String: Any]? {
+    request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  }
+
+  @MainActor
+  @Test func splitSendDeliversAllPartsAndResendUsesNewIDs() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Grok Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800,
+        content: .summary
+      )
+      try store.upsert(endpoint, signingSecret: "topsecret", headers: [:])
+      center.reloadEndpoints()
+      let session = Self.longFinishedSession()
+
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      let firstDone = await Self.waitUntil {
+        let records = center.deliveries.filter { $0.noteID == session.id }
+        return !records.isEmpty && records.allSatisfy { $0.state == .delivered }
+          && records.count == records.first?.partTotal
+      }
+      #expect(firstDone)
+      let firstRequests = transport.requests
+      #expect(firstRequests.count > 1)
+      #expect(firstRequests.allSatisfy { ($0.httpBody?.count ?? .max) <= 3_800 })
+      let firstBodies = firstRequests.compactMap(Self.bodyJSON)
+      let firstSendIDs = Set(firstBodies.compactMap { $0["sendId"] as? String })
+      #expect(firstSendIDs.count == 1)
+      let indexes = firstBodies.compactMap { ($0["part"] as? [String: Any])?["index"] as? Int }
+      #expect(indexes == Array(1...firstRequests.count))
+      let summary = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(summary.partIndex == summary.partTotal)
+      #expect(MeetingWebhookStatusFormatter.text(for: summary).hasPrefix(
+        "Sent to Grok Bot (\(firstRequests.count) parts)"
+      ))
+
+      // Resend: every part again, with a new sendId and new deliveryIds.
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+      let secondDone = await Self.waitUntil {
+        transport.requests.count == firstRequests.count * 2
+          && center.deliveries.filter { $0.event == .noteResent }
+            .allSatisfy { $0.state == .delivered }
+      }
+      #expect(secondDone)
+      let secondBodies = transport.requests.dropFirst(firstRequests.count)
+        .compactMap(Self.bodyJSON)
+      let secondSendIDs = Set(secondBodies.compactMap { $0["sendId"] as? String })
+      #expect(secondSendIDs.count == 1 && secondSendIDs.isDisjoint(with: firstSendIDs))
+      let firstIDs = Set(firstBodies.compactMap { $0["deliveryId"] as? String })
+      let secondIDs = Set(secondBodies.compactMap { $0["deliveryId"] as? String })
+      #expect(firstIDs.isDisjoint(with: secondIDs))
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
+
+  @MainActor
+  @Test func aLimitTooSmallForTheMetadataFailsWithoutSending() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Grok Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 1_000
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      var surfaced: String?
+      center.onFinalFailure = { surfaced = $0 }
+      var session = Self.longFinishedSession()
+      session.title = String(repeating: "Very long title ", count: 100)
+
+      #expect(center.send(session, event: .noteCompleted) == 0)
+      let record = try #require(center.deliveries.first)
+      #expect(record.state == .failed)
+      #expect(record.lastError?.contains("too small") == true)
+      #expect(surfaced?.contains("too small") == true)
+      try? await Task.sleep(nanoseconds: 50_000_000)
+      #expect(transport.requests.isEmpty)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
 }
 
 /// In-memory secrets whose reads can be switched to fail, like a locked Keychain.

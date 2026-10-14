@@ -124,12 +124,27 @@ and synthesizes its own audio with `say`.
   sends only bounded matching excerpts back to OpenRouter in one batched brief request.
 - Webhooks: when a meeting note finishes (after the completed session is persisted, detached
   from finalization), `MeetingWebhookCenter` POSTs JSON to every enabled endpoint configured in
-  Settings > Meetings > Webhooks. Payload (`schemaVersion` 1): `event`
-  (`meeting.note.completed`, `meeting.note.resent`, `webhook.test`), `deliveryId` (reused across
-  retries), `sentAt`, `note` (`id`, `title`, `startedAt`, `endedAt`, `durationSeconds`,
-  `detectedApp`, `markdown` = `MeetingObsidianExporter.document(for:)`) and `app` (name,
-  version, build). Headers: `X-WonderWhisper-Event`, `-Delivery`, `-Timestamp` (unix seconds)
-  and, with a signing secret, `X-WonderWhisper-Signature: sha256=<hex HMAC-SHA256 of
+  Settings > Meetings > Webhooks. Payload (`schemaVersion` 1), written by an ordered JSON
+  writer (`MeetingWebhookJSONValue`, not `JSONEncoder`) in this key order so the Markdown is the
+  last key of the body and a receiver that keeps only the start still gets all metadata:
+  `event` (`meeting.note.completed`, `meeting.note.resent`, `webhook.test`), `schemaVersion`,
+  `deliveryId` (reused across retries), [`sendId`], `sentAt`, `app` (`name`, `version`,
+  `build`), [`part` (`index`, `total`)], `note` (`id`, `title`, `startedAt`, `endedAt`,
+  `durationSeconds`, `detectedApp`, [`content`], `markdown`). Bracketed fields are additive and
+  absent from an unsplit full-note body. Per-endpoint settings (non-secret, in the endpoint
+  JSON, older endpoints decode with the defaults): `content` `full` (default,
+  `MeetingObsidianExporter.document(for:)`) or `summary` (the same document built without the
+  `## Transcript` section, adds `note.content: "summary"`); `splitIntoParts` (default off) and
+  `maxBodyCharacters` (default 3800, clamped 1000 to 1,000,000). A split send
+  (`MeetingWebhookPayloadSplitter`) cuts the Markdown so every whole serialized body is at most
+  the max in UTF-8 bytes, preferring cuts before headings, then blank lines, line breaks,
+  sentence ends, spaces, then a hard cut between grapheme clusters; each part repeats the
+  metadata with a shared `sendId`, its own `deliveryId` and `part`, and the parts' Markdown
+  joins back exactly. Parts are POSTed strictly in order, each retried on its own and logged as
+  its own record ("part 2 of 3"); a part that fails for good leaves the rest recorded as
+  "Skipped: part N failed"; a limit too small for the metadata fails the send without sending.
+  Resend and Retry send every part again with a new `sendId`. Headers (per part, signature over
+  that part's body): `X-WonderWhisper-Event`, `-Delivery`, `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature: sha256=<hex HMAC-SHA256 of
   "<timestamp>.<raw body>">`; custom headers cannot override `Content-Type` or
   `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter, `Retry-After` capped
   at 10 min) on network errors, 408, 425, 429 and 5xx; other 4xx and all 3xx fail at once
@@ -207,6 +222,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-14: Meeting webhooks: body keys now in a fixed order with `note.markdown` last (still
+  schema v1); per-endpoint "Send: Summary only / Full note" and "Split into multiple webhooks"
+  with a max body size (default 3800), sending sequential parts with `sendId` and `part`.
 - 2026-10-14: Released 2026-10-14 with meeting webhook export.
 - 2026-10-14: Meeting webhook export: finished notes POST to user-configured webhooks with
   HMAC signing, Keychain-stored headers, retries, a delivery log, a meeting status line, a

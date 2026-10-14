@@ -11,7 +11,10 @@ enum MeetingObsidianExporter {
     return destination
   }
 
-  static func document(for session: MeetingSession) -> String {
+  /// The exported note. Without the transcript it is the same document minus the
+  /// `## Transcript` section (front matter, title, generated and manual notes stay); the
+  /// section is left out structurally, never stripped from the text afterwards.
+  static func document(for session: MeetingSession, includeTranscript: Bool = true) -> String {
     let iso = ISO8601DateFormatter().string(from: session.startedAt)
     let durationMinutes = max(1, Int((session.duration / 60).rounded()))
     let source = session.detectedApp ?? "Manual"
@@ -39,9 +42,6 @@ enum MeetingObsidianExporter {
     let manualNotes = session.manualNotesMarkdown?.trimmingCharacters(
       in: .whitespacesAndNewlines
     )
-    let transcript = session.transcriptMarkdown.isEmpty
-      ? "_No transcript was captured._"
-      : session.transcriptMarkdown
     var sections = [notesSection]
     if let manualNotes, !manualNotes.isEmpty {
       sections.append("""
@@ -50,11 +50,16 @@ enum MeetingObsidianExporter {
       \(manualNotes)
       """)
     }
-    sections.append("""
-    ## Transcript
+    if includeTranscript {
+      let transcript = session.transcriptMarkdown.isEmpty
+        ? "_No transcript was captured._"
+        : session.transcriptMarkdown
+      sections.append("""
+      ## Transcript
 
-    \(transcript)
-    """)
+      \(transcript)
+      """)
+    }
     let body = sections.joined(separator: "\n\n")
 
     return """

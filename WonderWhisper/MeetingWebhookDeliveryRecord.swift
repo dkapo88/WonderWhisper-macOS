@@ -1,7 +1,7 @@
 import Foundation
 
-/// One delivery of one note to one endpoint, as shown in the meeting detail view and the
-/// Settings log. Never holds request bodies, secrets or header values.
+/// One delivery of one note (or one part of it) to one endpoint, as shown in the meeting
+/// detail view and the Settings log. Never holds request bodies, secrets or header values.
 struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable {
   enum State: String, Codable, Sendable {
     case sending
@@ -27,4 +27,20 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   var lastError: String?
   let createdAt: Date
   var updatedAt: Date
+  /// The send this part belongs to (nil in records written before split sends existed).
+  var sendID: UUID?
+  /// 1-based part index and part count; nil means a single, unsplit delivery.
+  var partIndex: Int?
+  var partTotal: Int?
+
+  /// Groups the parts of one send; an older record is its own send.
+  var sendKey: UUID { sendID ?? id }
+
+  /// True for parts of a send with more than one part.
+  var isPartOfSplit: Bool { (partTotal ?? 1) > 1 }
+
+  static let skippedPrefix = "Skipped: "
+
+  /// A part that was never sent because an earlier part failed.
+  var isSkipped: Bool { state == .failed && lastError?.hasPrefix(Self.skippedPrefix) == true }
 }

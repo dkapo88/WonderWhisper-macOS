@@ -4,17 +4,40 @@ import Foundation
 enum MeetingWebhookStatusFormatter {
   static func text(for record: MeetingWebhookDeliveryRecord, now: Date = Date()) -> String {
     let name = record.endpointName
+    guard record.isPartOfSplit, let index = record.partIndex, let total = record.partTotal else {
+      switch record.state {
+      case .sending:
+        return "Sending to \(name)…"
+      case .retrying:
+        return "Retrying \(name) (\(attemptText(record)))"
+      case .delivered:
+        return "Sent to \(name) \(relative(record.updatedAt, now: now))"
+      case .failed:
+        return "\(name) failed: \(failureReason(for: record))"
+      }
+    }
+    let part = "part \(index) of \(total)"
     switch record.state {
     case .sending:
-      return "Sending to \(name)…"
+      return "Sending \(name) \(part)"
     case .retrying:
-      let next = min(record.attempts + 1, record.maximumAttempts)
-      return "Retrying \(name) (attempt \(next) of \(record.maximumAttempts))"
+      return "Retrying \(name) \(part) (\(attemptText(record)))"
     case .delivered:
-      return "Sent to \(name) \(relative(record.updatedAt, now: now))"
+      let when = relative(record.updatedAt, now: now)
+      return index == total
+        ? "Sent to \(name) (\(total) parts) \(when)"
+        : "Sent \(name) \(part) \(when)"
     case .failed:
-      return "\(name) failed: \(failureReason(for: record))"
+      if record.isSkipped {
+        return "\(name) \(part) not sent: \(failureReason(for: record))"
+      }
+      return "\(name) failed at \(part): \(failureReason(for: record))"
     }
+  }
+
+  private static func attemptText(_ record: MeetingWebhookDeliveryRecord) -> String {
+    let next = min(record.attempts + 1, record.maximumAttempts)
+    return "attempt \(next) of \(record.maximumAttempts)"
   }
 
   static func failureReason(for record: MeetingWebhookDeliveryRecord) -> String {
@@ -30,20 +53,36 @@ enum MeetingWebhookStatusFormatter {
     return formatter.localizedString(for: date, relativeTo: now)
   }
 
-  /// The newest record per endpoint for one note, in endpoint-name order.
+  /// One record per endpoint for one note, in endpoint-name order: for the endpoint's newest
+  /// send, the first part that is not delivered (the one sending, retrying or failed), or the
+  /// last part when every part was delivered.
   static func latestPerEndpoint(
     _ records: [MeetingWebhookDeliveryRecord],
     noteID: UUID
   ) -> [MeetingWebhookDeliveryRecord] {
-    var latest: [UUID: MeetingWebhookDeliveryRecord] = [:]
-    for record in records where record.noteID == noteID && record.event != .test {
-      if let existing = latest[record.endpointID], existing.createdAt >= record.createdAt {
+    let relevant = records.filter { $0.noteID == noteID && $0.event != .test }
+    var newest: [UUID: MeetingWebhookDeliveryRecord] = [:]
+    for record in relevant {
+      if let existing = newest[record.endpointID], existing.createdAt >= record.createdAt {
         continue
       }
-      latest[record.endpointID] = record
+      newest[record.endpointID] = record
     }
-    return latest.values.sorted {
+    let summaries = newest.values.compactMap { latest in
+      representative(of: relevant.filter {
+        $0.endpointID == latest.endpointID && $0.sendKey == latest.sendKey
+      })
+    }
+    return summaries.sorted {
       $0.endpointName.localizedCaseInsensitiveCompare($1.endpointName) == .orderedAscending
     }
+  }
+
+  /// The record that best describes one send's progress.
+  static func representative(
+    of parts: [MeetingWebhookDeliveryRecord]
+  ) -> MeetingWebhookDeliveryRecord? {
+    let ordered = parts.sorted { ($0.partIndex ?? 1) < ($1.partIndex ?? 1) }
+    return ordered.first { $0.state != .delivered } ?? ordered.last
   }
 }

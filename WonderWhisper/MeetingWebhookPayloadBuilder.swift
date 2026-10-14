@@ -1,7 +1,8 @@
 import Foundation
 
-/// Builds webhook payloads from meeting sessions. The `markdown` field is the same document
-/// the Obsidian export writes (`MeetingObsidianExporter.document(for:)`).
+/// Builds webhook payloads from meeting sessions. `note.markdown` is the same document the
+/// Obsidian export writes (`MeetingObsidianExporter.document(for:)`), without the transcript
+/// for summary-only endpoints.
 struct MeetingWebhookPayloadBuilder: Sendable {
   let appInfo: MeetingWebhookAppInfo
 
@@ -9,17 +10,22 @@ struct MeetingWebhookPayloadBuilder: Sendable {
     self.appInfo = appInfo
   }
 
+  /// The single, unsplit payload.
   func payload(
     for session: MeetingSession,
     event: MeetingWebhookEvent,
     deliveryID: UUID,
-    sentAt: Date
+    sentAt: Date,
+    content: MeetingWebhookContent = .full
   ) -> MeetingWebhookPayload {
     MeetingWebhookPayload(
       event: event,
       schemaVersion: MeetingWebhookPayload.currentSchemaVersion,
       deliveryId: deliveryID,
+      sendId: nil,
       sentAt: sentAt,
+      app: appInfo,
+      part: nil,
       note: MeetingWebhookPayload.Note(
         id: session.id,
         title: session.title,
@@ -27,17 +33,45 @@ struct MeetingWebhookPayloadBuilder: Sendable {
         endedAt: session.endedAt,
         durationSeconds: max(0, Int(session.duration.rounded())),
         detectedApp: session.detectedApp,
-        markdown: MeetingObsidianExporter.document(for: session)
-      ),
-      app: appInfo
+        content: content,
+        markdown: MeetingObsidianExporter.document(
+          for: session,
+          includeTranscript: content == .full
+        )
+      )
     )
   }
 
-  static func encode(_ payload: MeetingWebhookPayload) throws -> Data {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    encoder.dateEncodingStrategy = .iso8601
-    return try encoder.encode(payload)
+  /// The payloads one send to `endpoint` POSTs, in order: one unsplit payload, or the parts
+  /// when the endpoint splits. Throws `MeetingWebhookPayloadSplitter.SplitError` when the
+  /// endpoint's body limit can't fit even the metadata.
+  func payloads(
+    for session: MeetingSession,
+    event: MeetingWebhookEvent,
+    endpoint: MeetingWebhookEndpoint,
+    sendID: UUID,
+    sentAt: Date,
+    makeDeliveryID: () -> UUID = { UUID() }
+  ) throws -> [MeetingWebhookPayload] {
+    let base = payload(
+      for: session,
+      event: event,
+      deliveryID: makeDeliveryID(),
+      sentAt: sentAt,
+      content: endpoint.content
+    )
+    guard endpoint.splitIntoParts else { return [base] }
+    return try MeetingWebhookPayloadSplitter.parts(
+      of: base,
+      sendID: sendID,
+      maxBytes: MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters),
+      makeDeliveryID: makeDeliveryID
+    )
+  }
+
+  /// The request body: compact JSON with keys in the documented order, `note.markdown` last.
+  static func encode(_ payload: MeetingWebhookPayload) -> Data {
+    payload.body
   }
 
   /// A short sample note for "Send Test".

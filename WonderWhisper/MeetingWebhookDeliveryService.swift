@@ -52,13 +52,18 @@ actor MeetingWebhookDeliveryService {
       lastStatusCode: nil,
       lastError: nil,
       createdAt: createdAt,
-      updatedAt: createdAt
+      updatedAt: createdAt,
+      sendID: job.sendID,
+      partIndex: job.partIndex,
+      partTotal: job.partTotal
     )
     await onUpdate(record)
 
     while true {
       if Task.isCancelled {
-        return await finish(&record, state: .failed, error: "Cancelled", onUpdate: onUpdate)
+        return await finish(
+          &record, state: .failed, error: Self.cancelledMessage, onUpdate: onUpdate
+        )
       }
       record.attempts += 1
       let request = MeetingWebhookRequestBuilder.request(for: job, at: clock())
@@ -86,7 +91,9 @@ actor MeetingWebhookDeliveryService {
       } catch {
         record.lastStatusCode = nil
         if MeetingWebhookRetryPolicy.isCancellation(error) {
-          return await finish(&record, state: .failed, error: "Cancelled", onUpdate: onUpdate)
+          return await finish(
+          &record, state: .failed, error: Self.cancelledMessage, onUpdate: onUpdate
+        )
         }
         let message = error.localizedDescription
         guard MeetingWebhookRetryPolicy.shouldRetry(error) else {
@@ -112,9 +119,73 @@ actor MeetingWebhookDeliveryService {
       do {
         try await sleeper(delay)
       } catch {
-        return await finish(&record, state: .failed, error: "Cancelled", onUpdate: onUpdate)
+        return await finish(
+          &record, state: .failed, error: Self.cancelledMessage, onUpdate: onUpdate
+        )
       }
     }
+  }
+
+  static let cancelledMessage = "Cancelled"
+
+  /// Delivers the parts of one send strictly in order: a part starts only after the previous
+  /// one was delivered. Each part retries on its own. When a part fails for good the rest are
+  /// not sent and are recorded as failed with "Skipped: part N failed"; when the send is
+  /// cancelled they are recorded as cancelled. Returns one record per part, in order.
+  func deliverParts(
+    _ jobs: [MeetingWebhookDeliveryJob],
+    onUpdate: UpdateHandler = { _ in }
+  ) async -> [MeetingWebhookDeliveryRecord] {
+    var records: [MeetingWebhookDeliveryRecord] = []
+    for (offset, job) in jobs.enumerated() {
+      if Task.isCancelled {
+        let rest = jobs[offset...]
+        return records + (await unsent(rest, reason: Self.cancelledMessage, onUpdate: onUpdate))
+      }
+      let record = await deliver(job, onUpdate: onUpdate)
+      records.append(record)
+      guard record.state == .delivered else {
+        let reason = Task.isCancelled || record.lastError == Self.cancelledMessage
+          ? Self.cancelledMessage
+          : MeetingWebhookDeliveryRecord.skippedPrefix + "part \(job.partIndex) failed"
+        let rest = jobs[(offset + 1)...]
+        return records + (await unsent(rest, reason: reason, onUpdate: onUpdate))
+      }
+    }
+    return records
+  }
+
+  /// Failed records for parts that were never attempted.
+  private func unsent(
+    _ jobs: ArraySlice<MeetingWebhookDeliveryJob>,
+    reason: String,
+    onUpdate: UpdateHandler
+  ) async -> [MeetingWebhookDeliveryRecord] {
+    var records: [MeetingWebhookDeliveryRecord] = []
+    for job in jobs {
+      let now = clock()
+      let record = MeetingWebhookDeliveryRecord(
+        id: job.deliveryID,
+        endpointID: job.endpoint.id,
+        endpointName: job.endpoint.displayName,
+        noteID: job.noteID,
+        noteTitle: job.noteTitle,
+        event: job.event,
+        state: .failed,
+        attempts: 0,
+        maximumAttempts: maximumAttempts,
+        lastStatusCode: nil,
+        lastError: reason,
+        createdAt: now,
+        updatedAt: now,
+        sendID: job.sendID,
+        partIndex: job.partIndex,
+        partTotal: job.partTotal
+      )
+      await onUpdate(record)
+      records.append(record)
+    }
+    return records
   }
 
   private func finish(

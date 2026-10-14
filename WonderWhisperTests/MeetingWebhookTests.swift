@@ -123,7 +123,7 @@ struct MeetingWebhookTests {
       deliveryID: deliveryID,
       sentAt: Self.fixedDate
     )
-    let data = try MeetingWebhookPayloadBuilder.encode(payload)
+    let data = MeetingWebhookPayloadBuilder.encode(payload)
     let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     let note = try #require(json["note"] as? [String: Any])
     let app = try #require(json["app"] as? [String: Any])
@@ -151,7 +151,7 @@ struct MeetingWebhookTests {
     let payload = MeetingWebhookPayloadBuilder(appInfo: Self.appInfo).payload(
       for: session, event: .test, deliveryID: UUID(), sentAt: Self.fixedDate
     )
-    let raw = String(decoding: try MeetingWebhookPayloadBuilder.encode(payload), as: UTF8.self)
+    let raw = String(decoding: MeetingWebhookPayloadBuilder.encode(payload), as: UTF8.self)
     #expect(raw.contains(#""endedAt":null"#))
     #expect(raw.contains(#""detectedApp":null"#))
     #expect(raw.contains(#""event":"webhook.test""#))
