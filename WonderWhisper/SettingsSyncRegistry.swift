@@ -172,6 +172,7 @@ enum SettingsSyncRegistry {
     "beeper.enabled": "integration switch depends on this Mac's Beeper Desktop and token",
     "beeper.api.baseURL": "points at this Mac's Beeper Desktop",
     "codex.enabled": "integration switch depends on this Mac's Codex install",
+    "meeting.webhooks.endpoints": "paired with per-Mac Keychain secrets",
     // State, history and window state
     "codex.ownedThreadIDs": "conversation state",
     "simple.sidebar.selection": "window state",

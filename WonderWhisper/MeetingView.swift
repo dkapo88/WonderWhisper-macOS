@@ -162,7 +162,12 @@ struct MeetingView: View {
         onOpenExport: { coordinator.openExportedNote(session) },
         onCopyMarkdown: { coordinator.copyMarkdown(session) },
         onRevealAudio: { Task { await coordinator.revealAudio(session) } },
-        onDelete: { sessionPendingDeletion = session }
+        onDelete: { sessionPendingDeletion = session },
+        webhookEndpoints: coordinator.webhooks.enabledEndpoints,
+        canSendToWebhooks: coordinator.canSendToWebhooks(session),
+        onSendToWebhook: { coordinator.sendToWebhooks(session, endpointID: $0) },
+        webhookRecords: coordinator.webhooks.latestRecords(forNote: session.id),
+        onRetryWebhook: { coordinator.retryWebhookDelivery($0) }
       )
     } else {
       ContentUnavailableView(
@@ -213,6 +218,11 @@ private struct MeetingDetailView: View {
   let onCopyMarkdown: () -> Void
   let onRevealAudio: () -> Void
   let onDelete: () -> Void
+  let webhookEndpoints: [MeetingWebhookEndpoint]
+  let canSendToWebhooks: Bool
+  let onSendToWebhook: (UUID?) -> Void
+  let webhookRecords: [MeetingWebhookDeliveryRecord]
+  let onRetryWebhook: (MeetingWebhookDeliveryRecord) -> Void
   @State private var titleDraft = ""
   @FocusState private var titleIsFocused: Bool
 
@@ -352,6 +362,8 @@ private struct MeetingDetailView: View {
         StatusBadge(.warning, error)
           .font(.footnote)
       }
+
+      MeetingWebhookStatusList(records: webhookRecords, onRetry: onRetryWebhook)
     }
   }
 
@@ -397,6 +409,10 @@ private struct MeetingDetailView: View {
         Button("Copy as Markdown", systemImage: "doc.on.doc", action: onCopyMarkdown)
           .disabled(isGeneratingNotes)
 
+        if !webhookEndpoints.isEmpty {
+          sendToWebhookMenu
+        }
+
         if let exportedPath = session.exportedMarkdownPath,
            FileManager.default.fileExists(atPath: exportedPath) {
           Button("Open in Obsidian", systemImage: "arrow.up.forward.app", action: onOpenExport)
@@ -419,6 +435,28 @@ private struct MeetingDetailView: View {
       .fixedSize()
       .help("More actions")
       .accessibilityLabel("More meeting actions")
+    }
+  }
+
+  @ViewBuilder private var sendToWebhookMenu: some View {
+    if webhookEndpoints.count == 1, let only = webhookEndpoints.first {
+      Button(
+        "Send to \(only.displayName)",
+        systemImage: "paperplane",
+        action: { onSendToWebhook(only.id) }
+      )
+      .disabled(!canSendToWebhooks)
+    } else {
+      Menu {
+        Button("All Enabled Webhooks") { onSendToWebhook(nil) }
+        Divider()
+        ForEach(webhookEndpoints) { endpoint in
+          Button(endpoint.displayName) { onSendToWebhook(endpoint.id) }
+        }
+      } label: {
+        Label("Send to Webhook", systemImage: "paperplane")
+      }
+      .disabled(!canSendToWebhooks)
     }
   }
 

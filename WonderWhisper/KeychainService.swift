@@ -54,6 +54,18 @@ final class KeychainService {
         guard status == errSecSuccess else { throw KeychainServiceError.securityStatus(status) }
     }
 
+    /// Removes the item from both the current and the original Keychain service.
+    func deleteSecret(forKey key: String) {
+        for service in [Self.service, Self.originalService] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrAccount as String: key,
+                kSecAttrService as String: service
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
+    }
+
     func getSecret(forKey key: String) -> String? {
         if let value = getSecret(forKey: key, service: Self.service) {
             return value

@@ -122,6 +122,23 @@ and synthesizes its own audio with `say`.
   context uses its own fast OpenRouter model and sends a bounded recent transcript window to extract useful
   subjects at a rate-limited cadence, ranks Markdown locally inside the chosen Obsidian vault, and
   sends only bounded matching excerpts back to OpenRouter in one batched brief request.
+- Webhooks: when a meeting note finishes (after the completed session is persisted, detached
+  from finalization), `MeetingWebhookCenter` POSTs JSON to every enabled endpoint configured in
+  Settings > Meetings > Webhooks. Payload (`schemaVersion` 1): `event`
+  (`meeting.note.completed`, `meeting.note.resent`, `webhook.test`), `deliveryId` (reused across
+  retries), `sentAt`, `note` (`id`, `title`, `startedAt`, `endedAt`, `durationSeconds`,
+  `detectedApp`, `markdown` = `MeetingObsidianExporter.document(for:)`) and `app` (name,
+  version, build). Headers: `X-WonderWhisper-Event`, `-Delivery`, `-Timestamp` (unix seconds)
+  and, with a signing secret, `X-WonderWhisper-Signature: sha256=<hex HMAC-SHA256 of
+  "<timestamp>.<raw body>">`; custom headers cannot override `Content-Type` or
+  `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter, `Retry-After` capped
+  at 10 min) on network errors, 408, 425, 429 and 5xx; other 4xx and all 3xx fail at once
+  (redirects are refused). `https` is required except for localhost, private ranges and
+  Tailscale `100.64.0.0/10`. Endpoints live in `meeting.webhooks.endpoints` (excluded from
+  settings sync); the secret and header values live in the Keychain as
+  `meeting.webhook.<id>.signingSecret` and `meeting.webhook.<id>.headers` (JSON). The delivery
+  log `meeting-webhook-deliveries.json` (app support root, newest 200) never stores bodies,
+  secrets or header values; in-flight records become failed on the next launch.
 - All LLM requests route through OpenRouter or the Vercel AI Gateway
   (`https://ai-gateway.vercel.sh/v1`, OpenAI-compatible), decided per model: the model browser
   offers both catalogs, and favorites saved from the Vercel catalog carry a `vercel:` ID prefix.
@@ -190,6 +207,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-14: Meeting webhook export: finished notes POST to user-configured webhooks with
+  HMAC signing, Keychain-stored headers, retries, a delivery log, a meeting status line, a
+  "Send to Webhook" action and "Send Test" in Settings > Meetings.
 - 2026-10-12: Released 2026-10-12.1. Minimized meeting bubble is now a dark recording pill
   (dot, timer, level bars); companion header, tabs, transcript turns and context cards redrawn
   from plain-value views in `MeetingCompanionComponents.swift`.
