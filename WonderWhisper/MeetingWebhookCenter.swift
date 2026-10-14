@@ -87,17 +87,27 @@ final class MeetingWebhookCenter: ObservableObject {
         return "\(name) is set by WonderWhisper and can't be overridden."
       }
     }
+    let previous = endpoints.first { $0.id == endpoint.id }
     do {
       try store.upsert(endpoint, signingSecret: signingSecret, headers: headers)
     } catch {
       return "Could not save the webhook secrets: \(error.localizedDescription)"
     }
     reloadEndpoints()
+    // Pending retries carry a copy of the old URL and credentials. Stop them when the endpoint
+    // is switched off or pointed somewhere else, or its credentials change.
+    if !endpoint.isEnabled {
+      cancelDeliveries(for: endpoint.id, reason: Self.disabledReason)
+    } else if let previous,
+              previous.url != endpoint.url || signingSecret != nil || headers != nil {
+      cancelDeliveries(for: endpoint.id, reason: Self.editedReason)
+    }
     return nil
   }
 
   static let removedReason = "Cancelled: endpoint removed"
   static let disabledReason = "Cancelled: endpoint disabled"
+  static let editedReason = "Cancelled: endpoint edited"
 
   /// Disabling cancels this endpoint's pending deliveries (queued or waiting to retry), so
   /// nothing more is sent to it. An attempt already on the wire is aborted too: the delivery

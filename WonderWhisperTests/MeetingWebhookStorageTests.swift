@@ -259,6 +259,62 @@ struct MeetingWebhookStorageTests {
       #expect(surfaced == nil)
     }
   }
+
+  @MainActor
+  @Test func disablingAnEndpointFromTheEditorStopsFurtherRequests() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([.status(500), .status(200)])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
+      )
+      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      try store.upsert(endpoint, signingSecret: "topsecret", headers: ["Authorization": "B"])
+      center.reloadEndpoints()
+
+      #expect(center.send(Self.finishedSession(), event: .noteCompleted) == 1)
+      let backingOff = await Self.waitUntil { center.deliveries.first?.state == .retrying }
+      #expect(backingOff)
+
+      var disabled = endpoint
+      disabled.isEnabled = false
+      #expect(center.saveEndpoint(disabled, signingSecret: nil, headers: nil) == nil)
+      let ended = await Self.waitUntil { center.deliveries.first?.state == .failed }
+      #expect(ended)
+      #expect(center.deliveries.first?.lastError == MeetingWebhookCenter.disabledReason)
+      #expect(transport.requests.count == 1)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
+
+  @MainActor
+  @Test func changingAnEndpointURLStopsRetriesToTheOldURL() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([.status(500), .status(200)])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
+      )
+      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+
+      #expect(center.send(Self.finishedSession(), event: .noteCompleted) == 1)
+      let backingOff = await Self.waitUntil { center.deliveries.first?.state == .retrying }
+      #expect(backingOff)
+
+      var moved = endpoint
+      moved.url = "https://example.org/new-hook"
+      #expect(center.saveEndpoint(moved, signingSecret: nil, headers: nil) == nil)
+      let ended = await Self.waitUntil { center.deliveries.first?.state == .failed }
+      #expect(ended)
+      #expect(center.deliveries.first?.lastError == MeetingWebhookCenter.editedReason)
+      #expect(transport.requests.count == 1)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
 }
 
 /// In-memory secrets whose reads can be switched to fail, like a locked Keychain.
