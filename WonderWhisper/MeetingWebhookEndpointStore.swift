@@ -92,6 +92,7 @@ struct MeetingWebhookEndpointStore: Sendable {
     var stored = endpoint
     stored.name = endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)
     stored.url = endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines)
+    stored.maxBodyCharacters = MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters)
     stored.hasSecret = previous?.hasSecret ?? false
     stored.headerNames = previous?.headerNames ?? []
 

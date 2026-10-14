@@ -108,8 +108,9 @@ struct MeetingWebhookStorageTests {
   @MainActor
   private static func scratchCenter(
     secrets: MeetingWebhookSecretStoring,
-    transport: FakeMeetingWebhookTransport,
-    sleeper: @escaping MeetingWebhookDeliveryService.Sleeper = { _ in }
+    transport: MeetingWebhookTransport,
+    sleeper: @escaping MeetingWebhookDeliveryService.Sleeper = { _ in },
+    logURL: URL = scratchLogURL()
   ) -> (MeetingWebhookCenter, MeetingWebhookEndpointStore) {
     let store = MeetingWebhookEndpointStore(defaults: { AppConfig.defaults }, secrets: secrets)
     let service = MeetingWebhookDeliveryService(
@@ -120,7 +121,7 @@ struct MeetingWebhookStorageTests {
     let center = MeetingWebhookCenter(
       store: store,
       deliveryService: service,
-      log: MeetingWebhookDeliveryLog(fileURL: scratchLogURL()),
+      log: MeetingWebhookDeliveryLog(fileURL: logURL),
       payloadBuilder: MeetingWebhookPayloadBuilder(
         appInfo: MeetingWebhookAppInfo(name: "WonderWhisper", version: "test", build: "1")
       )
@@ -315,6 +316,330 @@ struct MeetingWebhookStorageTests {
       center.deleteEndpoint(endpoint.id)
     }
   }
+
+  // MARK: - Split sends
+
+  private static func longFinishedSession() -> MeetingSession {
+    MeetingSession(
+      title: "Planning",
+      endedAt: Date(),
+      recordedDuration: 60,
+      status: .completed,
+      notesMarkdown: (0..<40)
+        .map { "## Topic \($0)\n\n" + String(repeating: "Detail. ", count: 30) }
+        .joined(separator: "\n\n")
+    )
+  }
+
+  private static func bodyJSON(_ request: URLRequest) -> [String: Any]? {
+    request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  }
+
+  @MainActor
+  @Test func splitSendDeliversAllPartsAndResendUsesNewIDs() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Grok Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800,
+        content: .summary
+      )
+      try store.upsert(endpoint, signingSecret: "topsecret", headers: [:])
+      center.reloadEndpoints()
+      let session = Self.longFinishedSession()
+
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      let firstDone = await Self.waitUntil {
+        let records = center.deliveries.filter { $0.noteID == session.id }
+        return !records.isEmpty && records.allSatisfy { $0.state == .delivered }
+          && records.count == records.first?.partTotal
+      }
+      #expect(firstDone)
+      let firstRequests = transport.requests
+      #expect(firstRequests.count > 1)
+      #expect(firstRequests.allSatisfy { ($0.httpBody?.count ?? .max) <= 3_800 })
+      let firstBodies = firstRequests.compactMap(Self.bodyJSON)
+      let firstSendIDs = Set(firstBodies.compactMap { $0["sendId"] as? String })
+      #expect(firstSendIDs.count == 1)
+      let indexes = firstBodies.compactMap { ($0["part"] as? [String: Any])?["index"] as? Int }
+      #expect(indexes == Array(1...firstRequests.count))
+      let summary = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(summary.partIndex == summary.partTotal)
+      #expect(MeetingWebhookStatusFormatter.text(for: summary).hasPrefix(
+        "Sent to Grok Bot (\(firstRequests.count) parts)"
+      ))
+
+      // Resend: every part again, with a new sendId and new deliveryIds.
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+      let secondDone = await Self.waitUntil {
+        transport.requests.count == firstRequests.count * 2
+          && center.deliveries.filter { $0.event == .noteResent }
+            .allSatisfy { $0.state == .delivered }
+      }
+      #expect(secondDone)
+      let secondBodies = transport.requests.dropFirst(firstRequests.count)
+        .compactMap(Self.bodyJSON)
+      let secondSendIDs = Set(secondBodies.compactMap { $0["sendId"] as? String })
+      #expect(secondSendIDs.count == 1 && secondSendIDs.isDisjoint(with: firstSendIDs))
+      let firstIDs = Set(firstBodies.compactMap { $0["deliveryId"] as? String })
+      let secondIDs = Set(secondBodies.compactMap { $0["deliveryId"] as? String })
+      #expect(firstIDs.isDisjoint(with: secondIDs))
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
+
+  @MainActor
+  @Test func aLimitTooSmallForTheMetadataFailsWithoutSending() async throws {
+    try await Self.withScratchEndpoints {
+      let transport = FakeMeetingWebhookTransport([])
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Grok Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 1_000
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      var surfaced: String?
+      center.onFinalFailure = { surfaced = $0 }
+      var session = Self.longFinishedSession()
+      session.title = String(repeating: "Very long title ", count: 100)
+
+      #expect(center.send(session, event: .noteCompleted) == 0)
+      let record = try #require(center.deliveries.first)
+      #expect(record.state == .failed)
+      #expect(record.lastError?.contains("too small") == true)
+      #expect(surfaced?.contains("too small") == true)
+      try? await Task.sleep(nanoseconds: 50_000_000)
+      #expect(transport.requests.isEmpty)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
+
+  @MainActor
+  @Test func anOlderSendResumingAfterANewerFailureDoesNotHideIt() async throws {
+    try await Self.withScratchEndpoints {
+      // Old send: part 1 gets 500 and waits at the gate. Resend: part 1 gets 400 and fails.
+      // Then the old send resumes and delivers every part.
+      let transport = FakeMeetingWebhookTransport([.status(500), .status(400)])
+      let gate = BackoffGate()
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await gate.wait() }
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      let session = Self.longFinishedSession()
+
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      let backingOff = await Self.waitUntil { center.deliveries.first?.state == .retrying }
+      #expect(backingOff)
+      try? await Task.sleep(nanoseconds: 5_000_000)
+
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+      let resendFailed = await Self.waitUntil {
+        let resent = center.deliveries.filter { $0.event == .noteResent }
+        return !resent.isEmpty && resent.count == resent.first?.partTotal
+          && resent.allSatisfy { $0.state == .failed }
+      }
+      #expect(resendFailed)
+
+      gate.open()
+      let oldDelivered = await Self.waitUntil {
+        let old = center.deliveries.filter { $0.event == .noteCompleted }
+        return !old.isEmpty && old.count == old.first?.partTotal
+          && old.allSatisfy { $0.state == .delivered }
+      }
+      #expect(oldDelivered)
+
+      let expected = "Bot failed at part 1 of "
+      let noteStatus = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(noteStatus.event == .noteResent)
+      #expect(noteStatus.state == .failed)
+      #expect(MeetingWebhookStatusFormatter.text(for: noteStatus).hasPrefix(expected))
+      let endpointStatus = try #require(center.latestRecord(forEndpoint: endpoint.id))
+      #expect(endpointStatus.id == noteStatus.id)
+      #expect(endpointStatus.state == .failed)
+      let oldOrders = Set(center.deliveries.filter { $0.event == .noteCompleted }
+        .compactMap(\.sendOrder))
+      let newOrders = Set(center.deliveries.filter { $0.event == .noteResent }
+        .compactMap(\.sendOrder))
+      #expect(oldOrders.count == 1 && newOrders.count == 1)
+      #expect((oldOrders.first ?? 0) < (newOrders.first ?? 0))
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
+
+  /// Two sends in the same second, then the older one resumes after the newer one failed:
+  /// the parts of one send, built in log order (newest first) like the center does.
+  private static func sameSecondOverlapLog(
+    withSendOrder: Bool
+  ) -> (records: [MeetingWebhookDeliveryRecord], endpointID: UUID, noteID: UUID, newer: UUID) {
+    let endpointID = UUID()
+    let noteID = UUID()
+    let second = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    let base = second.timeIntervalSinceReferenceDate
+    let older = UUID()
+    let newer = UUID()
+    func part(
+      _ sendID: UUID, order: Double, event: MeetingWebhookEvent, index: Int,
+      state: MeetingWebhookDeliveryRecord.State, at offset: Double
+    ) -> MeetingWebhookDeliveryRecord {
+      let created = second.addingTimeInterval(offset)
+      return MeetingWebhookDeliveryRecord(
+        id: UUID(), endpointID: endpointID, endpointName: "Bot", noteID: noteID,
+        noteTitle: "Planning", event: event, state: state, attempts: 1, maximumAttempts: 5,
+        lastStatusCode: state == .failed ? 400 : 200,
+        lastError: state == .failed ? (index == 1 ? "HTTP 400" : "Skipped: part 1 failed") : nil,
+        createdAt: created, updatedAt: created, sendID: sendID,
+        sendCreatedAt: second.addingTimeInterval(order - base),
+        sendOrder: withSendOrder ? order : nil, partIndex: index, partTotal: 3
+      )
+    }
+    var records: [MeetingWebhookDeliveryRecord] = []
+    let olderOrder = base + 0.1
+    let newerOrder = base + 0.2
+    var olderFirst = part(older, order: olderOrder, event: .noteCompleted, index: 1,
+                          state: .retrying, at: 0.1)
+    records = MeetingWebhookDeliveryLog.upserting(olderFirst, into: records)
+    for index in 1...3 {
+      let failed = part(newer, order: newerOrder, event: .noteResent, index: index,
+                        state: .failed, at: 0.2)
+      records = MeetingWebhookDeliveryLog.upserting(failed, into: records)
+    }
+    olderFirst.state = .delivered
+    records = MeetingWebhookDeliveryLog.upserting(olderFirst, into: records)
+    for index in 2...3 {
+      let delivered = part(older, order: olderOrder, event: .noteCompleted, index: index,
+                           state: .delivered, at: 0.3)
+      records = MeetingWebhookDeliveryLog.upserting(delivered, into: records)
+    }
+    return (records, endpointID, noteID, newer)
+  }
+
+  @Test func sameSecondSendsKeepTheirOrderAcrossALogReload() async throws {
+    let scenario = Self.sameSecondOverlapLog(withSendOrder: true)
+    let url = Self.scratchLogURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    await MeetingWebhookDeliveryLog(fileURL: url).save(scenario.records, generation: 1)
+    let loaded = await MeetingWebhookDeliveryLog(fileURL: url).load()
+    #expect(loaded.count == scenario.records.count)
+    #expect(loaded.map(\.sendOrder) == scenario.records.map(\.sendOrder))
+
+    let noteStatus = try #require(
+      MeetingWebhookStatusFormatter.latestPerEndpoint(loaded, noteID: scenario.noteID).first
+    )
+    #expect(noteStatus.sendID == scenario.newer)
+    #expect(noteStatus.state == .failed)
+    #expect(MeetingWebhookStatusFormatter.text(for: noteStatus)
+      == "Bot failed at part 1 of 3: HTTP 400")
+    let endpointStatus = MeetingWebhookStatusFormatter.latestSend(
+      in: loaded.filter { $0.endpointID == scenario.endpointID }
+    )
+    #expect(endpointStatus?.id == noteStatus.id)
+
+    // Without the numeric key the reloaded whole-second dates tie and the older send wins,
+    // which is the regression this key prevents.
+    let legacy = Self.sameSecondOverlapLog(withSendOrder: false)
+    let legacyURL = Self.scratchLogURL()
+    defer { try? FileManager.default.removeItem(at: legacyURL) }
+    await MeetingWebhookDeliveryLog(fileURL: legacyURL).save(legacy.records, generation: 1)
+    let legacyLoaded = await MeetingWebhookDeliveryLog(fileURL: legacyURL).load()
+    let legacyStatus = MeetingWebhookStatusFormatter.latestPerEndpoint(
+      legacyLoaded,
+      noteID: legacy.noteID
+    ).first
+    #expect(legacyStatus?.sendID != legacy.newer)
+  }
+
+  @MainActor
+  @Test func sendsStartedBeforeTheLogLoadsRankAboveAPersistedSendFromTheFuture() async throws {
+    try await Self.withScratchEndpoints {
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800
+      )
+      let session = Self.longFinishedSession()
+      // A delivered send persisted with a key an hour ahead: the clock has since gone back.
+      let future = Date().addingTimeInterval(3_600)
+      let persistedSend = UUID()
+      let persisted = (1...3).map { index in
+        MeetingWebhookDeliveryRecord(
+          id: UUID(), endpointID: endpoint.id, endpointName: "Bot", noteID: session.id,
+          noteTitle: session.title, event: .noteCompleted, state: .delivered, attempts: 1,
+          maximumAttempts: 5, lastStatusCode: 200, lastError: nil, createdAt: future,
+          updatedAt: future, sendID: persistedSend, sendCreatedAt: future,
+          sendOrder: future.timeIntervalSinceReferenceDate, partIndex: index, partTotal: 3
+        )
+      }
+      let logURL = Self.scratchLogURL()
+      defer { try? FileManager.default.removeItem(at: logURL) }
+      await MeetingWebhookDeliveryLog(fileURL: logURL).save(persisted, generation: 1)
+
+      // The first send waits in backoff; the resend fails at part 1.
+      let transport = EventScriptedTransport([.noteCompleted: [500], .noteResent: [400]])
+      let gate = BackoffGate()
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await gate.wait() },
+        logURL: logURL
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      // Same main-actor turn as `init`: the async log load has not run yet.
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+
+      let resendFailed = await Self.waitUntil {
+        let resent = center.deliveries.filter { $0.event == .noteResent }
+        let loaded = center.deliveries.contains { $0.sendID == persistedSend }
+        return loaded && !resent.isEmpty && resent.count == resent.first?.partTotal
+          && resent.allSatisfy { $0.state == .failed }
+      }
+      #expect(resendFailed)
+      gate.open()
+      let olderDelivered = await Self.waitUntil {
+        let older = center.deliveries.filter {
+          $0.event == .noteCompleted && $0.sendID != persistedSend
+        }
+        return !older.isEmpty && older.count == older.first?.partTotal
+          && older.allSatisfy { $0.state == .delivered }
+      }
+      #expect(olderDelivered)
+
+      let noteStatus = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(noteStatus.event == .noteResent)
+      #expect(noteStatus.state == .failed)
+      let statusText = MeetingWebhookStatusFormatter.text(for: noteStatus)
+      #expect(statusText.hasPrefix("Bot failed at part 1 of "))
+      #expect(center.latestRecord(forEndpoint: endpoint.id)?.id == noteStatus.id)
+      let olderOrder = center.deliveries
+        .first { $0.event == .noteCompleted && $0.sendID != persistedSend }?.sendOrder ?? 0
+      #expect(olderOrder > future.timeIntervalSinceReferenceDate)
+      #expect((noteStatus.sendOrder ?? 0) > olderOrder)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
 }
 
 /// In-memory secrets whose reads can be switched to fail, like a locked Keychain.
@@ -338,5 +663,43 @@ final class ToggleableSecretStore: MeetingWebhookSecretStoring, @unchecked Senda
 
   func deleteSecret(forKey key: String) {
     backing.deleteSecret(forKey: key)
+  }
+}
+
+/// A backoff sleeper that waits until opened, so a test can hold a delivery in its retry wait.
+final class BackoffGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var isOpen = false
+
+  func open() {
+    lock.withLock { isOpen = true }
+  }
+
+  func wait() async throws {
+    while !lock.withLock({ isOpen }) {
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+  }
+}
+
+/// Answers each request by its `X-WonderWhisper-Event`: the queued statuses for that event in
+/// order, then 200. For tests where sends to the same endpoint race.
+final class EventScriptedTransport: MeetingWebhookTransport, @unchecked Sendable {
+  private let lock = NSLock()
+  private var scripts: [String: [Int]]
+
+  init(_ scripts: [MeetingWebhookEvent: [Int]]) {
+    self.scripts = Dictionary(uniqueKeysWithValues: scripts.map { ($0.key.rawValue, $0.value) })
+  }
+
+  func send(_ request: URLRequest) async throws -> MeetingWebhookTransportResponse {
+    let event = request.value(forHTTPHeaderField: MeetingWebhookRequestBuilder.eventHeader) ?? ""
+    let status: Int = lock.withLock {
+      var queue = scripts[event] ?? []
+      let next = queue.isEmpty ? 200 : queue.removeFirst()
+      scripts[event] = queue
+      return next
+    }
+    return MeetingWebhookTransportResponse(statusCode: status)
   }
 }

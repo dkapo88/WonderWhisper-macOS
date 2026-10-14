@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Add or edit one webhook endpoint: name, URL, enabled, signing secret and custom headers.
+/// Add or edit one webhook endpoint: name, URL, enabled, what to send and whether to split it,
+/// signing secret and custom headers.
 /// Secret values are written to the Keychain on Save and are never shown in plain text.
 struct MeetingWebhookEditorSheet: View {
   private struct HeaderDraft: Identifiable, Equatable {
@@ -50,6 +51,7 @@ struct MeetingWebhookEditorSheet: View {
           Text(isNew ? "New webhook" : "Edit webhook")
         }
 
+        deliverySection
         signingSection
         headersSection
       }
@@ -61,7 +63,7 @@ struct MeetingWebhookEditorSheet: View {
         .padding(DesignTokens.Spacing.medium)
         .background(Color(nsColor: .controlBackgroundColor))
     }
-    .frame(width: 560, height: 560)
+    .frame(width: 560, height: 640)
     .onAppear(perform: loadHeaders)
     .alert("Delete webhook?", isPresented: $confirmingDelete) {
       Button("Delete", role: .destructive) {
@@ -75,6 +77,40 @@ struct MeetingWebhookEditorSheet: View {
   }
 
   // MARK: - Sections
+
+  private var deliverySection: some View {
+    Section {
+      Picker("Send", selection: $endpoint.content) {
+        ForEach(MeetingWebhookContent.allCases, id: \.self) { content in
+          Text(content.label).tag(content)
+        }
+      }
+      Toggle("Split into multiple webhooks", isOn: $endpoint.splitIntoParts)
+      if endpoint.splitIntoParts {
+        TextField(
+          "Max body size (characters)",
+          value: $endpoint.maxBodyCharacters,
+          format: .number.grouping(.never)
+        )
+      }
+    } header: {
+      Text("Delivery")
+    } footer: {
+      Text(deliveryFootnote)
+        .settingsFootnote()
+    }
+  }
+
+  private var deliveryFootnote: String {
+    guard endpoint.splitIntoParts else {
+      return "Summary only leaves out the transcript. The note is sent as one request."
+    }
+    let range = MeetingWebhookEndpoint.maxBodyCharactersRange
+    return "For receivers that keep only the start of a long request: the note is sent as "
+      + "several requests in order, each with the same note details plus part index and "
+      + "total, and no body longer than the max (\(range.lowerBound) to "
+      + "\(range.upperBound.formatted()))."
+  }
 
   private var signingSection: some View {
     Section {
@@ -233,6 +269,9 @@ struct MeetingWebhookEditorSheet: View {
     } else {
       secret = nil
     }
+    endpoint.maxBodyCharacters = MeetingWebhookEndpoint.clampedMaxBody(
+      endpoint.maxBodyCharacters
+    )
     let headersToSave = Self.headersToSave(
       loaded: loadedHeaders,
       edited: headers,

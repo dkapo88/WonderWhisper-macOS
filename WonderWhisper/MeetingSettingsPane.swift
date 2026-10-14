@@ -306,8 +306,9 @@ struct MeetingSettingsPane: View {
       Text("Webhooks")
     } footer: {
       Text("When a meeting note finishes, WonderWhisper POSTs it as JSON (the same Markdown as "
-        + "the Obsidian export) to every enabled webhook, retrying up to 5 times. Endpoints and "
-        + "their Keychain secrets stay on this Mac.")
+        + "the Obsidian export, or just the summary) to every enabled webhook, retrying up to 5 "
+        + "times, optionally split into several requests. Endpoints and their Keychain secrets "
+        + "stay on this Mac.")
         .settingsFootnote()
     }
   }
