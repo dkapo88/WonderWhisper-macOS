@@ -424,6 +424,61 @@ struct MeetingWebhookStorageTests {
       center.deleteEndpoint(endpoint.id)
     }
   }
+
+  @MainActor
+  @Test func anOlderSendResumingAfterANewerFailureDoesNotHideIt() async throws {
+    try await Self.withScratchEndpoints {
+      // Old send: part 1 gets 500 and waits at the gate. Resend: part 1 gets 400 and fails.
+      // Then the old send resumes and delivers every part.
+      let transport = FakeMeetingWebhookTransport([.status(500), .status(400)])
+      let gate = BackoffGate()
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await gate.wait() }
+      )
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      let session = Self.longFinishedSession()
+
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      let backingOff = await Self.waitUntil { center.deliveries.first?.state == .retrying }
+      #expect(backingOff)
+      try? await Task.sleep(nanoseconds: 5_000_000)
+
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+      let resendFailed = await Self.waitUntil {
+        let resent = center.deliveries.filter { $0.event == .noteResent }
+        return !resent.isEmpty && resent.count == resent.first?.partTotal
+          && resent.allSatisfy { $0.state == .failed }
+      }
+      #expect(resendFailed)
+
+      gate.open()
+      let oldDelivered = await Self.waitUntil {
+        let old = center.deliveries.filter { $0.event == .noteCompleted }
+        return !old.isEmpty && old.count == old.first?.partTotal
+          && old.allSatisfy { $0.state == .delivered }
+      }
+      #expect(oldDelivered)
+
+      let expected = "Bot failed at part 1 of "
+      let noteStatus = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(noteStatus.event == .noteResent)
+      #expect(noteStatus.state == .failed)
+      #expect(MeetingWebhookStatusFormatter.text(for: noteStatus).hasPrefix(expected))
+      let endpointStatus = try #require(center.latestRecord(forEndpoint: endpoint.id))
+      #expect(endpointStatus.id == noteStatus.id)
+      #expect(endpointStatus.state == .failed)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
 }
 
 /// In-memory secrets whose reads can be switched to fail, like a locked Keychain.
@@ -447,5 +502,21 @@ final class ToggleableSecretStore: MeetingWebhookSecretStoring, @unchecked Senda
 
   func deleteSecret(forKey key: String) {
     backing.deleteSecret(forKey: key)
+  }
+}
+
+/// A backoff sleeper that waits until opened, so a test can hold a delivery in its retry wait.
+final class BackoffGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var isOpen = false
+
+  func open() {
+    lock.withLock { isOpen = true }
+  }
+
+  func wait() async throws {
+    while !lock.withLock({ isOpen }) {
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
   }
 }

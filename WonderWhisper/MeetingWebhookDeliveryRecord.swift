@@ -29,12 +29,18 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   var updatedAt: Date
   /// The send this part belongs to (nil in records written before split sends existed).
   var sendID: UUID?
+  /// When the send was enqueued, stamped once and copied onto every part, so a send that
+  /// resumes later never looks newer than a send started after it. Nil in older records.
+  var sendCreatedAt: Date?
   /// 1-based part index and part count; nil means a single, unsplit delivery.
   var partIndex: Int?
   var partTotal: Int?
 
   /// Groups the parts of one send; an older record is its own send.
   var sendKey: UUID { sendID ?? id }
+
+  /// Orders sends: when the send was enqueued, or the record's creation for older records.
+  var sendOrder: Date { sendCreatedAt ?? createdAt }
 
   /// True for parts of a send with more than one part.
   var isPartOfSplit: Bool { (partTotal ?? 1) > 1 }

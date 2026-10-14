@@ -143,7 +143,9 @@ and synthesizes its own audio with `say`.
   joins back exactly. Parts are POSTed strictly in order, each retried on its own and logged as
   its own record ("part 2 of 3"); a part that fails for good leaves the rest recorded as
   "Skipped: part N failed"; a limit too small for the metadata fails the send without sending.
-  Resend and Retry send every part again with a new `sendId`. Headers (per part, signature over
+  Resend and Retry send every part again with a new `sendId`. Status lines show each endpoint's
+  newest send, ranked by `sendCreatedAt` (stamped once at enqueue on every part record), so an
+  older send resuming from backoff never hides a newer one. Headers (per part, signature over
   that part's body): `X-WonderWhisper-Event`, `-Delivery`, `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature: sha256=<hex HMAC-SHA256 of
   "<timestamp>.<raw body>">`; custom headers cannot override `Content-Type` or
   `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter, `Retry-After` capped

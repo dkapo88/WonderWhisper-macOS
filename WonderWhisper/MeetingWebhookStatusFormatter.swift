@@ -53,32 +53,37 @@ enum MeetingWebhookStatusFormatter {
     return formatter.localizedString(for: date, relativeTo: now)
   }
 
-  /// One record per endpoint for one note, in endpoint-name order: for the endpoint's newest
-  /// send, the first part that is not delivered (the one sending, retrying or failed), or the
-  /// last part when every part was delivered.
+  /// One record per endpoint for one note, in endpoint-name order, chosen by `latestSend(in:)`.
   static func latestPerEndpoint(
     _ records: [MeetingWebhookDeliveryRecord],
     noteID: UUID
   ) -> [MeetingWebhookDeliveryRecord] {
     let relevant = records.filter { $0.noteID == noteID && $0.event != .test }
-    var newest: [UUID: MeetingWebhookDeliveryRecord] = [:]
-    for record in relevant {
-      if let existing = newest[record.endpointID], existing.createdAt >= record.createdAt {
-        continue
-      }
-      newest[record.endpointID] = record
-    }
-    let summaries = newest.values.compactMap { latest in
-      representative(of: relevant.filter {
-        $0.endpointID == latest.endpointID && $0.sendKey == latest.sendKey
-      })
-    }
+    let byEndpoint = Dictionary(grouping: relevant, by: \.endpointID)
+    let summaries = byEndpoint.values.compactMap { latestSend(in: $0) }
     return summaries.sorted {
       $0.endpointName.localizedCaseInsensitiveCompare($1.endpointName) == .orderedAscending
     }
   }
 
-  /// The record that best describes one send's progress.
+  /// The record describing the newest send among `records` (newest first, as the delivery log
+  /// keeps them). Sends are ranked by `sendOrder`, which is fixed when a send is enqueued, so an
+  /// older send that resumes after a newer one never takes its place; ties keep the earlier
+  /// record in the list. Within the send, see `representative(of:)`.
+  static func latestSend(
+    in records: [MeetingWebhookDeliveryRecord]
+  ) -> MeetingWebhookDeliveryRecord? {
+    var newest: MeetingWebhookDeliveryRecord?
+    for record in records {
+      if let current = newest, current.sendOrder >= record.sendOrder { continue }
+      newest = record
+    }
+    guard let newest else { return nil }
+    return representative(of: records.filter { $0.sendKey == newest.sendKey })
+  }
+
+  /// The record that best describes one send's progress: the first part (by index) that is not
+  /// delivered, or the last part when every part was delivered.
   static func representative(
     of parts: [MeetingWebhookDeliveryRecord]
   ) -> MeetingWebhookDeliveryRecord? {

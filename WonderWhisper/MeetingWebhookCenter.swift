@@ -167,10 +167,7 @@ final class MeetingWebhookCenter: ObservableObject {
   /// The record describing the endpoint's newest send (for a split send, its current or
   /// failed part, or the last part once all were delivered).
   func latestRecord(forEndpoint id: UUID) -> MeetingWebhookDeliveryRecord? {
-    guard let newest = deliveries.first(where: { $0.endpointID == id }) else { return nil }
-    return MeetingWebhookStatusFormatter.representative(
-      of: deliveries.filter { $0.endpointID == id && $0.sendKey == newest.sendKey }
-    )
+    MeetingWebhookStatusFormatter.latestSend(in: deliveries.filter { $0.endpointID == id })
   }
 
   func latestRecords(forNote noteID: UUID) -> [MeetingWebhookDeliveryRecord] {
@@ -223,6 +220,7 @@ final class MeetingWebhookCenter: ObservableObject {
       MeetingWebhookDeliveryJob(
         deliveryID: payload.deliveryId,
         sendID: sendID,
+        sendCreatedAt: now,
         partIndex: offset + 1,
         partTotal: payloads.count,
         endpoint: endpoint,
@@ -269,7 +267,8 @@ final class MeetingWebhookCenter: ObservableObject {
       lastError: message,
       createdAt: now,
       updatedAt: now,
-      sendID: sendID
+      sendID: sendID,
+      sendCreatedAt: now
     )
     apply(failed)
     finish(sendID: sendID, records: [failed])

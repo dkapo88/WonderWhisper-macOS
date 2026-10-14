@@ -7,6 +7,9 @@ struct MeetingWebhookDeliveryJob: Sendable {
   let deliveryID: UUID
   /// Shared by every part of one send.
   let sendID: UUID
+  /// When the send was enqueued; copied onto every part's record. Nil means the first
+  /// record's creation time.
+  let sendCreatedAt: Date?
   let partIndex: Int
   let partTotal: Int
   let endpoint: MeetingWebhookEndpoint
@@ -22,6 +25,7 @@ struct MeetingWebhookDeliveryJob: Sendable {
   init(
     deliveryID: UUID,
     sendID: UUID? = nil,
+    sendCreatedAt: Date? = nil,
     partIndex: Int = 1,
     partTotal: Int = 1,
     endpoint: MeetingWebhookEndpoint,
@@ -36,6 +40,7 @@ struct MeetingWebhookDeliveryJob: Sendable {
   ) {
     self.deliveryID = deliveryID
     self.sendID = sendID ?? deliveryID
+    self.sendCreatedAt = sendCreatedAt
     self.partIndex = partIndex
     self.partTotal = partTotal
     self.endpoint = endpoint
