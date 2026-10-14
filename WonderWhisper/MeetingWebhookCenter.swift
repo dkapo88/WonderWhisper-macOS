@@ -21,6 +21,8 @@ final class MeetingWebhookCenter: ObservableObject {
   /// Why a send was cancelled, keyed by send ID, so its final records say so.
   private var cancellationReasons: [UUID: String] = [:]
   private var logGeneration = 0
+  /// The last send ordering key issued; see `nextSendOrder(at:)`.
+  private var lastSendOrder = -Double.greatestFiniteMagnitude
 
   init(
     store: MeetingWebhookEndpointStore = .live(),
@@ -42,6 +44,10 @@ final class MeetingWebhookCenter: ObservableObject {
         merged = MeetingWebhookDeliveryLog.upserting(record, into: merged)
       }
       deliveries = merged
+      // Keep new sends ordered after any loaded ones, even if the clock went backwards.
+      if let loadedMax = merged.compactMap(\.sendOrder).max() {
+        lastSendOrder = max(lastSendOrder, loadedMax)
+      }
       if merged != loaded { persistLog() }
     }
   }
@@ -182,9 +188,10 @@ final class MeetingWebhookCenter: ObservableObject {
   ) -> Bool {
     let sendID = UUID()
     let now = Date()
+    let sendOrder = nextSendOrder(at: now)
     let failure = { (message: String) in
-      self.record(failure: message, sendID: sendID, endpoint: endpoint, session: session,
-                  event: event, now: now)
+      self.record(failure: message, sendID: sendID, sendOrder: sendOrder, endpoint: endpoint,
+                  session: session, event: event, now: now)
     }
     guard let url = MeetingWebhookURLValidator.validate(endpoint.url).url else {
       failure("Invalid URL")
@@ -221,6 +228,7 @@ final class MeetingWebhookCenter: ObservableObject {
         deliveryID: payload.deliveryId,
         sendID: sendID,
         sendCreatedAt: now,
+        sendOrder: sendOrder,
         partIndex: offset + 1,
         partTotal: payloads.count,
         endpoint: endpoint,
@@ -245,9 +253,18 @@ final class MeetingWebhookCenter: ObservableObject {
     return true
   }
 
+  /// A send ordering key: the time in seconds since the reference date, bumped so every key
+  /// is strictly greater than the last one issued.
+  private func nextSendOrder(at date: Date) -> Double {
+    let order = max(date.timeIntervalSinceReferenceDate, lastSendOrder.nextUp)
+    lastSendOrder = order
+    return order
+  }
+
   private func record(
     failure message: String,
     sendID: UUID,
+    sendOrder: Double,
     endpoint: MeetingWebhookEndpoint,
     session: MeetingSession,
     event: MeetingWebhookEvent,
@@ -268,7 +285,8 @@ final class MeetingWebhookCenter: ObservableObject {
       createdAt: now,
       updatedAt: now,
       sendID: sendID,
-      sendCreatedAt: now
+      sendCreatedAt: now,
+      sendOrder: sendOrder
     )
     apply(failed)
     finish(sendID: sendID, records: [failed])

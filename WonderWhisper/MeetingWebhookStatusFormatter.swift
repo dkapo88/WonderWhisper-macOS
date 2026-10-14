@@ -67,7 +67,7 @@ enum MeetingWebhookStatusFormatter {
   }
 
   /// The record describing the newest send among `records` (newest first, as the delivery log
-  /// keeps them). Sends are ranked by `sendOrder`, which is fixed when a send is enqueued, so an
+  /// keeps them). Sends are ranked by `sendRank`, which is fixed when a send is enqueued, so an
   /// older send that resumes after a newer one never takes its place; ties keep the earlier
   /// record in the list. Within the send, see `representative(of:)`.
   static func latestSend(
@@ -75,7 +75,7 @@ enum MeetingWebhookStatusFormatter {
   ) -> MeetingWebhookDeliveryRecord? {
     var newest: MeetingWebhookDeliveryRecord?
     for record in records {
-      if let current = newest, current.sendOrder >= record.sendOrder { continue }
+      if let current = newest, current.sendRank >= record.sendRank { continue }
       newest = record
     }
     guard let newest else { return nil }

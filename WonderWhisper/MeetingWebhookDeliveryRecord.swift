@@ -32,6 +32,10 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   /// When the send was enqueued, stamped once and copied onto every part, so a send that
   /// resumes later never looks newer than a send started after it. Nil in older records.
   var sendCreatedAt: Date?
+  /// Orders sends with full precision: issued once per send at enqueue (seconds since the
+  /// reference date, strictly increasing within a run) and copied onto every part. Stored as a
+  /// number because the log's ISO 8601 dates drop fractional seconds. Nil in older records.
+  var sendOrder: Double?
   /// 1-based part index and part count; nil means a single, unsplit delivery.
   var partIndex: Int?
   var partTotal: Int?
@@ -39,8 +43,11 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   /// Groups the parts of one send; an older record is its own send.
   var sendKey: UUID { sendID ?? id }
 
-  /// Orders sends: when the send was enqueued, or the record's creation for older records.
-  var sendOrder: Date { sendCreatedAt ?? createdAt }
+  /// Ranks sends, newest highest: `sendOrder`, else `sendCreatedAt`, else `createdAt` for
+  /// records written before those fields existed.
+  var sendRank: Double {
+    sendOrder ?? (sendCreatedAt ?? createdAt).timeIntervalSinceReferenceDate
+  }
 
   /// True for parts of a send with more than one part.
   var isPartOfSplit: Bool { (partTotal ?? 1) > 1 }

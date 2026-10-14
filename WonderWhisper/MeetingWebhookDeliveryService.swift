@@ -55,6 +55,7 @@ actor MeetingWebhookDeliveryService {
       updatedAt: createdAt,
       sendID: job.sendID,
       sendCreatedAt: job.sendCreatedAt ?? createdAt,
+      sendOrder: job.sendOrder,
       partIndex: job.partIndex,
       partTotal: job.partTotal
     )
@@ -181,6 +182,7 @@ actor MeetingWebhookDeliveryService {
         updatedAt: now,
         sendID: job.sendID,
         sendCreatedAt: job.sendCreatedAt ?? now,
+        sendOrder: job.sendOrder,
         partIndex: job.partIndex,
         partTotal: job.partTotal
       )

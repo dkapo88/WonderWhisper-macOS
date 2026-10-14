@@ -476,8 +476,96 @@ struct MeetingWebhookStorageTests {
       let endpointStatus = try #require(center.latestRecord(forEndpoint: endpoint.id))
       #expect(endpointStatus.id == noteStatus.id)
       #expect(endpointStatus.state == .failed)
+      let oldOrders = Set(center.deliveries.filter { $0.event == .noteCompleted }
+        .compactMap(\.sendOrder))
+      let newOrders = Set(center.deliveries.filter { $0.event == .noteResent }
+        .compactMap(\.sendOrder))
+      #expect(oldOrders.count == 1 && newOrders.count == 1)
+      #expect((oldOrders.first ?? 0) < (newOrders.first ?? 0))
       center.deleteEndpoint(endpoint.id)
     }
+  }
+
+  /// Two sends in the same second, then the older one resumes after the newer one failed:
+  /// the parts of one send, built in log order (newest first) like the center does.
+  private static func sameSecondOverlapLog(
+    withSendOrder: Bool
+  ) -> (records: [MeetingWebhookDeliveryRecord], endpointID: UUID, noteID: UUID, newer: UUID) {
+    let endpointID = UUID()
+    let noteID = UUID()
+    let second = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    let base = second.timeIntervalSinceReferenceDate
+    let older = UUID()
+    let newer = UUID()
+    func part(
+      _ sendID: UUID, order: Double, event: MeetingWebhookEvent, index: Int,
+      state: MeetingWebhookDeliveryRecord.State, at offset: Double
+    ) -> MeetingWebhookDeliveryRecord {
+      let created = second.addingTimeInterval(offset)
+      return MeetingWebhookDeliveryRecord(
+        id: UUID(), endpointID: endpointID, endpointName: "Bot", noteID: noteID,
+        noteTitle: "Planning", event: event, state: state, attempts: 1, maximumAttempts: 5,
+        lastStatusCode: state == .failed ? 400 : 200,
+        lastError: state == .failed ? (index == 1 ? "HTTP 400" : "Skipped: part 1 failed") : nil,
+        createdAt: created, updatedAt: created, sendID: sendID,
+        sendCreatedAt: second.addingTimeInterval(order - base),
+        sendOrder: withSendOrder ? order : nil, partIndex: index, partTotal: 3
+      )
+    }
+    var records: [MeetingWebhookDeliveryRecord] = []
+    let olderOrder = base + 0.1
+    let newerOrder = base + 0.2
+    var olderFirst = part(older, order: olderOrder, event: .noteCompleted, index: 1,
+                          state: .retrying, at: 0.1)
+    records = MeetingWebhookDeliveryLog.upserting(olderFirst, into: records)
+    for index in 1...3 {
+      let failed = part(newer, order: newerOrder, event: .noteResent, index: index,
+                        state: .failed, at: 0.2)
+      records = MeetingWebhookDeliveryLog.upserting(failed, into: records)
+    }
+    olderFirst.state = .delivered
+    records = MeetingWebhookDeliveryLog.upserting(olderFirst, into: records)
+    for index in 2...3 {
+      let delivered = part(older, order: olderOrder, event: .noteCompleted, index: index,
+                           state: .delivered, at: 0.3)
+      records = MeetingWebhookDeliveryLog.upserting(delivered, into: records)
+    }
+    return (records, endpointID, noteID, newer)
+  }
+
+  @Test func sameSecondSendsKeepTheirOrderAcrossALogReload() async throws {
+    let scenario = Self.sameSecondOverlapLog(withSendOrder: true)
+    let url = Self.scratchLogURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    await MeetingWebhookDeliveryLog(fileURL: url).save(scenario.records, generation: 1)
+    let loaded = await MeetingWebhookDeliveryLog(fileURL: url).load()
+    #expect(loaded.count == scenario.records.count)
+    #expect(loaded.map(\.sendOrder) == scenario.records.map(\.sendOrder))
+
+    let noteStatus = try #require(
+      MeetingWebhookStatusFormatter.latestPerEndpoint(loaded, noteID: scenario.noteID).first
+    )
+    #expect(noteStatus.sendID == scenario.newer)
+    #expect(noteStatus.state == .failed)
+    #expect(MeetingWebhookStatusFormatter.text(for: noteStatus)
+      == "Bot failed at part 1 of 3: HTTP 400")
+    let endpointStatus = MeetingWebhookStatusFormatter.latestSend(
+      in: loaded.filter { $0.endpointID == scenario.endpointID }
+    )
+    #expect(endpointStatus?.id == noteStatus.id)
+
+    // Without the numeric key the reloaded whole-second dates tie and the older send wins,
+    // which is the regression this key prevents.
+    let legacy = Self.sameSecondOverlapLog(withSendOrder: false)
+    let legacyURL = Self.scratchLogURL()
+    defer { try? FileManager.default.removeItem(at: legacyURL) }
+    await MeetingWebhookDeliveryLog(fileURL: legacyURL).save(legacy.records, generation: 1)
+    let legacyLoaded = await MeetingWebhookDeliveryLog(fileURL: legacyURL).load()
+    let legacyStatus = MeetingWebhookStatusFormatter.latestPerEndpoint(
+      legacyLoaded,
+      noteID: legacy.noteID
+    ).first
+    #expect(legacyStatus?.sendID != legacy.newer)
   }
 }
 

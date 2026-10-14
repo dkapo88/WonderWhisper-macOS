@@ -10,6 +10,9 @@ struct MeetingWebhookDeliveryJob: Sendable {
   /// When the send was enqueued; copied onto every part's record. Nil means the first
   /// record's creation time.
   let sendCreatedAt: Date?
+  /// The send's ordering key (`MeetingWebhookDeliveryRecord.sendOrder`); copied onto every
+  /// part's record.
+  let sendOrder: Double?
   let partIndex: Int
   let partTotal: Int
   let endpoint: MeetingWebhookEndpoint
@@ -26,6 +29,7 @@ struct MeetingWebhookDeliveryJob: Sendable {
     deliveryID: UUID,
     sendID: UUID? = nil,
     sendCreatedAt: Date? = nil,
+    sendOrder: Double? = nil,
     partIndex: Int = 1,
     partTotal: Int = 1,
     endpoint: MeetingWebhookEndpoint,
@@ -41,6 +45,7 @@ struct MeetingWebhookDeliveryJob: Sendable {
     self.deliveryID = deliveryID
     self.sendID = sendID ?? deliveryID
     self.sendCreatedAt = sendCreatedAt
+    self.sendOrder = sendOrder
     self.partIndex = partIndex
     self.partTotal = partTotal
     self.endpoint = endpoint
