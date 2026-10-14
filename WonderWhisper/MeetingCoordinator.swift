@@ -865,8 +865,8 @@ final class MeetingCoordinator: ObservableObject {
     }
 
     replace(session)
-    await persist(session)
-    if !Task.isCancelled {
+    let persisted = await persist(session)
+    if Self.shouldSendCompletedWebhook(persisted: persisted, isCancelled: Task.isCancelled) {
       // Enqueues background deliveries and returns at once, so a slow webhook never delays
       // "Meeting saved".
       webhooks.send(session, event: .noteCompleted)
@@ -2034,12 +2034,22 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  private func persist(_ session: MeetingSession) async {
+  /// Saves the session, reporting failures through `lastError`. Returns whether it was saved.
+  @discardableResult
+  private func persist(_ session: MeetingSession) async -> Bool {
     do {
       try await store.save(session)
+      return true
     } catch {
       lastError = "Meeting could not be saved: \(error.localizedDescription)"
+      return false
     }
+  }
+
+  /// The completed-note webhook only goes out for a note that is actually on disk, and never
+  /// from a cancelled finalization.
+  nonisolated static func shouldSendCompletedWebhook(persisted: Bool, isCancelled: Bool) -> Bool {
+    persisted && !isCancelled
   }
 
   private func replace(_ session: MeetingSession) {

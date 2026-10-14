@@ -22,6 +22,13 @@ enum KeychainServiceError: LocalizedError {
     }
 }
 
+/// The outcome of a Keychain read that must tell "no item" apart from "item unreadable".
+enum KeychainReadResult: Equatable {
+    case found(String)
+    case notFound
+    case failed(OSStatus)
+}
+
 final class KeychainService {
     private static let service = AppConfig.bundleIdentifier
     private static let originalService = AppConfig.originalBundleIdentifier
@@ -77,6 +84,39 @@ final class KeychainService {
         }
 
         return nil
+    }
+
+    /// Like `getSecret(forKey:)`, but reports a read failure (locked Keychain, denied access)
+    /// separately from a missing item, so callers never mistake one for the other.
+    func readSecret(forKey key: String) -> KeychainReadResult {
+        let current = readSecret(forKey: key, service: Self.service)
+        guard current == .notFound else { return current }
+        let original = readSecret(forKey: key, service: Self.originalService)
+        if case let .found(value) = original {
+            try? setSecret(value, forKey: key)
+        }
+        return original
+    }
+
+    private func readSecret(forKey key: String, service: String) -> KeychainReadResult {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess else { return .failed(status) }
+        guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+            return .failed(errSecDecode)
+        }
+        return .found(Self.normalizedSecret(value))
     }
 
     private func getSecret(forKey key: String, service: String) -> String? {

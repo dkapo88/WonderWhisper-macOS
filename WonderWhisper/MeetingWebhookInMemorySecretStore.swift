@@ -12,10 +12,10 @@ final class MeetingWebhookInMemorySecretStore: MeetingWebhookSecretStoring, @unc
 
   init() {}
 
-  func secret(forKey key: String) -> String? {
+  func readSecret(forKey key: String) -> MeetingWebhookSecretRead {
     lock.lock()
     defer { lock.unlock() }
-    return values[key]
+    return values[key].map { .value($0) } ?? .absent
   }
 
   func setSecret(_ value: String, forKey key: String) throws {

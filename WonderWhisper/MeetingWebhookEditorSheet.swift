@@ -19,6 +19,8 @@ struct MeetingWebhookEditorSheet: View {
   @State private var clearsSecret = false
   @State private var generatedSecretCopied = false
   @State private var headerDrafts: [HeaderDraft] = []
+  /// The header set as read from the Keychain; nil when it could not be read.
+  @State private var loadedHeaders: [String: String]? = [:]
   @State private var errorMessage: String?
   @State private var confirmingDelete = false
 
@@ -181,9 +183,30 @@ struct MeetingWebhookEditorSheet: View {
 
   private func loadHeaders() {
     guard !isNew else { return }
-    headerDrafts = webhooks.headers(for: endpoint.id)
-      .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-      .map { HeaderDraft(name: $0.key, value: $0.value) }
+    do {
+      let headers = try webhooks.headers(for: endpoint.id)
+      loadedHeaders = headers
+      headerDrafts = headers
+        .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        .map { HeaderDraft(name: $0.key, value: $0.value) }
+    } catch {
+      // Leave the stored headers alone: saving only replaces them if the user edits them.
+      loadedHeaders = nil
+      errorMessage = MeetingWebhookCredentialsError.userMessage
+        + ". Stored headers are kept unless you add new ones."
+    }
+  }
+
+  /// The header set to save, or nil to leave the stored one untouched. Unchanged headers,
+  /// including headers that could not be read (`loaded` nil, no drafts), are never rewritten.
+  static func headersToSave(
+    loaded: [String: String]?,
+    edited: [String: String],
+    isNew: Bool
+  ) -> [String: String]? {
+    if isNew { return edited }
+    guard let loaded else { return edited.isEmpty ? nil : edited }
+    return loaded == edited ? nil : edited
   }
 
   private func save() {
@@ -210,7 +233,16 @@ struct MeetingWebhookEditorSheet: View {
     } else {
       secret = nil
     }
-    if let message = webhooks.saveEndpoint(endpoint, signingSecret: secret, headers: headers) {
+    let headersToSave = Self.headersToSave(
+      loaded: loadedHeaders,
+      edited: headers,
+      isNew: isNew
+    )
+    if let message = webhooks.saveEndpoint(
+      endpoint,
+      signingSecret: secret,
+      headers: headersToSave
+    ) {
       errorMessage = message
       return
     }
