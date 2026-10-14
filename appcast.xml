@@ -5,6 +5,20 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-14.1</title>
+      <pubDate>Wed, 14 Oct 2026 14:52:49 +0000</pubDate>
+      <sparkle:version>2026101401</sparkle:version>
+      <sparkle:shortVersionString>2026-10-14.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Webhook metadata survives truncation:** Every webhook body now lists the note's metadata (event, ids, title, times, duration, app version) before the Markdown, so receivers that cut long bodies short still get it.</li>
+<li>**Split into multiple webhooks (optional, per endpoint):** Turn it on in Settings &gt; Meetings &gt; Webhooks to send long notes as several smaller posts, each under a max body size you set (default 3800 characters). Parts arrive in order with the same note id and "part N of M".</li>
+<li>**Summary only (optional, per endpoint):** Send the note without its transcript.</li>
+<li>**Clearer delivery status:** Each part is retried and logged on its own, and the meeting shows which part failed.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-14.1/WonderWhisper-2026-10-14.1.dmg" sparkle:edSignature="uyAaIf3hApP6cAoX8NSiHZ1oc5iAT7LHHGBvJUtIVN8RhC471H+EHbRUg8EX91/FhX5LmVNDKmXfcRlBLTy0Aw==" length="25710527" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-14</title>
       <pubDate>Wed, 14 Oct 2026 11:44:13 +0000</pubDate>
       <sparkle:version>2026101400</sparkle:version>
