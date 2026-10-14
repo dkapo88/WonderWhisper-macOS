@@ -207,6 +207,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-14: Released 2026-10-14 with meeting webhook export.
 - 2026-10-14: Meeting webhook export: finished notes POST to user-configured webhooks with
   HMAC signing, Keychain-stored headers, retries, a delivery log, a meeting status line, a
   "Send to Webhook" action and "Send Test" in Settings > Meetings.

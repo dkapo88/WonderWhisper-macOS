@@ -48,6 +48,7 @@ The meeting workflow includes:
 - Optional generated summaries, decisions, and action items through OpenRouter.
 - Local Obsidian search with links and bounded excerpts for live context.
 - Markdown export to a chosen folder inside your Obsidian vault.
+- Webhook export: finished notes are POSTed as JSON (full Markdown, title, time, duration, note id) to the endpoints you add in **Settings → Meetings → Webhooks**, with optional HMAC signing, Keychain-stored custom headers, retries and a delivery log.
 
 ### Walkthrough: your first meeting
 
