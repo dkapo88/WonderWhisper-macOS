@@ -227,6 +227,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-14: Released 2026-10-14.1 with ordered webhook bodies, optional split parts and summary-only content.
 - 2026-10-14: Meeting webhooks: body keys now in a fixed order with `note.markdown` last (still
   schema v1); per-endpoint "Send: Summary only / Full note" and "Split into multiple webhooks"
   with a max body size (default 3800), sending sequential parts with `sendId` and `part`.
