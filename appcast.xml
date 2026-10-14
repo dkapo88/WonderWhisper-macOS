@@ -5,6 +5,19 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-14</title>
+      <pubDate>Wed, 14 Oct 2026 11:44:13 +0000</pubDate>
+      <sparkle:version>2026101400</sparkle:version>
+      <sparkle:shortVersionString>2026-10-14</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Webhook export for meeting notes:** When a meeting note finishes, WonderWhisper can POST the full Markdown note (with title, time, duration and note id) to one or more webhooks. Add them in Settings &gt; Meetings &gt; Webhooks with an optional signing secret and custom headers such as an API key; secrets are stored in Keychain.</li>
+<li>**Send manually or test:** Use "Send to Webhook" on any finished meeting, or "Send Test" in Settings.</li>
+<li>**Never silent:** Failed sends retry with backoff, every meeting shows its delivery status, and failures appear in the app with a Retry option.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-14/WonderWhisper-2026-10-14.dmg" sparkle:edSignature="GExGubCLGqglF/kzIfcrEtT2l5KHTr7MLjOrqn4h1GUCQybmgxPgoCnAq1J4BwOj3YBAjpA4GoN5oLLnp8gtBw==" length="25696793" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-12.1</title>
       <pubDate>Mon, 12 Oct 2026 11:27:53 +0000</pubDate>
       <sparkle:version>2026101201</sparkle:version>
