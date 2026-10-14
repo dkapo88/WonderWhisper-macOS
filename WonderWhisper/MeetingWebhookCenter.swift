@@ -21,8 +21,10 @@ final class MeetingWebhookCenter: ObservableObject {
   /// Why a send was cancelled, keyed by send ID, so its final records say so.
   private var cancellationReasons: [UUID: String] = [:]
   private var logGeneration = 0
-  /// The last send ordering key issued; see `nextSendOrder(at:)`.
-  private var lastSendOrder = -Double.greatestFiniteMagnitude
+  /// The last send ordering key issued; see `nextSendOrder(at:)`. Seeded in `init` from the
+  /// persisted log, before any send can be enqueued, so a key issued before the async log load
+  /// finishes still ranks above every persisted send (even after the clock went backwards).
+  private var lastSendOrder: Double
 
   init(
     store: MeetingWebhookEndpointStore = .live(),
@@ -34,6 +36,7 @@ final class MeetingWebhookCenter: ObservableObject {
     self.deliveryService = deliveryService
     self.log = log
     self.payloadBuilder = payloadBuilder
+    lastSendOrder = log.highestPersistedSendOrder() ?? -Double.greatestFiniteMagnitude
     endpoints = store.load()
     Task { [weak self] in
       guard let self else { return }
@@ -254,7 +257,7 @@ final class MeetingWebhookCenter: ObservableObject {
   }
 
   /// A send ordering key: the time in seconds since the reference date, bumped so every key
-  /// is strictly greater than the last one issued.
+  /// is strictly greater than the last one issued (and than every loaded one).
   private func nextSendOrder(at date: Date) -> Double {
     let order = max(date.timeIntervalSinceReferenceDate, lastSendOrder.nextUp)
     lastSendOrder = order

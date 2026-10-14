@@ -35,6 +35,17 @@ actor MeetingWebhookDeliveryLog {
     return capped
   }
 
+  /// The highest `sendOrder` in the saved log, read synchronously so the center can seed its
+  /// ordering counter before any send is enqueued. Nil when there is no readable log or no
+  /// record carries one.
+  nonisolated func highestPersistedSendOrder() -> Double? {
+    guard let data = try? Data(contentsOf: fileURL) else { return nil }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let records = try? decoder.decode([MeetingWebhookDeliveryRecord].self, from: data)
+    return records?.compactMap(\.sendOrder).max()
+  }
+
   /// Saves a snapshot. Snapshots are numbered by the caller so a stale one that arrives late
   /// never overwrites a newer one.
   func save(_ records: [MeetingWebhookDeliveryRecord], generation: Int) {

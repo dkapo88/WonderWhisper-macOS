@@ -108,8 +108,9 @@ struct MeetingWebhookStorageTests {
   @MainActor
   private static func scratchCenter(
     secrets: MeetingWebhookSecretStoring,
-    transport: FakeMeetingWebhookTransport,
-    sleeper: @escaping MeetingWebhookDeliveryService.Sleeper = { _ in }
+    transport: MeetingWebhookTransport,
+    sleeper: @escaping MeetingWebhookDeliveryService.Sleeper = { _ in },
+    logURL: URL = scratchLogURL()
   ) -> (MeetingWebhookCenter, MeetingWebhookEndpointStore) {
     let store = MeetingWebhookEndpointStore(defaults: { AppConfig.defaults }, secrets: secrets)
     let service = MeetingWebhookDeliveryService(
@@ -120,7 +121,7 @@ struct MeetingWebhookStorageTests {
     let center = MeetingWebhookCenter(
       store: store,
       deliveryService: service,
-      log: MeetingWebhookDeliveryLog(fileURL: scratchLogURL()),
+      log: MeetingWebhookDeliveryLog(fileURL: logURL),
       payloadBuilder: MeetingWebhookPayloadBuilder(
         appInfo: MeetingWebhookAppInfo(name: "WonderWhisper", version: "test", build: "1")
       )
@@ -567,6 +568,78 @@ struct MeetingWebhookStorageTests {
     ).first
     #expect(legacyStatus?.sendID != legacy.newer)
   }
+
+  @MainActor
+  @Test func sendsStartedBeforeTheLogLoadsRankAboveAPersistedSendFromTheFuture() async throws {
+    try await Self.withScratchEndpoints {
+      let endpoint = MeetingWebhookEndpoint(
+        name: "Bot",
+        url: "https://example.com/hook",
+        splitIntoParts: true,
+        maxBodyCharacters: 3_800
+      )
+      let session = Self.longFinishedSession()
+      // A delivered send persisted with a key an hour ahead: the clock has since gone back.
+      let future = Date().addingTimeInterval(3_600)
+      let persistedSend = UUID()
+      let persisted = (1...3).map { index in
+        MeetingWebhookDeliveryRecord(
+          id: UUID(), endpointID: endpoint.id, endpointName: "Bot", noteID: session.id,
+          noteTitle: session.title, event: .noteCompleted, state: .delivered, attempts: 1,
+          maximumAttempts: 5, lastStatusCode: 200, lastError: nil, createdAt: future,
+          updatedAt: future, sendID: persistedSend, sendCreatedAt: future,
+          sendOrder: future.timeIntervalSinceReferenceDate, partIndex: index, partTotal: 3
+        )
+      }
+      let logURL = Self.scratchLogURL()
+      defer { try? FileManager.default.removeItem(at: logURL) }
+      await MeetingWebhookDeliveryLog(fileURL: logURL).save(persisted, generation: 1)
+
+      // The first send waits in backoff; the resend fails at part 1.
+      let transport = EventScriptedTransport([.noteCompleted: [500], .noteResent: [400]])
+      let gate = BackoffGate()
+      let (center, store) = Self.scratchCenter(
+        secrets: MeetingWebhookInMemorySecretStore(),
+        transport: transport,
+        sleeper: { _ in try await gate.wait() },
+        logURL: logURL
+      )
+      try store.upsert(endpoint, signingSecret: nil, headers: [:])
+      center.reloadEndpoints()
+      // Same main-actor turn as `init`: the async log load has not run yet.
+      #expect(center.send(session, event: .noteCompleted) == 1)
+      #expect(center.send(session, event: .noteResent, endpointIDs: [endpoint.id]) == 1)
+
+      let resendFailed = await Self.waitUntil {
+        let resent = center.deliveries.filter { $0.event == .noteResent }
+        let loaded = center.deliveries.contains { $0.sendID == persistedSend }
+        return loaded && !resent.isEmpty && resent.count == resent.first?.partTotal
+          && resent.allSatisfy { $0.state == .failed }
+      }
+      #expect(resendFailed)
+      gate.open()
+      let olderDelivered = await Self.waitUntil {
+        let older = center.deliveries.filter {
+          $0.event == .noteCompleted && $0.sendID != persistedSend
+        }
+        return !older.isEmpty && older.count == older.first?.partTotal
+          && older.allSatisfy { $0.state == .delivered }
+      }
+      #expect(olderDelivered)
+
+      let noteStatus = try #require(center.latestRecords(forNote: session.id).first)
+      #expect(noteStatus.event == .noteResent)
+      #expect(noteStatus.state == .failed)
+      let statusText = MeetingWebhookStatusFormatter.text(for: noteStatus)
+      #expect(statusText.hasPrefix("Bot failed at part 1 of "))
+      #expect(center.latestRecord(forEndpoint: endpoint.id)?.id == noteStatus.id)
+      let olderOrder = center.deliveries
+        .first { $0.event == .noteCompleted && $0.sendID != persistedSend }?.sendOrder ?? 0
+      #expect(olderOrder > future.timeIntervalSinceReferenceDate)
+      #expect((noteStatus.sendOrder ?? 0) > olderOrder)
+      center.deleteEndpoint(endpoint.id)
+    }
+  }
 }
 
 /// In-memory secrets whose reads can be switched to fail, like a locked Keychain.
@@ -606,5 +679,27 @@ final class BackoffGate: @unchecked Sendable {
     while !lock.withLock({ isOpen }) {
       try await Task.sleep(nanoseconds: 5_000_000)
     }
+  }
+}
+
+/// Answers each request by its `X-WonderWhisper-Event`: the queued statuses for that event in
+/// order, then 200. For tests where sends to the same endpoint race.
+final class EventScriptedTransport: MeetingWebhookTransport, @unchecked Sendable {
+  private let lock = NSLock()
+  private var scripts: [String: [Int]]
+
+  init(_ scripts: [MeetingWebhookEvent: [Int]]) {
+    self.scripts = Dictionary(uniqueKeysWithValues: scripts.map { ($0.key.rawValue, $0.value) })
+  }
+
+  func send(_ request: URLRequest) async throws -> MeetingWebhookTransportResponse {
+    let event = request.value(forHTTPHeaderField: MeetingWebhookRequestBuilder.eventHeader) ?? ""
+    let status: Int = lock.withLock {
+      var queue = scripts[event] ?? []
+      let next = queue.isEmpty ? 200 : queue.removeFirst()
+      scripts[event] = queue
+      return next
+    }
+    return MeetingWebhookTransportResponse(statusCode: status)
   }
 }
