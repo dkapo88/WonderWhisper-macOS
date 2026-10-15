@@ -8,6 +8,7 @@ indirect enum MeetingWebhookJSONValue: Sendable {
   case string(String)
   case int(Int)
   case null
+  case array([MeetingWebhookJSONValue])
   case object([(key: String, value: MeetingWebhookJSONValue)])
 
   /// The compact serialized form.
@@ -29,6 +30,13 @@ indirect enum MeetingWebhookJSONValue: Sendable {
       output += String(value)
     case .null:
       output += "null"
+    case let .array(elements):
+      output += "["
+      for (offset, element) in elements.enumerated() {
+        if offset > 0 { output += "," }
+        element.write(into: &output)
+      }
+      output += "]"
     case let .object(members):
       output += "{"
       for (offset, member) in members.enumerated() {

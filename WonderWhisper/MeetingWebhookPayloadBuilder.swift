@@ -31,8 +31,11 @@ struct MeetingWebhookPayloadBuilder: Sendable {
         title: session.title,
         startedAt: session.startedAt,
         endedAt: session.endedAt,
-        durationSeconds: max(0, Int(session.duration.rounded())),
+        durationSeconds: Self.seconds(session.duration),
+        recordedSeconds: Self.seconds(session.duration),
+        elapsedSeconds: session.elapsed.map(Self.seconds),
         detectedApp: session.detectedApp,
+        attendees: session.attendees,
         content: content,
         markdown: MeetingObsidianExporter.document(
           for: session,
@@ -53,6 +56,26 @@ struct MeetingWebhookPayloadBuilder: Sendable {
     sentAt: Date,
     makeDeliveryID: () -> UUID = { UUID() }
   ) throws -> [MeetingWebhookPayload] {
+    try plan(
+      for: session,
+      event: event,
+      endpoint: endpoint,
+      sendID: sendID,
+      sentAt: sentAt,
+      makeDeliveryID: makeDeliveryID
+    ).payloads
+  }
+
+  /// The payloads of one send plus, for a split send, what a later partial resend needs to
+  /// prove it cuts the same note the same way.
+  func plan(
+    for session: MeetingSession,
+    event: MeetingWebhookEvent,
+    endpoint: MeetingWebhookEndpoint,
+    sendID: UUID,
+    sentAt: Date,
+    makeDeliveryID: () -> UUID = { UUID() }
+  ) throws -> MeetingWebhookSendPlan {
     let base = payload(
       for: session,
       event: event,
@@ -60,18 +83,33 @@ struct MeetingWebhookPayloadBuilder: Sendable {
       sentAt: sentAt,
       content: endpoint.content
     )
-    guard endpoint.splitIntoParts else { return [base] }
-    return try MeetingWebhookPayloadSplitter.parts(
+    guard endpoint.splitIntoParts else {
+      return MeetingWebhookSendPlan(payloads: [base], split: nil)
+    }
+    let maxBytes = MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters)
+    let split = try MeetingWebhookPayloadSplitter.split(
       of: base,
       sendID: sendID,
-      maxBytes: MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters),
+      maxBytes: maxBytes,
       makeDeliveryID: makeDeliveryID
     )
+    let info = MeetingWebhookSplitInfo(
+      contentFingerprint: MeetingWebhookFingerprint.of(base.note.markdown),
+      content: endpoint.content,
+      maxBodyCharacters: maxBytes,
+      chunkBudget: split.chunkBudget,
+      partFingerprints: split.chunks.map(MeetingWebhookFingerprint.of)
+    )
+    return MeetingWebhookSendPlan(payloads: split.parts, split: info)
   }
 
   /// The request body: compact JSON with keys in the documented order, `note.markdown` last.
   static func encode(_ payload: MeetingWebhookPayload) -> Data {
     payload.body
+  }
+
+  static func seconds(_ interval: TimeInterval) -> Int {
+    max(0, Int(interval.rounded()))
   }
 
   /// A short sample note for "Send Test".

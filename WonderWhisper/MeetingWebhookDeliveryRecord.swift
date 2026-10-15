@@ -4,12 +4,15 @@ import Foundation
 /// detail view and the Settings log. Never holds request bodies, secrets or header values.
 struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable {
   enum State: String, Codable, Sendable {
+    /// Waiting its turn: behind earlier sends to the endpoint, the gap between notes, or the
+    /// delay between parts.
+    case queued
     case sending
     case retrying
     case delivered
     case failed
 
-    var isInFlight: Bool { self == .sending || self == .retrying }
+    var isInFlight: Bool { self == .queued || self == .sending || self == .retrying }
   }
 
   /// The delivery ID, reused across retries (`X-WonderWhisper-Delivery`).
@@ -39,6 +42,18 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   /// 1-based part index and part count; nil means a single, unsplit delivery.
   var partIndex: Int?
   var partTotal: Int?
+  /// Queued records: how many earlier sends to the endpoint are still ahead of this one.
+  var queuedBehind: Int?
+  /// Queued or retrying records: when the next request is due, if known.
+  var nextAttemptAt: Date?
+  /// Split sends: SHA-256 of the whole note Markdown that was split (never the Markdown).
+  var contentFingerprint: String?
+  /// Split sends: SHA-256 of this part's chunk of the note, without the end marker.
+  var partFingerprint: String?
+  /// Split sends: the content setting, max body size and chunk budget the note was cut with.
+  var content: MeetingWebhookContent?
+  var maxBodyCharacters: Int?
+  var chunkBudget: Int?
 
   /// Groups the parts of one send; an older record is its own send.
   var sendKey: UUID { sendID ?? id }
@@ -52,8 +67,55 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   /// True for parts of a send with more than one part.
   var isPartOfSplit: Bool { (partTotal ?? 1) > 1 }
 
+  /// True for a split send's record that carries what a partial resend needs.
+  var supportsPartialResend: Bool {
+    partIndex != nil && partTotal != nil && contentFingerprint != nil && chunkBudget != nil
+      && content != nil && maxBodyCharacters != nil
+  }
+
   static let skippedPrefix = "Skipped: "
 
   /// A part that was never sent because an earlier part failed.
   var isSkipped: Bool { state == .failed && lastError?.hasPrefix(Self.skippedPrefix) == true }
+}
+
+extension MeetingWebhookDeliveryRecord {
+  /// A fresh record for `job` in `state`, with the job's send and split details.
+  init(
+    job: MeetingWebhookDeliveryJob,
+    state: State,
+    maximumAttempts: Int,
+    lastError: String? = nil,
+    at date: Date
+  ) {
+    let partIndex = job.partIndex
+    let fingerprints = job.splitInfo?.partFingerprints ?? []
+    self.init(
+      id: job.deliveryID,
+      endpointID: job.endpoint.id,
+      endpointName: job.endpoint.displayName,
+      noteID: job.noteID,
+      noteTitle: job.noteTitle,
+      event: job.event,
+      state: state,
+      attempts: 0,
+      maximumAttempts: maximumAttempts,
+      lastStatusCode: nil,
+      lastError: lastError,
+      createdAt: date,
+      updatedAt: date,
+      sendID: job.sendID,
+      sendCreatedAt: job.sendCreatedAt ?? date,
+      sendOrder: job.sendOrder,
+      partIndex: job.partIndex,
+      partTotal: job.partTotal,
+      contentFingerprint: job.splitInfo?.contentFingerprint,
+      partFingerprint: fingerprints.indices.contains(partIndex - 1)
+        ? fingerprints[partIndex - 1]
+        : nil,
+      content: job.splitInfo?.content,
+      maxBodyCharacters: job.splitInfo?.maxBodyCharacters,
+      chunkBudget: job.splitInfo?.chunkBudget
+    )
+  }
 }

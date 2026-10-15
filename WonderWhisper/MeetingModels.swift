@@ -128,6 +128,9 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var audioFiles: [String]
   var exportedMarkdownPath: String?
   var errorMessage: String?
+  /// Who attended, as typed by the user (trimmed, no case-insensitive duplicates). Empty for
+  /// sessions saved before attendees existed.
+  var attendees: [String]
 
   init(id: UUID = UUID(),
        title: String,
@@ -144,7 +147,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        notesMarkdown: String? = nil,
        audioFiles: [String] = [],
        exportedMarkdownPath: String? = nil,
-       errorMessage: String? = nil) {
+       errorMessage: String? = nil,
+       attendees: [String] = []) {
     self.id = id
     self.title = title
     self.startedAt = startedAt
@@ -161,8 +165,51 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.audioFiles = audioFiles
     self.exportedMarkdownPath = exportedMarkdownPath
     self.errorMessage = errorMessage
+    self.attendees = attendees
   }
 
+  private enum CodingKeys: String, CodingKey {
+    case id, title, startedAt, endedAt, recordedDuration, recordingStartedAt, detectedApp
+    case automaticallyStarted, transcriptionEngine, status, transcriptTokens
+    case manualNotesMarkdown, notesMarkdown, audioFiles, exportedMarkdownPath, errorMessage
+    case attendees
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    title = try container.decode(String.self, forKey: .title)
+    startedAt = try container.decode(Date.self, forKey: .startedAt)
+    endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+    recordedDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .recordedDuration)
+    recordingStartedAt = try container.decodeIfPresent(Date.self, forKey: .recordingStartedAt)
+    detectedApp = try container.decodeIfPresent(String.self, forKey: .detectedApp)
+    automaticallyStarted = try container.decode(Bool.self, forKey: .automaticallyStarted)
+    transcriptionEngine = try container.decodeIfPresent(
+      MeetingTranscriptionEngine.self,
+      forKey: .transcriptionEngine
+    )
+    status = try container.decode(MeetingStatus.self, forKey: .status)
+    transcriptTokens = try container.decode(
+      [MeetingTranscriptToken].self,
+      forKey: .transcriptTokens
+    )
+    manualNotesMarkdown = try container.decodeIfPresent(
+      String.self,
+      forKey: .manualNotesMarkdown
+    )
+    notesMarkdown = try container.decodeIfPresent(String.self, forKey: .notesMarkdown)
+    audioFiles = try container.decode([String].self, forKey: .audioFiles)
+    exportedMarkdownPath = try container.decodeIfPresent(
+      String.self,
+      forKey: .exportedMarkdownPath
+    )
+    errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+    attendees = try container.decodeIfPresent([String].self, forKey: .attendees) ?? []
+  }
+
+  /// Recorded time: the sum of the recording runs, without pauses or the gap before a
+  /// Resume. The payload's `recordedSeconds` (and `durationSeconds`).
   var duration: TimeInterval {
     if let recordedDuration {
       let activeDuration = recordingStartedAt.map {
@@ -171,6 +218,11 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
       return max(0, recordedDuration + activeDuration)
     }
     return max(0, (endedAt ?? Date()).timeIntervalSince(startedAt))
+  }
+
+  /// Wall-clock span from start to end, gaps included; nil until the meeting has ended.
+  var elapsed: TimeInterval? {
+    endedAt.map { max(0, $0.timeIntervalSince(startedAt)) }
   }
 
   var transcriptMarkdown: String {

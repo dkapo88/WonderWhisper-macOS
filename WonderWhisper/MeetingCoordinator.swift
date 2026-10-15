@@ -1164,7 +1164,8 @@ final class MeetingCoordinator: ObservableObject {
     statusMessage = started == 0 ? "No webhook to send to" : "Sending to webhook"
   }
 
-  /// Resends the note behind a delivery record to the same endpoint.
+  /// Retries the send behind a delivery record. A failed part of the newest split send of a
+  /// note resends only its missing parts; anything else resends the whole note.
   func retryWebhookDelivery(_ record: MeetingWebhookDeliveryRecord) {
     if record.event == .test {
       webhooks.sendTest(to: record.endpointID)
@@ -1174,7 +1175,54 @@ final class MeetingCoordinator: ObservableObject {
       lastError = "That meeting no longer exists."
       return
     }
+    if record.supportsPartialResend,
+       webhooks.resumableSend(noteID: record.noteID, endpointID: record.endpointID)?.sendID
+         == record.sendKey {
+      resendWebhookParts(current, endpointID: record.endpointID, selection: .missing)
+      return
+    }
     sendToWebhooks(current, endpointID: record.endpointID)
+  }
+
+  /// Whether "Resend Missing Parts" / "Resend Parts" can act on this note and endpoint.
+  func canResendWebhookParts(_ session: MeetingSession, endpointID: UUID) -> Bool {
+    guard canSendToWebhooks(session),
+          let send = webhooks.resumableSend(noteID: session.id, endpointID: endpointID) else {
+      return false
+    }
+    return send.splitRecord != nil && !send.isInFlight
+  }
+
+  /// Resends the parts typed into "Resend Parts..." (for example `3` or `2,3`).
+  func resendWebhookParts(_ session: MeetingSession, endpointID: UUID, partsText: String) {
+    guard let send = webhooks.resumableSend(noteID: session.id, endpointID: endpointID) else {
+      lastError = "This note has no split send to that webhook to resume; use Send to Webhook."
+      return
+    }
+    guard let parts = MeetingWebhookPartList.parse(partsText, total: send.total) else {
+      lastError = "Type part numbers between 1 and \(send.total), for example 3 or 2,3."
+      return
+    }
+    resendWebhookParts(session, endpointID: endpointID, selection: .parts(parts))
+  }
+
+  /// Resends some parts of the note's newest split send to one endpoint.
+  func resendWebhookParts(
+    _ session: MeetingSession,
+    endpointID: UUID,
+    selection: MeetingWebhookCenter.PartSelection
+  ) {
+    guard canSendToWebhooks(session), let current = self.session(withID: session.id) else {
+      lastError = "Wait for the meeting note to finish before sending it to a webhook."
+      return
+    }
+    switch webhooks.resendParts(current, endpointID: endpointID, selection: selection) {
+    case let .started(parts):
+      let list = parts.map(String.init).joined(separator: ", ")
+      statusMessage = parts.count == 1 ? "Resending part \(list)" : "Resending parts \(list)"
+    case let .refused(message):
+      lastError = message
+    }
   }
 
   func openExportedNote(_ session: MeetingSession) {
@@ -1233,6 +1281,16 @@ final class MeetingCoordinator: ObservableObject {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     session.title = trimmed.isEmpty ? "Meeting" : trimmed
     generatedTitleEligibleSessionIDs.remove(sessionID)
+    replace(session)
+    schedulePersist(session)
+  }
+
+  /// Saves the attendees typed as a comma separated list (trimmed, deduplicated).
+  func updateAttendees(_ text: String, for sessionID: UUID) {
+    guard var session = session(withID: sessionID) else { return }
+    let attendees = MeetingAttendees.parse(text)
+    guard attendees != session.attendees else { return }
+    session.attendees = attendees
     replace(session)
     schedulePersist(session)
   }

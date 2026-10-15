@@ -61,6 +61,12 @@ enum MeetingObsidianExporter {
       """)
     }
     let body = sections.joined(separator: "\n\n")
+    // Only notes with attendees get the list, so other notes stay byte-identical.
+    let attendeesBlock = session.attendees.isEmpty
+      ? ""
+      : "attendees:\n" + session.attendees
+        .map { "  - \(yamlDoubleQuoted($0))\n" }
+        .joined()
 
     return """
     ---
@@ -68,7 +74,7 @@ enum MeetingObsidianExporter {
     date: \(iso)
     source: \(escapedSource)
     duration_minutes: \(durationMinutes)
-    tags:
+    \(attendeesBlock)tags:
       - meeting
     ---
 

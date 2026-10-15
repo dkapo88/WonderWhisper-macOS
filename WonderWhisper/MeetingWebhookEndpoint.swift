@@ -9,6 +9,10 @@ import Foundation
 struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Sendable {
   static let defaultMaxBodyCharacters = 3_800
   static let maxBodyCharactersRange = 1_000...1_000_000
+  static let defaultPartDelaySeconds = 7
+  static let partDelaySecondsRange = 0...60
+  static let defaultNoteDelaySeconds = 30
+  static let noteDelaySecondsRange = 0...600
 
   let id: UUID
   var name: String
@@ -22,6 +26,11 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
   /// `splitIntoParts` is on.
   var maxBodyCharacters: Int
   var content: MeetingWebhookContent
+  /// Split sends only: the wait after one part is delivered before the next part is POSTed.
+  var partDelaySeconds: Int
+  /// Split sends only: the minimum gap between the last request of one send and the first
+  /// request of the next send to this endpoint.
+  var noteDelaySeconds: Int
 
   init(
     id: UUID = UUID(),
@@ -32,7 +41,9 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
     hasSecret: Bool = false,
     splitIntoParts: Bool = false,
     maxBodyCharacters: Int = MeetingWebhookEndpoint.defaultMaxBodyCharacters,
-    content: MeetingWebhookContent = .full
+    content: MeetingWebhookContent = .full,
+    partDelaySeconds: Int = MeetingWebhookEndpoint.defaultPartDelaySeconds,
+    noteDelaySeconds: Int = MeetingWebhookEndpoint.defaultNoteDelaySeconds
   ) {
     self.id = id
     self.name = name
@@ -43,11 +54,13 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
     self.splitIntoParts = splitIntoParts
     self.maxBodyCharacters = Self.clampedMaxBody(maxBodyCharacters)
     self.content = content
+    self.partDelaySeconds = Self.clamped(partDelaySeconds, to: Self.partDelaySecondsRange)
+    self.noteDelaySeconds = Self.clamped(noteDelaySeconds, to: Self.noteDelaySecondsRange)
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, name, url, isEnabled, headerNames, hasSecret
-    case splitIntoParts, maxBodyCharacters, content
+    case splitIntoParts, maxBodyCharacters, content, partDelaySeconds, noteDelaySeconds
   }
 
   init(from decoder: Decoder) throws {
@@ -65,10 +78,34 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
     )
     content = (try? container.decodeIfPresent(MeetingWebhookContent.self, forKey: .content))
       ?? .full
+    partDelaySeconds = Self.clamped(
+      (try? container.decodeIfPresent(Int.self, forKey: .partDelaySeconds))
+        ?? Self.defaultPartDelaySeconds,
+      to: Self.partDelaySecondsRange
+    )
+    noteDelaySeconds = Self.clamped(
+      (try? container.decodeIfPresent(Int.self, forKey: .noteDelaySeconds))
+        ?? Self.defaultNoteDelaySeconds,
+      to: Self.noteDelaySecondsRange
+    )
   }
 
   static func clampedMaxBody(_ value: Int) -> Int {
-    min(max(value, maxBodyCharactersRange.lowerBound), maxBodyCharactersRange.upperBound)
+    clamped(value, to: maxBodyCharactersRange)
+  }
+
+  static func clamped(_ value: Int, to range: ClosedRange<Int>) -> Int {
+    min(max(value, range.lowerBound), range.upperBound)
+  }
+
+  /// How sends to this endpoint are spaced. Only split sends are paced and queued; an unsplit
+  /// endpoint sends exactly as before.
+  var pacing: MeetingWebhookPacing? {
+    guard splitIntoParts else { return nil }
+    return MeetingWebhookPacing(
+      partDelay: TimeInterval(Self.clamped(partDelaySeconds, to: Self.partDelaySecondsRange)),
+      noteDelay: TimeInterval(Self.clamped(noteDelaySeconds, to: Self.noteDelaySecondsRange))
+    )
   }
 
   /// The name, or the URL host when the name is blank.
