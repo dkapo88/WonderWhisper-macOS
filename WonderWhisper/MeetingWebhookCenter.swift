@@ -26,8 +26,13 @@ final class MeetingWebhookCenter: ObservableObject {
   private var endpointQueues: [UUID: [UUID]] = [:]
   /// The last paced run enqueued per endpoint; the next one waits for it.
   private var endpointTails: [UUID: Task<Void, Never>] = [:]
-  /// The delivery IDs each run sends, to keep queued records' positions current.
+  /// Unpaced (unsplit) runs per endpoint that are still running. A paced run waits for them,
+  /// so turning splitting on never lets a paced request overlap an unsplit one.
+  private var unpacedRuns: [UUID: Set<UUID>] = [:]
+  /// The delivery IDs of each waiting run, to keep its queued records' positions current.
   private var runDeliveryIDs: [UUID: [UUID]] = [:]
+  /// The runs each waiting run is queued behind ("behind N notes" counts those still running).
+  private var runAhead: [UUID: Set<UUID>] = [:]
   private var logGeneration = 0
   /// The last send ordering key issued; see `nextSendOrder(at:)`. Seeded in `init` from the
   /// persisted log, before any send can be enqueued, so a key issued before the async log load
@@ -408,9 +413,12 @@ final class MeetingWebhookCenter: ObservableObject {
     }
   }
 
-  /// Runs the jobs of one send (or partial resend) in the background. Paced jobs wait for the
-  /// endpoint's earlier paced runs, so at most one request is in flight per endpoint, and
-  /// are shown as queued until their turn. Unpaced jobs start at once, as before.
+  /// Runs the jobs of one send (or partial resend) in the background. Paced jobs wait for
+  /// every earlier run to the endpoint that is still going (paced or not), so at most one
+  /// request is in flight per endpoint, and are shown as queued until their turn. Unpaced
+  /// jobs start at once and run alongside each other, as before; they only wait (shown as
+  /// queued) when paced work for the endpoint is queued or running, which happens only after
+  /// splitting was switched on or off with sends in flight.
   private func start(
     _ jobs: [MeetingWebhookDeliveryJob],
     runID: UUID,
@@ -419,40 +427,45 @@ final class MeetingWebhookCenter: ObservableObject {
   ) {
     let service = deliveryService
     let isPaced = jobs.first?.pacing != nil
-    guard isPaced else {
-      let task = Task.detached(priority: .utility) { [weak self] in
-        let records = await service.deliverParts(jobs) { [weak self] record in
-          await self?.apply(record, runID: runID)
-        }
-        await self?.finish(runID: runID, endpointID: endpointID, records: records)
+    let pacedQueue = endpointQueues[endpointID] ?? []
+    let pacedTail = endpointTails[endpointID]
+    let running = unpacedRuns[endpointID] ?? []
+    let unpacedTasks = isPaced ? running.compactMap { tasks[$0]?.task } : []
+    let ahead = Set(pacedQueue).union(isPaced ? running : [])
+    // Paced runs record every part as queued up front (so parts never reached after a quit
+    // show up as interrupted); unpaced runs only when they actually have to wait.
+    if isPaced || !ahead.isEmpty {
+      runAhead[runID] = ahead
+      runDeliveryIDs[runID] = jobs.map(\.deliveryID)
+      for job in jobs {
+        var queued = MeetingWebhookDeliveryRecord(
+          job: job,
+          state: .queued,
+          maximumAttempts: MeetingWebhookRetryPolicy.maximumAttempts,
+          at: now
+        )
+        queued.queuedBehind = ahead.isEmpty ? nil : ahead.count
+        apply(queued, runID: runID)
       }
-      tasks[runID] = (endpointID, task)
-      return
     }
-    let ahead = endpointQueues[endpointID]?.count ?? 0
-    endpointQueues[endpointID, default: []].append(runID)
-    runDeliveryIDs[runID] = jobs.map(\.deliveryID)
-    for job in jobs {
-      var queued = MeetingWebhookDeliveryRecord(
-        job: job,
-        state: .queued,
-        maximumAttempts: MeetingWebhookRetryPolicy.maximumAttempts,
-        at: now
-      )
-      queued.queuedBehind = ahead > 0 ? ahead : nil
-      apply(queued, runID: runID)
-    }
-    let previous = endpointTails[endpointID]
     let task = Task.detached(priority: .utility) { [weak self] in
-      // Cancelling an endpoint cancels every run to it, so this wait ends promptly too.
-      await previous?.value
+      // Cancelling an endpoint cancels every run to it, so these waits end promptly too.
+      await pacedTail?.value
+      for earlier in unpacedTasks {
+        await earlier.value
+      }
       let records = await service.deliverParts(jobs) { [weak self] record in
         await self?.apply(record, runID: runID)
       }
       await self?.finish(runID: runID, endpointID: endpointID, records: records)
     }
     tasks[runID] = (endpointID, task)
-    endpointTails[endpointID] = task
+    if isPaced {
+      endpointQueues[endpointID, default: []].append(runID)
+      endpointTails[endpointID] = task
+    } else {
+      unpacedRuns[endpointID, default: []].insert(runID)
+    }
   }
 
   /// A send ordering key: the time in seconds since the reference date, bumped so every key
@@ -506,6 +519,7 @@ final class MeetingWebhookCenter: ObservableObject {
   private func finish(runID: UUID, endpointID: UUID, records: [MeetingWebhookDeliveryRecord]) {
     tasks.removeValue(forKey: runID)
     runDeliveryIDs.removeValue(forKey: runID)
+    runAhead.removeValue(forKey: runID)
     if var queue = endpointQueues[endpointID] {
       queue.removeAll { $0 == runID }
       if queue.isEmpty {
@@ -513,9 +527,13 @@ final class MeetingWebhookCenter: ObservableObject {
         endpointTails.removeValue(forKey: endpointID)
       } else {
         endpointQueues[endpointID] = queue
-        refreshQueuePositions(for: endpointID)
       }
     }
+    if var running = unpacedRuns[endpointID] {
+      running.remove(runID)
+      unpacedRuns[endpointID] = running.isEmpty ? nil : running
+    }
+    refreshQueuePositions()
     // A send the user cancelled (endpoint removed, disabled or edited) is not an error to
     // surface.
     let wasCancelledByUser = cancellationReasons.removeValue(forKey: runID) != nil
@@ -532,12 +550,14 @@ final class MeetingWebhookCenter: ObservableObject {
     }
   }
 
-  /// Updates "behind N notes" on the queued records of the endpoint's waiting runs.
-  private func refreshQueuePositions(for endpointID: UUID) {
-    guard let queue = endpointQueues[endpointID] else { return }
+  /// Updates "behind N notes" on the queued records of waiting runs: the runs each one waits
+  /// for that are still going.
+  private func refreshQueuePositions() {
     var changed = false
-    for (position, runID) in queue.enumerated() {
-      let behind = position > 0 ? position : nil
+    for (runID, ahead) in runAhead {
+      let remaining = ahead.filter { tasks[$0] != nil }
+      runAhead[runID] = remaining
+      let behind = remaining.isEmpty ? nil : remaining.count
       for deliveryID in runDeliveryIDs[runID] ?? [] {
         guard let index = deliveries.firstIndex(where: { $0.id == deliveryID }),
               deliveries[index].state == .queued,

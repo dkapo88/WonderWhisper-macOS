@@ -46,6 +46,8 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   var queuedBehind: Int?
   /// Queued or retrying records: when the next request is due, if known.
   var nextAttemptAt: Date?
+  /// Queued records: true while waiting out the receiver's rate-limit cooldown.
+  var isRateLimitWait: Bool?
   /// Split sends: SHA-256 of the whole note Markdown that was split (never the Markdown).
   var contentFingerprint: String?
   /// Split sends: SHA-256 of this part's chunk of the note, without the end marker.

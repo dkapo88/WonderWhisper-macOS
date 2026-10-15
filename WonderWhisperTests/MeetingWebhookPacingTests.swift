@@ -49,15 +49,18 @@ final class PacingTestTransport: MeetingWebhookTransport, @unchecked Sendable {
   private var totalInFlight = 0
   private var totalPeak = 0
   private let holdNanoseconds: UInt64
+  private let gate: BackoffGate?
 
   init(
     clock: PacingTestClock? = nil,
     steps: [MeetingWebhookTransportResponse] = [],
-    holdNanoseconds: UInt64 = 0
+    holdNanoseconds: UInt64 = 0,
+    gate: BackoffGate? = nil
   ) {
     self.clock = clock
     self.steps = steps
     self.holdNanoseconds = holdNanoseconds
+    self.gate = gate
   }
 
   var requests: [Sent] { lock.withLock { sent } }
@@ -78,6 +81,9 @@ final class PacingTestTransport: MeetingWebhookTransport, @unchecked Sendable {
     }
     if holdNanoseconds > 0 {
       try? await Task.sleep(nanoseconds: holdNanoseconds)
+    }
+    if let gate {
+      try? await gate.wait()
     }
     lock.withLock {
       inFlight[host, default: 1] -= 1
@@ -439,6 +445,75 @@ struct MeetingWebhookPacingTests {
     #expect(transport.requests.count == 5)
   }
 
+  @Test func anExhaustedRateLimitWithRetryAfterHoldsTheNextNote() async throws {
+    let clock = PacingTestClock(Self.fixedDate)
+    let limited = MeetingWebhookTransportResponse(statusCode: 429, retryAfter: "600")
+    let transport = PacingTestTransport(
+      clock: clock,
+      steps: Array(repeating: limited, count: 5)
+    )
+    let service = Self.service(transport, clock: clock)
+    let endpoint = Self.splitEndpoint(partDelay: 7, noteDelay: 30)
+    let first = await service.deliverParts(Self.jobs(1, endpoint: endpoint))
+    #expect(first.map(\.state) == [.failed])
+    #expect(clock.sleeps == [600, 600, 600, 600])
+    let updates = RecordCollector()
+    let second = await service.deliverParts(Self.jobs(1, endpoint: endpoint)) {
+      updates.append($0)
+    }
+    #expect(second.map(\.state) == [.delivered])
+    // The fifth 429 came at +2400s; the next note waits its 600s, not the 30s note gap.
+    #expect(clock.sleeps == [600, 600, 600, 600, 600])
+    #expect(transport.requests.last?.time == Self.fixedDate.addingTimeInterval(3_000))
+    let waiting = try #require(updates.values.first { $0.state == .queued })
+    #expect(waiting.isRateLimitWait == true)
+    #expect(MeetingWebhookStatusFormatter.text(
+      for: waiting,
+      now: Self.fixedDate.addingTimeInterval(2_400)
+    ) == "Waiting for Grok Bot rate limit (10m)")
+    #expect(MeetingWebhookStatusFormatter.text(
+      for: waiting,
+      now: Self.fixedDate.addingTimeInterval(2_955)
+    ) == "Waiting for Grok Bot rate limit (45s)")
+  }
+
+  @Test func anExhaustedRateLimitWithoutRetryAfterHoldsTheNextNoteForTheNextBackoff() async {
+    let clock = PacingTestClock(Self.fixedDate)
+    let transport = PacingTestTransport(
+      clock: clock,
+      steps: Array(repeating: MeetingWebhookTransportResponse(statusCode: 503), count: 5)
+    )
+    let service = Self.service(transport, clock: clock)
+    let endpoint = Self.splitEndpoint(partDelay: 7, noteDelay: 30)
+    _ = await service.deliverParts(Self.jobs(1, endpoint: endpoint))
+    _ = await service.deliverParts(Self.jobs(1, endpoint: endpoint))
+    #expect(clock.sleeps == [30, 60, 120, 240, 240])
+    #expect(transport.requests.count == 6)
+  }
+
+  @Test func aCancelledRateLimitedSendStillHoldsTheNextNote() async {
+    let clock = PacingTestClock(Self.fixedDate)
+    let transport = PacingTestTransport(clock: clock, steps: [
+      MeetingWebhookTransportResponse(statusCode: 429, retryAfter: "120")
+    ])
+    let service = MeetingWebhookDeliveryService(
+      transport: transport,
+      // The backoff wait is cancelled at once, as when the endpoint is edited.
+      sleeper: { seconds in
+        if seconds == 120 { throw CancellationError() }
+        clock.sleep(seconds)
+      },
+      clock: { clock.now },
+      jitter: { 0 }
+    )
+    let endpoint = Self.splitEndpoint(partDelay: 7, noteDelay: 30)
+    let first = await service.deliverParts(Self.jobs(1, endpoint: endpoint))
+    #expect(first.first?.lastError == MeetingWebhookDeliveryService.cancelledMessage)
+    clock.advance(50)
+    _ = await service.deliverParts(Self.jobs(1, endpoint: endpoint))
+    #expect(clock.sleeps == [70])
+  }
+
   @Test func unsplitSendsKeepTheOriginalBackoffAndNoPacing() async {
     let clock = PacingTestClock(Self.fixedDate)
     let transport = PacingTestTransport(clock: clock, steps: [
@@ -602,6 +677,61 @@ struct MeetingWebhookPacingTests {
       center.deleteEndpoint(first.id)
       center.deleteEndpoint(second.id)
     }
+  }
+
+  @MainActor
+  @Test func turningSplittingOnWhileAnUnsplitPostIsInFlightNeverOverlaps() async throws {
+    let gate = BackoffGate()
+    let transport = PacingTestTransport(gate: gate)
+    let (center, store) = try Self.center(transport: transport)
+    var endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+    try store.upsert(endpoint, signingSecret: nil, headers: [:])
+    center.reloadEndpoints()
+    #expect(center.send(Self.longSession("Unsplit"), event: .noteCompleted) == 1)
+    let unsplitOnTheWire = await Self.waitUntil { transport.requests.count == 1 }
+    #expect(unsplitOnTheWire)
+
+    endpoint.splitIntoParts = true
+    #expect(center.saveEndpoint(endpoint, signingSecret: nil, headers: nil) == nil)
+    let split = Self.longSession("Split")
+    #expect(center.send(split, event: .noteCompleted) == 1)
+    let waiting = try #require(center.latestRecords(forNote: split.id).first)
+    #expect(waiting.state == .queued)
+    #expect(MeetingWebhookStatusFormatter.text(for: waiting)
+      == "Queued for Grok Bot (behind 1 note)")
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    #expect(transport.requests.count == 1)
+
+    gate.open()
+    let done = await Self.waitUntil {
+      center.deliveries.allSatisfy { $0.state == .delivered }
+    }
+    #expect(done)
+    #expect(transport.peakInFlight(host: "example.com") == 1)
+    let titles = transport.requests.compactMap {
+      ($0.body["note"] as? [String: Any])?["title"] as? String
+    }
+    #expect(titles.first == "Unsplit" && titles.dropFirst().allSatisfy { $0 == "Split" })
+    #expect(titles.count > 2)
+    center.deleteEndpoint(endpoint.id)
+  }
+
+  @MainActor
+  @Test func unsplitSendsStillRunAlongsideEachOther() async throws {
+    let transport = PacingTestTransport(holdNanoseconds: 30_000_000)
+    let (center, store) = try Self.center(transport: transport)
+    let endpoint = MeetingWebhookEndpoint(name: "Bot", url: "https://example.com/hook")
+    try store.upsert(endpoint, signingSecret: nil, headers: [:])
+    center.reloadEndpoints()
+    #expect(center.send(Self.longSession("One"), event: .noteCompleted) == 1)
+    #expect(center.send(Self.longSession("Two"), event: .noteCompleted) == 1)
+    #expect(center.deliveries.allSatisfy { $0.state != .queued })
+    let done = await Self.waitUntil {
+      center.deliveries.count == 2 && center.deliveries.allSatisfy { $0.state == .delivered }
+    }
+    #expect(done)
+    #expect(transport.peakInFlight(host: "example.com") == 2)
+    center.deleteEndpoint(endpoint.id)
   }
 
   @MainActor

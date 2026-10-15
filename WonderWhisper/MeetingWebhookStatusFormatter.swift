@@ -43,6 +43,9 @@ enum MeetingWebhookStatusFormatter {
   /// later part waiting out the delay between parts "Sending Grok Bot part 3 of 5 (next in 7s)".
   private static func queuedText(for record: MeetingWebhookDeliveryRecord, now: Date) -> String {
     let name = record.endpointName
+    if record.isRateLimitWait == true, let until = record.nextAttemptAt {
+      return "Waiting for \(name) rate limit (\(shortDuration(until: until, now: now)))"
+    }
     if let behind = record.queuedBehind, behind > 0 {
       return "Queued for \(name) (behind \(behind) \(behind == 1 ? "note" : "notes"))"
     }
@@ -52,6 +55,12 @@ enum MeetingWebhookStatusFormatter {
       return "Sending \(name) part \(index) of \(total)\(wait)"
     }
     return "Queued for \(name)\(wait)"
+  }
+
+  /// "45s" under a minute, else whole minutes rounded up ("4m").
+  private static func shortDuration(until date: Date, now: Date) -> String {
+    let remaining = seconds(until: date, now: now)
+    return remaining < 60 ? "\(remaining)s" : "\((remaining + 59) / 60)m"
   }
 
   private static func seconds(until date: Date, now: Date) -> Int {

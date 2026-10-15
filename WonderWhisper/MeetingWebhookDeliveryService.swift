@@ -19,6 +19,9 @@ actor MeetingWebhookDeliveryService {
   private let logger = Logger(subsystem: AppConfig.bundleIdentifier, category: "Webhooks")
   /// When the last request to each endpoint finished (any outcome), for pacing.
   private var lastRequestEnded: [UUID: Date] = [:]
+  /// Paced sends only: when the receiver's rate limit (429/503) on each endpoint ends, from
+  /// its `Retry-After` or the rate-limit backoff that would have applied next.
+  private var rateLimitedUntil: [UUID: Date] = [:]
 
   init(
     transport: MeetingWebhookTransport = MeetingWebhookURLSessionTransport(),
@@ -99,15 +102,22 @@ actor MeetingWebhookDeliveryService {
         record.lastError = message
       }
 
-      guard record.attempts < maximumAttempts else {
-        return await finish(&record, state: .failed, error: record.lastError, onUpdate: onUpdate)
-      }
       let delay = MeetingWebhookRetryPolicy.delay(
         afterAttempt: record.attempts,
         retryAfter: retryAfter,
         jitter: jitter(),
         rateLimited: rateLimited
       )
+      if rateLimited {
+        // The receiver's cooldown outlives this send: if it gives up (or is cancelled), the
+        // next paced send to the endpoint still waits it out.
+        let until = clock().addingTimeInterval(delay)
+        let endpointID = job.endpoint.id
+        rateLimitedUntil[endpointID] = max(rateLimitedUntil[endpointID] ?? until, until)
+      }
+      guard record.attempts < maximumAttempts else {
+        return await finish(&record, state: .failed, error: record.lastError, onUpdate: onUpdate)
+      }
       record.state = .retrying
       record.updatedAt = clock()
       record.nextAttemptAt = record.updatedAt.addingTimeInterval(delay)
@@ -167,31 +177,42 @@ actor MeetingWebhookDeliveryService {
     return records
   }
 
-  /// Waits until `gap` seconds have passed since the last request to the job's endpoint,
-  /// reporting the job as queued until then. False when the wait was cancelled.
+  /// Waits until `gap` seconds have passed since the last request to the job's endpoint and
+  /// any rate-limit cooldown on it has ended, reporting the job as queued until then. False
+  /// when the wait was cancelled.
   private func waitForTurn(
     _ job: MeetingWebhookDeliveryJob,
     gap: TimeInterval,
     onUpdate: UpdateHandler
   ) async -> Bool {
-    guard gap > 0, let last = lastRequestEnded[job.endpoint.id] else { return true }
+    let endpointID = job.endpoint.id
     let now = clock()
-    let wait = gap - now.timeIntervalSince(last)
-    guard wait > 0 else { return true }
+    let afterGap = gap > 0 ? lastRequestEnded[endpointID]?.addingTimeInterval(gap) : nil
+    let cooldown = rateLimitedUntil[endpointID]
+    let notBefore = [afterGap, cooldown].compactMap { $0 }.max()
+    guard let notBefore, notBefore > now else { return true }
     var queued = MeetingWebhookDeliveryRecord(
       job: job,
       state: .queued,
       maximumAttempts: maximumAttempts,
       at: now
     )
-    queued.nextAttemptAt = now.addingTimeInterval(wait)
+    queued.nextAttemptAt = notBefore
+    if let cooldown, cooldown >= notBefore {
+      queued.isRateLimitWait = true
+    }
     await onUpdate(queued)
     do {
-      try await sleeper(wait)
+      try await sleeper(notBefore.timeIntervalSince(now))
       return true
     } catch {
       return false
     }
+  }
+
+  /// When the rate-limit cooldown on `endpointID` ends, if one was recorded.
+  func rateLimitCooldown(for endpointID: UUID) -> Date? {
+    rateLimitedUntil[endpointID]
   }
 
   /// The time the last request to `endpointID` finished, if any (for tests and status).

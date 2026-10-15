@@ -153,7 +153,12 @@ and synthesizes its own audio with `say`.
   including tests, shown as "Queued for X (behind N notes)"), `partDelaySeconds` after each
   delivered part, `noteDelaySeconds` between the last request of one send and the first of the
   next, and 429/503 back off by `Retry-After` or else 30s, 60s, 120s, 240s while later parts and
-  sends wait. Unsplit endpoints are not queued or paced and keep the original backoff. Parts
+  sends wait; that cooldown outlives a send that gives up, so the next send waits until
+  max(note gap, the last `Retry-After` or the backoff that would have applied), shown as
+  "Waiting for X rate limit (4m)". Unsplit sends are not paced, keep the original backoff and
+  still run alongside each other; a split send also waits for unsplit sends still running to
+  that endpoint (and an unsplit send for queued split work), so toggling splitting never
+  overlaps requests. Parts
   are retried on their own and logged as their own records ("part 2 of 3"); a part that fails
   for good leaves the rest recorded as "Skipped: part N failed"; a limit too small for the
   metadata fails the send without sending. "Send to Webhook" sends every part again with a new
