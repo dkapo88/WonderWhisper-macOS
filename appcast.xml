@@ -5,6 +5,22 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-15</title>
+      <pubDate>Thu, 15 Oct 2026 10:27:44 +0000</pubDate>
+      <sparkle:version>2026101500</sparkle:version>
+      <sparkle:shortVersionString>2026-10-15</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Paced split webhooks:** Endpoints with "Split into multiple webhooks" on now send one request at a time, with a delay between parts (default 7 seconds) and between notes (default 30 seconds). Rate limits (HTTP 429 or 503) are honoured, including the receiver's Retry-After.</li>
+<li>**End-of-payload marker:** Every split part ends with "END-OF-PAYLOAD part N of M", so a receiver can tell a complete part from a truncated one.</li>
+<li>**Fuller parts:** Split parts are packed closer to the max body size, so long notes need fewer requests.</li>
+<li>**Resend missing parts:** Resend only the parts that did not arrive, or pick specific parts, for any finished meeting.</li>
+<li>**Clearer duration:** Webhooks now include recordedSeconds (time actually recorded) and elapsedSeconds (start to end).</li>
+<li>**Attendees:** Add attendees to a meeting; they are included in its webhook and exported note.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-15/WonderWhisper-2026-10-15.dmg" sparkle:edSignature="JWrcOTnRzYmKZrCbpf9Fc4WrCI78Bn4HSdKRs9FYOtTvbq5/Ww2XJUE6EM03whZ+aqH/oVg/Ob538ZXZQY26Dw==" length="25796270" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-14.1</title>
       <pubDate>Wed, 14 Oct 2026 14:52:49 +0000</pubDate>
       <sparkle:version>2026101401</sparkle:version>
