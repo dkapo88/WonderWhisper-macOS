@@ -254,6 +254,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-15: Released 2026-10-15 with paced split webhooks, end marker, partial resend, duration fields and attendees.
 - 2026-10-15: Meeting webhooks: split parts end with `END-OF-PAYLOAD part N of M` (and
   `part.endMarker`), fill to about 85 to 100 percent of the max, and are paced per endpoint
   (one request at a time, 7s between parts, 30s between notes, 429/503 back off from 30s);
