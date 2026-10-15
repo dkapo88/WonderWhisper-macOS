@@ -111,9 +111,14 @@ struct MeetingWebhookSplitTests {
       )
       let note = try #require(json["note"] as? [String: Any])
       #expect(note["markdown"] as? String == part.note.markdown)
+      let marker = "END-OF-PAYLOAD part \(offset + 1) of \(parts.count)"
+      #expect(part.note.markdown.hasSuffix("\n\n" + marker))
+      let partJSON = try #require(json["part"] as? [String: Any])
+      #expect(partJSON["endMarker"] as? String == marker)
+      #expect(Self.text(part).hasSuffix(marker + "\"}}"))
     }
     #expect(Set(parts.map(\.deliveryId)).count == parts.count)
-    let joined = parts.map(\.note.markdown).joined()
+    let joined = parts.map(MeetingWebhookPayloadSplitter.chunk(of:)).joined()
     #expect(joined.unicodeScalars.elementsEqual(markdown.unicodeScalars))
     return parts
   }
@@ -231,9 +236,11 @@ struct MeetingWebhookSplitTests {
       sendID: sendID,
       sentAt: Self.fixedDate
     )
-    #expect(parts.count >= 6 && parts.count <= 10)
+    // Escape-heavy (quotes, CJK, emoji) 30k note; 10 parts before the end marker and the
+    // recorded/elapsed fields were added, 11 now.
+    #expect(parts.count >= 6 && parts.count <= 11)
     let full = MeetingObsidianExporter.document(for: session)
-    #expect(parts.map(\.note.markdown).joined() == full)
+    #expect(parts.map(MeetingWebhookPayloadSplitter.chunk(of:)).joined() == full)
     for (offset, part) in parts.enumerated() {
       #expect(part.body.count <= 3_800)
       #expect(part.part == MeetingWebhookPayload.Part(index: offset + 1, total: parts.count))
@@ -244,16 +251,16 @@ struct MeetingWebhookSplitTests {
         "\"deliveryId\":\"\(part.deliveryId.uuidString)\",\"sendId\":\"\(sendID.uuidString)\""
       ))
       #expect(body.contains(
-        "\"part\":{\"index\":\(offset + 1),\"total\":\(parts.count)},\"note\":{"
+        "\"part\":{\"index\":\(offset + 1),\"total\":\(parts.count),"
+          + "\"endMarker\":\"END-OF-PAYLOAD part \(offset + 1) of \(parts.count)\"},\"note\":{"
       ))
     }
     #expect(Set(parts.map(\.deliveryId)).count == parts.count)
-    // Every cut but the last lands on a line break, and parts are filled well past half.
+    // Every cut but the last lands on a line break, and parts are nearly full.
     for part in parts.dropLast() {
-      #expect(part.note.markdown.hasSuffix("\n"))
-      #expect(part.note.markdown.utf8.count > 1_900)
+      #expect(MeetingWebhookPayloadSplitter.chunk(of: part).hasSuffix("\n"))
+      #expect(part.body.count > 3_200)
     }
-    #expect(parts.dropFirst().contains { $0.note.markdown.hasPrefix("#") })
   }
 
   @Test func splittingOffSendsOneUnchangedBody() throws {

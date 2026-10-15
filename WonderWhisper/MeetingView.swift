@@ -154,6 +154,7 @@ struct MeetingView: View {
           ? coordinator.liveTranscriptPreviews
           : [:],
         onTitleChange: { coordinator.updateTitle($0, for: session.id) },
+        onAttendeesChange: { coordinator.updateAttendees($0, for: session.id) },
         canResume: coordinator.canResumeMeeting(session),
         onResume: { Task { await coordinator.resumeMeeting(session) } },
         isGeneratingNotes: coordinator.noteGenerationSessionIDs.contains(session.id),
@@ -167,7 +168,15 @@ struct MeetingView: View {
         canSendToWebhooks: coordinator.canSendToWebhooks(session),
         onSendToWebhook: { coordinator.sendToWebhooks(session, endpointID: $0) },
         webhookRecords: coordinator.webhooks.latestRecords(forNote: session.id),
-        onRetryWebhook: { coordinator.retryWebhookDelivery($0) }
+        onRetryWebhook: { coordinator.retryWebhookDelivery($0) },
+        canResendWebhookParts: { coordinator.canResendWebhookParts(session, endpointID: $0) },
+        webhookPartTotal: {
+          coordinator.webhooks.resumableSend(noteID: session.id, endpointID: $0)?.total
+        },
+        onResendMissingParts: {
+          coordinator.resendWebhookParts(session, endpointID: $0, selection: .missing)
+        },
+        onResendParts: { coordinator.resendWebhookParts(session, endpointID: $0, partsText: $1) }
       )
     } else {
       ContentUnavailableView(
@@ -209,6 +218,7 @@ private struct MeetingDetailView: View {
   let isActive: Bool
   let livePreviews: [MeetingAudioSource: String]
   let onTitleChange: (String) -> Void
+  let onAttendeesChange: (String) -> Void
   let canResume: Bool
   let onResume: () -> Void
   let isGeneratingNotes: Bool
@@ -223,8 +233,16 @@ private struct MeetingDetailView: View {
   let onSendToWebhook: (UUID?) -> Void
   let webhookRecords: [MeetingWebhookDeliveryRecord]
   let onRetryWebhook: (MeetingWebhookDeliveryRecord) -> Void
+  let canResendWebhookParts: (UUID) -> Bool
+  let webhookPartTotal: (UUID) -> Int?
+  let onResendMissingParts: (UUID) -> Void
+  let onResendParts: (UUID, String) -> Void
   @State private var titleDraft = ""
   @FocusState private var titleIsFocused: Bool
+  @State private var attendeesDraft = ""
+  @FocusState private var attendeesAreFocused: Bool
+  @State private var partsPromptEndpoint: MeetingWebhookEndpoint?
+  @State private var partsDraft = ""
 
   var body: some View {
     let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
@@ -315,6 +333,38 @@ private struct MeetingDetailView: View {
         titleDraft = title
       }
     }
+    .onChange(of: session.id, initial: true) { _, _ in
+      attendeesDraft = MeetingAttendees.text(session.attendees)
+    }
+    .onChange(of: session.attendees) { _, attendees in
+      if !attendeesAreFocused {
+        attendeesDraft = MeetingAttendees.text(attendees)
+      }
+    }
+    .alert(
+      "Resend parts to \(partsPromptEndpoint?.displayName ?? "webhook")",
+      isPresented: Binding(
+        get: { partsPromptEndpoint != nil },
+        set: { if !$0 { partsPromptEndpoint = nil } }
+      )
+    ) {
+      TextField("Parts", text: $partsDraft, prompt: Text("2,3"))
+      Button("Resend") {
+        if let endpoint = partsPromptEndpoint {
+          onResendParts(endpoint.id, partsDraft)
+        }
+        partsPromptEndpoint = nil
+      }
+      Button("Cancel", role: .cancel) { partsPromptEndpoint = nil }
+    } message: {
+      Text(partsPromptMessage)
+    }
+  }
+
+  private var partsPromptMessage: String {
+    let total = partsPromptEndpoint.flatMap { webhookPartTotal($0.id) }
+    let range = total.map { " The last split send had \($0) parts." } ?? ""
+    return "Part numbers to send again with the same send ID, for example 3 or 2,3.\(range)"
   }
 
   private var header: some View {
@@ -358,6 +408,8 @@ private struct MeetingDetailView: View {
       .font(.callout)
       .foregroundStyle(.secondary)
 
+      attendeesField
+
       if let error = session.errorMessage {
         StatusBadge(.warning, error)
           .font(.footnote)
@@ -378,6 +430,36 @@ private struct MeetingDetailView: View {
           commitTitle()
         }
       }
+  }
+
+  private var attendeesField: some View {
+    HStack(spacing: DesignTokens.Spacing.xSmall) {
+      Image(systemName: "person.2")
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+      TextField(
+        "Attendees",
+        text: $attendeesDraft,
+        prompt: Text("Attendees, comma separated")
+      )
+      .textFieldStyle(.plain)
+      .focused($attendeesAreFocused)
+      .onSubmit(commitAttendees)
+      .onChange(of: attendeesAreFocused) { wasFocused, isFocused in
+        if wasFocused && !isFocused {
+          commitAttendees()
+        }
+      }
+      .accessibilityLabel("Attendees")
+    }
+    .font(.callout)
+  }
+
+  private func commitAttendees() {
+    let parsed = MeetingAttendees.parse(attendeesDraft)
+    attendeesDraft = MeetingAttendees.text(parsed)
+    guard parsed != session.attendees else { return }
+    onAttendeesChange(attendeesDraft)
   }
 
   private var showsTerminalActions: Bool {
@@ -446,6 +528,9 @@ private struct MeetingDetailView: View {
         action: { onSendToWebhook(only.id) }
       )
       .disabled(!canSendToWebhooks)
+      if only.splitIntoParts {
+        resendPartsButtons(for: only, suffix: " to \(only.displayName)")
+      }
     } else {
       Menu {
         Button("All Enabled Webhooks") { onSendToWebhook(nil) }
@@ -453,11 +538,37 @@ private struct MeetingDetailView: View {
         ForEach(webhookEndpoints) { endpoint in
           Button(endpoint.displayName) { onSendToWebhook(endpoint.id) }
         }
+        ForEach(webhookEndpoints.filter(\.splitIntoParts)) { endpoint in
+          Section(endpoint.displayName) {
+            resendPartsButtons(for: endpoint, suffix: "")
+          }
+        }
       } label: {
         Label("Send to Webhook", systemImage: "paperplane")
       }
       .disabled(!canSendToWebhooks)
     }
+  }
+
+  /// "Resend Missing Parts" and "Resend Parts..." for a split endpoint: they act on the
+  /// note's newest split send to it.
+  @ViewBuilder
+  private func resendPartsButtons(
+    for endpoint: MeetingWebhookEndpoint,
+    suffix: String
+  ) -> some View {
+    let enabled = canResendWebhookParts(endpoint.id)
+    Button(
+      "Resend Missing Parts\(suffix)",
+      systemImage: "arrow.clockwise",
+      action: { onResendMissingParts(endpoint.id) }
+    )
+    .disabled(!enabled)
+    Button("Resend Parts\(suffix)…", systemImage: "number") {
+      partsDraft = ""
+      partsPromptEndpoint = endpoint
+    }
+    .disabled(!enabled)
   }
 
   private func commitTitle() {

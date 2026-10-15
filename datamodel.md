@@ -250,6 +250,7 @@ erDiagram
         String[] audioFiles
         String exportedMarkdownPath "optional"
         String errorMessage "optional"
+        String[] attendees "typed by the user, empty when absent"
     }
 
     MeetingTranscriptToken {
@@ -273,7 +274,11 @@ first normalizes variable callbacks into continuous 100 ms sample-clock frames, 
 sources and reduces the system-audio reference from the microphone with an Accelerate-backed
 normalized adaptive filter, mixes the cleaned microphone with system audio, and opens one real-time stream.
 The fallback `soniox-separate` mode opens one stream per raw source. The optional
-`transcriptionEngine` manifest field keeps older meeting manifests decodable. Manual meetings capture all Mac system audio;
+`transcriptionEngine` manifest field keeps older meeting manifests decodable. `attendees`
+(comma separated in the meeting detail view, trimmed, case-insensitive duplicates dropped)
+decodes as empty from older manifests. `recordedDuration` sums the capture runs only (pauses
+and the gap before a Resume excluded), so it can be much shorter than `endedAt - startedAt`.
+Manual meetings capture all Mac system audio;
 automatically detected meetings restrict system capture to the detected application scope.
 Persisted `MeetingTriggerRule` values keep Slack and browser rules on strict Huddle/Google Meet
 evidence; explicitly configured standalone applications may start from that scoped application's

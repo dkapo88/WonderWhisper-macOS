@@ -24,6 +24,10 @@ struct MeetingWebhookDeliveryJob: Sendable {
   let signingSecret: String?
   let customHeaders: [String: String]
   let userAgent: String
+  /// Spacing for split sends; nil sends exactly as before (no gaps, the normal backoff).
+  let pacing: MeetingWebhookPacing?
+  /// How a split send cut its note; copied onto the part's record for partial resends.
+  let splitInfo: MeetingWebhookSplitInfo?
 
   init(
     deliveryID: UUID,
@@ -40,7 +44,9 @@ struct MeetingWebhookDeliveryJob: Sendable {
     body: Data,
     signingSecret: String?,
     customHeaders: [String: String],
-    userAgent: String
+    userAgent: String,
+    pacing: MeetingWebhookPacing? = nil,
+    splitInfo: MeetingWebhookSplitInfo? = nil
   ) {
     self.deliveryID = deliveryID
     self.sendID = sendID ?? deliveryID
@@ -57,5 +63,7 @@ struct MeetingWebhookDeliveryJob: Sendable {
     self.signingSecret = signingSecret
     self.customHeaders = customHeaders
     self.userAgent = userAgent
+    self.pacing = pacing
+    self.splitInfo = splitInfo
   }
 }

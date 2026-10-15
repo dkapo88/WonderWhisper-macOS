@@ -429,8 +429,9 @@ struct MeetingWebhookStorageTests {
   @MainActor
   @Test func anOlderSendResumingAfterANewerFailureDoesNotHideIt() async throws {
     try await Self.withScratchEndpoints {
-      // Old send: part 1 gets 500 and waits at the gate. Resend: part 1 gets 400 and fails.
-      // Then the old send resumes and delivers every part.
+      // Old send gets 500 and waits at the gate. Resend gets 400 and fails. Then the old send
+      // resumes and is delivered. Unsplit: split sends to one endpoint are queued one at a
+      // time, so only unsplit sends can overlap like this.
       let transport = FakeMeetingWebhookTransport([.status(500), .status(400)])
       let gate = BackoffGate()
       let (center, store) = Self.scratchCenter(
@@ -438,12 +439,7 @@ struct MeetingWebhookStorageTests {
         transport: transport,
         sleeper: { _ in try await gate.wait() }
       )
-      let endpoint = MeetingWebhookEndpoint(
-        name: "Bot",
-        url: "https://example.com/hook",
-        splitIntoParts: true,
-        maxBodyCharacters: 3_800
-      )
+      let endpoint = MeetingWebhookEndpoint(name: "Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: nil, headers: [:])
       center.reloadEndpoints()
       let session = Self.longFinishedSession()
@@ -469,7 +465,7 @@ struct MeetingWebhookStorageTests {
       }
       #expect(oldDelivered)
 
-      let expected = "Bot failed at part 1 of "
+      let expected = "Bot failed: HTTP 400"
       let noteStatus = try #require(center.latestRecords(forNote: session.id).first)
       #expect(noteStatus.event == .noteResent)
       #expect(noteStatus.state == .failed)
@@ -572,12 +568,8 @@ struct MeetingWebhookStorageTests {
   @MainActor
   @Test func sendsStartedBeforeTheLogLoadsRankAboveAPersistedSendFromTheFuture() async throws {
     try await Self.withScratchEndpoints {
-      let endpoint = MeetingWebhookEndpoint(
-        name: "Bot",
-        url: "https://example.com/hook",
-        splitIntoParts: true,
-        maxBodyCharacters: 3_800
-      )
+      // Unsplit, so the two new sends overlap (split sends to one endpoint are queued).
+      let endpoint = MeetingWebhookEndpoint(name: "Bot", url: "https://example.com/hook")
       let session = Self.longFinishedSession()
       // A delivered send persisted with a key an hour ahead: the clock has since gone back.
       let future = Date().addingTimeInterval(3_600)
@@ -631,7 +623,7 @@ struct MeetingWebhookStorageTests {
       #expect(noteStatus.event == .noteResent)
       #expect(noteStatus.state == .failed)
       let statusText = MeetingWebhookStatusFormatter.text(for: noteStatus)
-      #expect(statusText.hasPrefix("Bot failed at part 1 of "))
+      #expect(statusText.hasPrefix("Bot failed: HTTP 400"))
       #expect(center.latestRecord(forEndpoint: endpoint.id)?.id == noteStatus.id)
       let olderOrder = center.deliveries
         .first { $0.event == .noteCompleted && $0.sendID != persistedSend }?.sendOrder ?? 0

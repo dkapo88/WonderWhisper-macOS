@@ -16,10 +16,23 @@ final class MeetingWebhookCenter: ObservableObject {
   private let deliveryService: MeetingWebhookDeliveryService
   private let log: MeetingWebhookDeliveryLog
   private let payloadBuilder: MeetingWebhookPayloadBuilder
-  /// Running sends, keyed by send ID (one task delivers all parts of a send in order).
+  /// Running or queued sends, keyed by run ID (one task delivers the parts of one send, or of
+  /// one partial resend, in order). A partial resend reuses its send's ID, so runs have their
+  /// own IDs; a normal send's run ID is its send ID.
   private var tasks: [UUID: (endpointID: UUID, task: Task<Void, Never>)] = [:]
-  /// Why a send was cancelled, keyed by send ID, so its final records say so.
+  /// Why a run was cancelled, keyed by run ID, so its final records say so.
   private var cancellationReasons: [UUID: String] = [:]
+  /// Paced (split) runs per endpoint, in the order they will send: the first is running.
+  private var endpointQueues: [UUID: [UUID]] = [:]
+  /// The last paced run enqueued per endpoint; the next one waits for it.
+  private var endpointTails: [UUID: Task<Void, Never>] = [:]
+  /// Unpaced (unsplit) runs per endpoint that are still running. A paced run waits for them,
+  /// so turning splitting on never lets a paced request overlap an unsplit one.
+  private var unpacedRuns: [UUID: Set<UUID>] = [:]
+  /// The delivery IDs of each waiting run, to keep its queued records' positions current.
+  private var runDeliveryIDs: [UUID: [UUID]] = [:]
+  /// The runs each waiting run is queued behind ("behind N notes" counts those still running).
+  private var runAhead: [UUID: Set<UUID>] = [:]
   private var logGeneration = 0
   /// The last send ordering key issued; see `nextSendOrder(at:)`. Seeded in `init` from the
   /// persisted log, before any send can be enqueued, so a key issued before the async log load
@@ -138,9 +151,11 @@ final class MeetingWebhookCenter: ObservableObject {
     reloadEndpoints()
   }
 
+  /// Cancels every running and queued run to the endpoint; queued ones end as cancelled
+  /// without sending.
   private func cancelDeliveries(for endpointID: UUID, reason: String) {
-    for (sendID, entry) in tasks where entry.endpointID == endpointID {
-      cancellationReasons[sendID] = reason
+    for (runID, entry) in tasks where entry.endpointID == endpointID {
+      cancellationReasons[runID] = reason
       entry.task.cancel()
     }
   }
@@ -173,6 +188,147 @@ final class MeetingWebhookCenter: ObservableObject {
     enqueue(MeetingWebhookPayloadBuilder.sampleSession(), event: .test, endpoint: endpoint)
   }
 
+  // MARK: - Partial resend
+
+  /// Which parts of the newest split send a partial resend sends again.
+  enum PartSelection: Equatable, Sendable {
+    /// Every part whose newest record is not delivered (failed, skipped, interrupted).
+    case missing
+    /// These part numbers, delivered or not.
+    case parts([Int])
+  }
+
+  enum ResendOutcome: Equatable, Sendable {
+    case started(parts: [Int])
+    case refused(String)
+  }
+
+  /// The newest split send of the note to the endpoint, if any.
+  func resumableSend(noteID: UUID, endpointID: UUID) -> MeetingWebhookResumableSend? {
+    MeetingWebhookResumableSend.latest(in: deliveries, noteID: noteID, endpointID: endpointID)
+  }
+
+  /// Sends some parts of the newest split send of `session` to the endpoint again, reusing its
+  /// `sendId`, part numbering and total (each part gets a new `deliveryId`), so the receiver
+  /// can complete the original set. Refuses, without sending anything, when the note or the
+  /// endpoint's split settings changed since that send, so the parts would not match.
+  func resendParts(
+    _ session: MeetingSession,
+    endpointID: UUID,
+    selection: PartSelection
+  ) -> ResendOutcome {
+    guard let endpoint = endpoint(withID: endpointID) else {
+      return .refused("That webhook no longer exists.")
+    }
+    let name = endpoint.displayName
+    guard let send = resumableSend(noteID: session.id, endpointID: endpointID) else {
+      return .refused("This note has no split send to \(name) to resume; use Send to Webhook.")
+    }
+    guard !send.isInFlight else {
+      return .refused("The last send to \(name) is still in progress.")
+    }
+    guard let reference = send.splitRecord,
+          let fingerprint = reference.contentFingerprint,
+          let content = reference.content,
+          let maxBody = reference.maxBodyCharacters,
+          let chunkBudget = reference.chunkBudget else {
+      return .refused("That send was made by an older version of WonderWhisper; use Send to "
+        + "Webhook to send all parts again.")
+    }
+    let indexes: [Int]
+    switch selection {
+    case .missing:
+      indexes = send.missingIndexes
+      guard !indexes.isEmpty else {
+        return .refused("Every part reached \(name). Use Resend Parts to send specific parts "
+          + "again.")
+      }
+    case let .parts(requested):
+      indexes = Array(Set(requested)).sorted()
+      guard !indexes.isEmpty, indexes.allSatisfy({ (1...send.total).contains($0) }) else {
+        return .refused("Part numbers must be between 1 and \(send.total).")
+      }
+    }
+    let changed = MeetingWebhookPayloadSplitter.ResendError.noteChanged.message
+    guard endpoint.splitIntoParts,
+          endpoint.content == content,
+          MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters) == maxBody else {
+      return .refused("The webhook's split settings changed since the note was sent; use Send "
+        + "to Webhook to send all parts again.")
+    }
+    guard let url = MeetingWebhookURLValidator.validate(endpoint.url).url else {
+      return .refused("Invalid URL")
+    }
+    let now = Date()
+    let base = payloadBuilder.payload(
+      for: session,
+      event: .noteResent,
+      deliveryID: UUID(),
+      sentAt: now,
+      content: content
+    )
+    guard MeetingWebhookFingerprint.of(base.note.markdown) == fingerprint else {
+      return .refused(changed)
+    }
+    let rebuilt: (parts: [MeetingWebhookPayload], chunks: [String])
+    do {
+      rebuilt = try MeetingWebhookPayloadSplitter.resend(
+        of: base,
+        sendID: send.sendID,
+        chunkBudget: chunkBudget,
+        total: send.total,
+        indexes: indexes,
+        maxBytes: maxBody
+      )
+    } catch let error as MeetingWebhookPayloadSplitter.ResendError {
+      return .refused(error.message)
+    } catch {
+      return .refused(changed)
+    }
+    let partFingerprints = rebuilt.chunks.map(MeetingWebhookFingerprint.of)
+    for (index, record) in send.partRecords {
+      guard let stored = record.partFingerprint else { continue }
+      guard partFingerprints.indices.contains(index - 1),
+            partFingerprints[index - 1] == stored else {
+        return .refused(changed)
+      }
+    }
+    guard let credentials = credentials(for: endpoint) else {
+      return .refused(MeetingWebhookCredentialsError.userMessage)
+    }
+    let info = MeetingWebhookSplitInfo(
+      contentFingerprint: fingerprint,
+      content: content,
+      maxBodyCharacters: maxBody,
+      chunkBudget: chunkBudget,
+      partFingerprints: partFingerprints
+    )
+    let sendOrder = nextSendOrder(at: now)
+    let jobs = rebuilt.parts.map { payload in
+      MeetingWebhookDeliveryJob(
+        deliveryID: payload.deliveryId,
+        sendID: send.sendID,
+        sendCreatedAt: now,
+        sendOrder: sendOrder,
+        partIndex: payload.part?.index ?? 1,
+        partTotal: send.total,
+        endpoint: endpoint,
+        url: url,
+        event: .noteResent,
+        noteID: session.id,
+        noteTitle: session.title,
+        body: MeetingWebhookPayloadBuilder.encode(payload),
+        signingSecret: credentials.secret,
+        customHeaders: credentials.headers,
+        userAgent: payloadBuilder.appInfo.userAgent,
+        pacing: endpoint.pacing,
+        splitInfo: info
+      )
+    }
+    start(jobs, runID: UUID(), endpointID: endpoint.id, at: now)
+    return .started(parts: indexes)
+  }
+
   /// The record describing the endpoint's newest send (for a split send, its current or
   /// failed part, or the last part once all were delivered).
   func latestRecord(forEndpoint id: UUID) -> MeetingWebhookDeliveryRecord? {
@@ -200,9 +356,9 @@ final class MeetingWebhookCenter: ObservableObject {
       failure("Invalid URL")
       return false
     }
-    let payloads: [MeetingWebhookPayload]
+    let plan: MeetingWebhookSendPlan
     do {
-      payloads = try payloadBuilder.payloads(
+      plan = try payloadBuilder.plan(
         for: session,
         event: event,
         endpoint: endpoint,
@@ -216,44 +372,100 @@ final class MeetingWebhookCenter: ObservableObject {
       failure("Could not build the payload")
       return false
     }
-    let signingSecret: String?
-    let customHeaders: [String: String]
-    do {
-      signingSecret = try store.signingSecret(for: endpoint.id)
-      customHeaders = try store.headers(for: endpoint.id)
-    } catch {
+    guard let credentials = credentials(for: endpoint) else {
       // Never send without the endpoint's auth headers or signature.
       failure(MeetingWebhookCredentialsError.userMessage)
       return false
     }
-    let jobs = payloads.enumerated().map { offset, payload in
+    let total = plan.payloads.count
+    let jobs = plan.payloads.enumerated().map { offset, payload in
       MeetingWebhookDeliveryJob(
         deliveryID: payload.deliveryId,
         sendID: sendID,
         sendCreatedAt: now,
         sendOrder: sendOrder,
-        partIndex: offset + 1,
-        partTotal: payloads.count,
+        partIndex: payload.part?.index ?? offset + 1,
+        partTotal: payload.part?.total ?? total,
         endpoint: endpoint,
         url: url,
         event: event,
         noteID: session.id,
         noteTitle: session.title,
         body: MeetingWebhookPayloadBuilder.encode(payload),
-        signingSecret: signingSecret,
-        customHeaders: customHeaders,
-        userAgent: payloadBuilder.appInfo.userAgent
+        signingSecret: credentials.secret,
+        customHeaders: credentials.headers,
+        userAgent: payloadBuilder.appInfo.userAgent,
+        pacing: endpoint.pacing,
+        splitInfo: plan.split
       )
     }
-    let service = deliveryService
-    let task = Task.detached(priority: .utility) { [weak self] in
-      let records = await service.deliverParts(jobs) { [weak self] record in
-        await self?.apply(record)
-      }
-      await self?.finish(sendID: sendID, records: records)
-    }
-    tasks[sendID] = (endpoint.id, task)
+    start(jobs, runID: sendID, endpointID: endpoint.id, at: now)
     return true
+  }
+
+  private func credentials(
+    for endpoint: MeetingWebhookEndpoint
+  ) -> (secret: String?, headers: [String: String])? {
+    do {
+      return (try store.signingSecret(for: endpoint.id), try store.headers(for: endpoint.id))
+    } catch {
+      return nil
+    }
+  }
+
+  /// Runs the jobs of one send (or partial resend) in the background. Paced jobs wait for
+  /// every earlier run to the endpoint that is still going (paced or not), so at most one
+  /// request is in flight per endpoint, and are shown as queued until their turn. Unpaced
+  /// jobs start at once and run alongside each other, as before; they only wait (shown as
+  /// queued) when paced work for the endpoint is queued or running, which happens only after
+  /// splitting was switched on or off with sends in flight.
+  private func start(
+    _ jobs: [MeetingWebhookDeliveryJob],
+    runID: UUID,
+    endpointID: UUID,
+    at now: Date
+  ) {
+    let service = deliveryService
+    let isPaced = jobs.first?.pacing != nil
+    let pacedQueue = endpointQueues[endpointID] ?? []
+    let pacedTail = endpointTails[endpointID]
+    let running = unpacedRuns[endpointID] ?? []
+    let unpacedTasks = isPaced ? running.compactMap { tasks[$0]?.task } : []
+    let ahead = Set(pacedQueue).union(isPaced ? running : [])
+    // Paced runs record every part as queued up front (so parts never reached after a quit
+    // show up as interrupted); unpaced runs only when they actually have to wait.
+    if isPaced || !ahead.isEmpty {
+      runAhead[runID] = ahead
+      runDeliveryIDs[runID] = jobs.map(\.deliveryID)
+      for job in jobs {
+        var queued = MeetingWebhookDeliveryRecord(
+          job: job,
+          state: .queued,
+          maximumAttempts: MeetingWebhookRetryPolicy.maximumAttempts,
+          at: now
+        )
+        queued.queuedBehind = ahead.isEmpty ? nil : ahead.count
+        apply(queued, runID: runID)
+      }
+    }
+    let task = Task.detached(priority: .utility) { [weak self] in
+      // Cancelling an endpoint cancels every run to it, so these waits end promptly too.
+      await pacedTail?.value
+      for earlier in unpacedTasks {
+        await earlier.value
+      }
+      let records = await service.deliverParts(jobs) { [weak self] record in
+        await self?.apply(record, runID: runID)
+      }
+      await self?.finish(runID: runID, endpointID: endpointID, records: records)
+    }
+    tasks[runID] = (endpointID, task)
+    if isPaced {
+      endpointQueues[endpointID, default: []].append(runID)
+      endpointTails[endpointID] = task
+    } else {
+      unpacedRuns[endpointID, default: []].insert(runID)
+    }
   }
 
   /// A send ordering key: the time in seconds since the reference date, bumped so every key
@@ -291,24 +503,40 @@ final class MeetingWebhookCenter: ObservableObject {
       sendCreatedAt: now,
       sendOrder: sendOrder
     )
-    apply(failed)
-    finish(sendID: sendID, records: [failed])
+    apply(failed, runID: sendID)
+    finish(runID: sendID, endpointID: endpoint.id, records: [failed])
   }
 
-  private func apply(_ incoming: MeetingWebhookDeliveryRecord) {
+  private func apply(_ incoming: MeetingWebhookDeliveryRecord, runID: UUID) {
     var record = incoming
-    if record.state == .failed, let reason = cancellationReasons[record.sendKey] {
+    if record.state == .failed, let reason = cancellationReasons[runID] {
       record.lastError = reason
     }
     deliveries = MeetingWebhookDeliveryLog.upserting(record, into: deliveries)
     persistLog()
   }
 
-  private func finish(sendID: UUID, records: [MeetingWebhookDeliveryRecord]) {
-    tasks.removeValue(forKey: sendID)
+  private func finish(runID: UUID, endpointID: UUID, records: [MeetingWebhookDeliveryRecord]) {
+    tasks.removeValue(forKey: runID)
+    runDeliveryIDs.removeValue(forKey: runID)
+    runAhead.removeValue(forKey: runID)
+    if var queue = endpointQueues[endpointID] {
+      queue.removeAll { $0 == runID }
+      if queue.isEmpty {
+        endpointQueues.removeValue(forKey: endpointID)
+        endpointTails.removeValue(forKey: endpointID)
+      } else {
+        endpointQueues[endpointID] = queue
+      }
+    }
+    if var running = unpacedRuns[endpointID] {
+      running.remove(runID)
+      unpacedRuns[endpointID] = running.isEmpty ? nil : running
+    }
+    refreshQueuePositions()
     // A send the user cancelled (endpoint removed, disabled or edited) is not an error to
     // surface.
-    let wasCancelledByUser = cancellationReasons.removeValue(forKey: sendID) != nil
+    let wasCancelledByUser = cancellationReasons.removeValue(forKey: runID) != nil
     guard let failed = records.first(where: { $0.state == .failed }),
           failed.event != .test,
           !wasCancelledByUser else { return }
@@ -320,6 +548,25 @@ final class MeetingWebhookCenter: ObservableObject {
     } else {
       onFinalFailure?("Webhook \(failed.endpointName) failed: \(reason)")
     }
+  }
+
+  /// Updates "behind N notes" on the queued records of waiting runs: the runs each one waits
+  /// for that are still going.
+  private func refreshQueuePositions() {
+    var changed = false
+    for (runID, ahead) in runAhead {
+      let remaining = ahead.filter { tasks[$0] != nil }
+      runAhead[runID] = remaining
+      let behind = remaining.isEmpty ? nil : remaining.count
+      for deliveryID in runDeliveryIDs[runID] ?? [] {
+        guard let index = deliveries.firstIndex(where: { $0.id == deliveryID }),
+              deliveries[index].state == .queued,
+              deliveries[index].queuedBehind != behind else { continue }
+        deliveries[index].queuedBehind = behind
+        changed = true
+      }
+    }
+    if changed { persistLog() }
   }
 
   private func persistLog() {

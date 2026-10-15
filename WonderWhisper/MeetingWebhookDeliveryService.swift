@@ -2,7 +2,9 @@ import Foundation
 import OSLog
 
 /// Delivers webhook jobs with retries and backoff. Each call is independent, so endpoints
-/// never wait on each other. Transport, clock, sleeper and jitter are injected for tests.
+/// never wait on each other. Paced (split) sends also wait between parts and between sends to
+/// the same endpoint; `MeetingWebhookCenter` runs them one at a time per endpoint. Transport,
+/// clock, sleeper and jitter are injected for tests.
 actor MeetingWebhookDeliveryService {
   typealias Sleeper = @Sendable (TimeInterval) async throws -> Void
   typealias Clock = @Sendable () -> Date
@@ -15,6 +17,11 @@ actor MeetingWebhookDeliveryService {
   private let jitter: Jitter
   private let maximumAttempts: Int
   private let logger = Logger(subsystem: AppConfig.bundleIdentifier, category: "Webhooks")
+  /// When the last request to each endpoint finished (any outcome), for pacing.
+  private var lastRequestEnded: [UUID: Date] = [:]
+  /// Paced sends only: when the receiver's rate limit (429/503) on each endpoint ends, from
+  /// its `Retry-After` or the rate-limit backoff that would have applied next.
+  private var rateLimitedUntil: [UUID: Date] = [:]
 
   init(
     transport: MeetingWebhookTransport = MeetingWebhookURLSessionTransport(),
@@ -38,26 +45,11 @@ actor MeetingWebhookDeliveryService {
     _ job: MeetingWebhookDeliveryJob,
     onUpdate: UpdateHandler = { _ in }
   ) async -> MeetingWebhookDeliveryRecord {
-    let createdAt = clock()
     var record = MeetingWebhookDeliveryRecord(
-      id: job.deliveryID,
-      endpointID: job.endpoint.id,
-      endpointName: job.endpoint.displayName,
-      noteID: job.noteID,
-      noteTitle: job.noteTitle,
-      event: job.event,
+      job: job,
       state: .sending,
-      attempts: 0,
       maximumAttempts: maximumAttempts,
-      lastStatusCode: nil,
-      lastError: nil,
-      createdAt: createdAt,
-      updatedAt: createdAt,
-      sendID: job.sendID,
-      sendCreatedAt: job.sendCreatedAt ?? createdAt,
-      sendOrder: job.sendOrder,
-      partIndex: job.partIndex,
-      partTotal: job.partTotal
+      at: clock()
     )
     await onUpdate(record)
 
@@ -68,10 +60,13 @@ actor MeetingWebhookDeliveryService {
         )
       }
       record.attempts += 1
+      record.nextAttemptAt = nil
       let request = MeetingWebhookRequestBuilder.request(for: job, at: clock())
       var retryAfter: TimeInterval?
+      var rateLimited = false
       do {
         let response = try await transport.send(request)
+        lastRequestEnded[job.endpoint.id] = clock()
         record.lastStatusCode = response.statusCode
         switch MeetingWebhookRetryPolicy.outcome(forStatus: response.statusCode) {
         case .delivered:
@@ -85,12 +80,15 @@ actor MeetingWebhookDeliveryService {
           )
         case .retryable:
           record.lastError = Self.statusMessage(response.statusCode)
+          rateLimited = job.pacing != nil
+            && MeetingWebhookRetryPolicy.isRateLimit(status: response.statusCode)
           retryAfter = MeetingWebhookRetryPolicy.retryAfterSeconds(
             response.retryAfter,
             now: clock()
           )
         }
       } catch {
+        lastRequestEnded[job.endpoint.id] = clock()
         record.lastStatusCode = nil
         if MeetingWebhookRetryPolicy.isCancellation(error) {
           return await finish(
@@ -104,16 +102,25 @@ actor MeetingWebhookDeliveryService {
         record.lastError = message
       }
 
-      guard record.attempts < maximumAttempts else {
-        return await finish(&record, state: .failed, error: record.lastError, onUpdate: onUpdate)
-      }
       let delay = MeetingWebhookRetryPolicy.delay(
         afterAttempt: record.attempts,
         retryAfter: retryAfter,
-        jitter: jitter()
+        jitter: jitter(),
+        rateLimited: rateLimited
       )
+      if rateLimited {
+        // The receiver's cooldown outlives this send: if it gives up (or is cancelled), the
+        // next paced send to the endpoint still waits it out.
+        let until = clock().addingTimeInterval(delay)
+        let endpointID = job.endpoint.id
+        rateLimitedUntil[endpointID] = max(rateLimitedUntil[endpointID] ?? until, until)
+      }
+      guard record.attempts < maximumAttempts else {
+        return await finish(&record, state: .failed, error: record.lastError, onUpdate: onUpdate)
+      }
       record.state = .retrying
       record.updatedAt = clock()
+      record.nextAttemptAt = record.updatedAt.addingTimeInterval(delay)
       let retryNote = "Webhook \(record.id.uuidString) attempt \(record.attempts) failed; "
         + "retrying in \(Int(delay))s"
       logger.log("\(retryNote, privacy: .public)")
@@ -134,6 +141,10 @@ actor MeetingWebhookDeliveryService {
   /// one was delivered. Each part retries on its own. When a part fails for good the rest are
   /// not sent and are recorded as failed with "Skipped: part N failed"; when the send is
   /// cancelled they are recorded as cancelled. Returns one record per part, in order.
+  ///
+  /// A paced send (`job.pacing`) first waits until `noteDelay` has passed since the last
+  /// request to the endpoint, and waits `partDelay` after each delivered part; while waiting,
+  /// the next part is reported as queued with `nextAttemptAt`.
   func deliverParts(
     _ jobs: [MeetingWebhookDeliveryJob],
     onUpdate: UpdateHandler = { _ in }
@@ -143,6 +154,15 @@ actor MeetingWebhookDeliveryService {
       if Task.isCancelled {
         let rest = jobs[offset...]
         return records + (await unsent(rest, reason: Self.cancelledMessage, onUpdate: onUpdate))
+      }
+      if let pacing = job.pacing {
+        let gap = offset == 0 ? pacing.noteDelay : pacing.partDelay
+        let waited = await waitForTurn(job, gap: gap, onUpdate: onUpdate)
+        if !waited || Task.isCancelled {
+          let rest = jobs[offset...]
+          return records
+            + (await unsent(rest, reason: Self.cancelledMessage, onUpdate: onUpdate))
+        }
       }
       let record = await deliver(job, onUpdate: onUpdate)
       records.append(record)
@@ -157,6 +177,49 @@ actor MeetingWebhookDeliveryService {
     return records
   }
 
+  /// Waits until `gap` seconds have passed since the last request to the job's endpoint and
+  /// any rate-limit cooldown on it has ended, reporting the job as queued until then. False
+  /// when the wait was cancelled.
+  private func waitForTurn(
+    _ job: MeetingWebhookDeliveryJob,
+    gap: TimeInterval,
+    onUpdate: UpdateHandler
+  ) async -> Bool {
+    let endpointID = job.endpoint.id
+    let now = clock()
+    let afterGap = gap > 0 ? lastRequestEnded[endpointID]?.addingTimeInterval(gap) : nil
+    let cooldown = rateLimitedUntil[endpointID]
+    let notBefore = [afterGap, cooldown].compactMap { $0 }.max()
+    guard let notBefore, notBefore > now else { return true }
+    var queued = MeetingWebhookDeliveryRecord(
+      job: job,
+      state: .queued,
+      maximumAttempts: maximumAttempts,
+      at: now
+    )
+    queued.nextAttemptAt = notBefore
+    if let cooldown, cooldown >= notBefore {
+      queued.isRateLimitWait = true
+    }
+    await onUpdate(queued)
+    do {
+      try await sleeper(notBefore.timeIntervalSince(now))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /// When the rate-limit cooldown on `endpointID` ends, if one was recorded.
+  func rateLimitCooldown(for endpointID: UUID) -> Date? {
+    rateLimitedUntil[endpointID]
+  }
+
+  /// The time the last request to `endpointID` finished, if any (for tests and status).
+  func lastRequestEnd(for endpointID: UUID) -> Date? {
+    lastRequestEnded[endpointID]
+  }
+
   /// Failed records for parts that were never attempted.
   private func unsent(
     _ jobs: ArraySlice<MeetingWebhookDeliveryJob>,
@@ -165,26 +228,12 @@ actor MeetingWebhookDeliveryService {
   ) async -> [MeetingWebhookDeliveryRecord] {
     var records: [MeetingWebhookDeliveryRecord] = []
     for job in jobs {
-      let now = clock()
       let record = MeetingWebhookDeliveryRecord(
-        id: job.deliveryID,
-        endpointID: job.endpoint.id,
-        endpointName: job.endpoint.displayName,
-        noteID: job.noteID,
-        noteTitle: job.noteTitle,
-        event: job.event,
+        job: job,
         state: .failed,
-        attempts: 0,
         maximumAttempts: maximumAttempts,
-        lastStatusCode: nil,
         lastError: reason,
-        createdAt: now,
-        updatedAt: now,
-        sendID: job.sendID,
-        sendCreatedAt: job.sendCreatedAt ?? now,
-        sendOrder: job.sendOrder,
-        partIndex: job.partIndex,
-        partTotal: job.partTotal
+        at: clock()
       )
       await onUpdate(record)
       records.append(record)
@@ -201,6 +250,7 @@ actor MeetingWebhookDeliveryService {
     record.state = state
     record.lastError = state == .delivered ? nil : (error ?? "Delivery failed")
     record.updatedAt = clock()
+    record.nextAttemptAt = nil
     let status = record.lastStatusCode.map(String.init) ?? "none"
     let summary = "Webhook \(record.id.uuidString) \(state.rawValue) after "
       + "\(record.attempts) attempt(s), status \(status)"

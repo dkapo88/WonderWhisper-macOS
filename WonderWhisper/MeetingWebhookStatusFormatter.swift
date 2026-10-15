@@ -6,6 +6,8 @@ enum MeetingWebhookStatusFormatter {
     let name = record.endpointName
     guard record.isPartOfSplit, let index = record.partIndex, let total = record.partTotal else {
       switch record.state {
+      case .queued:
+        return queuedText(for: record, now: now)
       case .sending:
         return "Sending to \(name)…"
       case .retrying:
@@ -18,6 +20,8 @@ enum MeetingWebhookStatusFormatter {
     }
     let part = "part \(index) of \(total)"
     switch record.state {
+    case .queued:
+      return queuedText(for: record, now: now)
     case .sending:
       return "Sending \(name) \(part)"
     case .retrying:
@@ -33,6 +37,34 @@ enum MeetingWebhookStatusFormatter {
       }
       return "\(name) failed at \(part): \(failureReason(for: record))"
     }
+  }
+
+  /// "Queued for Grok Bot (behind 1 note)", "Queued for Grok Bot (next in 25s)", or for a
+  /// later part waiting out the delay between parts "Sending Grok Bot part 3 of 5 (next in 7s)".
+  private static func queuedText(for record: MeetingWebhookDeliveryRecord, now: Date) -> String {
+    let name = record.endpointName
+    if record.isRateLimitWait == true, let until = record.nextAttemptAt {
+      return "Waiting for \(name) rate limit (\(shortDuration(until: until, now: now)))"
+    }
+    if let behind = record.queuedBehind, behind > 0 {
+      return "Queued for \(name) (behind \(behind) \(behind == 1 ? "note" : "notes"))"
+    }
+    let wait = record.nextAttemptAt.map { " (next in \(seconds(until: $0, now: now))s)" } ?? ""
+    if record.isPartOfSplit, let index = record.partIndex, let total = record.partTotal,
+       index > 1 {
+      return "Sending \(name) part \(index) of \(total)\(wait)"
+    }
+    return "Queued for \(name)\(wait)"
+  }
+
+  /// "45s" under a minute, else whole minutes rounded up ("4m").
+  private static func shortDuration(until date: Date, now: Date) -> String {
+    let remaining = seconds(until: date, now: now)
+    return remaining < 60 ? "\(remaining)s" : "\((remaining + 59) / 60)m"
+  }
+
+  private static func seconds(until date: Date, now: Date) -> Int {
+    max(0, Int(date.timeIntervalSince(now).rounded(.up)))
   }
 
   private static func attemptText(_ record: MeetingWebhookDeliveryRecord) -> String {
@@ -69,7 +101,8 @@ enum MeetingWebhookStatusFormatter {
   /// The record describing the newest send among `records` (newest first, as the delivery log
   /// keeps them). Sends are ranked by `sendRank`, which is fixed when a send is enqueued, so an
   /// older send that resumes after a newer one never takes its place; ties keep the earlier
-  /// record in the list. Within the send, see `representative(of:)`.
+  /// record in the list. Within the send, see `representative(of:)`. A partial resend reuses
+  /// its send's ID with a newer rank, so it brings the whole send back to the top.
   static func latestSend(
     in records: [MeetingWebhookDeliveryRecord]
   ) -> MeetingWebhookDeliveryRecord? {
@@ -82,12 +115,28 @@ enum MeetingWebhookStatusFormatter {
     return representative(of: records.filter { $0.sendKey == newest.sendKey })
   }
 
-  /// The record that best describes one send's progress: the first part (by index) that is not
-  /// delivered, or the last part when every part was delivered.
+  /// The record that best describes one send's progress: the first part (by index) whose
+  /// newest record is not delivered, or the last part when every part was delivered.
   static func representative(
     of parts: [MeetingWebhookDeliveryRecord]
   ) -> MeetingWebhookDeliveryRecord? {
-    let ordered = parts.sorted { ($0.partIndex ?? 1) < ($1.partIndex ?? 1) }
+    let newest = newestPerPart(parts)
+    let ordered = newest.keys.sorted().compactMap { newest[$0] }
     return ordered.first { $0.state != .delivered } ?? ordered.last
+  }
+
+  /// The newest record for each part index (unsplit records count as part 1). A partial
+  /// resend adds newer records for some parts of a send; ranks break ties, then list order
+  /// (newest first).
+  static func newestPerPart(
+    _ parts: [MeetingWebhookDeliveryRecord]
+  ) -> [Int: MeetingWebhookDeliveryRecord] {
+    var newest: [Int: MeetingWebhookDeliveryRecord] = [:]
+    for record in parts {
+      let index = record.partIndex ?? 1
+      if let current = newest[index], current.sendRank >= record.sendRank { continue }
+      newest[index] = record
+    }
+    return newest
   }
 }

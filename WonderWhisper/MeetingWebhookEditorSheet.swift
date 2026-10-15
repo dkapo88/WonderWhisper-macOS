@@ -92,6 +92,16 @@ struct MeetingWebhookEditorSheet: View {
           value: $endpoint.maxBodyCharacters,
           format: .number.grouping(.never)
         )
+        TextField(
+          "Delay between parts (seconds)",
+          value: $endpoint.partDelaySeconds,
+          format: .number.grouping(.never)
+        )
+        TextField(
+          "Delay between notes (seconds)",
+          value: $endpoint.noteDelaySeconds,
+          format: .number.grouping(.never)
+        )
       }
     } header: {
       Text("Delivery")
@@ -106,10 +116,16 @@ struct MeetingWebhookEditorSheet: View {
       return "Summary only leaves out the transcript. The note is sent as one request."
     }
     let range = MeetingWebhookEndpoint.maxBodyCharactersRange
+    let parts = MeetingWebhookEndpoint.partDelaySecondsRange
+    let notes = MeetingWebhookEndpoint.noteDelaySecondsRange
     return "For receivers that keep only the start of a long request: the note is sent as "
       + "several requests in order, each with the same note details plus part index and "
-      + "total, and no body longer than the max (\(range.lowerBound) to "
-      + "\(range.upperBound.formatted()))."
+      + "total, ending with an END-OF-PAYLOAD line, and no body longer than the max "
+      + "(\(range.lowerBound) to \(range.upperBound.formatted())). One request at a time: "
+      + "parts wait the delay between parts (\(parts.lowerBound) to \(parts.upperBound)), "
+      + "the next note waits the delay between notes (\(notes.lowerBound) to "
+      + "\(notes.upperBound)), and rate limits (HTTP 429 or 503) back off for at least 30 "
+      + "seconds."
   }
 
   private var signingSection: some View {
@@ -271,6 +287,14 @@ struct MeetingWebhookEditorSheet: View {
     }
     endpoint.maxBodyCharacters = MeetingWebhookEndpoint.clampedMaxBody(
       endpoint.maxBodyCharacters
+    )
+    endpoint.partDelaySeconds = MeetingWebhookEndpoint.clamped(
+      endpoint.partDelaySeconds,
+      to: MeetingWebhookEndpoint.partDelaySecondsRange
+    )
+    endpoint.noteDelaySeconds = MeetingWebhookEndpoint.clamped(
+      endpoint.noteDelaySeconds,
+      to: MeetingWebhookEndpoint.noteDelaySecondsRange
     )
     let headersToSave = Self.headersToSave(
       loaded: loadedHeaders,

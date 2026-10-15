@@ -354,7 +354,7 @@ struct MeetingSettingsPane: View {
       StatusBadge(.ok, text)
     case .failed:
       StatusBadge(.error, text)
-    case .sending, .retrying:
+    case .queued, .sending, .retrying:
       StatusBadge(.neutral, text)
     }
   }

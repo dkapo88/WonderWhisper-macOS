@@ -129,36 +129,63 @@ and synthesizes its own audio with `say`.
   last key of the body and a receiver that keeps only the start still gets all metadata:
   `event` (`meeting.note.completed`, `meeting.note.resent`, `webhook.test`), `schemaVersion`,
   `deliveryId` (reused across retries), [`sendId`], `sentAt`, `app` (`name`, `version`,
-  `build`), [`part` (`index`, `total`)], `note` (`id`, `title`, `startedAt`, `endedAt`,
-  `durationSeconds`, `detectedApp`, [`content`], `markdown`). Bracketed fields are additive and
-  absent from an unsplit full-note body. Per-endpoint settings (non-secret, in the endpoint
-  JSON, older endpoints decode with the defaults): `content` `full` (default,
-  `MeetingObsidianExporter.document(for:)`) or `summary` (the same document built without the
-  `## Transcript` section, adds `note.content: "summary"`); `splitIntoParts` (default off) and
-  `maxBodyCharacters` (default 3800, clamped 1000 to 1,000,000). A split send
-  (`MeetingWebhookPayloadSplitter`) cuts the Markdown so every whole serialized body is at most
-  the max in UTF-8 bytes, preferring cuts before headings, then blank lines, line breaks,
-  sentence ends, spaces, then a hard cut between grapheme clusters; each part repeats the
-  metadata with a shared `sendId`, its own `deliveryId` and `part`, and the parts' Markdown
-  joins back exactly. Parts are POSTed strictly in order, each retried on its own and logged as
-  its own record ("part 2 of 3"); a part that fails for good leaves the rest recorded as
-  "Skipped: part N failed"; a limit too small for the metadata fails the send without sending.
-  Resend and Retry send every part again with a new `sendId`. Status lines show each endpoint's
-  newest send, ranked by `sendOrder` (a number stamped once at enqueue on every part record,
-  strictly increasing within a run and seeded synchronously from the saved log when the center
-  starts, kept numeric because the log's ISO 8601 dates drop fractional seconds; older records
-  fall back to `sendCreatedAt`, then `createdAt`), so an
-  older send resuming from backoff never hides a newer one. Headers (per part, signature over
-  that part's body): `X-WonderWhisper-Event`, `-Delivery`, `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature: sha256=<hex HMAC-SHA256 of
-  "<timestamp>.<raw body>">`; custom headers cannot override `Content-Type` or
-  `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter, `Retry-After` capped
-  at 10 min) on network errors, 408, 425, 429 and 5xx; other 4xx and all 3xx fail at once
-  (redirects are refused). `https` is required except for localhost, private ranges and
-  Tailscale `100.64.0.0/10`. Endpoints live in `meeting.webhooks.endpoints` (excluded from
-  settings sync); the secret and header values live in the Keychain as
+  `build`), [`part` (`index`, `total`, `endMarker`)], `note` (`id`, `title`, `startedAt`,
+  `endedAt`, `durationSeconds`, `recordedSeconds`, `elapsedSeconds`, `detectedApp`,
+  [`attendees`], [`content`], `markdown`). Bracketed fields are additive and absent from an
+  unsplit full-note body. `durationSeconds` and `recordedSeconds` are both the recorded time
+  (sum of capture runs; pauses and the gap before a Resume excluded, unchanged meaning);
+  `elapsedSeconds` is `endedAt - startedAt` (wall clock, null while unended), so a resumed
+  meeting can report 2001 recorded seconds across 6720 elapsed. `attendees` (typed in the
+  meeting detail view) is sent, and listed in the exported front matter, only when non-empty.
+  Per-endpoint settings (non-secret, in the endpoint JSON, older endpoints decode with the
+  defaults): `content` `full` (default, `MeetingObsidianExporter.document(for:)`) or `summary`
+  (the same document built without the `## Transcript` section, adds `note.content:
+  "summary"`); `splitIntoParts` (default off), `maxBodyCharacters` (default 3800, clamped 1000
+  to 1,000,000), `partDelaySeconds` (default 7, 0 to 60) and `noteDelaySeconds` (default 30, 0
+  to 600). A split send (`MeetingWebhookPayloadSplitter`) cuts the Markdown so every whole
+  serialized body, end marker included, is at most the max in UTF-8 bytes, preferring cuts
+  before headings, then blank lines, line breaks, sentence ends, spaces, then a hard cut
+  between grapheme clusters, each only if the part is at least 85 percent full; each part
+  repeats the metadata (dropping `detectedApp` and `elapsedSeconds` when null) with a shared
+  `sendId`, its own `deliveryId` and `part`, and its Markdown ends with a blank line plus
+  `END-OF-PAYLOAD part N of M` (also `part.endMarker`); removing that suffix, the parts join
+  back exactly. Split sends are paced: one request in flight per endpoint (a FIFO of sends,
+  including tests, shown as "Queued for X (behind N notes)"), `partDelaySeconds` after each
+  delivered part, `noteDelaySeconds` between the last request of one send and the first of the
+  next, and 429/503 back off by `Retry-After` or else 30s, 60s, 120s, 240s while later parts and
+  sends wait; that cooldown outlives a send that gives up, so the next send waits until
+  max(note gap, the last `Retry-After` or the backoff that would have applied), shown as
+  "Waiting for X rate limit (4m)". Unsplit sends are not paced, keep the original backoff and
+  still run alongside each other; a split send also waits for unsplit sends still running to
+  that endpoint (and an unsplit send for queued split work), so toggling splitting never
+  overlaps requests. Parts
+  are retried on their own and logged as their own records ("part 2 of 3"); a part that fails
+  for good leaves the rest recorded as "Skipped: part N failed"; a limit too small for the
+  metadata fails the send without sending. "Send to Webhook" sends every part again with a new
+  `sendId`. "Resend Missing Parts" (the Send menu, and Retry on a failed split send) and
+  "Resend Parts..." (typed numbers, for parts the log says arrived but the receiver lost)
+  resend only those parts of the newest split send with its `sendId`, numbering and `total`,
+  new `deliveryId`s and event `meeting.note.resent`. They re-cut the note with the stored chunk
+  budget and refuse ("The note changed since it was sent...") unless the SHA-256 of the note
+  Markdown and of each part's chunk, the content setting and the max body size match what the
+  part records stored. Status lines show each endpoint's newest send (a partial resend reuses
+  its send ID with a newer rank; each part shows its newest record), ranked by `sendOrder` (a
+  number stamped once at enqueue on every part record, strictly increasing within a run and
+  seeded synchronously from the saved log when the center starts, kept numeric because the
+  log's ISO 8601 dates drop fractional seconds; older records fall back to `sendCreatedAt`,
+  then `createdAt`), so an older send resuming from backoff never hides a newer one. Headers
+  (per part, signature over that part's body): `X-WonderWhisper-Event`, `-Delivery`,
+  `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature:
+  sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">`; custom headers cannot override
+  `Content-Type` or `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter,
+  `Retry-After` capped at 10 min) on network errors, 408, 425, 429 and 5xx; other 4xx and all
+  3xx fail at once (redirects are refused). `https` is required except for localhost, private
+  ranges and Tailscale `100.64.0.0/10`. Endpoints live in `meeting.webhooks.endpoints`
+  (excluded from settings sync); the secret and header values live in the Keychain as
   `meeting.webhook.<id>.signingSecret` and `meeting.webhook.<id>.headers` (JSON). The delivery
   log `meeting-webhook-deliveries.json` (app support root, newest 200) never stores bodies,
-  secrets or header values; in-flight records become failed on the next launch.
+  secrets or header values (split parts store SHA-256 fingerprints only); queued and in-flight
+  records become failed on the next launch.
 - All LLM requests route through OpenRouter or the Vercel AI Gateway
   (`https://ai-gateway.vercel.sh/v1`, OpenAI-compatible), decided per model: the model browser
   offers both catalogs, and favorites saved from the Vercel catalog carry a `vercel:` ID prefix.
@@ -227,6 +254,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-15: Meeting webhooks: split parts end with `END-OF-PAYLOAD part N of M` (and
+  `part.endMarker`), fill to about 85 to 100 percent of the max, and are paced per endpoint
+  (one request at a time, 7s between parts, 30s between notes, 429/503 back off from 30s);
+  "Resend Missing Parts" / "Resend Parts..." reuse the send's `sendId`; payloads add
+  `recordedSeconds`, `elapsedSeconds` and optional `attendees` (also in the front matter).
 - 2026-10-14: Released 2026-10-14.1 with ordered webhook bodies, optional split parts and summary-only content.
 - 2026-10-14: Meeting webhooks: body keys now in a fixed order with `note.markdown` last (still
   schema v1); per-endpoint "Send: Summary only / Full note" and "Split into multiple webhooks"
