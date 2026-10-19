@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Amp orb setup. WonderWhisper is a macOS/Xcode app, so orbs (Debian Linux) cannot build it or
+# run its Swift tests. This installs the Linux-usable tooling: swiftformat and Python 3 for the
+# appcast scripts. Must stay idempotent and non-interactive.
+set -euo pipefail
+
+SWIFTFORMAT_VERSION="0.64.0"
+SWIFTFORMAT_SHA256="599eb5d2d8cf43e1128e79cd72f3bc2fec1b3189c3ac7593fbe732f2568fed36"
+BIN_DIR="$HOME/.local/bin"
+
+step() { printf '[setup] %s\n' "$*"; }
+
+start=$SECONDS
+mkdir -p "$BIN_DIR"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  step "installing python3"
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3
+fi
+
+if [[ "$("$BIN_DIR/swiftformat" --version 2>/dev/null || true)" != "$SWIFTFORMAT_VERSION" ]]; then
+  step "installing swiftformat $SWIFTFORMAT_VERSION"
+  for tool in curl unzip; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      sudo apt-get update -qq
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl unzip
+      break
+    fi
+  done
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL -o "$tmp/swiftformat.zip" \
+    "https://github.com/nicklockwood/SwiftFormat/releases/download/$SWIFTFORMAT_VERSION/swiftformat_linux.zip"
+  echo "$SWIFTFORMAT_SHA256  $tmp/swiftformat.zip" | sha256sum -c --quiet -
+  unzip -q -o "$tmp/swiftformat.zip" -d "$tmp"
+  install -m 0755 "$tmp/swiftformat_linux" "$BIN_DIR/swiftformat"
+else
+  step "swiftformat $SWIFTFORMAT_VERSION already installed"
+fi
+
+step "writing orb agent guidance"
+mkdir -p "$HOME/.config/amp"
+cat > "$HOME/.config/amp/AGENTS.md" <<'GUIDE'
+# WonderWhisper in an Amp orb
+
+- This orb is Debian Linux. WonderWhisper is a macOS SwiftUI/Xcode app: `xcodebuild`, the
+  WonderWhisper app, and the Swift Testing suite cannot run here. Do not try to install Xcode or
+  a Swift toolchain to build it; report that build/test verification needs a macOS machine.
+- Available here: `swiftformat` (in ~/.local/bin) for formatting/linting Swift sources, and
+  Python 3 for `python3 Scripts/test_update_appcast.py` (stdlib only).
+GUIDE
+
+step "done in $((SECONDS - start))s"
