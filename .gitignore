@@ -55,3 +55,6 @@ dist/
 # Orchestrator project memory (local only, repo is public)
 /MEMORY.md
 /ui-audit/
+
+# Amp orb portals
+.amp/portals/*
