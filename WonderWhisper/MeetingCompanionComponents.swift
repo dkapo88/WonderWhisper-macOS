@@ -7,6 +7,19 @@ import SwiftUI
 enum MeetingCompanionStyle {
   static let microphoneTint = Color.blue
   static let remoteTint = Color.purple
+  /// One colour per voice on the call, in the order they were first heard.
+  static let speakerTints: [Color] = [
+    .purple, .orange, .teal, .pink, .green, .indigo, .brown, .mint,
+  ]
+
+  static func tint(for speaker: MeetingSpeakerKey, in directory: MeetingSpeakerDirectory) -> Color {
+    guard let index = directory.colorIndex(for: speaker) else { return microphoneTint }
+    return speakerTints[index % speakerTints.count]
+  }
+
+  static func tint(for source: MeetingAudioSource) -> Color {
+    source == .microphone ? microphoneTint : remoteTint
+  }
   static let recordingTint = Color(red: 1, green: 0.27, blue: 0.23)
 
   static func elapsed(since start: Date, now: Date) -> String {

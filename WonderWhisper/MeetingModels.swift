@@ -26,35 +26,43 @@ enum MeetingAudioSource: String, Codable, CaseIterable, Hashable, Sendable {
 
 enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Sendable {
   case parakeet
+  /// The retired single-stream Soniox beta. It still decodes for older sessions and synced
+  /// settings, but new meetings run it as `.sonioxSeparate` (see `normalized`).
   case soniox
   case sonioxSeparate = "soniox-separate"
+  case xaiGrok = "xai-grok"
+
+  /// The engines offered in Settings.
+  static let selectableCases: [Self] = [.parakeet, .sonioxSeparate, .xaiGrok]
 
   var id: String { rawValue }
 
   var displayName: String {
     switch self {
     case .parakeet: return "Parakeet Unified (On-device)"
-    case .soniox: return "Soniox V5 (Single stream beta)"
-    case .sonioxSeparate: return "Soniox V5 (Separate streams)"
+    case .soniox: return "Soniox V5 (Single stream, retired)"
+    case .sonioxSeparate: return "Soniox V5 (Cloud)"
+    case .xaiGrok: return "Grok Voice Transcribe 2.0 (Cloud)"
     }
   }
 
   var recordingLabel: String {
     switch self {
     case .parakeet: return "local Parakeet"
-    case .soniox: return "single-stream Soniox V5 beta"
-    case .sonioxSeparate: return "separate-stream Soniox V5"
+    case .soniox, .sonioxSeparate: return "Soniox V5"
+    case .xaiGrok: return "Grok Voice Transcribe"
     }
   }
 
   var detail: String {
     switch self {
     case .parakeet:
-      return "Private and free. Best when cloud audio must stay off."
-    case .soniox:
-      return "Locally aligns and echo-reduces both sources before one cloud stream."
-    case .sonioxSeparate:
-      return "Fallback with independent microphone and system-audio cloud streams."
+      return "Private and free. Voices on the call are told apart on this Mac after the meeting."
+    case .soniox, .sonioxSeparate:
+      return "Your microphone and the call stream separately; voices on the call are told apart live."
+    case .xaiGrok:
+      return "One two-channel stream for your microphone and the call; voices on the call are told "
+        + "apart live."
     }
   }
 
@@ -62,12 +70,21 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Se
     self == .soniox || self == .sonioxSeparate
   }
 
+  var usesXAI: Bool {
+    self == .xaiGrok
+  }
+
+  /// The engine a new meeting actually runs.
+  var normalized: Self {
+    self == .soniox ? .sonioxSeparate : self
+  }
+
   static func selected(defaults: UserDefaults = AppConfig.defaults) -> Self {
     guard let stored = defaults.string(forKey: "meeting.transcription.engine"),
           let value = Self(rawValue: stored) else {
       return .parakeet
     }
-    return value
+    return value.normalized
   }
 }
 
@@ -131,6 +148,14 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   /// Who attended, as typed by the user (trimmed, no case-insensitive duplicates). Empty for
   /// sessions saved before attendees existed.
   var attendees: [String]
+  /// Names given to transcript speakers, keyed by `MeetingSpeakerKey.rawValue`. Speakers
+  /// without an entry show their default name ("You", "Speaker 2").
+  var speakerNames: [String: String]
+  /// Speakers folded into another one, source `rawValue` to target `rawValue`, for voices
+  /// the diarizer split in two.
+  var speakerMerges: [String: String]
+  /// Names suggested for unnamed speakers from what was said, waiting to be accepted.
+  var speakerSuggestions: [MeetingSpeakerSuggestion]
 
   init(id: UUID = UUID(),
        title: String,
@@ -148,7 +173,10 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        audioFiles: [String] = [],
        exportedMarkdownPath: String? = nil,
        errorMessage: String? = nil,
-       attendees: [String] = []) {
+       attendees: [String] = [],
+       speakerNames: [String: String] = [:],
+       speakerMerges: [String: String] = [:],
+       speakerSuggestions: [MeetingSpeakerSuggestion] = []) {
     self.id = id
     self.title = title
     self.startedAt = startedAt
@@ -166,13 +194,16 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.exportedMarkdownPath = exportedMarkdownPath
     self.errorMessage = errorMessage
     self.attendees = attendees
+    self.speakerNames = speakerNames
+    self.speakerMerges = speakerMerges
+    self.speakerSuggestions = speakerSuggestions
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, title, startedAt, endedAt, recordedDuration, recordingStartedAt, detectedApp
     case automaticallyStarted, transcriptionEngine, status, transcriptTokens
     case manualNotesMarkdown, notesMarkdown, audioFiles, exportedMarkdownPath, errorMessage
-    case attendees
+    case attendees, speakerNames, speakerMerges, speakerSuggestions
   }
 
   init(from decoder: Decoder) throws {
@@ -206,6 +237,18 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     )
     errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
     attendees = try container.decodeIfPresent([String].self, forKey: .attendees) ?? []
+    speakerNames = try container.decodeIfPresent(
+      [String: String].self,
+      forKey: .speakerNames
+    ) ?? [:]
+    speakerMerges = try container.decodeIfPresent(
+      [String: String].self,
+      forKey: .speakerMerges
+    ) ?? [:]
+    speakerSuggestions = try container.decodeIfPresent(
+      [MeetingSpeakerSuggestion].self,
+      forKey: .speakerSuggestions
+    ) ?? []
   }
 
   /// Recorded time: the sum of the recording runs, without pauses or the gap before a
@@ -225,8 +268,17 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     endedAt.map { max(0, $0.timeIntervalSince(startedAt)) }
   }
 
+  /// Who is who in this meeting's transcript, with the user's current "Your name".
+  var speakerDirectory: MeetingSpeakerDirectory {
+    MeetingSpeakerDirectory(session: self)
+  }
+
   var transcriptMarkdown: String {
-    MeetingTranscriptFormatter.markdown(tokens: transcriptTokens)
+    MeetingTranscriptFormatter.markdown(tokens: transcriptTokens, speakers: speakerDirectory)
+  }
+
+  var transcriptPlainText: String {
+    MeetingTranscriptFormatter.plainText(tokens: transcriptTokens, speakers: speakerDirectory)
   }
 }
 
@@ -273,22 +325,12 @@ struct MeetingTranscriptBlock: Identifiable, Equatable, Sendable {
   let startTime: TimeInterval
   let endTime: TimeInterval
   let text: String
-  let speaker: String?
-
-  var displayName: String {
-    if source != .microphone, let speaker, !speaker.isEmpty {
-      return "Speaker \(speaker)"
-    }
-    return source.displayName
-  }
+  /// The speaker after merges.
+  let speaker: MeetingSpeakerKey
+  let displayName: String
 }
 
 enum MeetingTranscriptFormatter {
-  private struct BlockKey: Hashable {
-    let source: MeetingAudioSource
-    let speaker: String?
-  }
-
   static func chronologicalTokens(
     _ tokens: [MeetingTranscriptToken]
   ) -> [MeetingTranscriptToken] {
@@ -316,13 +358,17 @@ enum MeetingTranscriptFormatter {
     return chronologicalTokens(tokens.filter { $0.endTime >= cutoff })
   }
 
-  static func blocks(tokens: [MeetingTranscriptToken]) -> [MeetingTranscriptBlock] {
+  static func blocks(
+    tokens: [MeetingTranscriptToken],
+    speakers: MeetingSpeakerDirectory? = nil
+  ) -> [MeetingTranscriptBlock] {
     let sorted = chronologicalTokens(MeetingEchoSuppressor.filteredTokens(tokens))
+    let directory = speakers ?? MeetingSpeakerDirectory(tokens: tokens)
     var result: [MeetingTranscriptBlock] = []
-    var latestBlockIndex: [BlockKey: Int] = [:]
+    var latestBlockIndex: [MeetingSpeakerKey: Int] = [:]
 
     for token in sorted where !token.text.isEmpty {
-      let key = BlockKey(source: token.source, speaker: token.speaker)
+      let key = directory.canonical(MeetingSpeakerKey(token: token))
       if let index = latestBlockIndex[key],
          token.startTime - result[index].endTime < 2.5,
          index == result.count - 1 || token.startTime < result[result.count - 1].endTime {
@@ -333,18 +379,20 @@ enum MeetingTranscriptFormatter {
           startTime: last.startTime,
           endTime: max(last.endTime, token.endTime),
           text: last.text + token.text,
-          speaker: last.speaker
+          speaker: last.speaker,
+          displayName: last.displayName
         )
       } else {
         latestBlockIndex[key] = result.count
         result.append(
           MeetingTranscriptBlock(
             id: token.id,
-            source: token.source,
+            source: key.source,
             startTime: token.startTime,
             endTime: token.endTime,
             text: token.text,
-            speaker: token.speaker
+            speaker: key,
+            displayName: directory.name(for: key)
           )
         )
       }
@@ -359,19 +407,26 @@ enum MeetingTranscriptFormatter {
         startTime: $0.startTime,
         endTime: $0.endTime,
         text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
-        speaker: $0.speaker
+        speaker: $0.speaker,
+        displayName: $0.displayName
       )
     }.filter { !$0.text.isEmpty }
   }
 
-  static func markdown(tokens: [MeetingTranscriptToken]) -> String {
-    blocks(tokens: tokens).map { block in
+  static func markdown(
+    tokens: [MeetingTranscriptToken],
+    speakers: MeetingSpeakerDirectory? = nil
+  ) -> String {
+    blocks(tokens: tokens, speakers: speakers).map { block in
       "**\(block.displayName) [\(timestamp(block.startTime))]:** \(block.text)"
     }.joined(separator: "\n\n")
   }
 
-  static func plainText(tokens: [MeetingTranscriptToken]) -> String {
-    blocks(tokens: tokens).map { block in
+  static func plainText(
+    tokens: [MeetingTranscriptToken],
+    speakers: MeetingSpeakerDirectory? = nil
+  ) -> String {
+    blocks(tokens: tokens, speakers: speakers).map { block in
       "\(block.displayName): \(block.text)"
     }.joined(separator: "\n")
   }

@@ -444,7 +444,11 @@ private struct MeetingOverlayView: View {
   }
 
   private func transcript(_ session: MeetingSession) -> some View {
-    let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
+    let speakers = session.speakerDirectory
+    let blocks = MeetingTranscriptFormatter.blocks(
+      tokens: session.transcriptTokens,
+      speakers: speakers
+    )
     return ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 14) {
@@ -459,16 +463,16 @@ private struct MeetingOverlayView: View {
               speaker: block.displayName,
               timestamp: MeetingTranscriptFormatter.timestamp(block.startTime),
               text: block.text,
-              tint: tint(for: block.source)
+              tint: MeetingCompanionStyle.tint(for: block.speaker, in: speakers)
             )
             .id(block.id)
           }
           ForEach(previewSources, id: \.self) { source in
             MeetingSpeakerTurnView(
-              speaker: source.displayName,
+              speaker: source == .microphone ? speakers.name(for: .microphone) : "Call",
               timestamp: "Live",
               text: coordinator.liveTranscriptPreviews[source] ?? "",
-              tint: tint(for: source),
+              tint: MeetingCompanionStyle.tint(for: source),
               isLive: true
             )
             .id("live-\(source.rawValue)")
@@ -488,10 +492,6 @@ private struct MeetingOverlayView: View {
         proxy.scrollTo("live-\(source.rawValue)", anchor: .bottom)
       }
     }
-  }
-
-  private func tint(for source: MeetingAudioSource) -> Color {
-    source == .microphone ? MeetingCompanionStyle.microphoneTint : MeetingCompanionStyle.remoteTint
   }
 
   private var context: some View {

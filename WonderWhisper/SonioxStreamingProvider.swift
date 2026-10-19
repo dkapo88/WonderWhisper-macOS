@@ -42,6 +42,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       self.finalizationWaitMs = finalizationWaitMs
     }
 
+    /// The microphone side of a meeting: always the user, so never diarized.
     static let meeting = RealtimeOptions(
       enableEndpointDetection: true,
       maxEndpointDelayMs: 1_500,
@@ -50,7 +51,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       finalizationWaitMs: 15_000
     )
 
-    static let mixedMeeting = RealtimeOptions(
+    /// The call side of a meeting: the one stream whose voices are told apart.
+    static let remoteMeeting = RealtimeOptions(
       enableEndpointDetection: true,
       maxEndpointDelayMs: 1_500,
       enableSpeakerDiarization: true,

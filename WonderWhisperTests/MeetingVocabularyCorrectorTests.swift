@@ -73,7 +73,7 @@ struct MeetingVocabularyCorrectorTests {
     let session = MeetingTranscriptFormatter.chronologicalTokens(mic + [system])
     #expect(
       MeetingTranscriptFormatter.plainText(tokens: session)
-        == "Microphone: Send Nive\nSystem audio: Okay\nMicrophone: Hapanna tomorrow"
+        == "You: Send Nive\nOthers: Okay\nYou: Hapanna tomorrow"
     )
 
     let corrections = MeetingVocabularyCorrector.corrections(
@@ -88,7 +88,7 @@ struct MeetingVocabularyCorrectorTests {
     let applied = MeetingVocabularyCorrector.apply(corrections, to: session)
     #expect(
       MeetingTranscriptFormatter.plainText(tokens: applied)
-        == "Microphone: Send Niamh\nSystem audio: Okay\nMicrophone: Hapana tomorrow"
+        == "You: Send Niamh\nOthers: Okay\nYou: Hapana tomorrow"
     )
   }
 

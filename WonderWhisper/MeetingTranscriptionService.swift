@@ -2,11 +2,13 @@ import Foundation
 import AVFoundation
 import FluidAudio
 
-private actor MeetingSingleStreamIngress {
+/// Feeds the Grok engine's single two-channel stream. Capture delivers each source on its own
+/// path, so chunks are aligned into stereo frames here before they are sent.
+private actor MeetingStereoStreamIngress {
   private static let maximumPendingChunks = 6_000
 
-  private var mixer = MeetingSingleStreamMixer()
-  private var provider: SonioxStreamingProvider?
+  private var aligner = MeetingStereoAligner()
+  private var provider: XAIMeetingStreamingProvider?
   private var pendingChunks: [MeetingAudioChunk] = []
   private var preparationFailure: String?
   private var streamFailure: String?
@@ -16,7 +18,7 @@ private actor MeetingSingleStreamIngress {
   private var latestOutputEndTime: TimeInterval = 0
   private var lastMetricsLogTime = Date()
 
-  func install(provider: SonioxStreamingProvider) {
+  func install(provider: XAIMeetingStreamingProvider) {
     guard !isFinishing else { return }
     self.provider = provider
     let queued = pendingChunks.sorted { lhs, rhs in
@@ -63,12 +65,9 @@ private actor MeetingSingleStreamIngress {
   func finish() {
     isFinishing = true
     guard streamFailure == nil, let provider else { return }
-    for chunk in mixer.finish() {
-      provider.enqueuePCM16(Self.pcm16Data(samples: chunk.samples))
-      latestOutputEndTime = max(
-        latestOutputEndTime,
-        chunk.startTime + chunk.duration
-      )
+    for frame in aligner.finish() {
+      provider.enqueuePCM16(frame.interleavedPCM16)
+      latestOutputEndTime = max(latestOutputEndTime, frame.startTime + frame.duration)
     }
   }
 
@@ -77,7 +76,7 @@ private actor MeetingSingleStreamIngress {
   }
 
   func reset() {
-    mixer = MeetingSingleStreamMixer()
+    aligner = MeetingStereoAligner()
     provider = nil
     pendingChunks.removeAll()
     preparationFailure = nil
@@ -91,24 +90,18 @@ private actor MeetingSingleStreamIngress {
 
   private func process(_ chunk: MeetingAudioChunk) {
     guard let provider else { return }
-    latestInputEndTime = max(
-      latestInputEndTime,
-      chunk.startTime + chunk.duration
-    )
-    let hadDiscardedLateAudio = mixer.hasDiscardedLateAudio
-    let mixedChunks = mixer.ingest(chunk)
-    if !hadDiscardedLateAudio, mixer.hasDiscardedLateAudio {
+    latestInputEndTime = max(latestInputEndTime, chunk.startTime + chunk.duration)
+    let hadDiscardedLateAudio = aligner.hasDiscardedLateAudio
+    let frames = aligner.ingest(chunk)
+    if !hadDiscardedLateAudio, aligner.hasDiscardedLateAudio {
       recoveryRequired = true
       AppLog.dictation.error(
-        "MeetingTranscription: mixed source arrived after its timeline was emitted; raw recovery required"
+        "MeetingTranscription: a source arrived after its timeline was sent; raw recovery required"
       )
     }
-    for mixedChunk in mixedChunks {
-      provider.enqueuePCM16(Self.pcm16Data(samples: mixedChunk.samples))
-      latestOutputEndTime = max(
-        latestOutputEndTime,
-        mixedChunk.startTime + mixedChunk.duration
-      )
+    for frame in frames {
+      provider.enqueuePCM16(frame.interleavedPCM16)
+      latestOutputEndTime = max(latestOutputEndTime, frame.startTime + frame.duration)
     }
     logMetricsIfNeeded()
   }
@@ -123,15 +116,6 @@ private actor MeetingSingleStreamIngress {
     AppLog.dictation.log(
       "MeetingIngress: input=\(input, privacy: .public)s output=\(output, privacy: .public)s lag=\(lag, privacy: .public)s"
     )
-  }
-
-  private static func pcm16Data(samples: [Float]) -> Data {
-    let values = samples.map { sample -> Int16 in
-      let clamped = max(-1, min(1, sample))
-      let scale: Float = clamped < 0 ? 32_768 : 32_767
-      return Int16((clamped * scale).rounded()).littleEndian
-    }
-    return values.withUnsafeBufferPointer { Data(buffer: $0) }
   }
 }
 
@@ -155,9 +139,13 @@ actor MeetingTranscriptionService {
 
   private static let maximumPendingChunks = 6_000
 
+  /// Terms every cloud meeting stream is biased towards, after the user's vocabulary.
+  static let meetingTerms = ["Hapana", "CORE", "OC", "BC", "INT", "Jira", "Linear", "Obsidian"]
+
   nonisolated private let engine: MeetingTranscriptionEngine
   nonisolated private let timelineOffset: TimeInterval
-  nonisolated private let singleStreamIngress = MeetingSingleStreamIngress()
+  nonisolated private let stereoIngress = MeetingStereoStreamIngress()
+  private let participantNames: [String]
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
   private let correctionHandler: CorrectionHandler
@@ -168,6 +156,8 @@ actor MeetingTranscriptionService {
   private var boostedSources: Set<MeetingAudioSource> = []
   private var boostedTokens: [MeetingAudioSource: [MeetingTranscriptToken]] = [:]
   private var sonioxProviders: [MeetingAudioSource: SonioxStreamingProvider] = [:]
+  private var xaiProvider: XAIMeetingStreamingProvider?
+  private var xaiFailure: String?
   private var sourceOffsets: [MeetingAudioSource: TimeInterval] = [:]
   private var sonioxEndTimes: [MeetingAudioSource: TimeInterval] = [:]
   private var pendingChunks: [MeetingAudioChunk] = []
@@ -178,15 +168,19 @@ actor MeetingTranscriptionService {
   private var isReady = false
   private var isFinishing = false
 
+  /// `participantNames` (the user and the attendees) bias cloud recognition towards the
+  /// names people will say.
   init(
     engine: MeetingTranscriptionEngine = .parakeet,
     timelineOffset: TimeInterval = 0,
+    participantNames: [String] = [],
     tokenHandler: @escaping TokenHandler,
     previewHandler: @escaping PreviewHandler = { _, _ in },
     correctionHandler: @escaping CorrectionHandler = { _ in }
   ) {
-    self.engine = engine
+    self.engine = engine.normalized
     self.timelineOffset = max(0, timelineOffset)
+    self.participantNames = participantNames
     self.tokenHandler = tokenHandler
     self.previewHandler = previewHandler
     self.correctionHandler = correctionHandler
@@ -198,16 +192,16 @@ actor MeetingTranscriptionService {
       switch engine {
       case .parakeet:
         try await prepareParakeet()
-      case .soniox:
-        try await prepareSingleStreamSoniox()
-      case .sonioxSeparate:
+      case .soniox, .sonioxSeparate:
         try await prepareSeparateSoniox()
+      case .xaiGrok:
+        try await prepareGrok()
       }
       isReady = true
     } catch {
       preparationFailure = error.localizedDescription
-      if engine == .soniox {
-        await singleStreamIngress.markPreparationFailure(error.localizedDescription)
+      if engine == .xaiGrok {
+        await stereoIngress.markPreparationFailure(error.localizedDescription)
       }
       recoverySources.formUnion(MeetingAudioSource.captureSources)
       fullRecoverySources.formUnion(MeetingAudioSource.captureSources)
@@ -217,8 +211,8 @@ actor MeetingTranscriptionService {
   }
 
   nonisolated func ingest(_ chunk: MeetingAudioChunk) async throws {
-    if engine == .soniox {
-      try await singleStreamIngress.ingest(Self.singleStreamChunk(
+    if engine == .xaiGrok {
+      try await stereoIngress.ingest(Self.streamLocalChunk(
         chunk,
         timelineOffset: timelineOffset
       ))
@@ -227,7 +221,8 @@ actor MeetingTranscriptionService {
     try await ingestSourceSpecific(chunk)
   }
 
-  nonisolated static func singleStreamChunk(
+  /// A chunk on the stream's own clock: a resumed meeting's stream starts at zero.
+  nonisolated static func streamLocalChunk(
     _ chunk: MeetingAudioChunk,
     timelineOffset: TimeInterval
   ) -> MeetingAudioChunk {
@@ -244,10 +239,9 @@ actor MeetingTranscriptionService {
     if let preparationFailure {
       throw ProviderError.networkError(preparationFailure)
     }
-    let failureSource: MeetingAudioSource = engine == .soniox ? .mixed : chunk.source
-    if let sonioxFailure = sonioxFailures[failureSource] {
+    if let sonioxFailure = sonioxFailures[chunk.source] {
       throw ProviderError.networkError(
-        "\(failureSource.displayName): \(sonioxFailure)"
+        "\(chunk.source.displayName): \(sonioxFailure)"
       )
     }
     guard isReady else {
@@ -281,10 +275,10 @@ actor MeetingTranscriptionService {
     switch engine {
     case .parakeet:
       try await finishParakeet()
-    case .soniox:
-      try await finishSingleStreamSoniox()
-    case .sonioxSeparate:
+    case .soniox, .sonioxSeparate:
       try await finishSeparateSoniox()
+    case .xaiGrok:
+      try await finishGrok()
     }
   }
 
@@ -307,12 +301,15 @@ actor MeetingTranscriptionService {
     for provider in sonioxProviders.values {
       await provider.abort()
     }
-    await singleStreamIngress.reset()
+    await xaiProvider?.abort()
+    await stereoIngress.reset()
     systemManager = nil
     microphoneManager = nil
     boostedSources.removeAll()
     boostedTokens.removeAll()
     sonioxProviders.removeAll()
+    xaiProvider = nil
+    xaiFailure = nil
     pendingChunks.removeAll()
     sourceOffsets.removeAll()
     sonioxEndTimes.removeAll()
@@ -381,27 +378,10 @@ actor MeetingTranscriptionService {
     await correctionHandler(corrections)
   }
 
-  private func prepareSingleStreamSoniox() async throws {
-    let provider = await makeSonioxProvider(
-      source: .mixed,
-      realtimeOptions: .mixedMeeting
-    )
-    sonioxProviders = [.mixed: provider]
-    do {
-      try await provider.beginRealtime()
-      await singleStreamIngress.install(provider: provider)
-      AppLog.dictation.log("MeetingTranscription: one mixed Soniox V5 stream accepting audio")
-    } catch {
-      await singleStreamIngress.markPreparationFailure(error.localizedDescription)
-      await provider.abort()
-      sonioxProviders.removeAll()
-      throw error
-    }
-  }
-
   private func prepareSeparateSoniox() async throws {
-    let system = await makeSonioxProvider(source: .systemAudio)
-    let microphone = await makeSonioxProvider(source: .microphone)
+    // Only the call is split into speakers: everything on the microphone is the user.
+    let system = await makeSonioxProvider(source: .systemAudio, realtimeOptions: .remoteMeeting)
+    let microphone = await makeSonioxProvider(source: .microphone, realtimeOptions: .meeting)
     sonioxProviders = [
       .systemAudio: system,
       .microphone: microphone
@@ -420,26 +400,48 @@ actor MeetingTranscriptionService {
     }
   }
 
+  /// Names first so the provider's term limit never drops them, then the user's
+  /// vocabulary, then the fixed meeting terms; case-insensitive duplicates removed.
+  nonisolated static func vocabularyTerms(
+    participantNames: [String],
+    customVocabulary: String,
+    spellingCorrections: String
+  ) -> [String] {
+    var result: [String] = []
+    var seen: Set<String> = []
+    let vocabulary = VoiceVocabularyKeyterms.terms(
+      customVocabulary: customVocabulary,
+      spellingCorrections: spellingCorrections
+    )
+    for raw in participantNames + vocabulary + meetingTerms {
+      let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !term.isEmpty,
+            term.count <= VoiceVocabularyKeyterms.maxCharactersPerTerm,
+            seen.insert(term.lowercased()).inserted else { continue }
+      result.append(term)
+      if result.count >= VoiceVocabularyKeyterms.maxTerms { break }
+    }
+    return result
+  }
+
+  private func currentVocabularyTerms() -> [String] {
+    Self.vocabularyTerms(
+      participantNames: participantNames,
+      customVocabulary: AppConfig.defaults.string(forKey: "vocab.custom") ?? "",
+      spellingCorrections: AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
+    )
+  }
+
   private func makeSonioxProvider(
     source: MeetingAudioSource,
-    realtimeOptions: SonioxStreamingProvider.RealtimeOptions = .meeting
+    realtimeOptions: SonioxStreamingProvider.RealtimeOptions
   ) async -> SonioxStreamingProvider {
+    let terms = currentVocabularyTerms().joined(separator: ", ")
     let provider = SonioxStreamingProvider(
       apiKeyProvider: {
         KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias)
       },
-      vocabularyProvider: {
-        let custom = AppConfig.defaults.string(forKey: "vocab.custom") ?? ""
-        let spelling = AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
-        var terms = VoiceVocabularyKeyterms.terms(
-          customVocabulary: custom,
-          spellingCorrections: spelling
-        )
-        terms.append(contentsOf: [
-          "Hapana", "CORE", "OC", "BC", "INT", "Jira", "Linear", "Obsidian"
-        ])
-        return terms.joined(separator: ", ")
-      },
+      vocabularyProvider: { terms },
       languageProvider: {
         AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
       },
@@ -464,17 +466,105 @@ actor MeetingTranscriptionService {
     source: MeetingAudioSource
   ) async {
     sonioxFailures[source] = message
-    if source == .mixed {
-      await singleStreamIngress.markStreamFailure(message)
+    recoverySources.insert(source)
+  }
+
+  private func prepareGrok() async throws {
+    let language = AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
+    let provider = XAIMeetingStreamingProvider(
+      apiKeyProvider: {
+        KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias)
+      },
+      keyterms: currentVocabularyTerms(),
+      language: language
+    )
+    await provider.setHandlers(
+      onWords: { [weak self] channel, words in
+        await self?.emitGrok(words, channel: channel)
+      },
+      onPreview: { [weak self] channel, text in
+        await self?.emitGrokPreview(text, channel: channel)
+      },
+      onStreamError: { [weak self] message in
+        await self?.recordGrokFailure(message)
+      }
+    )
+    xaiProvider = provider
+    do {
+      try await provider.beginRealtime()
+      await stereoIngress.install(provider: provider)
+      AppLog.dictation.log("MeetingTranscription: one two-channel Grok stream accepting audio")
+    } catch {
+      await stereoIngress.markPreparationFailure(error.localizedDescription)
+      await provider.abort()
+      xaiProvider = nil
+      throw error
+    }
+  }
+
+  /// Grok channel 0 carries the microphone and channel 1 the call.
+  nonisolated static func grokSource(channel: Int) -> MeetingAudioSource? {
+    switch channel {
+    case 0: return .microphone
+    case 1: return .systemAudio
+    default: return nil
+    }
+  }
+
+  private func recordGrokFailure(_ message: String) async {
+    xaiFailure = message
+    await stereoIngress.markStreamFailure(message)
+    recoverySources.formUnion(MeetingAudioSource.captureSources)
+  }
+
+  private func emitGrokPreview(_ text: String, channel: Int) async {
+    guard let source = Self.grokSource(channel: channel) else { return }
+    await previewHandler(source, text)
+  }
+
+  private func emitGrok(_ words: [XAIMeetingWord], channel: Int) async {
+    guard let source = Self.grokSource(channel: channel) else { return }
+    let tokens = Self.grokTokens(words, source: source, timelineOffset: timelineOffset)
+    guard !tokens.isEmpty else { return }
+    await tokenHandler(tokens)
+  }
+
+  /// Grok words as transcript tokens on the meeting timeline. Words carry no spacing, so
+  /// each gets a leading space like Soniox tokens; the microphone keeps no speaker label.
+  nonisolated static func grokTokens(
+    _ words: [XAIMeetingWord],
+    source: MeetingAudioSource,
+    timelineOffset: TimeInterval
+  ) -> [MeetingTranscriptToken] {
+    words.map { word in
+      MeetingTranscriptToken(
+        source: source,
+        startTime: timelineOffset + word.start,
+        endTime: timelineOffset + max(word.start, word.end),
+        text: " " + word.text.trimmingCharacters(in: .whitespacesAndNewlines),
+        speaker: source == .microphone ? nil : word.speaker
+      )
+    }
+  }
+
+  private func finishGrok() async throws {
+    guard let provider = xaiProvider else { return }
+    await stereoIngress.finish()
+    do {
+      try await provider.endRealtime()
+    } catch {
       recoverySources.formUnion(MeetingAudioSource.captureSources)
-    } else {
-      recoverySources.insert(source)
+      throw error
+    }
+    if let xaiFailure {
+      recoverySources.formUnion(MeetingAudioSource.captureSources)
+      throw ProviderError.networkError("Grok: \(xaiFailure)")
     }
   }
 
   func sourcesNeedingRecovery() async -> Set<MeetingAudioSource> {
     var sources = recoverySources
-    if await singleStreamIngress.needsRecovery() {
+    if await stereoIngress.needsRecovery() {
       sources.formUnion(MeetingAudioSource.captureSources)
     }
     return sources
@@ -482,7 +572,7 @@ actor MeetingTranscriptionService {
 
   func sourcesNeedingFullRecovery() async -> Set<MeetingAudioSource> {
     var sources = fullRecoverySources
-    if await singleStreamIngress.needsRecovery() {
+    if await stereoIngress.needsRecovery() {
       sources.formUnion(MeetingAudioSource.captureSources)
     }
     return sources
@@ -527,22 +617,6 @@ actor MeetingTranscriptionService {
     }
   }
 
-  private func finishSingleStreamSoniox() async throws {
-    guard let provider = sonioxProviders[.mixed] else { return }
-    await singleStreamIngress.finish()
-    do {
-      _ = try await provider.endRealtime()
-    } catch {
-      recoverySources.formUnion(MeetingAudioSource.captureSources)
-      fullRecoverySources.formUnion(MeetingAudioSource.captureSources)
-      throw error
-    }
-    if let failure = sonioxFailures[.mixed] {
-      recoverySources.formUnion(MeetingAudioSource.captureSources)
-      throw ProviderError.networkError("Meeting: \(failure)")
-    }
-  }
-
   private func finishSeparateSoniox() async throws {
     guard let system = sonioxProviders[.systemAudio],
           let microphone = sonioxProviders[.microphone] else { return }
@@ -569,9 +643,9 @@ actor MeetingTranscriptionService {
         sourceOffsets[chunk.source] = chunk.startTime
       }
       try await processParakeet(chunk)
-    case .soniox:
+    case .xaiGrok:
       return
-    case .sonioxSeparate:
+    case .soniox, .sonioxSeparate:
       if sourceOffsets[chunk.source] == nil {
         sourceOffsets[chunk.source] = chunk.startTime
       }
@@ -646,7 +720,7 @@ actor MeetingTranscriptionService {
     source: MeetingAudioSource
   ) async {
     guard !tokens.isEmpty else { return }
-    let offset = sourceOffsets[source] ?? (source == .mixed ? timelineOffset : 0)
+    let offset = sourceOffsets[source] ?? 0
     var endTime = sonioxEndTimes[source] ?? offset
     let mapped = tokens.compactMap { token -> MeetingTranscriptToken? in
       guard !token.text.isEmpty,
@@ -662,7 +736,7 @@ actor MeetingTranscriptionService {
         startTime: start,
         endTime: end,
         text: token.text,
-        speaker: token.speaker
+        speaker: source == .microphone ? nil : token.speaker
       )
     }
     sonioxEndTimes[source] = endTime

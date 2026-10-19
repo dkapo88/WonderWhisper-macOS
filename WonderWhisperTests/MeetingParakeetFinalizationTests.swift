@@ -78,7 +78,7 @@ struct MeetingParakeetFinalizationTests {
     #expect(!tokens.contains { $0.text == " Hapana" })
     #expect(
       MeetingTranscriptFormatter.plainText(tokens: tokens)
-        == "System audio: We use hap\nMicrophone: Right\nSystem audio: anna for bookings daily"
+        == "Others: We use hap\nYou: Right\nOthers: anna for bookings daily"
     )
   }
 
