@@ -102,8 +102,8 @@ struct MeetingFeatureTests {
     #expect(abs(resumed[0].startTime - 0.35) < 0.000_001)
   }
 
-  @Test func singleStreamMixerAlignsBothSourcesIntoOneTimeline() {
-    let mixer = MeetingSingleStreamMixer()
+  @Test func stereoAlignerKeepsEachSourceOnItsOwnChannel() {
+    let aligner = MeetingStereoAligner()
     let system = MeetingAudioChunk(
       source: .systemAudio,
       samples: Array(repeating: 0.1, count: 3_200),
@@ -117,18 +117,34 @@ struct MeetingFeatureTests {
       duration: 0.2
     )
 
-    #expect(mixer.ingest(system).isEmpty)
-    let mixed = mixer.ingest(microphone)
+    #expect(aligner.ingest(system).isEmpty)
+    let frames = aligner.ingest(microphone)
 
-    #expect(mixed.count == 2)
-    #expect(mixed.allSatisfy { $0.source == .mixed })
-    #expect(mixed[0].startTime == 0)
-    #expect(mixed[1].startTime == 0.1)
-    #expect(mixed.allSatisfy { $0.samples.count == 1_600 })
+    #expect(frames.count == 2)
+    #expect(frames[0].startTime == 0)
+    #expect(frames[1].startTime == 0.1)
+    #expect(frames.allSatisfy { $0.microphone.count == 1_600 && $0.system.count == 1_600 })
+    #expect(frames.allSatisfy { $0.microphone.allSatisfy { $0 == 0.05 } })
+    #expect(frames.allSatisfy { $0.system.allSatisfy { $0 == 0.1 } })
   }
 
-  @Test func singleStreamMixerWaitsForBothSourcesInsteadOfDiscardingOne() {
-    let mixer = MeetingSingleStreamMixer()
+  @Test func stereoFrameInterleavesMicrophoneFirst() {
+    let frame = MeetingStereoFrame(startTime: 0, microphone: [0.5, -1], system: [-0.5, 1])
+    let data = frame.interleavedPCM16
+
+    func value(at index: Int) -> Int16 {
+      Int16(bitPattern: UInt16(data[index * 2]) | UInt16(data[index * 2 + 1]) << 8)
+    }
+
+    #expect(data.count == 8)
+    #expect(value(at: 0) == 16_384)
+    #expect(value(at: 1) == -16_384)
+    #expect(value(at: 2) == Int16.min)
+    #expect(value(at: 3) == Int16.max)
+  }
+
+  @Test func stereoAlignerWaitsForBothSourcesInsteadOfDiscardingOne() {
+    let aligner = MeetingStereoAligner()
     let microphoneStart = MeetingAudioChunk(
       source: .microphone,
       samples: Array(repeating: 0.05, count: 1_600),
@@ -148,15 +164,17 @@ struct MeetingFeatureTests {
       duration: 0.3
     )
 
-    #expect(mixer.ingest(microphoneStart).isEmpty)
-    #expect(mixer.ingest(systemAhead).count == 1)
-    #expect(!mixer.hasDiscardedLateAudio)
-    #expect(mixer.ingest(delayedMicrophone).count == 3)
-    #expect(!mixer.hasDiscardedLateAudio)
+    #expect(aligner.ingest(microphoneStart).isEmpty)
+    #expect(aligner.ingest(systemAhead).count == 1)
+    #expect(!aligner.hasDiscardedLateAudio)
+    let frames = aligner.ingest(delayedMicrophone)
+    #expect(frames.count == 3)
+    #expect(frames.allSatisfy { $0.microphone.allSatisfy { $0 == 0.05 } })
+    #expect(!aligner.hasDiscardedLateAudio)
   }
 
-  @Test func singleStreamMixerBoundsAStalledSourceAndRequiresRecovery() {
-    let mixer = MeetingSingleStreamMixer()
+  @Test func stereoAlignerBoundsAStalledSourceAndRequiresRecovery() {
+    let aligner = MeetingStereoAligner()
     let microphone = MeetingAudioChunk(
       source: .microphone,
       samples: Array(repeating: 0.05, count: 1_600),
@@ -170,100 +188,11 @@ struct MeetingFeatureTests {
       duration: 31
     )
 
-    #expect(mixer.ingest(microphone).isEmpty)
-    #expect(mixer.ingest(system).count == 10)
-    #expect(mixer.hasDiscardedLateAudio)
-  }
-
-  @Test func adaptiveEchoCancellerReducesDelayedReferenceEnergy() {
-    var randomState: UInt32 = 0x1234ABCD
-    let reference = (0..<12_000).map { _ -> Float in
-      randomState = randomState &* 1_664_525 &+ 1_013_904_223
-      return (Float(randomState % 20_001) / 10_000 - 1) * 0.25
-    }
-    let delay = 240
-    let microphone = reference.indices.map { index in
-      index >= delay ? reference[index - delay] * 0.55 : 0
-    }
-    let canceller = MeetingAdaptiveEchoCanceller()
-    var residual: [Float] = []
-    for start in stride(from: 0, to: reference.count, by: 160) {
-      let end = min(reference.count, start + 160)
-      residual.append(contentsOf: canceller.process(
-        reference: Array(reference[start..<end]),
-        microphone: Array(microphone[start..<end])
-      ))
-    }
-    let comparisonRange = 8_000..<12_000
-    let originalRMS = rms(Array(microphone[comparisonRange]))
-    let residualRMS = rms(Array(residual[comparisonRange]))
-
-    #expect(residualRMS < originalRMS * 0.3)
-  }
-
-  @Test func adaptiveEchoCancellerPreservesIndependentNearEndSpeech() {
-    var referenceState: UInt32 = 0xC001D00D
-    var nearEndState: UInt32 = 0xFACEB00C
-    let reference = (0..<12_000).map { _ -> Float in
-      referenceState = referenceState &* 1_664_525 &+ 1_013_904_223
-      return (Float(referenceState % 20_001) / 10_000 - 1) * 0.25
-    }
-    let nearEnd = (0..<12_000).map { index -> Float in
-      nearEndState = nearEndState &* 22_695_477 &+ 1
-      guard index >= 7_000 else { return 0 }
-      return (Float(nearEndState % 20_001) / 10_000 - 1) * 0.12
-    }
-    let delay = 240
-    let microphone = reference.indices.map { index in
-      let echo = index >= delay ? reference[index - delay] * 0.55 : 0
-      return echo + nearEnd[index]
-    }
-    let canceller = MeetingAdaptiveEchoCanceller()
-    var residual: [Float] = []
-    for start in stride(from: 0, to: reference.count, by: 160) {
-      let end = min(reference.count, start + 160)
-      residual.append(contentsOf: canceller.process(
-        reference: Array(reference[start..<end]),
-        microphone: Array(microphone[start..<end])
-      ))
-    }
-    let comparisonRange = 8_000..<12_000
-    let expected = Array(nearEnd[comparisonRange])
-    let difference = zip(residual[comparisonRange], expected).map { $0 - $1 }
-
-    #expect(rms(difference) < rms(expected) * 0.4)
-    #expect(rms(Array(residual[comparisonRange])) > rms(expected) * 0.7)
-  }
-
-  @Test func adaptiveEchoCancellerSustainsTenMinutesFasterThanRealtime() {
-    let reference = (0..<1_600).map { index in
-      Float((index % 97) - 48) / 240
-    }
-    let microphone = reference.map { $0 * 0.45 }
-    let canceller = MeetingAdaptiveEchoCanceller()
-    let startedAt = Date()
-
-    for _ in 0..<6_000 {
-      _ = canceller.process(reference: reference, microphone: microphone)
-    }
-
-    let processingTime = Date().timeIntervalSince(startedAt)
-    #expect(processingTime < 30)
-  }
-
-  @Test func adaptiveEchoCancellerRejectsNonFiniteAudioWithoutPoisoningState() {
-    let canceller = MeetingAdaptiveEchoCanceller(filterLength: 16)
-    let contaminated = canceller.process(
-      reference: [0.2, .nan, .infinity, -0.1],
-      microphone: [0.1, 0.2, -.infinity, .nan]
-    )
-    let clean = canceller.process(
-      reference: [0.1, 0.2, 0.3, 0.4],
-      microphone: [0.05, 0.1, 0.15, 0.2]
-    )
-
-    #expect(contaminated.allSatisfy { $0.isFinite })
-    #expect(clean.allSatisfy { $0.isFinite })
+    #expect(aligner.ingest(microphone).isEmpty)
+    let frames = aligner.ingest(system)
+    #expect(frames.count == 10)
+    #expect(frames[1].microphone.allSatisfy { $0 == 0 })
+    #expect(aligner.hasDiscardedLateAudio)
   }
 
   @Test func sharedTranscriptionBacklogMarksBothRawSourcesForRecovery() {
@@ -354,9 +283,10 @@ struct MeetingFeatureTests {
     #expect(blocks[0].source == .microphone)
     #expect(blocks[0].text == "Hello world.")
     #expect(blocks[1].source == .systemAudio)
-    #expect(MeetingTranscriptFormatter.markdown(tokens: tokens).contains(
-      "**Microphone [00:00]:**"
-    ))
+    #expect(MeetingTranscriptFormatter.markdown(tokens: tokens, speakers: MeetingSpeakerDirectory(
+      tokens: tokens,
+      userName: nil
+    )).contains("**You [00:00]:**"))
   }
 
   @Test func transcriptFormatterPreservesSubwordOrderAtEqualTimestamps() {
@@ -757,7 +687,7 @@ struct MeetingFeatureTests {
     #expect(document.contains("We planned the release."))
     #expect(document.contains("## Manual notes"))
     #expect(document.contains("Dane owns the release announcement."))
-    #expect(document.contains("**Microphone [00:03]:** Ship it."))
+    #expect(document.contains("**You [00:03]:** Ship it."))
   }
 
   @Test func noteGeneratorSourceMaterialCombinesManualNotesAndTranscript() {
@@ -986,7 +916,7 @@ struct MeetingFeatureTests {
     #expect(try Data(contentsOf: existingURL) == original)
   }
 
-  @Test func resumedSingleStreamSonioxUsesRunLocalMixerTime() {
+  @Test func resumedTwoChannelStreamUsesRunLocalTime() {
     let chunk = MeetingAudioChunk(
       source: .systemAudio,
       samples: [0.1],
@@ -994,7 +924,7 @@ struct MeetingFeatureTests {
       duration: 0.1
     )
 
-    let local = MeetingTranscriptionService.singleStreamChunk(
+    let local = MeetingTranscriptionService.streamLocalChunk(
       chunk,
       timelineOffset: 95
     )
@@ -1549,16 +1479,19 @@ struct MeetingFeatureTests {
     ) == nil)
   }
 
-  @Test func meetingTranscriptionEngineDefaultsLocalAndPersistsSonioxOptIn() throws {
+  @Test func meetingTranscriptionEngineDefaultsLocalAndRetiresSingleStreamSoniox() throws {
     let suiteName = "MeetingFeatureTests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .parakeet)
     defaults.set("soniox", forKey: "meeting.transcription.engine")
-    #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .soniox)
+    #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .sonioxSeparate)
     defaults.set("soniox-separate", forKey: "meeting.transcription.engine")
     #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .sonioxSeparate)
+    defaults.set("xai-grok", forKey: "meeting.transcription.engine")
+    #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .xaiGrok)
+    #expect(!MeetingTranscriptionEngine.selectableCases.contains(.soniox))
     defaults.set("unknown", forKey: "meeting.transcription.engine")
     #expect(MeetingTranscriptionEngine.selected(defaults: defaults) == .parakeet)
   }
@@ -1605,6 +1538,81 @@ struct MeetingFeatureTests {
     #expect(tokens[1].isFinal == false)
   }
 
+  @Test func grokEventsCarryChannelAndOneBasedSpeakers() {
+    let partial = XAIMeetingStreamingProvider.event(from: """
+    {"type":"transcript.partial","text":"Sure, the build","is_final":true,"speech_final":false,
+     "channel_index":1,"words":[
+       {"text":"Sure,","start":5.041,"end":5.6,"speaker":0},
+       {"text":"the","start":5.703,"end":5.8,"speaker":1},
+       {"text":" ","start":5.9,"end":5.9}
+     ]}
+    """)
+    let done = XAIMeetingStreamingProvider.event(from: #"{"type":"transcript.done","channel_index":1}"#)
+    let error = XAIMeetingStreamingProvider.event(
+      from: #"{"type":"error","error":{"message":"bad audio"}}"#
+    )
+
+    #expect(partial == .partial(
+      channel: 1,
+      text: "Sure, the build",
+      words: [
+        XAIMeetingWord(text: "Sure,", start: 5.041, end: 5.6, speaker: "1"),
+        XAIMeetingWord(text: "the", start: 5.703, end: 5.8, speaker: "2"),
+      ],
+      isFinal: true
+    ))
+    #expect(done == .done(channel: 1))
+    #expect(error == .error("bad audio"))
+  }
+
+  @Test func grokSpeechFinalRepeatsAreKeptOnce() {
+    var deduplicator = XAIMeetingWordDeduplicator()
+    let first = [
+      XAIMeetingWord(text: "Morning,", start: 0.72, end: 1.1, speaker: "1"),
+      XAIMeetingWord(text: "everyone.", start: 1.18, end: 1.7, speaker: "1"),
+    ]
+    let repeated = first + [XAIMeetingWord(text: "Let's", start: 1.79, end: 2, speaker: "1")]
+
+    #expect(deduplicator.newWords(channel: 0, words: first) == first)
+    #expect(deduplicator.newWords(channel: 0, words: repeated).map(\.text) == ["Let's"])
+    // Channels are independent: the call's words at the same times still count.
+    #expect(deduplicator.newWords(channel: 1, words: first) == first)
+  }
+
+  @Test func grokWordsBecomeTimelineTokensWithTheMicrophoneUnlabelled() {
+    let words = [XAIMeetingWord(text: "Hello", start: 1, end: 1.4, speaker: "2")]
+
+    let microphone = MeetingTranscriptionService.grokTokens(
+      words,
+      source: .microphone,
+      timelineOffset: 95
+    )
+    let call = MeetingTranscriptionService.grokTokens(words, source: .systemAudio, timelineOffset: 95)
+
+    #expect(microphone.map(\.text) == [" Hello"])
+    #expect(microphone.map(\.speaker) == [nil])
+    #expect(call.map(\.speaker) == ["2"])
+    #expect(call.first?.startTime == 96)
+    #expect(MeetingTranscriptionService.grokSource(channel: 0) == .microphone)
+    #expect(MeetingTranscriptionService.grokSource(channel: 1) == .systemAudio)
+  }
+
+  @Test func grokMeetingStreamAsksForTwoDiarizedChannels() throws {
+    let url = try #require(XAIMeetingStreamingProvider.websocketURL(
+      keyterms: ["Priya Shah"],
+      language: "auto"
+    ))
+    let items = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+    func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+
+    #expect(url.host == "api.x.ai")
+    #expect(value("channels") == "2")
+    #expect(value("multichannel") == "true")
+    #expect(value("diarize") == "true")
+    #expect(value("keyterm") == "Priya Shah")
+    #expect(value("language") == nil)
+  }
+
   @Test func sonioxParserSurfacesCurrentErrorSchema() {
     let payload = """
     {
@@ -1623,7 +1631,8 @@ struct MeetingFeatureTests {
 
     #expect(options.waitForFinished)
     #expect(options.finalizationWaitMs >= 15_000)
-    #expect(SonioxStreamingProvider.RealtimeOptions.mixedMeeting.enableSpeakerDiarization)
+    #expect(!options.enableSpeakerDiarization)
+    #expect(SonioxStreamingProvider.RealtimeOptions.remoteMeeting.enableSpeakerDiarization)
   }
 
   @Test func sonioxLivePreviewReplacesWithOnlyTheCurrentNonFinalTail() {
@@ -1683,10 +1692,6 @@ struct MeetingFeatureTests {
     return directory
   }
 
-  private func rms(_ samples: [Float]) -> Float {
-    guard !samples.isEmpty else { return 0 }
-    return sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
-  }
 
   @Test func placeholderMeetingTitlesAreReplaceableButUserTitlesArePreserved() {
     // Bare detector name, as used by an automatic start.

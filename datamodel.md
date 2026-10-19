@@ -243,7 +243,7 @@ erDiagram
         Date recordingStartedAt "optional, current capture run"
         String detectedApp "optional"
         Bool automaticallyStarted
-        String transcriptionEngine "optional, parakeet or soniox"
+        String transcriptionEngine "optional, parakeet, soniox-separate, xai-grok, or retired soniox"
         String status "recording, processing, completed, interrupted, failed"
         String manualNotesMarkdown "optional, user-authored"
         String notesMarkdown "optional"
@@ -251,6 +251,9 @@ erDiagram
         String exportedMarkdownPath "optional"
         String errorMessage "optional"
         String[] attendees "typed by the user, empty when absent"
+        Map speakerNames "MeetingSpeakerKey rawValue to name, empty when absent"
+        Map speakerMerges "merged speaker rawValue to target rawValue, empty when absent"
+        MeetingSpeakerSuggestion[] speakerSuggestions "pending name suggestions"
     }
 
     MeetingTranscriptToken {
@@ -259,7 +262,7 @@ erDiagram
         Double startTime
         Double endTime
         String text
-        String speaker "optional Soniox label"
+        String speaker "optional diarizer label on non-microphone sources"
     }
 ```
 
@@ -269,14 +272,18 @@ System and microphone audio are kept as separate one-minute, 16 kHz mono CAF seg
 Core Audio process tap captures system audio before output volume and device routing; manual meetings
 use a global tap excluding WonderWhisper, while automatic meetings include only matching meeting-app
 audio processes. ScreenCaptureKit captures the selected microphone. Parakeet Unified is the on-device
-default and keeps source-specific inference. Soniox V5 is an opt-in cloud beta whose default mode
-first normalizes variable callbacks into continuous 100 ms sample-clock frames, then aligns both
-sources and reduces the system-audio reference from the microphone with an Accelerate-backed
-normalized adaptive filter, mixes the cleaned microphone with system audio, and opens one real-time stream.
-The fallback `soniox-separate` mode opens one stream per raw source. The optional
+default and keeps source-specific inference. `soniox-separate` opens one Soniox stream per raw
+source and diarizes only the system stream. `xai-grok` aligns both sources into 100 ms stereo
+frames (`MeetingStereoAligner`, channel 0 microphone, channel 1 system) for one diarized
+two-channel Grok stream. The retired single-stream `soniox` value still decodes for older
+manifests and settings and runs as `soniox-separate`. The optional
 `transcriptionEngine` manifest field keeps older meeting manifests decodable. `attendees`
 (comma separated in the meeting detail view, trimmed, case-insensitive duplicates dropped)
-decodes as empty from older manifests. `recordedDuration` sums the capture runs only (pauses
+decodes as empty from older manifests. `speakerNames`, `speakerMerges` and
+`speakerSuggestions` also decode as empty from older manifests. A speaker is a
+`MeetingSpeakerKey`: `microphone` (always the user), or `systemAudio`/`mixed` plus an optional
+diarizer label, stored as `systemAudio:2`. Renames and merges never rewrite tokens.
+`recordedDuration` sums the capture runs only (pauses
 and the gap before a Resume excluded), so it can be much shorter than `endedAt - startedAt`.
 Manual meetings capture all Mac system audio;
 automatically detected meetings restrict system capture to the detected application scope.
@@ -289,16 +296,17 @@ dismisses the companion first;
 the session remains `processing` while transcription, optional notes, and export finish in a
 session-scoped background task. When a live transcription source fails, local Parakeet Unified
 re-transcribes only the final overlapping CAF segment and later segments for that source, replacing
-the incomplete tail while preserving earlier finalized tokens and the other source. A failed mixed
-stream is instead replaced from both raw tracks. If the bounded live-ingestion queue fills, only live
+the incomplete tail while preserving earlier finalized tokens and the other source. A failed Grok
+stream is recovered from both raw tracks. After transcription, when no system token has a speaker label
+(Parakeet), the optional on-Mac speaker pass labels them from FluidAudio's offline diarizer. If the bounded live-ingestion queue fills, only live
 transcription pauses; raw CAF capture continues and the affected tracks are recovered after Stop.
-Single-stream mixing and PCM delivery use a dedicated serial ingress actor, independent of Soniox
-token callbacks and MainActor transcript/context updates.
+Two-channel alignment and PCM delivery use a dedicated serial ingress actor, independent of token
+callbacks and MainActor transcript/context updates.
 
-**MeetingTranscriptToken**: A timestamped local transcription token. Parakeet and separate-stream
-Soniox tokens preserve the honest `Microphone`/`System audio` capture distinction and suppress
-matching acoustic echo at render time. Single-stream Soniox tokens use the `mixed` source and may
-carry Soniox speaker labels; their audio has already passed through local adaptive echo reduction.
+**MeetingTranscriptToken**: A timestamped local transcription token. Tokens keep the honest
+microphone/system capture distinction and suppress matching acoustic echo at render time. System
+tokens may carry a diarizer speaker label (Soniox, Grok 1-based, or the on-Mac pass); microphone
+tokens never do. Tokens from the retired single-stream Soniox beta use the `mixed` source.
 Soniox non-final tokens are shown only as a replaceable transient live tail. They are never persisted
 or used for context; only final tokens enter the manifest.
 
@@ -610,7 +618,10 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `simple.command.settings` | Data | Command prompt settings |
 | `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
-| `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet`, single-stream `soniox`, or fallback `soniox-separate`); defaults to local Parakeet when unset or unknown |
+| `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet`, `soniox-separate`, or `xai-grok`; retired `soniox` reads as `soniox-separate`); defaults to local Parakeet when unset or unknown |
+| `meeting.userName` | String | The user's name for the microphone in transcripts, notes and exports; "You" when empty |
+| `meeting.speakers.localPass` | Bool | After a meeting whose call side has no live speaker labels (Parakeet), diarize the call audio on this Mac and label the call's speakers; defaults to true |
+| `meeting.speakers.suggestNames` | Bool | Ask the summary model for names for unnamed speakers (attendee-constrained, quoted, accepted by the user); runs only with `meeting.notes.generate`; defaults to true |
 | `meeting.autoDetection.enabled` | Bool | Detect configured meeting applications and start/stop capture automatically; opt-in and false when unset |
 | `meeting.autoDetection.triggerRules` | Data | JSON-encoded `MeetingTriggerRule[]` containing bundle prefix, display name, strict Meet/Slack or explicit-microphone mode, and app-scoped capture rule; migrates legacy `meeting.autoDetect.apps` values |
 | `meeting.notes.generate` | Bool | Opt in to sending the complete transcript to OpenRouter for Markdown notes after capture; defaults to false |

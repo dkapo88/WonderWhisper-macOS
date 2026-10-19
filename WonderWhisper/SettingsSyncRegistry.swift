@@ -92,7 +92,7 @@ enum SettingsSyncRegistry {
     // Free-form: values differ across app versions ("unified", "v3", "ultra").
     Setting("parakeet.version", .transcription, .string),
 
-    // Meetings: engine, summary/context models, prompt, toggles, trigger apps
+    // Meetings: engine, summary/context models, prompt, toggles, trigger apps, speakers
     Setting("meeting.transcription.engine", .meetings, .oneOf(meetingEngines)),
     Setting("meeting.notes.generate", .meetings, .bool),
     Setting("meeting.notes.model", .meetings, .string),
@@ -104,6 +104,9 @@ enum SettingsSyncRegistry {
     Setting("meeting.autoDetection.enabled", .meetings, .bool),
     Setting("meeting.autoDetection.triggerRules", .meetings, .json(.meetingTriggerRules)),
     Setting("meeting.ticketBaseURL", .meetings, .string),
+    Setting("meeting.userName", .meetings, .string),
+    Setting("meeting.speakers.localPass", .meetings, .bool),
+    Setting("meeting.speakers.suggestNames", .meetings, .bool),
 
     // Beeper chats (IDs + aliases) and response monitoring
     Setting("beeper.chats", .beeper, .json(.beeperChats)),

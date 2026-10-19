@@ -270,5 +270,17 @@ extension MeetingCoordinator {
     if has(MeetingTriggerRule.defaultsKey) {
       reloadTriggerRulesFromDefaults()
     }
+    if has(MeetingSpeakerDirectory.userNameDefaultsKey) {
+      let value = defaults.string(forKey: MeetingSpeakerDirectory.userNameDefaultsKey) ?? ""
+      if userName != value { userName = value }
+    }
+    if has(MeetingSpeakerPassService.enabledDefaultsKey) {
+      let value = MeetingSpeakerPassService.isEnabled(defaults: defaults)
+      if localSpeakerPassEnabled != value { localSpeakerPassEnabled = value }
+    }
+    if has(MeetingSpeakerNameSuggester.enabledDefaultsKey) {
+      let value = MeetingSpeakerNameSuggester.isEnabled(defaults: defaults)
+      if speakerNameSuggestionsEnabled != value { speakerNameSuggestionsEnabled = value }
+    }
   }
 }

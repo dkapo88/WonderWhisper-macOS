@@ -95,12 +95,26 @@ and synthesizes its own audio with `say`.
 - Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Parakeet runs English Parakeet Unified (default) or multilingual Parakeet Ultra (`parakeet.version`), and Unified rescores toward the Vocabulary list via FluidAudio CTC boosting (`ParakeetVocabularyBoosting`). Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
-  supplies the selected microphone. Parakeet Unified remains the free on-device default with
-  source-specific inference. Soniox V5 is an opt-in cloud beta whose default mode normalizes
-  variable capture callbacks into fixed 100 ms source frames,
-  timestamp-aligns both sources, uses Accelerate-backed adaptive system-audio echo reduction,
-  and sends one mixed WebSocket with speaker metadata for approximately $0.12 per meeting hour. A
-  two-WebSocket source-separated mode remains available as a fallback at approximately $0.24 per hour. Audio
+  supplies the selected microphone. Speakers are "me by channel, them by diarizer, names by
+  roster": everything on the microphone is the user (`meeting.userName`, else "You"), and only
+  the call side is split into voices. Engines: Parakeet Unified (free, on-device, two source
+  streams, no live speaker split); Soniox V5 (`soniox-separate`, two WebSockets, diarization on
+  the system stream only, about $0.24 per meeting hour); Grok Voice Transcribe 2.0 (`xai-grok`,
+  `XAIMeetingStreamingProvider`, one two-channel WebSocket fed by `MeetingStereoAligner` with
+  channel 0 the microphone and channel 1 the call, `diarize=true`, $0.20 per stream hour; whether
+  two channels bill once or twice is unconfirmed). The retired single-stream Soniox beta
+  (`soniox`) still decodes and runs as `soniox-separate`; the mixer and its NLMS echo canceller
+  were removed. Attendees and the user's name lead the cloud vocabulary terms. After Stop,
+  when the call side has no live labels (Parakeet), `MeetingSpeakerPassService` (FluidAudio
+  `OfflineDiarizerManager`, `meeting.speakers.localPass`, default on) diarizes the retained system
+  track on the Mac and `MeetingSpeakerRelabeler` labels the call's words. Live cloud labels are
+  kept: on a 41 s three-voice synthetic call the pass found two voices (74% of words right)
+  against Grok's live 76%. Speaker names and merges live on the session (`speakerNames`, `speakerMerges`, keyed by
+  `MeetingSpeakerKey.rawValue`), resolved by `MeetingSpeakerDirectory` and edited only through
+  `MeetingSpeakerEditor`; tokens are never rewritten for a rename. The only other attendee names
+  the only voice on the call. `MeetingSpeakerNameSuggester` (`meeting.speakers.suggestNames`,
+  needs AI notes) asks the summary model for names, keeps only quoted, attendee-constrained ones,
+  and the user accepts each. The notes prompt gets a participants header. Audio
   is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
@@ -112,9 +126,9 @@ and synthesizes its own audio with `say`.
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
   retained CAF segments with local Parakeet Unified. Full Soniox failures first recover both retained
   raw tracks with Soniox Async V5 so system-audio speaker labels survive; if that fails, local Parakeet
-  remains the fallback. One cumulative late 100 ms mixed frame is tolerated before full recovery.
-  Mixed capture runs on a dedicated serial ingestion worker so Soniox
-  token and UI callbacks cannot starve audio delivery. If live ingestion falls behind, transcription pauses and is recovered
+  remains the fallback. One cumulative late 100 ms frame is tolerated on the Grok stream before full
+  recovery. Two-channel ingestion runs on a dedicated serial ingress actor so token and UI
+  callbacks cannot starve audio delivery. If live ingestion falls behind, transcription pauses and is recovered
   later while durable audio capture continues uninterrupted. The companion includes a durable Manual notes
   tab backed by an atomically saved local sidecar; those notes remain separate from generated Markdown,
   appear in history and exports, and join the transcript only when cloud-generated notes are opted in.
@@ -254,6 +268,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-19: Meeting speakers: the microphone is the user ("Your name" setting), only the call is
+  diarized (Soniox system stream, Grok channel 1), single-stream Soniox retired, new Grok Voice
+  Transcribe 2.0 two-channel engine, on-Mac call diarization after Parakeet meetings,
+  rename/merge/separate speakers with per-speaker colours, attendee-constrained name
+  suggestions, and a participants header for notes.
 - 2026-10-15: Released 2026-10-15 with paced split webhooks, end marker, partial resend, duration fields and attendees.
 - 2026-10-15: Meeting webhooks: split parts end with `END-OF-PAYLOAD part N of M` (and
   `part.endMarker`), fill to about 85 to 100 percent of the max, and are paced per endpoint

@@ -311,6 +311,39 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
+  /// What the microphone is called in transcripts and notes; "You" when empty.
+  @Published var userName: String = {
+    AppConfig.defaults.string(forKey: MeetingSpeakerDirectory.userNameDefaultsKey) ?? ""
+  }() {
+    didSet {
+      AppConfig.defaults.set(userName, forKey: MeetingSpeakerDirectory.userNameDefaultsKey)
+    }
+  }
+
+  @Published var localSpeakerPassEnabled: Bool = {
+    MeetingSpeakerPassService.isEnabled()
+  }() {
+    didSet {
+      AppConfig.defaults.set(
+        localSpeakerPassEnabled,
+        forKey: MeetingSpeakerPassService.enabledDefaultsKey
+      )
+    }
+  }
+
+  @Published var speakerNameSuggestionsEnabled: Bool = {
+    MeetingSpeakerNameSuggester.isEnabled()
+  }() {
+    didSet {
+      AppConfig.defaults.set(
+        speakerNameSuggestionsEnabled,
+        forKey: MeetingSpeakerNameSuggester.enabledDefaultsKey
+      )
+    }
+  }
+
+  @Published private(set) var speakerSuggestionSessionIDs: Set<UUID> = []
+
   private let store = MeetingSessionStore()
   private let capture = MeetingCaptureService()
   private let detector = MeetingDetector()
@@ -323,6 +356,11 @@ final class MeetingCoordinator: ObservableObject {
     ? MeetingTranscriptRecoveryService()
     : MeetingTranscriptRecoveryService { _ in "" }
   private let sonioxAsyncRecovery = MeetingSonioxAsyncRecoveryService()
+  // Unit tests never download the diarizer models.
+  private let speakerPass = AppConfig.testScratchParakeetModels == nil
+    ? MeetingSpeakerPassService()
+    : MeetingSpeakerPassService { _ in [] }
+  private let speakerNameSuggester = MeetingSpeakerNameSuggester()
   private let audioLevelGate = MeetingAudioLevelGate()
   /// Webhook endpoints and deliveries. Its changes are forwarded to this object's
   /// `objectWillChange`, so views observing the coordinator also refresh on webhook updates.
@@ -378,6 +416,10 @@ final class MeetingCoordinator: ObservableObject {
 
   var hasSonioxAPIKey: Bool {
     KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) != nil
+  }
+
+  var hasXAIAPIKey: Bool {
+    KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias) != nil
   }
 
   init() {
@@ -808,13 +850,18 @@ final class MeetingCoordinator: ObservableObject {
       }
     }
 
+    if !Task.isCancelled, localSpeakerPassEnabled {
+      await runSpeakerPass(for: sessionID)
+    }
+    if !Task.isCancelled, speakerNameSuggestionsEnabled, generateNotes {
+      await suggestSpeakerNames(for: sessionID, model: noteModel)
+    }
+
     guard let transcribedSession = session(withID: sessionID) else {
       finalizationTasks.removeValue(forKey: sessionID)
       return
     }
-    let transcript = MeetingTranscriptFormatter.plainText(
-      tokens: transcribedSession.transcriptTokens
-    )
+    let transcript = transcribedSession.transcriptPlainText
     let manualNotes = transcribedSession.manualNotesMarkdown?.trimmingCharacters(
       in: .whitespacesAndNewlines
     ) ?? ""
@@ -826,6 +873,7 @@ final class MeetingCoordinator: ObservableObject {
         generatedNotes = try await noteGenerator.generate(
           transcript: transcript,
           manualNotes: manualNotes,
+          participants: MeetingNoteGenerator.participants(for: transcribedSession),
           model: noteModel,
           prompt: notePrompt
         )
@@ -1042,9 +1090,7 @@ final class MeetingCoordinator: ObservableObject {
     }
     defer { noteGenerationSessionIDs.remove(session.id) }
 
-    let transcript = MeetingTranscriptFormatter.plainText(
-      tokens: currentSession.transcriptTokens
-    )
+    let transcript = currentSession.transcriptPlainText
     let manualNotes = currentSession.manualNotesMarkdown?.trimmingCharacters(
       in: .whitespacesAndNewlines
     ) ?? ""
@@ -1064,6 +1110,7 @@ final class MeetingCoordinator: ObservableObject {
       let generated = try await noteGenerator.generate(
         transcript: transcript,
         manualNotes: manualNotes,
+        participants: MeetingNoteGenerator.participants(for: currentSession),
         model: noteModel,
         prompt: notePrompt
       )
@@ -1295,6 +1342,136 @@ final class MeetingCoordinator: ObservableObject {
     schedulePersist(session)
   }
 
+  // MARK: - Speakers
+
+  /// Names a speaker; an empty name restores its default. A name another speaker already
+  /// has merges the two.
+  func renameSpeaker(_ speaker: MeetingSpeakerKey, to name: String, in sessionID: UUID) {
+    editSpeakers(in: sessionID) { session in
+      MeetingSpeakerEditor.rename(speaker, to: name, in: &session)
+    }
+  }
+
+  func mergeSpeaker(
+    _ speaker: MeetingSpeakerKey,
+    into target: MeetingSpeakerKey,
+    in sessionID: UUID
+  ) {
+    editSpeakers(in: sessionID) { session in
+      MeetingSpeakerEditor.merge(speaker, into: target, in: &session)
+    }
+  }
+
+  func separateSpeakers(mergedInto speaker: MeetingSpeakerKey, in sessionID: UUID) {
+    editSpeakers(in: sessionID) { session in
+      MeetingSpeakerEditor.separate(speaker, in: &session)
+    }
+  }
+
+  func acceptSpeakerSuggestion(_ suggestion: MeetingSpeakerSuggestion, in sessionID: UUID) {
+    guard let speaker = suggestion.speakerKey else { return }
+    renameSpeaker(speaker, to: suggestion.name, in: sessionID)
+  }
+
+  func dismissSpeakerSuggestion(_ suggestion: MeetingSpeakerSuggestion, in sessionID: UUID) {
+    editSpeakers(in: sessionID) { session in
+      session.speakerSuggestions.removeAll { $0.speaker == suggestion.speaker }
+    }
+  }
+
+  /// Asks the summary model for names for the meeting's unnamed speakers.
+  func requestSpeakerNameSuggestions(for sessionID: UUID) async {
+    guard let session = session(withID: sessionID), session.status.isTerminal else { return }
+    let model = noteModel.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+      ?? "openai/gpt-5.4-nano"
+    await suggestSpeakerNames(for: sessionID, model: model)
+    guard let updated = self.session(withID: sessionID) else { return }
+    if updated.speakerSuggestions.isEmpty, activeSessionID == nil, !isStarting {
+      statusMessage = "No speaker names found in the transcript"
+    }
+  }
+
+  private func editSpeakers(in sessionID: UUID, _ edit: (inout MeetingSession) -> Void) {
+    guard var session = session(withID: sessionID) else { return }
+    let before = session
+    edit(&session)
+    guard session != before else { return }
+    replace(session)
+    schedulePersist(session)
+  }
+
+  /// Labels the call's voices with the on-Mac diarizer when the live engine didn't.
+  private func runSpeakerPass(for sessionID: UUID) async {
+    guard let session = session(withID: sessionID),
+          !session.audioFiles.isEmpty,
+          MeetingSpeakerPassService.needsPass(session.transcriptTokens) else { return }
+    if activeSessionID == nil, !isStarting {
+      statusMessage = "Telling speakers apart…"
+    }
+    do {
+      let directory = try await store.directory(for: sessionID)
+      guard let relabeled = try await speakerPass.relabel(
+        sessionDirectory: directory,
+        audioFilenames: session.audioFiles,
+        tokens: session.transcriptTokens
+      ), var updated = self.session(withID: sessionID) else { return }
+      // Only labels change, so tokens that arrived meanwhile (none should) are left alone.
+      let labels = Dictionary(
+        relabeled.map { ($0.id, $0.speaker) },
+        uniquingKeysWith: { first, _ in first }
+      )
+      updated.transcriptTokens = updated.transcriptTokens.map { token in
+        guard token.source == .systemAudio, let label = labels[token.id] else { return token }
+        return MeetingTranscriptToken(
+          id: token.id,
+          source: token.source,
+          startTime: token.startTime,
+          endTime: token.endTime,
+          text: token.text,
+          speaker: label
+        )
+      }
+      replace(updated)
+      await persist(updated)
+    } catch {
+      AppLog.dictation.error(
+        "MeetingSpeakerPass: failed: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+  }
+
+  private func suggestSpeakerNames(for sessionID: UUID, model: String) async {
+    guard let session = session(withID: sessionID),
+          !MeetingSpeakerNameSuggester.candidates(in: session.speakerDirectory).isEmpty,
+          speakerSuggestionSessionIDs.insert(sessionID).inserted else { return }
+    defer { speakerSuggestionSessionIDs.remove(sessionID) }
+    do {
+      let suggestions = try await speakerNameSuggester.suggest(for: session, model: model)
+      guard var updated = self.session(withID: sessionID) else { return }
+      // Re-check against edits made while the model was thinking.
+      let candidates = Set(
+        MeetingSpeakerNameSuggester.candidates(in: updated.speakerDirectory).map(\.rawValue)
+      )
+      updated.speakerSuggestions = suggestions.filter { candidates.contains($0.speaker) }
+      replace(updated)
+      await persist(updated)
+    } catch {
+      AppLog.dictation.error(
+        "MeetingSpeakerNames: suggestion failed: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+  }
+
+  /// The names cloud recognition is biased towards: the user, then the attendees.
+  nonisolated static func participantNames(userName: String?, attendees: [String]) -> [String] {
+    var seen: Set<String> = []
+    return ([userName].compactMap { $0 } + attendees).compactMap { raw in
+      guard let name = MeetingSpeakerDirectory.cleanedName(raw),
+            seen.insert(name.lowercased()).inserted else { return nil }
+      return name
+    }
+  }
+
   func updateManualNotes(_ notes: String, for sessionID: UUID) {
     guard !isStopping,
           sessionID == activeSessionID,
@@ -1373,15 +1550,27 @@ final class MeetingCoordinator: ObservableObject {
           activeSessionID == nil,
           !isStarting,
           !isStopping else { return }
-    let activeTranscriptionEngine = transcriptionEngine
+    let activeTranscriptionEngine = transcriptionEngine.normalized
+    var missingKey: (error: String, status: String)?
     if activeTranscriptionEngine.usesSoniox, !hasSonioxAPIKey {
+      missingKey = (
+        error: "Add a Soniox API key in Settings → Transcription before using Soniox for meetings.",
+        status: "Soniox API key required"
+      )
+    } else if activeTranscriptionEngine.usesXAI, !hasXAIAPIKey {
+      missingKey = (
+        error: "Add an xAI API key in Settings → Transcription before using Grok for meetings.",
+        status: "xAI API key required"
+      )
+    }
+    if let missingKey {
       if automaticallyStarted {
         suppressedAutomaticFamily = candidate?.bundleFamily
         suppressedFamilyMissingSince = nil
         resetDetectionState()
       }
-      lastError = "Add a Soniox API key in Settings → Transcription before using Soniox for meetings."
-      statusMessage = "Soniox API key required"
+      lastError = missingKey.error
+      statusMessage = missingKey.status
       return
     }
     isStarting = true
@@ -1448,6 +1637,10 @@ final class MeetingCoordinator: ObservableObject {
       let transcriber = MeetingTranscriptionService(
         engine: activeTranscriptionEngine,
         timelineOffset: timelineOffset,
+        participantNames: Self.participantNames(
+          userName: MeetingSpeakerDirectory.currentUserName(),
+          attendees: session.attendees
+        ),
         tokenHandler: { [weak self] tokens in
           await self?.receive(tokens: tokens, for: sessionID)
         },
@@ -1710,7 +1903,10 @@ final class MeetingCoordinator: ObservableObject {
       session.transcriptTokens,
       duration: 30
     )
-    let transcript = MeetingTranscriptFormatter.plainText(tokens: recentTokens)
+    let transcript = MeetingTranscriptFormatter.plainText(
+      tokens: recentTokens,
+      speakers: session.speakerDirectory
+    )
     guard transcript.count >= 40 else { return }
     lastContextAnalysisTokenCount = session.transcriptTokens.count
     lastContextAnalysisAt = Date()

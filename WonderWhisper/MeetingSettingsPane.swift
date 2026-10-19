@@ -14,6 +14,7 @@ struct MeetingSettingsPane: View {
   var body: some View {
     SettingsPage {
       transcriptionSection
+      speakersSection
       detectionSection
       triggerAppsSection
       notesSection
@@ -49,7 +50,7 @@ struct MeetingSettingsPane: View {
   private var transcriptionSection: some View {
     Section {
       Picker(selection: $coordinator.transcriptionEngine) {
-        ForEach(MeetingTranscriptionEngine.allCases) { engine in
+        ForEach(MeetingTranscriptionEngine.selectableCases) { engine in
           Text(engine.displayName).tag(engine)
         }
       } label: {
@@ -61,9 +62,18 @@ struct MeetingSettingsPane: View {
       if coordinator.transcriptionEngine.usesSoniox {
         LabeledContent("Soniox") {
           if coordinator.hasSonioxAPIKey {
-            StatusBadge(.ok, sonioxCostText)
+            StatusBadge(.ok, "Key saved, about $0.24 per meeting hour")
           } else {
             StatusBadge(.warning, "Add a Soniox key in Settings → Transcription")
+          }
+        }
+      }
+      if coordinator.transcriptionEngine.usesXAI {
+        LabeledContent("xAI") {
+          if coordinator.hasXAIAPIKey {
+            StatusBadge(.ok, "Key saved, about $0.20–$0.40 per meeting hour")
+          } else {
+            StatusBadge(.warning, "Add an xAI key in Settings → Transcription")
           }
         }
       }
@@ -77,10 +87,33 @@ struct MeetingSettingsPane: View {
     }
   }
 
-  private var sonioxCostText: String {
-    coordinator.transcriptionEngine == .soniox
-      ? "Key saved, about $0.12 per meeting hour"
-      : "Key saved, about $0.24 per meeting hour"
+  // MARK: - Speakers
+
+  private var speakersSection: some View {
+    Section {
+      TextField(
+        text: $coordinator.userName,
+        prompt: Text(MeetingSpeakerDirectory.defaultUserName)
+      ) {
+        Text("Your name")
+        Text("Your microphone's label in transcripts and notes.")
+      }
+      Toggle(isOn: $coordinator.localSpeakerPassEnabled) {
+        Text("Tell call voices apart on this Mac")
+        Text("After a Parakeet meeting, with an on-device model. Cloud engines do this live.")
+      }
+      Toggle(isOn: $coordinator.speakerNameSuggestionsEnabled) {
+        Text("Suggest names for unnamed speakers")
+        Text("Finds names said in the meeting with the summary model. You accept each one.")
+      }
+      .disabled(!coordinator.generateMeetingNotes)
+    } header: {
+      Text("Speakers")
+    } footer: {
+      Text("Everything on your microphone is you. The on-device model downloads the first "
+        + "time it runs. Name suggestions need AI notes on.")
+        .settingsFootnote()
+    }
   }
 
   // MARK: - Detection

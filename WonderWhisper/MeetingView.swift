@@ -155,6 +155,15 @@ struct MeetingView: View {
           : [:],
         onTitleChange: { coordinator.updateTitle($0, for: session.id) },
         onAttendeesChange: { coordinator.updateAttendees($0, for: session.id) },
+        speakerActions: MeetingSpeakerActions(
+          rename: { coordinator.renameSpeaker($0, to: $1, in: session.id) },
+          merge: { coordinator.mergeSpeaker($0, into: $1, in: session.id) },
+          separate: { coordinator.separateSpeakers(mergedInto: $0, in: session.id) },
+          accept: { coordinator.acceptSpeakerSuggestion($0, in: session.id) },
+          dismiss: { coordinator.dismissSpeakerSuggestion($0, in: session.id) },
+          suggest: { Task { await coordinator.requestSpeakerNameSuggestions(for: session.id) } }
+        ),
+        isSuggestingSpeakerNames: coordinator.speakerSuggestionSessionIDs.contains(session.id),
         canResume: coordinator.canResumeMeeting(session),
         onResume: { Task { await coordinator.resumeMeeting(session) } },
         isGeneratingNotes: coordinator.noteGenerationSessionIDs.contains(session.id),
@@ -219,6 +228,8 @@ private struct MeetingDetailView: View {
   let livePreviews: [MeetingAudioSource: String]
   let onTitleChange: (String) -> Void
   let onAttendeesChange: (String) -> Void
+  let speakerActions: MeetingSpeakerActions
+  let isSuggestingSpeakerNames: Bool
   let canResume: Bool
   let onResume: () -> Void
   let isGeneratingNotes: Bool
@@ -243,11 +254,17 @@ private struct MeetingDetailView: View {
   @FocusState private var attendeesAreFocused: Bool
   @State private var partsPromptEndpoint: MeetingWebhookEndpoint?
   @State private var partsDraft = ""
+  @State private var speakerPendingRename: MeetingSpeakerKey?
+  @State private var speakerNameDraft = ""
 
   var body: some View {
-    let blocks = MeetingTranscriptFormatter.blocks(tokens: session.transcriptTokens)
+    let speakers = session.speakerDirectory
+    let blocks = MeetingTranscriptFormatter.blocks(
+      tokens: session.transcriptTokens,
+      speakers: speakers
+    )
     VStack(alignment: .leading, spacing: 0) {
-      header
+      header(speakers: speakers)
         .padding(DesignTokens.Spacing.large)
 
       Divider()
@@ -291,12 +308,12 @@ private struct MeetingDetailView: View {
                 .foregroundStyle(.secondary)
             } else {
               ForEach(blocks) { block in
-                transcriptBlock(block)
+                transcriptBlock(block, speakers: speakers)
                   .id(block.id)
               }
             }
             ForEach(previewSources, id: \.self) { source in
-              transcriptPreview(source: source, text: livePreviews[source] ?? "")
+              transcriptPreview(source: source, text: livePreviews[source] ?? "", speakers: speakers)
                 .id("live-\(source.rawValue)")
             }
           }
@@ -361,13 +378,113 @@ private struct MeetingDetailView: View {
     }
   }
 
+  private func beginRename(_ speaker: MeetingSpeakerKey, speakers: MeetingSpeakerDirectory) {
+    speakerNameDraft = speakers.hasCustomName(speaker) ? speakers.name(for: speaker) : ""
+    speakerPendingRename = speakers.canonical(speaker)
+  }
+
+  private func speakerMenu<Label: View>(
+    _ speaker: MeetingSpeakerKey,
+    speakers: MeetingSpeakerDirectory,
+    @ViewBuilder label: @escaping () -> Label
+  ) -> some View {
+    MeetingSpeakerMenu(
+      speaker: speaker,
+      directory: speakers,
+      attendees: session.attendees,
+      onRename: { beginRename(speaker, speakers: speakers) },
+      onName: { speakerActions.rename(speaker, $0) },
+      onMerge: { speakerActions.merge(speaker, $0) },
+      onSeparate: { speakerActions.separate(speaker) },
+      label: label
+    )
+  }
+
+  @ViewBuilder
+  private func speakersRow(speakers: MeetingSpeakerDirectory) -> some View {
+    if !speakers.speakers.isEmpty {
+      HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xSmall) {
+        Image(systemName: "person.wave.2")
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        ViewThatFits(in: .horizontal) {
+          speakerChips(speakers: speakers)
+          ScrollView(.horizontal, showsIndicators: false) {
+            speakerChips(speakers: speakers)
+          }
+        }
+        if showsTerminalActions,
+           !MeetingSpeakerNameSuggester.candidates(in: speakers).isEmpty {
+          if isSuggestingSpeakerNames {
+            ProgressView().controlSize(.small)
+          } else {
+            Button("Suggest Names", action: speakerActions.suggest)
+              .buttonStyle(.borderless)
+              .controlSize(.small)
+              .help("Find names said in the meeting with the summary model")
+          }
+        }
+      }
+      .font(.callout)
+    }
+  }
+
+  private func speakerChips(speakers: MeetingSpeakerDirectory) -> some View {
+    HStack(spacing: DesignTokens.Spacing.xSmall) {
+      ForEach(speakers.speakers, id: \.rawValue) { speaker in
+        speakerMenu(speaker, speakers: speakers) {
+          HStack(spacing: 5) {
+            Circle()
+              .fill(MeetingCompanionStyle.tint(for: speaker, in: speakers))
+              .frame(width: 7, height: 7)
+            Text(speakers.name(for: speaker))
+              .lineLimit(1)
+          }
+          .padding(.horizontal, 8)
+          .padding(.vertical, 3)
+          .background(.quaternary.opacity(0.6), in: Capsule())
+          .contentShape(Capsule())
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func speakerSuggestions(speakers: MeetingSpeakerDirectory) -> some View {
+    ForEach(session.speakerSuggestions) { suggestion in
+      if let speaker = suggestion.speakerKey {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xSmall) {
+          Image(systemName: "lightbulb")
+            .foregroundStyle(.yellow)
+            .accessibilityHidden(true)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("\(speakers.name(for: speaker)) might be \(suggestion.name)")
+              .font(.callout.weight(.medium))
+            Text("“\(suggestion.evidence)”")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .lineLimit(2)
+          }
+          Spacer()
+          Button("Accept") { speakerActions.accept(suggestion) }
+            .controlSize(.small)
+          Button("Dismiss") { speakerActions.dismiss(suggestion) }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+        .padding(DesignTokens.Spacing.xSmall)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
+      }
+    }
+  }
+
   private var partsPromptMessage: String {
     let total = partsPromptEndpoint.flatMap { webhookPartTotal($0.id) }
     let range = total.map { " The last split send had \($0) parts." } ?? ""
     return "Part numbers to send again with the same send ID, for example 3 or 2,3.\(range)"
   }
 
-  private var header: some View {
+  private func header(speakers: MeetingSpeakerDirectory) -> some View {
     VStack(alignment: .leading, spacing: 12) {
       ViewThatFits(in: .horizontal) {
         HStack(alignment: .top, spacing: 12) {
@@ -410,12 +527,35 @@ private struct MeetingDetailView: View {
 
       attendeesField
 
+      speakersRow(speakers: speakers)
+
+      speakerSuggestions(speakers: speakers)
+
       if let error = session.errorMessage {
         StatusBadge(.warning, error)
           .font(.footnote)
       }
 
       MeetingWebhookStatusList(records: webhookRecords, onRetry: onRetryWebhook)
+    }
+    .alert(
+      "Rename \(speakerPendingRename.map { speakers.name(for: $0) } ?? "speaker")",
+      isPresented: Binding(
+        get: { speakerPendingRename != nil },
+        set: { if !$0 { speakerPendingRename = nil } }
+      )
+    ) {
+      TextField("Name", text: $speakerNameDraft)
+      Button("Rename") {
+        if let speaker = speakerPendingRename {
+          speakerActions.rename(speaker, speakerNameDraft)
+        }
+        speakerPendingRename = nil
+      }
+      Button("Cancel", role: .cancel) { speakerPendingRename = nil }
+    } message: {
+      Text("Used in this meeting's transcript, notes, and exports. A name another speaker "
+        + "already has merges the two. Leave empty to restore the default.")
     }
   }
 
@@ -579,12 +719,18 @@ private struct MeetingDetailView: View {
     onTitleChange(committed)
   }
 
-  private func transcriptBlock(_ block: MeetingTranscriptBlock) -> some View {
+  private func transcriptBlock(
+    _ block: MeetingTranscriptBlock,
+    speakers: MeetingSpeakerDirectory
+  ) -> some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
-        Text(block.displayName)
-          .font(.callout.weight(.semibold))
-          .foregroundStyle(block.source == .microphone ? .blue : .purple)
+        speakerMenu(block.speaker, speakers: speakers) {
+          Text(block.displayName)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(MeetingCompanionStyle.tint(for: block.speaker, in: speakers))
+            .contentShape(Rectangle())
+        }
         Text(MeetingTranscriptFormatter.timestamp(block.startTime))
           .font(.footnote.monospacedDigit())
           .foregroundStyle(.tertiary)
@@ -597,12 +743,13 @@ private struct MeetingDetailView: View {
 
   private func transcriptPreview(
     source: MeetingAudioSource,
-    text: String
+    text: String,
+    speakers: MeetingSpeakerDirectory
   ) -> some View {
     VStack(alignment: .leading, spacing: 5) {
-      Text("\(source.displayName) • Live")
+      Text("\(source == .microphone ? speakers.name(for: .microphone) : "Call") • Live")
         .font(.callout.weight(.semibold))
-        .foregroundStyle(source == .microphone ? .blue : .purple)
+        .foregroundStyle(MeetingCompanionStyle.tint(for: source))
       Text(text)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
@@ -617,4 +764,14 @@ private struct MeetingDetailView: View {
     }
     return "\(minutes)m"
   }
+}
+
+/// What the meeting detail can do to its speakers.
+struct MeetingSpeakerActions {
+  let rename: (MeetingSpeakerKey, String) -> Void
+  let merge: (MeetingSpeakerKey, MeetingSpeakerKey) -> Void
+  let separate: (MeetingSpeakerKey) -> Void
+  let accept: (MeetingSpeakerSuggestion) -> Void
+  let dismiss: (MeetingSpeakerSuggestion) -> Void
+  let suggest: () -> Void
 }
