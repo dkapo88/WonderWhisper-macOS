@@ -268,6 +268,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-20: Released 2026-10-20 with meeting speakers: the mic is you, call voices are told apart (Grok Voice Transcribe 2.0, separate Soniox streams, an on-Mac pass for Parakeet), and speakers can be renamed, merged and given suggested names.
 - 2026-10-19: Meeting speakers: the microphone is the user ("Your name" setting), only the call is
   diarized (Soniox system stream, Grok channel 1), single-stream Soniox retired, new Grok Voice
   Transcribe 2.0 two-channel engine, on-Mac call diarization after Parakeet meetings,
