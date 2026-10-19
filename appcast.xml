@@ -5,6 +5,23 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-20</title>
+      <pubDate>Mon, 19 Oct 2026 23:56:54 +0000</pubDate>
+      <sparkle:version>2026102000</sparkle:version>
+      <sparkle:shortVersionString>2026-10-20</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Speakers in meeting transcripts:** Your microphone is always you, and the call audio is split into separate speakers (Speaker 1, Speaker 2, and so on).</li>
+<li>**Grok Voice Transcribe 2.0:** A new live meeting engine from xAI. Add an xAI API key in Settings to use it. Your mic and the call go up as two channels of one stream, and call voices are told apart live.</li>
+<li>**Soniox separate streams:** Soniox now transcribes your mic and the call separately and tells call voices apart. If you used the old single Soniox stream, you're moved to this automatically.</li>
+<li>**Speakers on this Mac:** With Parakeet, call voices are told apart on your Mac after the meeting. Turn this off under Settings &gt; Meetings &gt; Speakers.</li>
+<li>**Name speakers:** Click a speaker's label to rename them, mark two labels as the same person, or separate them again. Set your own name in Settings.</li>
+<li>**Suggested names:** With notes on, WonderWhisper suggests names said in the meeting, with the quote that shows it. Accept or dismiss each one.</li>
+<li>**Notes know who spoke:** Meeting notes, exports and webhooks use speaker names, and notes get a participants list.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-20/WonderWhisper-2026-10-20.dmg" sparkle:edSignature="pcVu848jJv+CkRsijeevG3wIBkL3Y5p9L1hI5+njYxv6LTxBnE9k/Hu/esxge530wFN38GDudAikEDwObCKNDQ==" length="25962592" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-15</title>
       <pubDate>Thu, 15 Oct 2026 10:27:44 +0000</pubDate>
       <sparkle:version>2026101500</sparkle:version>
