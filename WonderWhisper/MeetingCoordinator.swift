@@ -544,7 +544,9 @@ final class MeetingCoordinator: ObservableObject {
       session.microphoneMutedRanges = microphoneMuteRecorder.persistableRanges
       replace(session)
       Task { @MainActor [weak self] in
-        guard let self, let latest = self.session(withID: activeSessionID) else { return }
+        // Not for a meeting that has since stopped or been discarded (it would come back).
+        guard let self, self.activeSessionID == activeSessionID,
+              let latest = self.session(withID: activeSessionID) else { return }
         _ = await self.persist(latest)
       }
     }

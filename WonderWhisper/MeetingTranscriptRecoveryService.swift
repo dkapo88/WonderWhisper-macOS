@@ -143,12 +143,16 @@ actor MeetingTranscriptRecoveryService {
       $0.source == .microphone && $0.index < first.index && $0.endTime > warmStart
     }
     for segment in earlier {
+      // Warm a copy and keep it only on success, so a file failing halfway cannot leave its
+      // frames in the gate to be written ahead of the recovered tail.
+      var attempt = gate
       do {
         try MeetingMicrophoneGatedWriter.warm(
-          &gate,
+          &attempt,
           with: sessionDirectory.appendingPathComponent(segment.filename),
           startTime: segment.startTime
         )
+        gate = attempt
       } catch {
         let reason = error.localizedDescription
         AppLog.dictation.error(

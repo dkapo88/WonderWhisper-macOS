@@ -226,11 +226,9 @@ final class MeetingMicrophoneGatedWriter {
       )
       position += AVAudioFramePosition(buffer.frameLength)
     }
-    if let next {
-      try writer.finish(
-        peekingAt: try leadingChunks(of: next.url, startTime: next.startTime),
-        fileSamples: Int(input.length)
-      )
+    // The peek is best effort: an unreadable next file just means no look-ahead past this one.
+    if let next, let leading = try? leadingChunks(of: next.url, startTime: next.startTime) {
+      try writer.finish(peekingAt: leading, fileSamples: Int(input.length))
     } else {
       try writer.finish()
     }
