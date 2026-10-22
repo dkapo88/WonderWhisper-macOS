@@ -24,13 +24,18 @@ final class MeetingMicrophoneGatedWriter {
   )
 
   private let output: AVAudioFile
-  private var gate: MeetingMicrophoneGate
+  /// The gate, with what it has learned (noise floor, the user's level), for the next file.
+  private(set) var gate: MeetingMicrophoneGate
   /// Whether any audio was let through (false: nothing in it was speech).
   private(set) var keptAudio = false
 
-  init(output: AVAudioFile, settings: MeetingMicrophoneGateSettings) {
+  init(output: AVAudioFile, gate: MeetingMicrophoneGate) {
     self.output = output
-    gate = MeetingMicrophoneGate(settings: settings)
+    self.gate = gate
+  }
+
+  convenience init(output: AVAudioFile, settings: MeetingMicrophoneGateSettings) {
+    self.init(output: output, gate: MeetingMicrophoneGate(settings: settings))
   }
 
   /// `samples` start at `startTime` on the meeting timeline and follow the previous call.
@@ -82,6 +87,18 @@ final class MeetingMicrophoneGatedWriter {
     settings: MeetingMicrophoneGateSettings,
     to outputURL: URL
   ) throws -> Bool {
+    var gate = MeetingMicrophoneGate(settings: settings)
+    return try writeGatedCopy(of: inputURL, startTime: startTime, gate: &gate, to: outputURL)
+  }
+
+  /// As above, continuing `gate` from the previous segment so its noise floor and the user's
+  /// level carry over instead of being learned again for every saved minute.
+  static func writeGatedCopy(
+    of inputURL: URL,
+    startTime: TimeInterval,
+    gate: inout MeetingMicrophoneGate,
+    to outputURL: URL
+  ) throws -> Bool {
     let input = try AVAudioFile(
       forReading: inputURL,
       commonFormat: .pcmFormatFloat32,
@@ -98,7 +115,8 @@ final class MeetingMicrophoneGatedWriter {
       commonFormat: .pcmFormatFloat32,
       interleaved: false
     )
-    let writer = MeetingMicrophoneGatedWriter(output: output, settings: settings)
+    let writer = MeetingMicrophoneGatedWriter(output: output, gate: gate)
+    defer { gate = writer.gate }
     let blockSize = AVAudioFrameCount(MeetingStereoAligner.frameSampleCount)
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: blockSize) else {
       throw WriterError.allocationFailed

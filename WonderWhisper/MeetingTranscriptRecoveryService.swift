@@ -80,6 +80,8 @@ actor MeetingTranscriptRecoveryService {
       fullRecoverySources: fullRecoverySources
     )
     var recoveredTokens: [MeetingTranscriptToken] = []
+    // One gate across the microphone segments, so what it learns carries from minute to minute.
+    var microphoneGateState = MeetingMicrophoneGate(settings: microphoneGate)
 
     for segment in plan.segmentsToTranscribe {
       let url = sessionDirectory.appendingPathComponent(segment.filename)
@@ -88,7 +90,7 @@ actor MeetingTranscriptRecoveryService {
         guard let gated = try await transcribeGated(
           url,
           segment: segment,
-          settings: microphoneGate
+          gate: &microphoneGateState
         ) else { continue }
         transcript = gated
       } else {
@@ -112,7 +114,7 @@ actor MeetingTranscriptRecoveryService {
   private func transcribeGated(
     _ url: URL,
     segment: Segment,
-    settings: MeetingMicrophoneGateSettings
+    gate: inout MeetingMicrophoneGate
   ) async throws -> String? {
     let gatedURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("WonderWhisper-gated-\(UUID().uuidString).caf")
@@ -122,7 +124,7 @@ actor MeetingTranscriptRecoveryService {
       keptAudio = try MeetingMicrophoneGatedWriter.writeGatedCopy(
         of: url,
         startTime: segment.startTime,
-        settings: settings,
+        gate: &gate,
         to: gatedURL
       )
     } catch {

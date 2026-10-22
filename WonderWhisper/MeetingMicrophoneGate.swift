@@ -47,6 +47,8 @@ struct MeetingMicrophoneGate {
   static let noiseWindowBlocks = 50
   static let stayOpenHysteresis: Float = 6
   static let fadeSampleCount = 80
+  /// Speech frames needed before the user's own level is trusted.
+  static let learningFrames = 30
 
   private struct Frame {
     let startTime: TimeInterval
@@ -73,6 +75,7 @@ struct MeetingMicrophoneGate {
   private var noiseBlockCount = 0
   private var noiseBlockLevels: [Float] = []
   private(set) var speakingLevel: Float = initialSpeakingLevel
+  private var learnedFrames = 0
   private var recentAbove: [Bool] = []
   private var isSpeaking = false
   private var hangoverRemaining = 0
@@ -96,32 +99,42 @@ struct MeetingMicrophoneGate {
     self.init(mode: settings.mode, mutedRanges: settings.mutedRanges)
   }
 
-  var noiseFloor: Float {
-    let measured = noiseBlockLevels.min() ?? Self.initialNoiseFloor
-    return min(measured, speakingLevel - 20)
+  /// The user's own level is only used once learned: until then a quiet microphone must still
+  /// be able to open the gate.
+  var hasLearnedSpeakingLevel: Bool {
+    learnedFrames >= Self.learningFrames
   }
 
-  /// Gates one chunk. `muted` silences it whatever the gate decides (the user pressed Mute).
-  /// Returns the audio that is ready, which runs up to 200 ms behind the input.
+  /// The quietest 100 ms of the last 5 s.
+  var measuredNoiseFloor: Float {
+    noiseBlockLevels.min() ?? Self.initialNoiseFloor
+  }
+
+  /// Never within 20 dB of the user's level (assumed until learned), so speech without pauses
+  /// cannot be taken for the noise floor.
+  var noiseFloor: Float {
+    let reference = hasLearnedSpeakingLevel ? speakingLevel : Self.initialSpeakingLevel
+    return min(measuredNoiseFloor, reference - 20)
+  }
+
+  /// Gates one chunk. `muted` silences it whatever the gate decides (the user pressed Mute);
+  /// muted ranges are checked for every 10 ms frame. Returns the audio that is ready, which
+  /// runs up to 200 ms behind the input.
   mutating func process(_ chunk: MeetingAudioChunk, muted: Bool = false) -> [MeetingAudioChunk] {
     guard chunk.source == .microphone, !chunk.samples.isEmpty else { return [chunk] }
-    let isMuted = muted || mutedRanges.covers(
-      start: chunk.startTime,
-      end: chunk.startTime + Double(chunk.samples.count) / Double(Self.sampleRate)
-    )
     guard tuning != nil else {
-      guard isMuted else { return [chunk] }
-      return [chunk.replacingSamples(Array(repeating: 0, count: chunk.samples.count))]
+      let samples = silencingMuted(chunk.samples, startTime: chunk.startTime, muted: muted)
+      return [chunk.replacingSamples(samples)]
     }
 
     let expectedStart = partialStartTime + Double(partial.count) / Double(Self.sampleRate)
     if !partial.isEmpty,
-       abs(chunk.startTime - expectedStart) > 0.001 || isMuted != partialMuted {
+       abs(chunk.startTime - expectedStart) > 0.001 || muted != partialMuted {
       closePartialFrame()
     }
     if partial.isEmpty {
       partialStartTime = chunk.startTime
-      partialMuted = isMuted
+      partialMuted = muted
     }
     partial.append(contentsOf: chunk.samples)
     while partial.count >= Self.frameSampleCount {
@@ -129,9 +142,36 @@ struct MeetingMicrophoneGate {
       partial.removeFirst(Self.frameSampleCount)
       let startTime = partialStartTime
       partialStartTime += Double(Self.frameSampleCount) / Double(Self.sampleRate)
-      append(Frame(startTime: startTime, samples: samples, muted: partialMuted))
+      append(Frame(
+        startTime: startTime,
+        samples: samples,
+        muted: partialMuted || isInMutedRange(startTime: startTime, count: samples.count)
+      ))
     }
     return emit(keepingLast: tuning?.lookaheadFrames ?? 0)
+  }
+
+  private func isInMutedRange(startTime: TimeInterval, count: Int) -> Bool {
+    guard !mutedRanges.isEmpty else { return false }
+    return mutedRanges.covers(
+      start: startTime,
+      end: startTime + Double(count) / Double(Self.sampleRate)
+    )
+  }
+
+  /// With the gate off: silence the muted chunk, or the muted 10 ms frames within it.
+  private func silencingMuted(_ samples: [Float], startTime: TimeInterval, muted: Bool) -> [Float] {
+    if muted { return Array(repeating: 0, count: samples.count) }
+    guard !mutedRanges.isEmpty else { return samples }
+    var result = samples
+    for offset in stride(from: 0, to: samples.count, by: Self.frameSampleCount) {
+      let count = min(Self.frameSampleCount, samples.count - offset)
+      let frameStart = startTime + Double(offset) / Double(Self.sampleRate)
+      if isInMutedRange(startTime: frameStart, count: count) {
+        result.replaceSubrange(offset..<(offset + count), with: repeatElement(0, count: count))
+      }
+    }
+    return result
   }
 
   /// Everything still held back, for the end of the meeting.
@@ -143,7 +183,11 @@ struct MeetingMicrophoneGate {
 
   private mutating func closePartialFrame() {
     guard !partial.isEmpty else { return }
-    let frame = Frame(startTime: partialStartTime, samples: partial, muted: partialMuted)
+    let frame = Frame(
+      startTime: partialStartTime,
+      samples: partial,
+      muted: partialMuted || isInMutedRange(startTime: partialStartTime, count: partial.count)
+    )
     partial.removeAll(keepingCapacity: true)
     append(frame)
   }
@@ -190,11 +234,10 @@ struct MeetingMicrophoneGate {
       noiseBlockCount = 0
     }
 
-    let threshold = max(
-      noiseFloor + tuning.noiseMargin,
-      speakingLevel - tuning.speakingRange,
-      tuning.absoluteMinimum
-    )
+    var threshold = max(noiseFloor + tuning.noiseMargin, tuning.absoluteMinimum)
+    if hasLearnedSpeakingLevel {
+      threshold = max(threshold, speakingLevel - tuning.speakingRange)
+    }
     let above = level >= threshold
     recentAbove.append(above)
     if recentAbove.count > 4 { recentAbove.removeFirst() }
@@ -209,16 +252,22 @@ struct MeetingMicrophoneGate {
     } else {
       isSpeaking = recentAbove.filter { $0 }.count >= 3
     }
-    if isSpeaking, above {
+    // Learn only from speech clearly above the measured noise, so steady noise that opened
+    // the gate before the floor was known cannot pass for the user's voice.
+    if isSpeaking, above, level >= measuredNoiseFloor + tuning.noiseMargin {
       learnSpeakingLevel(from: level)
     }
     return isSpeaking
   }
 
-  /// Follows the user's own level: quickly upward, slowly downward, and only from speech
-  /// near that level, so quiet voices in the room cannot drag it down.
+  /// Follows the user's own level. While learning it simply averages speech; once learned it
+  /// moves quickly upward, slowly downward, and only from speech near that level, so quiet
+  /// voices in the room cannot drag it down.
   private mutating func learnSpeakingLevel(from level: Float) {
-    if level > speakingLevel {
+    if !hasLearnedSpeakingLevel {
+      speakingLevel = learnedFrames == 0 ? level : speakingLevel + 0.1 * (level - speakingLevel)
+      learnedFrames += 1
+    } else if level > speakingLevel {
       speakingLevel += 0.05 * (level - speakingLevel)
     } else if level > speakingLevel - 10 {
       speakingLevel += 0.01 * (level - speakingLevel)

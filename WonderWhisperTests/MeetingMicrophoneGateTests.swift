@@ -178,6 +178,43 @@ struct MeetingMicrophoneGateTests {
     }
   }
 
+  @Test func mutedRangesAreExactEvenWithOneSecondBlocks() {
+    // Soniox recovery feeds the gate one second at a time.
+    let input = Self.speech(seconds: 8, level: -25)
+    let muted = [MeetingTimeRange(start: 2.6, end: 4.6), MeetingTimeRange(start: 0, end: 0.45)]
+    for mode in MeetingMicrophoneGateMode.allCases {
+      var gate = MeetingMicrophoneGate(mode: mode, mutedRanges: muted)
+      var output: [MeetingAudioChunk] = []
+      for offset in stride(from: 0, to: input.count, by: 16_000) {
+        let block = Array(input[offset..<min(offset + 16_000, input.count)])
+        output += gate.process(MeetingAudioChunk(
+          source: .microphone,
+          samples: block,
+          startTime: Double(offset) / Self.sampleRate,
+          duration: Double(block.count) / Self.sampleRate
+        ))
+      }
+      output += gate.flush()
+      let timeline = Self.timeline(output, count: input.count)
+      #expect(Self.keptShare(timeline, from: 0, to: 0.45) == 0)
+      #expect(Self.keptShare(timeline, from: 2.6, to: 4.6) == 0)
+      #expect(Self.keptShare(timeline, from: 4.62, to: 5.0) == 1)
+      #expect(Self.keptShare(timeline, from: 2.0, to: 2.58) == 1)
+    }
+  }
+
+  @Test func aQuietMicrophoneStillOpensTheGate() {
+    for level: Float in [-48, -52, -55] {
+      let quiet = Self.noise(seconds: 1, level: -72)
+      let input = quiet + Self.speech(seconds: 3, level: level) + quiet
+      for mode in [MeetingMicrophoneGateMode.normal] {
+        let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+        #expect(Self.keptShare(output, from: 1.2, to: 4) > 0.95, "level \(level)")
+        #expect(Self.keptShare(output, from: 4.7, to: 5) == 0, "level \(level)")
+      }
+    }
+  }
+
   @Test func liveMuteFlagSilencesTheChunk() {
     var gate = MeetingMicrophoneGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]
@@ -322,6 +359,22 @@ struct MeetingMicrophoneGateTests {
     #expect(gated.count == input.count)
     #expect(Self.keptShare(gated, from: 1, to: 2) > 0.97)
     #expect(Self.keptShare(gated, from: 3, to: 4) == 0)
+
+    // One gate carried across segments keeps what it learned about the user's level.
+    var carried = MeetingMicrophoneGate(mode: .normal)
+    _ = try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: speechURL,
+      startTime: 0,
+      gate: &carried,
+      to: directory.appendingPathComponent("carried-1.caf")
+    )
+    #expect(carried.hasLearnedSpeakingLevel)
+    #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: speechURL,
+      startTime: 60,
+      gate: &carried,
+      to: directory.appendingPathComponent("carried-2.caf")
+    ))
 
     // A segment recorded while muted (on the meeting timeline) is not transcribed at all.
     let mutedCopy = directory.appendingPathComponent("muted-gated.caf")
