@@ -774,6 +774,22 @@ struct MeetingMicrophoneGateTests {
     #expect(boundaryGated.count == firstMinute.count)
     #expect(Self.keptShare(boundaryGated, from: 1.86, to: 2) > 0.9)
 
+    // An unreadable next file just means no look-ahead, and a length that is not a whole number
+    // of 10 ms frames comes out exactly as long as it went in.
+    let oddLength = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 0.5006, level: -25)
+    let oddURL = directory.appendingPathComponent("microphone-7.caf")
+    try write(oddLength, to: oddURL)
+    var oddGate = MeetingMicrophoneGate(mode: .normal)
+    let oddCopy = directory.appendingPathComponent("odd-gated.caf")
+    #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: oddURL,
+      startTime: 0,
+      gate: &oddGate,
+      next: (url: directory.appendingPathComponent("missing.caf"), startTime: 1.5006),
+      to: oddCopy
+    ))
+    #expect(try read(oddCopy).count == oddLength.count)
+
     // Warming on earlier audio teaches the gate without writing anything.
     var warmed = MeetingMicrophoneGate(mode: .strict)
     try MeetingMicrophoneGatedWriter.warm(&warmed, with: speechURL, startTime: 0)

@@ -126,6 +126,7 @@ final class MeetingMicrophoneGatedWriter {
   ) throws {
     try forEachBlock(of: inputURL, startTime: startTime) { chunk in
       _ = gate.process(chunk)
+      return true
     }
     _ = gate.flush()
   }
@@ -139,9 +140,9 @@ final class MeetingMicrophoneGatedWriter {
     let limit = MeetingMicrophoneGate.sampleRate * 3 / 10
     var collected = 0
     try forEachBlock(of: url, startTime: startTime) { chunk in
-      guard collected < limit else { return }
       chunks.append(chunk)
       collected += chunk.samples.count
+      return collected < limit
     }
     return chunks
   }
@@ -149,7 +150,7 @@ final class MeetingMicrophoneGatedWriter {
   private static func forEachBlock(
     of inputURL: URL,
     startTime: TimeInterval,
-    _ body: (MeetingAudioChunk) throws -> Void
+    _ body: (MeetingAudioChunk) throws -> Bool
   ) throws {
     let input = try AVAudioFile(
       forReading: inputURL,
@@ -171,13 +172,14 @@ final class MeetingMicrophoneGatedWriter {
       try input.read(into: buffer, frameCount: remaining)
       guard buffer.frameLength > 0, let channel = buffer.floatChannelData?.pointee else { break }
       let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
-      try body(MeetingAudioChunk(
+      let keepReading = try body(MeetingAudioChunk(
         source: .microphone,
         samples: samples,
         startTime: startTime + Double(position) / format.sampleRate,
         duration: Double(samples.count) / format.sampleRate
       ))
       position += AVAudioFramePosition(buffer.frameLength)
+      guard keepReading else { break }
     }
   }
 
@@ -227,7 +229,9 @@ final class MeetingMicrophoneGatedWriter {
       position += AVAudioFramePosition(buffer.frameLength)
     }
     // The peek is best effort: an unreadable next file just means no look-ahead past this one.
-    if let next, let leading = try? leadingChunks(of: next.url, startTime: next.startTime) {
+    // With the gate off (mutes only) nothing is held back, so there is nothing to look ahead for.
+    if gate.mode != .off, let next,
+       let leading = try? leadingChunks(of: next.url, startTime: next.startTime) {
       try writer.finish(peekingAt: leading, fileSamples: Int(input.length))
     } else {
       try writer.finish()
