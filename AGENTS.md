@@ -131,8 +131,9 @@ and synthesizes its own audio with `say`.
   the user (other voices are transcribed); strict leaves out much quieter voices (for about ten
   seconds of a voice heard on its own) at the cost of about ten seconds of speech on a quieter
   microphone. Everything else is turned down 20 dB (relative to the speech: the gain after it
-  raises both) on the same timeline (not exact silence: Grok drops about half of the real speech around exact zeros),
-  so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict) take quiet
+  raises both) on the same timeline (not exact silence: Grok drops about half of the real speech
+  around exact zeros), so cloud engines cannot invent words from near-silence ("yeah, yeah") or
+  (strict) take quiet
   room voices as the user; muted audio is exact silence. Then `MeetingMicrophoneAutoGain` (in every
   mode) brings the user's speaking level (80th percentile of speech-like frames) to -16 dBFS, up
   to +30 dB, never down, rising 1 dB per speech-like frame until the level is learned and 10 dB/s
@@ -140,10 +141,12 @@ and synthesizes its own audio with `say`.
   microphone at half input volume (speech near -40 dBFS). Meeting capture also raises the input
   volume to full at start, as dictation does (whatever the voice processing setting: meeting
   capture never uses voice processing). The gain is learned again after a timeline gap or 300 ms
-  of exact zeros (muted audio with real sound is skipped, so a mute keeps it), and exact zeros teach neither it
-  nor the gate. Recovery skips a saved minute only when the gate let nothing through
-  (`keptRanges`), and with the gate off and no mutes it transcribes the saved audio unchanged
-  (no gain). The companion's microphone button mutes transcription (audio is
+  of exact zeros (muted audio with real sound is skipped, so a mute keeps it), and exact zeros
+  teach neither it nor the gate. Recovery skips a saved minute only when the gate let nothing
+  through
+  (`keptRanges`), and with the gate off and no mutes it transcribes the saved audio as saved
+  (no gated copy is made, so no gain either; the live stream had the gain). The companion's
+  microphone button mutes transcription (audio is
   still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into
   `microphoneMutedRanges` (saved at every mute press, a mute still on saved open-ended and cut
   at the run's end on resume), and both recovery paths gate the saved microphone audio with the
