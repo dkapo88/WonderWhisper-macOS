@@ -487,6 +487,19 @@ struct MeetingMicrophoneGateTests {
     #expect(Self.keptShare(output, from: 7.2, to: 11) > 0.95)
   }
 
+  @Test func swingsFromBeforeAMuteDoNotOpenTheGateAfterIt() {
+    // Speech, a 3 s mute, then steady loud noise: no swing happened in the last 2 s of
+    // unmuted sound, so the noise stays out.
+    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 2, level: -25)
+      + Self.noise(seconds: 3, level: -70) + Self.noise(seconds: 4, level: -45, seed: 4)
+    let muted = [MeetingTimeRange(start: 3, end: 6)]
+    let output = Self.timeline(
+      Self.run(input, mode: .normal, mutedRanges: muted),
+      count: input.count
+    )
+    #expect(Self.keptShare(output, from: 6, to: 10) == 0)
+  }
+
   @Test func liveMuteFlagSilencesTheChunk() {
     var gate = MeetingMicrophoneGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]
@@ -738,6 +751,28 @@ struct MeetingMicrophoneGateTests {
       gate: &carried,
       to: directory.appendingPathComponent("carried-2.caf")
     ))
+
+    // A word starting at the very end of one saved minute is kept, using the next minute as
+    // look-ahead: room noise, then a soft onset in the last 0.15 s (below the threshold) that
+    // only becomes clear speech in the next file.
+    let firstMinute = Self.noise(seconds: 1.85, level: -70) + Self.speech(seconds: 0.15, level: -63)
+    let nextMinute = Self.speech(seconds: 2, level: -25) + Self.noise(seconds: 1, level: -70)
+    let firstURL = directory.appendingPathComponent("microphone-5.caf")
+    let nextURL = directory.appendingPathComponent("microphone-6.caf")
+    try write(firstMinute, to: firstURL)
+    try write(nextMinute, to: nextURL)
+    var boundaryGate = MeetingMicrophoneGate(mode: .normal)
+    let boundaryCopy = directory.appendingPathComponent("boundary-gated.caf")
+    #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: firstURL,
+      startTime: 0,
+      gate: &boundaryGate,
+      next: (url: nextURL, startTime: 2),
+      to: boundaryCopy
+    ))
+    let boundaryGated = try read(boundaryCopy)
+    #expect(boundaryGated.count == firstMinute.count)
+    #expect(Self.keptShare(boundaryGated, from: 1.86, to: 2) > 0.9)
 
     // Warming on earlier audio teaches the gate without writing anything.
     var warmed = MeetingMicrophoneGate(mode: .strict)

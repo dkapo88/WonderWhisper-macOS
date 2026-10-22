@@ -28,6 +28,10 @@ final class MeetingMicrophoneGatedWriter {
   private(set) var gate: MeetingMicrophoneGate
   /// Whether any audio was let through (false: nothing in it was speech).
   private(set) var keptAudio = false
+  /// Samples appended so far, and the most this file may hold (a peek into the next file
+  /// must not add its audio here).
+  private var appendedSamples = 0
+  private var sampleLimit = Int.max
 
   init(output: AVAudioFile, gate: MeetingMicrophoneGate) {
     self.output = output
@@ -57,7 +61,29 @@ final class MeetingMicrophoneGatedWriter {
     }
   }
 
+  /// Finishes this file using the start of the next one as look-ahead, as the live gate had:
+  /// a word that starts at the end of this file is kept. A copy of the gate peeks; the real
+  /// gate is then flushed (its output already written) so it continues into the next file with
+  /// what it learned.
+  func finish(peekingAt next: [MeetingAudioChunk], fileSamples: Int) throws {
+    sampleLimit = fileSamples
+    var peek = gate
+    var tail: [MeetingAudioChunk] = []
+    for chunk in next {
+      tail += peek.process(chunk)
+    }
+    tail += peek.flush()
+    for gated in tail {
+      try append(gated.samples)
+    }
+    _ = gate.flush()
+  }
+
   private func append(_ samples: [Float]) throws {
+    let room = sampleLimit - appendedSamples
+    guard room > 0 else { return }
+    let samples = samples.count > room ? Array(samples.prefix(room)) : samples
+    appendedSamples += samples.count
     guard !samples.isEmpty else { return }
     guard let format = Self.processingFormat,
           let buffer = AVAudioPCMBuffer(
@@ -104,6 +130,22 @@ final class MeetingMicrophoneGatedWriter {
     _ = gate.flush()
   }
 
+  /// The first 300 ms of a saved segment (more than the gate's look-ahead).
+  private static func leadingChunks(
+    of url: URL,
+    startTime: TimeInterval
+  ) throws -> [MeetingAudioChunk] {
+    var chunks: [MeetingAudioChunk] = []
+    let limit = MeetingMicrophoneGate.sampleRate * 3 / 10
+    var collected = 0
+    try forEachBlock(of: url, startTime: startTime) { chunk in
+      guard collected < limit else { return }
+      chunks.append(chunk)
+      collected += chunk.samples.count
+    }
+    return chunks
+  }
+
   private static func forEachBlock(
     of inputURL: URL,
     startTime: TimeInterval,
@@ -141,10 +183,13 @@ final class MeetingMicrophoneGatedWriter {
 
   /// As above, continuing `gate` from the previous segment so its noise floor and the user's
   /// level carry over instead of being learned again for every saved minute.
+  /// `next` is the following saved microphone segment when it starts where this one ends: its
+  /// first moments decide whether the end of this one is the start of a word.
   static func writeGatedCopy(
     of inputURL: URL,
     startTime: TimeInterval,
     gate: inout MeetingMicrophoneGate,
+    next: (url: URL, startTime: TimeInterval)? = nil,
     to outputURL: URL
   ) throws -> Bool {
     let input = try AVAudioFile(
@@ -181,7 +226,14 @@ final class MeetingMicrophoneGatedWriter {
       )
       position += AVAudioFramePosition(buffer.frameLength)
     }
-    try writer.finish()
+    if let next {
+      try writer.finish(
+        peekingAt: try leadingChunks(of: next.url, startTime: next.startTime),
+        fileSamples: Int(input.length)
+      )
+    } else {
+      try writer.finish()
+    }
     // Written audio is only complete on disk once the file is closed.
     output.close()
     return writer.keptAudio

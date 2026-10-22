@@ -97,10 +97,17 @@ actor MeetingTranscriptRecoveryService {
       let url = sessionDirectory.appendingPathComponent(segment.filename)
       let transcript: String
       if segment.source == .microphone, microphoneGate.changesAudio {
+        let next = segments.first {
+          $0.source == .microphone && $0.index == segment.index + 1
+            && abs($0.startTime - segment.endTime) < 0.05
+        }.map {
+          (url: sessionDirectory.appendingPathComponent($0.filename), startTime: $0.startTime)
+        }
         guard let gated = try await transcribeGated(
           url,
           segment: segment,
-          gate: &microphoneGateState
+          gate: &microphoneGateState,
+          next: next
         ) else { continue }
         transcript = gated
       } else {
@@ -156,7 +163,8 @@ actor MeetingTranscriptRecoveryService {
   private func transcribeGated(
     _ url: URL,
     segment: Segment,
-    gate: inout MeetingMicrophoneGate
+    gate: inout MeetingMicrophoneGate,
+    next: (url: URL, startTime: TimeInterval)?
   ) async throws -> String? {
     let gatedURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("WonderWhisper-gated-\(UUID().uuidString).caf")
@@ -167,6 +175,7 @@ actor MeetingTranscriptRecoveryService {
         of: url,
         startTime: segment.startTime,
         gate: &gate,
+        next: next,
         to: gatedURL
       )
     } catch {

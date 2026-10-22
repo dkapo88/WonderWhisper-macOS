@@ -314,6 +314,9 @@ struct MeetingMicrophoneGate {
       isSpeaking = false
       hangoverRemaining = 0
       recentAbove.removeAll()
+      // Swings heard before the mute must not open the gate after it.
+      recentLevels.removeAll()
+      modulationLevels.removeAll()
       return false
     }
 
