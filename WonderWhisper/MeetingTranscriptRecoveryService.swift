@@ -3,6 +3,8 @@ import Foundation
 
 actor MeetingTranscriptRecoveryService {
   static let segmentDuration: TimeInterval = 60
+  /// Saved microphone audio heard by the gate before a recovered tail.
+  static let gateWarmUpDuration: TimeInterval = 120
 
   typealias FileTranscriber = @Sendable (URL) async throws -> String
 
@@ -58,7 +60,8 @@ actor MeetingTranscriptRecoveryService {
     audioFilenames: [String],
     existingTokens: [MeetingTranscriptToken],
     sourcesNeedingRecovery: Set<MeetingAudioSource>,
-    fullRecoverySources: Set<MeetingAudioSource> = []
+    fullRecoverySources: Set<MeetingAudioSource> = [],
+    microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> RecoveryResult {
     guard !sourcesNeedingRecovery.isEmpty else {
       return RecoveryResult(
@@ -79,10 +82,37 @@ actor MeetingTranscriptRecoveryService {
       fullRecoverySources: fullRecoverySources
     )
     var recoveredTokens: [MeetingTranscriptToken] = []
+    // One gate across the microphone segments, so what it learns carries from minute to minute.
+    var microphoneGateState = MeetingMicrophoneGate(settings: microphoneGate)
+    if microphoneGate.mode != .off {
+      warmMicrophoneGate(
+        &microphoneGateState,
+        segments: segments,
+        before: plan.segmentsToTranscribe.filter { $0.source == .microphone },
+        sessionDirectory: sessionDirectory
+      )
+    }
 
     for segment in plan.segmentsToTranscribe {
       let url = sessionDirectory.appendingPathComponent(segment.filename)
-      let transcript = try await transcribeFile(url)
+      let transcript: String
+      if segment.source == .microphone, microphoneGate.changesAudio {
+        let next = segments.first {
+          $0.source == .microphone && $0.index == segment.index + 1
+            && abs($0.startTime - segment.endTime) < 0.05
+        }.map {
+          (url: sessionDirectory.appendingPathComponent($0.filename), startTime: $0.startTime)
+        }
+        guard let gated = try await transcribeGated(
+          url,
+          segment: segment,
+          gate: &microphoneGateState,
+          next: next
+        ) else { continue }
+        transcript = gated
+      } else {
+        transcript = try await transcribeFile(url)
+      }
       if let token = Self.recoveredToken(segment: segment, transcript: transcript) {
         recoveredTokens.append(token)
       }
@@ -94,6 +124,69 @@ actor MeetingTranscriptRecoveryService {
       ),
       recoveredSources: plan.recoverableSources
     )
+  }
+
+  /// When only a tail is recovered, the gate first hears the saved microphone audio of the two
+  /// minutes before it (not transcribed), as the live gate had, so it starts with the room's
+  /// noise floor and the user's level instead of learning them again mid-meeting.
+  /// Warming only improves accuracy: an unreadable earlier segment leaves the gate cold rather
+  /// than failing the recovery.
+  private func warmMicrophoneGate(
+    _ gate: inout MeetingMicrophoneGate,
+    segments: [Segment],
+    before selected: [Segment],
+    sessionDirectory: URL
+  ) {
+    guard let first = selected.first else { return }
+    let warmStart = first.startTime - Self.gateWarmUpDuration
+    let earlier = segments.filter {
+      $0.source == .microphone && $0.index < first.index && $0.endTime > warmStart
+    }
+    for segment in earlier {
+      // Warm a copy and keep it only on success, so a file failing halfway cannot leave its
+      // frames in the gate to be written ahead of the recovered tail.
+      var attempt = gate
+      do {
+        try MeetingMicrophoneGatedWriter.warm(
+          &attempt,
+          with: sessionDirectory.appendingPathComponent(segment.filename),
+          startTime: segment.startTime
+        )
+        gate = attempt
+      } catch {
+        let reason = error.localizedDescription
+        AppLog.dictation.error(
+          "MeetingTranscriptRecovery: gate warm-up skipped: \(reason, privacy: .public)"
+        )
+      }
+    }
+  }
+
+  /// Transcribes a gated copy of a saved microphone segment; nil when the gate let nothing
+  /// through (the segment held no speech, or the user had muted).
+  private func transcribeGated(
+    _ url: URL,
+    segment: Segment,
+    gate: inout MeetingMicrophoneGate,
+    next: (url: URL, startTime: TimeInterval)?
+  ) async throws -> String? {
+    let gatedURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("WonderWhisper-gated-\(UUID().uuidString).caf")
+    defer { try? FileManager.default.removeItem(at: gatedURL) }
+    let keptAudio: Bool
+    do {
+      keptAudio = try MeetingMicrophoneGatedWriter.writeGatedCopy(
+        of: url,
+        startTime: segment.startTime,
+        gate: &gate,
+        next: next,
+        to: gatedURL
+      )
+    } catch {
+      throw RecoveryError.unreadableAudioFile(segment.filename, error.localizedDescription)
+    }
+    guard keptAudio else { return nil }
+    return try await transcribeFile(gatedURL)
   }
 
   nonisolated static func segment(

@@ -114,7 +114,32 @@ and synthesizes its own audio with `say`.
   `MeetingSpeakerEditor`; tokens are never rewritten for a rename. The only other attendee names
   the only voice on the call. `MeetingSpeakerNameSuggester` (`meeting.speakers.suggestNames`,
   needs AI notes) asks the summary model for names, keeps only quoted, attendee-constrained ones,
-  and the user accepts each. The notes prompt gets a participants header. Audio
+  and the user accepts each. The notes prompt gets a participants header. The microphone passes
+  `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
+  strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
+  100 ms of the last 5 s; speech with no pause at all from the first moment is gated until the
+  first breath) plus a margin, the user's speaking level minus a
+  range (strict only; `MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from
+  the last 120 s, learned whether or not the gate is open, kept through silences, quieter voices
+  weighted down; an established level does not drop a lot until 600 speech-like frames in total
+  have been only quieter, about ten seconds, then it is learned again) and an absolute minimum;
+  the learned level also caps the floor so speech without pauses stays open.
+  Opening and staying open need a 6 dB swing within the last 2 s (speech, not a fan), and
+  staying open 6 dB above the floor; 200 ms look-ahead, hangover, fades, and a fresh start at
+  timeline gaps (and after 300 ms of exact digital silence, which is how saved audio carries a
+  capture pause). Normal's absolute minimum is -72 dBFS, so low-gain microphones still open it. Normal never drops speech for being quieter than the user, so it cannot lose
+  the user (other voices are transcribed); strict leaves out much quieter voices (for about ten
+  seconds of a voice heard on its own) at the cost of about ten seconds of speech on a quieter
+  microphone. Everything else becomes silence on the
+  same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict)
+  take quiet room voices as the user. The companion's microphone button mutes transcription (audio is
+  still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into
+  `microphoneMutedRanges` (saved at every mute press, a mute still on saved open-ended and cut
+  at the run's end on resume), and both recovery paths gate the saved microphone audio with the
+  session's mode (kept from the first recording, never changed by a resume) and ranges; tail
+  recovery first warms the gate on the two saved minutes before the tail. Saved CAF audio is
+  never gated, and saved microphone audio is padded with silence across capture pauses
+  (`MeetingAudioGapPadding`) so it stays on the live timeline. Audio
   is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
@@ -268,6 +293,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-22: Meeting microphone noise gate (Off/Normal/Strict, default Normal) so silence and
+  background sound are no longer transcribed as the user, plus a mute button in the meeting
+  companion; recovery from saved audio applies the same gate and mutes.
 - 2026-10-20: Released 2026-10-20 with meeting speakers: the mic is you, call voices are told apart (Grok Voice Transcribe 2.0, separate Soniox streams, an on-Mac pass for Parakeet), and speakers can be renamed, merged and given suggested names.
 - 2026-10-19: Meeting speakers: the microphone is the user ("Your name" setting), only the call is
   diarized (Soniox system stream, Grok channel 1), single-stream Soniox retired, new Grok Voice

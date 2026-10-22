@@ -145,6 +145,7 @@ actor MeetingTranscriptionService {
   nonisolated private let engine: MeetingTranscriptionEngine
   nonisolated private let timelineOffset: TimeInterval
   nonisolated private let stereoIngress = MeetingStereoStreamIngress()
+  nonisolated private let microphoneGate: MeetingLiveMicrophoneGate
   private let participantNames: [String]
   private let tokenHandler: TokenHandler
   private let previewHandler: PreviewHandler
@@ -174,6 +175,8 @@ actor MeetingTranscriptionService {
     engine: MeetingTranscriptionEngine = .parakeet,
     timelineOffset: TimeInterval = 0,
     participantNames: [String] = [],
+    microphoneGateMode: MeetingMicrophoneGateMode = .off,
+    microphoneMuteRecorder: MeetingMicrophoneMuteRecorder? = nil,
     tokenHandler: @escaping TokenHandler,
     previewHandler: @escaping PreviewHandler = { _, _ in },
     correctionHandler: @escaping CorrectionHandler = { _ in }
@@ -181,6 +184,10 @@ actor MeetingTranscriptionService {
     self.engine = engine.normalized
     self.timelineOffset = max(0, timelineOffset)
     self.participantNames = participantNames
+    self.microphoneGate = MeetingLiveMicrophoneGate(
+      mode: microphoneGateMode,
+      muteRecorder: microphoneMuteRecorder
+    )
     self.tokenHandler = tokenHandler
     self.previewHandler = previewHandler
     self.correctionHandler = correctionHandler
@@ -210,7 +217,21 @@ actor MeetingTranscriptionService {
     }
   }
 
+  /// Microphone audio passes the gate first (silence while the user is not speaking or has
+  /// muted); the gate holds up to 200 ms back, released by `finish`.
   nonisolated func ingest(_ chunk: MeetingAudioChunk) async throws {
+    var firstError: Error?
+    for gated in microphoneGate.process(chunk) {
+      do {
+        try await ingestGated(gated)
+      } catch {
+        firstError = firstError ?? error
+      }
+    }
+    if let firstError { throw firstError }
+  }
+
+  nonisolated private func ingestGated(_ chunk: MeetingAudioChunk) async throws {
     if engine == .xaiGrok {
       try await stereoIngress.ingest(Self.streamLocalChunk(
         chunk,
@@ -268,6 +289,9 @@ actor MeetingTranscriptionService {
   }
 
   func finish() async throws {
+    for chunk in microphoneGate.flush() {
+      try? await ingestGated(chunk)
+    }
     isFinishing = true
     guard isReady else { return }
     try await drainPendingChunks()

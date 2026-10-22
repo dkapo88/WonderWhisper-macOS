@@ -156,6 +156,11 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var speakerMerges: [String: String]
   /// Names suggested for unnamed speakers from what was said, waiting to be accepted.
   var speakerSuggestions: [MeetingSpeakerSuggestion]
+  /// The microphone gate the meeting was recorded with; nil for meetings recorded before
+  /// the gate existed (their saved microphone audio is recovered ungated).
+  var microphoneGateMode: MeetingMicrophoneGateMode?
+  /// When the user muted the microphone, on the meeting timeline. Never transcribed.
+  var microphoneMutedRanges: [MeetingTimeRange]
 
   init(id: UUID = UUID(),
        title: String,
@@ -176,7 +181,9 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        attendees: [String] = [],
        speakerNames: [String: String] = [:],
        speakerMerges: [String: String] = [:],
-       speakerSuggestions: [MeetingSpeakerSuggestion] = []) {
+       speakerSuggestions: [MeetingSpeakerSuggestion] = [],
+       microphoneGateMode: MeetingMicrophoneGateMode? = nil,
+       microphoneMutedRanges: [MeetingTimeRange] = []) {
     self.id = id
     self.title = title
     self.startedAt = startedAt
@@ -197,6 +204,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.speakerNames = speakerNames
     self.speakerMerges = speakerMerges
     self.speakerSuggestions = speakerSuggestions
+    self.microphoneGateMode = microphoneGateMode
+    self.microphoneMutedRanges = microphoneMutedRanges
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -204,6 +213,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     case automaticallyStarted, transcriptionEngine, status, transcriptTokens
     case manualNotesMarkdown, notesMarkdown, audioFiles, exportedMarkdownPath, errorMessage
     case attendees, speakerNames, speakerMerges, speakerSuggestions
+    case microphoneGateMode, microphoneMutedRanges
   }
 
   init(from decoder: Decoder) throws {
@@ -248,6 +258,15 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     speakerSuggestions = try container.decodeIfPresent(
       [MeetingSpeakerSuggestion].self,
       forKey: .speakerSuggestions
+    ) ?? []
+    // An unknown mode (from a newer version) must not make the whole meeting unreadable.
+    microphoneGateMode = (try? container.decodeIfPresent(
+      MeetingMicrophoneGateMode.self,
+      forKey: .microphoneGateMode
+    )) ?? nil
+    microphoneMutedRanges = try container.decodeIfPresent(
+      [MeetingTimeRange].self,
+      forKey: .microphoneMutedRanges
     ) ?? []
   }
 

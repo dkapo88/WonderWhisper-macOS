@@ -124,6 +124,15 @@ struct MeetingCompanionHeader: View {
   let isStopping: Bool
   let onMinimize: () -> Void
   let onStop: () -> Void
+  var isMicrophoneMuted = false
+  /// Shows the microphone mute button when set.
+  var onToggleMicrophoneMute: (() -> Void)?
+
+  private func statusText(now: Date) -> String {
+    if isStopping { return "Saving…" }
+    let elapsed = MeetingCompanionStyle.elapsed(since: startedAt, now: now)
+    return isMicrophoneMuted ? "Recording · \(elapsed) · Mic muted" : "Recording · \(elapsed)"
+  }
 
   var body: some View {
     HStack(spacing: 10) {
@@ -136,9 +145,7 @@ struct MeetingCompanionHeader: View {
             .lineLimit(1)
             .truncationMode(.tail)
           TimelineView(.periodic(from: .now, by: 1)) { context in
-            Text(isStopping
-              ? "Saving…"
-              : "Recording · \(MeetingCompanionStyle.elapsed(since: startedAt, now: context.date))")
+            Text(statusText(now: context.date))
               .font(.system(size: 11))
               .monospacedDigit()
               .foregroundStyle(.secondary)
@@ -148,6 +155,27 @@ struct MeetingCompanionHeader: View {
       // Let presses fall through to the drag handle behind the header.
       .allowsHitTesting(false)
       Spacer(minLength: 8)
+      if let onToggleMicrophoneMute {
+        Button(action: onToggleMicrophoneMute) {
+          Image(systemName: isMicrophoneMuted ? "mic.slash.fill" : "mic.fill")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isMicrophoneMuted ? MeetingCompanionStyle.recordingTint : .secondary)
+            .frame(width: 26, height: 26)
+            .background(
+              isMicrophoneMuted
+                ? MeetingCompanionStyle.recordingTint.opacity(0.16)
+                : Color.primary.opacity(0.06),
+              in: Circle()
+            )
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isStopping)
+        .help(isMicrophoneMuted
+          ? "Unmute: transcribe your microphone again"
+          : "Mute: stop transcribing your microphone (audio is still saved)")
+        .accessibilityLabel(isMicrophoneMuted ? "Unmute microphone" : "Mute microphone")
+      }
       Button(action: onMinimize) {
         Image(systemName: "arrow.down.right.and.arrow.up.left")
           .font(.system(size: 11, weight: .semibold))

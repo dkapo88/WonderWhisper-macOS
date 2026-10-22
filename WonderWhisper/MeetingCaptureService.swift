@@ -154,6 +154,9 @@ final class MeetingCaptureService: NSObject {
   private var stream: SCStream?
   private var systemWriter: MeetingAudioSegmentWriter?
   private var microphoneWriter: MeetingAudioSegmentWriter?
+  /// Capture time where the saved microphone audio ends; pauses are padded with silence so the
+  /// saved file stays on the live timeline.
+  private var microphoneWrittenEnd: TimeInterval = 0
   private var originPTS: TimeInterval?
   private var systemTapPendingSamples: [Float] = []
   private var systemTapSampleRate: Double?
@@ -251,6 +254,7 @@ final class MeetingCaptureService: NSObject {
     microphoneNativeSampleRate = nil
     systemFramer.reset()
     microphoneFramer.reset()
+    microphoneWrittenEnd = 0
     resetFatalErrorState()
     self.systemWriter = MeetingAudioSegmentWriter(
       directory: directory,
@@ -561,7 +565,17 @@ final class MeetingCaptureService: NSObject {
   ) throws {
     let samples = try microphoneConverter.resample(chunk.samples, from: sampleRate)
     guard !samples.isEmpty else { return }
+    let padding = MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: microphoneWrittenEnd,
+      chunkStart: chunk.startTime,
+      sampleRate: MeetingAudioChunkFramer.sampleRate
+    )
+    if padding > 0 {
+      try microphoneWriter?.append(samples: [Float](repeating: 0, count: padding))
+    }
     try microphoneWriter?.append(samples: samples)
+    microphoneWrittenEnd = max(microphoneWrittenEnd, chunk.startTime)
+      + Double(samples.count) / Double(MeetingAudioChunkFramer.sampleRate)
     microphoneFramer.append(samples: samples, startTime: chunk.startTime).forEach {
       onChunk?($0)
     }

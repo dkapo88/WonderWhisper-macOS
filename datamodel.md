@@ -254,6 +254,8 @@ erDiagram
         Map speakerNames "MeetingSpeakerKey rawValue to name, empty when absent"
         Map speakerMerges "merged speaker rawValue to target rawValue, empty when absent"
         MeetingSpeakerSuggestion[] speakerSuggestions "pending name suggestions"
+        String microphoneGateMode "off, normal or strict; absent before the gate existed"
+        MeetingTimeRange[] microphoneMutedRanges "start/end seconds on the meeting timeline"
     }
 
     MeetingTranscriptToken {
@@ -283,6 +285,13 @@ decodes as empty from older manifests. `speakerNames`, `speakerMerges` and
 `speakerSuggestions` also decode as empty from older manifests. A speaker is a
 `MeetingSpeakerKey`: `microphone` (always the user), or `systemAudio`/`mixed` plus an optional
 diarizer label, stored as `systemAudio:2`. Renames and merges never rewrite tokens.
+`microphoneGateMode` records the microphone noise gate the meeting was recorded with and
+`microphoneMutedRanges` the times the user muted the microphone in the companion (saved at
+each press; a mute still on is saved with an end of 1e9 s and cut at the run's end on resume);
+recovery from the saved segments applies both, so it leaves out what the live gate left out. A
+resume keeps the mode the meeting was first recorded with. Saved microphone segments are padded
+with silence across capture pauses so their sample positions match the live timeline. Older manifests
+decode with no mode (recovered ungated) and no muted ranges; an unknown mode decodes as none.
 `recordedDuration` sums the capture runs only (pauses
 and the gap before a Resume excluded), so it can be much shorter than `endedAt - startedAt`.
 Manual meetings capture all Mac system audio;

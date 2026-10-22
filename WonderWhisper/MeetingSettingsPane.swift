@@ -98,6 +98,14 @@ struct MeetingSettingsPane: View {
         Text("Your name")
         Text("Your microphone's label in transcripts and notes.")
       }
+      Picker(selection: $coordinator.microphoneGateMode) {
+        ForEach(MeetingMicrophoneGateMode.allCases) { mode in
+          Text(mode.displayName).tag(mode)
+        }
+      } label: {
+        Text("Microphone noise gate")
+        Text(coordinator.microphoneGateMode.detail)
+      }
       Toggle(isOn: $coordinator.localSpeakerPassEnabled) {
         Text("Tell call voices apart on this Mac")
         Text("After a Parakeet meeting, with an on-device model. Cloud engines do this live.")
@@ -110,8 +118,10 @@ struct MeetingSettingsPane: View {
     } header: {
       Text("Speakers")
     } footer: {
-      Text("Everything on your microphone is you. The on-device model downloads the first "
-        + "time it runs. Name suggestions need AI notes on.")
+      Text("Everything on your microphone is you, so the noise gate keeps silence and background "
+        + "sound off your side; the saved audio is never gated. Mute in the meeting window when "
+        + "you mute on the call. The gate applies from the next meeting. The on-device model "
+        + "downloads the first time it runs. Name suggestions need AI notes on.")
         .settingsFootnote()
     }
   }

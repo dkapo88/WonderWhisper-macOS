@@ -93,7 +93,8 @@ actor MeetingSonioxAsyncRecoveryService {
 
   func recover(
     sessionDirectory: URL,
-    audioFilenames: [String]
+    audioFilenames: [String],
+    microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> [MeetingTranscriptToken] {
     guard let rawKey = apiKeyProvider() else {
       throw RecoveryError.failed("A Soniox API key is required for async recovery.")
@@ -117,7 +118,8 @@ actor MeetingSonioxAsyncRecoveryService {
       segments: segments[.microphone] ?? [],
       sessionDirectory: sessionDirectory,
       temporaryDirectory: temporaryDirectory,
-      apiKey: apiKey
+      apiKey: apiKey,
+      microphoneGate: microphoneGate
     )
     async let systemTokens = recover(
       source: .systemAudio,
@@ -167,7 +169,8 @@ actor MeetingSonioxAsyncRecoveryService {
     segments: [RawSegment],
     sessionDirectory: URL,
     temporaryDirectory: URL,
-    apiKey: String
+    apiKey: String,
+    microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> [MeetingTranscriptToken] {
     let wavURL = temporaryDirectory.appendingPathComponent("\(source.filenamePrefix).wav")
     let multipartURL = temporaryDirectory
@@ -179,7 +182,8 @@ actor MeetingSonioxAsyncRecoveryService {
       try concatenate(
         segments: segments,
         sessionDirectory: sessionDirectory,
-        outputURL: wavURL
+        outputURL: wavURL,
+        microphoneGate: source == .microphone ? microphoneGate : .passThrough
       )
       let boundary = "WonderWhisper-\(UUID().uuidString)"
       try makeMultipartBody(
@@ -247,7 +251,8 @@ actor MeetingSonioxAsyncRecoveryService {
   private func concatenate(
     segments: [RawSegment],
     sessionDirectory: URL,
-    outputURL: URL
+    outputURL: URL,
+    microphoneGate: MeetingMicrophoneGateSettings
   ) throws {
     guard let processingFormat = AVAudioFormat(
       commonFormat: .pcmFormatFloat32,
@@ -271,6 +276,9 @@ actor MeetingSonioxAsyncRecoveryService {
       interleaved: false
     )
 
+    let gatedWriter = microphoneGate.changesAudio
+      ? MeetingMicrophoneGatedWriter(output: output, settings: microphoneGate)
+      : nil
     var outputFrames: AVAudioFramePosition = 0
     for segment in segments {
       let targetFrame = AVAudioFramePosition(
@@ -288,7 +296,14 @@ actor MeetingSonioxAsyncRecoveryService {
         if let channel = silence.floatChannelData?.pointee {
           channel.initialize(repeating: 0, count: Int(silenceFrameCount))
         }
-        try output.write(from: silence)
+        if let gatedWriter {
+          try gatedWriter.write(
+            Array(repeating: 0, count: Int(silenceFrameCount)),
+            startTime: Double(outputFrames) / processingFormat.sampleRate
+          )
+        } else {
+          try output.write(from: silence)
+        }
         outputFrames += silenceFrameCount
       }
       let inputURL = sessionDirectory.appendingPathComponent(segment.filename)
@@ -311,10 +326,18 @@ actor MeetingSonioxAsyncRecoveryService {
         let remaining = min(16_000, input.length - input.framePosition)
         try input.read(into: buffer, frameCount: AVAudioFrameCount(remaining))
         guard buffer.frameLength > 0 else { break }
-        try output.write(from: buffer)
+        if let gatedWriter, let channel = buffer.floatChannelData?.pointee {
+          try gatedWriter.write(
+            Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength))),
+            startTime: Double(outputFrames) / processingFormat.sampleRate
+          )
+        } else {
+          try output.write(from: buffer)
+        }
         outputFrames += AVAudioFramePosition(buffer.frameLength)
       }
     }
+    try gatedWriter?.finish()
   }
 
   private func makeMultipartBody(

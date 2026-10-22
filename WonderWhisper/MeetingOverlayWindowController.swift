@@ -404,7 +404,9 @@ private struct MeetingOverlayView: View {
           startedAt: session.startedAt,
           isStopping: coordinator.isStopping,
           onMinimize: coordinator.minimizeMeetingOverlayForCurrentSession,
-          onStop: { Task { await coordinator.stopMeeting() } }
+          onStop: { Task { await coordinator.stopMeeting() } },
+          isMicrophoneMuted: coordinator.isMicrophoneMuted,
+          onToggleMicrophoneMute: coordinator.toggleMicrophoneMute
         )
         .background(MeetingOverlayDragHandle())
 

@@ -233,6 +233,10 @@ extension MeetingCoordinator {
       let engine = MeetingTranscriptionEngine.selected(defaults: defaults)
       if transcriptionEngine != engine { transcriptionEngine = engine }
     }
+    if has(MeetingMicrophoneGateMode.defaultsKey) {
+      let mode = MeetingMicrophoneGateMode.selected(defaults: defaults)
+      if microphoneGateMode != mode { microphoneGateMode = mode }
+    }
     if has("meeting.notes.generate") {
       let value = bool("meeting.notes.generate", false)
       if generateMeetingNotes != value { generateMeetingNotes = value }
