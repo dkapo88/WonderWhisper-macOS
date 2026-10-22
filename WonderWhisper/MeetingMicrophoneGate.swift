@@ -6,9 +6,10 @@ import Foundation
 ///
 /// Works on 10 ms frames of 16 kHz audio. A frame counts as speech when its level (after a
 /// 120 Hz high-pass, so desk rumble does not count) is above all of:
-/// - the noise floor (the quietest 100 ms block of the last 5 s) plus a margin,
-/// - the user's own speaking level minus a range (distant voices are much quieter on a
-///   headset or laptop microphone than the user is),
+/// - the noise floor (the quietest 100 ms block of the last 5 s, at most -50 dBFS) plus a
+///   margin,
+/// - once learned, the user's own speaking level minus a range (distant voices are much
+///   quieter on a headset or laptop microphone than the user is),
 /// - an absolute minimum.
 /// Speech opens after 3 of 4 frames pass, stays open within 6 dB of the threshold, and is
 /// held a little after it ends. Output runs 200 ms behind input so the start of a word is
@@ -43,6 +44,9 @@ struct MeetingMicrophoneGate {
   static let initialSpeakingLevel: Float = -30
   static let speakingLevelBounds: ClosedRange<Float> = -50 ... -6
   static let initialNoiseFloor: Float = -65
+  /// The noise floor never counts as louder than this, so speech without pauses cannot be
+  /// taken for room noise.
+  static let noiseFloorCeiling: Float = -50
   static let noiseBlockFrames = 10
   static let noiseWindowBlocks = 50
   static let stayOpenHysteresis: Float = 6
@@ -76,6 +80,8 @@ struct MeetingMicrophoneGate {
   private var noiseBlockLevels: [Float] = []
   private(set) var speakingLevel: Float = initialSpeakingLevel
   private var learnedFrames = 0
+  private var nextFrameTime: TimeInterval?
+  private var lastEmittedEnd: TimeInterval?
   private var recentAbove: [Bool] = []
   private var isSpeaking = false
   private var hangoverRemaining = 0
@@ -105,16 +111,18 @@ struct MeetingMicrophoneGate {
     learnedFrames >= Self.learningFrames
   }
 
-  /// The quietest 100 ms of the last 5 s.
+  /// The quietest 100 ms of the last 5 s; before the first 100 ms is complete, the level so
+  /// far, so the gate cannot open on room noise at the start of a stream.
   var measuredNoiseFloor: Float {
-    noiseBlockLevels.min() ?? Self.initialNoiseFloor
+    if let quietest = noiseBlockLevels.min() { return quietest }
+    if noiseBlockCount > 0 { return Self.decibels(noiseBlockPower / Float(noiseBlockCount)) }
+    return Self.initialNoiseFloor
   }
 
-  /// Never within 20 dB of the user's level (assumed until learned), so speech without pauses
-  /// cannot be taken for the noise floor.
+  /// Only ever measured room noise (capped), never derived from the user's level, so a low
+  /// learned level cannot let steady noise through.
   var noiseFloor: Float {
-    let reference = hasLearnedSpeakingLevel ? speakingLevel : Self.initialSpeakingLevel
-    return min(measuredNoiseFloor, reference - 20)
+    min(measuredNoiseFloor, Self.noiseFloorCeiling)
   }
 
   /// Gates one chunk. `muted` silences it whatever the gate decides (the user pressed Mute);
@@ -194,6 +202,15 @@ struct MeetingMicrophoneGate {
 
   private mutating func append(_ frame: Frame) {
     var frame = frame
+    if let nextFrameTime, abs(frame.startTime - nextFrameTime) > 0.001 {
+      // A gap in the timeline (a resumed meeting): speech does not continue across it.
+      isSpeaking = false
+      hangoverRemaining = 0
+      recentAbove.removeAll()
+      highPassPreviousInput = 0
+      highPassPreviousOutput = 0
+    }
+    nextFrameTime = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
     let speaking = classify(frame.samples, muted: frame.muted)
     if speaking {
       hangoverRemaining = tuning?.hangoverFrames ?? 0
@@ -252,21 +269,23 @@ struct MeetingMicrophoneGate {
     } else {
       isSpeaking = recentAbove.filter { $0 }.count >= 3
     }
-    // Learn only from speech clearly above the measured noise, so steady noise that opened
-    // the gate before the floor was known cannot pass for the user's voice.
+    // Learn only from speech clearly above the measured noise, so room noise can never pass
+    // for (or drag down) the user's voice.
     if isSpeaking, above, level >= measuredNoiseFloor + tuning.noiseMargin {
       learnSpeakingLevel(from: level)
     }
     return isSpeaking
   }
 
-  /// Follows the user's own level. While learning it simply averages speech; once learned it
-  /// moves quickly upward, slowly downward, and only from speech near that level, so quiet
-  /// voices in the room cannot drag it down.
+  /// Follows the user's own level from their first clear speech: quickly upward, slowly
+  /// downward, and only from speech near that level, so quiet voices in the room cannot drag
+  /// it down.
   private mutating func learnSpeakingLevel(from level: Float) {
-    if !hasLearnedSpeakingLevel {
-      speakingLevel = learnedFrames == 0 ? level : speakingLevel + 0.1 * (level - speakingLevel)
+    if learnedFrames < Self.learningFrames {
       learnedFrames += 1
+    }
+    if learnedFrames == 1 {
+      speakingLevel = level
     } else if level > speakingLevel {
       speakingLevel += 0.05 * (level - speakingLevel)
     } else if level > speakingLevel - 10 {
@@ -286,6 +305,10 @@ struct MeetingMicrophoneGate {
     var runSamples: [Float] = []
     for index in 0..<readyCount {
       var frame = pending[index]
+      if let lastEmittedEnd, abs(frame.startTime - lastEmittedEnd) > 0.001 {
+        lastKept = false
+      }
+      lastEmittedEnd = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
       let keep = frame.keep && !frame.muted
       frame.samples = frame.muted
         ? Array(repeating: 0, count: frame.samples.count)

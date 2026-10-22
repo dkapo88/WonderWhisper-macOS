@@ -215,6 +215,51 @@ struct MeetingMicrophoneGateTests {
     }
   }
 
+  @Test func steadyNoiseAfterTheUserSpeaksStaysSilenced() {
+    for seed: UInt64 in 1...4 {
+      let room = Self.noise(seconds: 1, level: -70, seed: seed)
+      let normalInput = room + Self.speech(seconds: 2, level: -38)
+        + Self.noise(seconds: 30, level: -52, seed: seed + 10)
+      let normal = Self.timeline(Self.run(normalInput, mode: .normal), count: normalInput.count)
+      #expect(Self.keptShare(normal, from: 1.2, to: 3) > 0.95)
+      #expect(Self.keptShare(normal, from: 10, to: 33) == 0)
+
+      let strictInput = room + Self.speech(seconds: 2, level: -38)
+        + Self.noise(seconds: 30, level: -50, seed: seed + 20)
+      let strict = Self.timeline(Self.run(strictInput, mode: .strict), count: strictInput.count)
+      #expect(Self.keptShare(strict, from: 10, to: 33) == 0)
+    }
+  }
+
+  @Test func roomNoiseAtTheStartOfAStreamIsNotLetThrough() {
+    for level: Float in [-58, -54, -51] {
+      let input = Self.noise(seconds: 3, level: level)
+      let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+      #expect(Self.keptShare(output, from: 0, to: 3) == 0, "level \(level)")
+    }
+  }
+
+  @Test func speechFromTheFirstMomentIsKept() {
+    let input = Self.speech(seconds: 3, level: -25) + Self.noise(seconds: 2, level: -65)
+    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    #expect(Self.keptShare(output, from: 0.1, to: 3) > 0.97)
+  }
+
+  @Test func speechDoesNotCarryAcrossATimelineGap() {
+    var gate = MeetingMicrophoneGate(mode: .normal)
+    var output: [MeetingAudioChunk] = []
+    let before = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 1, level: -25)
+    for chunk in Self.chunks(before) { output += gate.process(chunk) }
+    output += gate.flush()
+    for chunk in Self.chunks(Self.noise(seconds: 2, level: -62), startTime: 60) {
+      output += gate.process(chunk)
+    }
+    output += gate.flush()
+    let after = output.filter { $0.startTime >= 60 }.flatMap(\.samples)
+    #expect(after.count == 32_000)
+    #expect(after.allSatisfy { $0 == 0 })
+  }
+
   @Test func liveMuteFlagSilencesTheChunk() {
     var gate = MeetingMicrophoneGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]
