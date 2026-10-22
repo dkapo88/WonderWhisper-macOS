@@ -13,8 +13,9 @@ import Foundation
 ///   range (distant voices are much quieter on a headset or laptop microphone than the user),
 /// - an absolute minimum.
 /// Speech opens after 3 of 4 frames pass, stays open within 6 dB of the threshold, and is
-/// held a little after it ends; opening and staying open also need the level to have swung by
-/// 9 dB within the last half second, as speech does and steady noise does not. Output runs 200 ms behind input so the start of a word is
+/// held a little after it ends; opening needs the level to have swung by 9 dB within the last
+/// half second and staying open 6 dB within the last 2 s, as speech does and steady noise
+/// does not. Output runs 200 ms behind input so the start of a word is
 /// kept too. Times on the chunks are unchanged.
 struct MeetingMicrophoneGate {
   struct Tuning: Equatable, Sendable {
@@ -23,21 +24,36 @@ struct MeetingMicrophoneGate {
     let absoluteMinimum: Float
     let hangoverFrames: Int
     let lookaheadFrames: Int
+    /// How long the user's level remembers loud speech; when the user gets quieter (another
+    /// microphone, gain, distance) the gate follows within this time.
+    let levelMemory: TimeInterval
+    /// Speech far under the user's level counts one frame in this many towards it.
+    let distantVoiceWeight: Int
+    /// Speech-like frames needed before the level drops by more than `speakingRange`.
+    let largeDropFrames: Int
 
+    /// Never lose the user: the level follows them down within 20 s.
     static let normal = Self(
       noiseMargin: 10,
       speakingRange: 20,
       absoluteMinimum: -60,
       hangoverFrames: 50,
-      lookaheadFrames: 20
+      lookaheadFrames: 20,
+      levelMemory: 20,
+      distantVoiceWeight: 1,
+      largeDropFrames: 300
     )
 
+    /// Keep other voices out: the level is slow to follow quieter speech.
     static let strict = Self(
       noiseMargin: 15,
       speakingRange: 14,
       absoluteMinimum: -50,
       hangoverFrames: 35,
-      lookaheadFrames: 20
+      lookaheadFrames: 20,
+      levelMemory: 120,
+      distantVoiceWeight: 4,
+      largeDropFrames: 1_000
     )
   }
 
@@ -54,14 +70,15 @@ struct MeetingMicrophoneGate {
   /// user's level when it is this far above the quietest frame of the last half second.
   static let speechModulation: Float = 12
   static let modulationWindowFrames = 50
-  /// The gate only opens, and stays open, while the level has swung this much within the last
-  /// half second, so a fan or hum that starts mid-meeting closes it before the noise floor has
-  /// caught up.
+  /// The gate only opens while the level has swung this much within the last half second, and
+  /// only stays open while it has swung `stayOpenModulation` within the last 2 s, as speech
+  /// (with its breaths) does and a fan or hum that starts mid-meeting does not.
   static let openModulation: Float = 9
-  /// Once 3 s of the user's speech is known, speech far under their level (another voice in
-  /// the room) counts only one frame in this many towards it, so it takes minutes, not
-  /// seconds, to pass for the user. Before that a loud bump must be outgrown quickly.
-  static let distantVoiceWeight = 4
+  static let stayOpenModulation: Float = 6
+  static let stayOpenModulationFrames = 200
+  /// In strict mode, once 3 s of the user's speech is known, speech far under their level
+  /// (another voice in the room) is weighted down; before that a loud bump must be outgrown
+  /// quickly.
   static let distantVoiceAfterFrames = 300
 
   private struct Frame {
@@ -88,7 +105,7 @@ struct MeetingMicrophoneGate {
   private var noiseBlockPower: Float = 0
   private var noiseBlockCount = 0
   private var noiseBlockLevels: [Float] = []
-  private var speakingLevelEstimator = MeetingSpeakingLevelEstimator()
+  private var speakingLevelEstimator: MeetingSpeakingLevelEstimator
   /// Index in `pending` of the first frame after the latest timeline gap; look-ahead never
   /// reaches back across a gap.
   private var contiguousStartIndex = 0
@@ -96,6 +113,7 @@ struct MeetingMicrophoneGate {
   private var lastEmittedEnd: TimeInterval?
   private var recentAbove: [Bool] = []
   private var recentLevels: [Float] = []
+  private var longerLevels: [Float] = []
   private var distantFrameCount = 0
   private var isSpeaking = false
   private var hangoverRemaining = 0
@@ -109,6 +127,12 @@ struct MeetingMicrophoneGate {
     case .normal: tuning = .normal
     case .strict: tuning = .strict
     }
+    let levelTuning = tuning ?? .normal
+    speakingLevelEstimator = MeetingSpeakingLevelEstimator(
+      memory: levelTuning.levelMemory,
+      largeDrop: levelTuning.speakingRange,
+      largeDropFrames: levelTuning.largeDropFrames
+    )
     let cutoff: Float = 120
     let rc = 1 / (2 * Float.pi * cutoff)
     let dt = 1 / Float(Self.sampleRate)
@@ -228,12 +252,16 @@ struct MeetingMicrophoneGate {
       hangoverRemaining = 0
       recentAbove.removeAll()
       recentLevels.removeAll()
+      longerLevels.removeAll()
+      // A resumed meeting may use another microphone: learn the user's level again.
+      speakingLevelEstimator.reset()
+      distantFrameCount = 0
       highPassPreviousInput = 0
       highPassPreviousOutput = 0
       contiguousStartIndex = pending.count
     }
     nextFrameTime = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
-    let speaking = classify(frame.samples, muted: frame.muted)
+    let speaking = classify(frame.samples, at: frame.startTime, muted: frame.muted)
     if speaking {
       hangoverRemaining = tuning?.hangoverFrames ?? 0
       frame.keep = true
@@ -249,7 +277,11 @@ struct MeetingMicrophoneGate {
     pending.append(frame)
   }
 
-  private mutating func classify(_ samples: [Float], muted: Bool) -> Bool {
+  private mutating func classify(
+    _ samples: [Float],
+    at time: TimeInterval,
+    muted: Bool
+  ) -> Bool {
     guard let tuning else { return true }
     var power: Float = 0
     for sample in samples {
@@ -275,6 +307,8 @@ struct MeetingMicrophoneGate {
 
     recentLevels.append(level)
     if recentLevels.count > Self.modulationWindowFrames { recentLevels.removeFirst() }
+    longerLevels.append(level)
+    if longerLevels.count > Self.stayOpenModulationFrames { longerLevels.removeFirst() }
     // Speech-like sound clearly above the room noise teaches the user's level, whether or not
     // the gate is open, so a wrong level always corrects itself; steady noise never does.
     let recentQuietest = recentLevels.min() ?? level
@@ -283,17 +317,20 @@ struct MeetingMicrophoneGate {
        level >= max(measuredNoiseFloor + tuning.noiseMargin, tuning.absoluteMinimum),
        level >= recentQuietest + Self.speechModulation {
       if let speakingLevel,
+         tuning.distantVoiceWeight > 1,
          speakingLevelEstimator.count >= Self.distantVoiceAfterFrames,
          level < speakingLevel - tuning.speakingRange {
         distantFrameCount += 1
-        if distantFrameCount % Self.distantVoiceWeight == 0 {
-          speakingLevelEstimator.add(level)
+        if distantFrameCount % tuning.distantVoiceWeight == 0 {
+          speakingLevelEstimator.add(level, at: time)
         }
       } else {
-        speakingLevelEstimator.add(level)
+        speakingLevelEstimator.add(level, at: time)
       }
     }
-    let modulated = recentLoudest - recentQuietest >= Self.openModulation
+    let opensModulated = recentLoudest - recentQuietest >= Self.openModulation
+    let staysModulated = (longerLevels.max() ?? level) - (longerLevels.min() ?? level)
+      >= Self.stayOpenModulation
     // Until the user's level is known, the quietest recent frame also counts as the floor:
     // speech that starts before the first pause dips between syllables, steady noise barely.
     let floor = hasLearnedSpeakingLevel ? noiseFloor : min(noiseFloor, recentQuietest)
@@ -311,9 +348,9 @@ struct MeetingMicrophoneGate {
       return false
     }
     if isSpeaking {
-      isSpeaking = modulated && level >= threshold - Self.stayOpenHysteresis
+      isSpeaking = staysModulated && level >= threshold - Self.stayOpenHysteresis
     } else {
-      isSpeaking = modulated && recentAbove.filter { $0 }.count >= 3
+      isSpeaking = opensModulated && recentAbove.filter { $0 }.count >= 3
     }
     return isSpeaking
   }

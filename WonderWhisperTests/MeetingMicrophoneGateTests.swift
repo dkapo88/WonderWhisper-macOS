@@ -316,17 +316,49 @@ struct MeetingMicrophoneGateTests {
       + Self.noise(seconds: 2, level: -70) + Self.noise(seconds: 30, level: -45, seed: 9)
     for mode in [MeetingMicrophoneGateMode.normal, .strict] {
       let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
-      #expect(Self.keptShare(output, from: 7.5, to: 36) == 0, "\(mode)")
+      #expect(Self.keptShare(output, from: 9, to: 36) == 0, "\(mode)")
     }
   }
 
   @Test func anotherVoiceFarBelowTheUserIsLeftOut() {
-    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
+    // Strict: ten seconds of someone quieter talking straight after the user.
+    let talking = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
       + Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -45)
+    let strict = Self.timeline(Self.run(talking, mode: .strict), count: talking.count)
+    #expect(Self.keptShare(strict, from: 1, to: 5) > 0.95)
+    #expect(Self.keptShare(strict, from: 6, to: 16) == 0)
+
+    // Both: a short phrase from someone quieter after the user has listened in silence for
+    // longer than the level's memory.
+    let listening = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
+      + Self.noise(seconds: 150, level: -70) + Self.speech(seconds: 2, level: -45)
+      + Self.noise(seconds: 1, level: -70)
+    for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+      let output = Self.timeline(Self.run(listening, mode: mode), count: listening.count)
+      #expect(Self.keptShare(output, from: 155, to: 158) == 0, "\(mode)")
+    }
+  }
+
+  @Test func normalFollowsTheUserDownToAQuieterMicrophone() {
+    // Loud for 30 s, then 25 dB quieter for good (another microphone or gain).
+    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 30, level: -12)
+      + Self.speech(seconds: 40, level: -37)
+    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    #expect(Self.keptShare(output, from: 51, to: 71) > 0.95)
+  }
+
+  @Test func evenlyLoudSpeechWithoutPausesStaysOpen() {
+    // A compressed voice: syllables only 8 dB apart and no pauses, with a breath every 2 s.
+    let rate = Self.sampleRate
+    let input = Self.noise(seconds: 1, level: -70) + (0..<Int(8 * rate)).map { index in
+      let time = Double(index) / rate
+      if time.truncatingRemainder(dividingBy: 2) > 1.85 { return Float(0.0003) }
+      let envelope = 0.7 + 0.3 * sin(2 * .pi * 4 * time)
+      return Float(envelope * sin(2 * .pi * 180 * time)) * 0.08
+    }
     for mode in [MeetingMicrophoneGateMode.normal, .strict] {
       let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
-      #expect(Self.keptShare(output, from: 1, to: 5) > 0.95, "\(mode)")
-      #expect(Self.keptShare(output, from: 6, to: 16) == 0, "\(mode)")
+      #expect(Self.keptShare(output, from: 1.2, to: 9) > 0.95, "\(mode)")
     }
   }
 
