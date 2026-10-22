@@ -140,7 +140,7 @@ and synthesizes its own audio with `say`.
   microphone at half input volume (speech near -40 dBFS). Meeting capture also raises the input
   volume to full at start, as dictation does (whatever the voice processing setting: meeting
   capture never uses voice processing). The gain is learned again after a timeline gap or 300 ms
-  of exact zeros (muted audio is skipped, so a mute keeps it), and exact zeros teach neither it
+  of exact zeros (muted audio with real sound is skipped, so a mute keeps it), and exact zeros teach neither it
   nor the gate. Recovery skips a saved minute only when the gate let nothing through
   (`keptRanges`), and with the gate off and no mutes it transcribes the saved audio unchanged
   (no gain). The companion's microphone button mutes transcription (audio is

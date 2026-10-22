@@ -1082,14 +1082,33 @@ struct MeetingMicrophoneGateTests {
     let quiet = Self.speech(seconds: 5, level: -45)
     let input = loud + pause + quiet
     let muted = [MeetingTimeRange(start: 2.9, end: 4)]
-    var gate = MeetingMicrophoneGate(mode: .normal, mutedRanges: muted)
-    var chunks: [MeetingAudioChunk] = []
-    for chunk in Self.chunks(input) {
-      chunks += gate.process(chunk)
+    for mode in MeetingMicrophoneGateMode.allCases {
+      var gate = MeetingMicrophoneGate(mode: mode, mutedRanges: muted)
+      var chunks: [MeetingAudioChunk] = []
+      for chunk in Self.chunks(input) {
+        chunks += gate.process(chunk)
+      }
+      let output = Self.timeline(chunks + gate.flush(), count: input.count)
+      let raised = Self.level(output, from: 5, to: 8) - Self.level(input, from: 5, to: 8)
+      #expect(raised > 20, "\(mode) \(raised)")
     }
-    let output = Self.timeline(chunks + gate.flush(), count: input.count)
-    let raised = Self.level(output, from: 5, to: 8) - Self.level(input, from: 5, to: 8)
-    #expect(raised > 20, "\(raised)")
+  }
+
+  @Test func shortPausesInsideOneMuteDoNotAddUp() {
+    // Several 200 ms capture pauses within one mute, with muted sound between them: none is a
+    // 300 ms pause, so the gain carries on.
+    var gain = MeetingMicrophoneAutoGain()
+    _ = gain.process(Self.noise(seconds: 0.5, level: -72) + Self.speech(seconds: 3, level: -45), startTime: 0)
+    let learned = gain.gain ?? 0
+    var time = 3.5
+    for _ in 0..<3 {
+      _ = gain.process([Float](repeating: 0, count: 3_200), startTime: time)
+      time += 0.2
+      gain.skip(1_600, startTime: time)
+      time += 0.1
+    }
+    _ = gain.process(Self.speech(seconds: 0.05, level: -45), startTime: time)
+    #expect((gain.gain ?? 0) > learned - 1, "\(learned) -> \(gain.gain ?? 0)")
   }
 
   @Test func aGapThatEndsMutedStillStartsTheGainAgain() {

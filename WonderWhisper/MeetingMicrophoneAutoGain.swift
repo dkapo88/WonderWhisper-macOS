@@ -95,11 +95,16 @@ struct MeetingMicrophoneAutoGain {
   }
 
   /// Moves past muted audio (silent, and nothing to learn from) without starting afresh,
-  /// unless it follows a gap in the timeline.
+  /// unless it follows a gap in the timeline or 300 ms of exact zeros (as the gate does: muted
+  /// sound ends a run of zeros like any other).
   mutating func skip(_ count: Int, startTime: TimeInterval) {
     if let nextStartTime, abs(startTime - nextStartTime) > 0.001 {
       reset()
     }
+    if zeroFrames >= MeetingMicrophoneGate.paddedPauseFrames {
+      reset()
+    }
+    zeroFrames = 0
     nextStartTime = startTime + Double(count) / Double(MeetingMicrophoneGate.sampleRate)
   }
 
