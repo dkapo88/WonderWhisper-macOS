@@ -44,6 +44,9 @@ struct MeetingMicrophoneAutoGain {
   }
 
   private mutating func nextGain(for frame: ArraySlice<Float>, at time: TimeInterval) -> Float {
+    // Exact silence (muted, or a microphone that has not started) teaches nothing: as the
+    // quietest frame it would make room noise look like speech.
+    guard frame.contains(where: { $0 != 0 }) else { return gain ?? 0 }
     let level = Self.level(of: frame)
     recentLevels.append(level)
     if recentLevels.count > Self.quietestWindowFrames { recentLevels.removeFirst() }

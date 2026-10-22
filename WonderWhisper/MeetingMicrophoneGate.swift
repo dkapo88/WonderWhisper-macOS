@@ -331,7 +331,12 @@ struct MeetingMicrophoneGate {
       contiguousStartIndex = pending.count
     }
     nextFrameTime = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
-    let speaking = classify(frame.samples, at: frame.startTime, muted: frame.muted)
+    let speaking = classify(
+      frame.samples,
+      at: frame.startTime,
+      muted: frame.muted,
+      digitalSilence: isDigitalSilence
+    )
     if speaking {
       hangoverRemaining = tuning?.hangoverFrames ?? 0
       frame.keep = true
@@ -350,7 +355,8 @@ struct MeetingMicrophoneGate {
   private mutating func classify(
     _ samples: [Float],
     at time: TimeInterval,
-    muted: Bool
+    muted: Bool,
+    digitalSilence: Bool
   ) -> Bool {
     guard let tuning else { return true }
     var power: Float = 0
@@ -374,6 +380,10 @@ struct MeetingMicrophoneGate {
       modulationLevels.removeAll()
       return false
     }
+    // Exact digital silence (the second or two a microphone sends before its first real audio,
+    // or a hardware mute) is no room: taken for the noise floor, it would let ordinary room
+    // noise through as speech for the next few seconds.
+    guard !digitalSilence else { return false }
 
     noiseBlockPower += power
     noiseBlockCount += 1

@@ -958,6 +958,19 @@ struct MeetingMicrophoneGateTests {
     ))
   }
 
+  @Test func exactZerosDoNotTeachTheNoiseFloor() {
+    // A microphone that sends brief stretches of exact zeros (as one does while it starts)
+    // between flickering room noise: the zeros must not pass for the room's noise floor.
+    var input: [Float] = []
+    for index in 0..<12 {
+      input += [Float](repeating: 0, count: Int(0.09 * Self.sampleRate))
+      input += Self.noise(seconds: 0.3, level: -60, seed: UInt64(index + 1))
+      input += Self.noise(seconds: 0.3, level: -53, seed: UInt64(index + 50))
+    }
+    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    #expect(Self.keptShare(output, from: 1, to: Double(input.count) / Self.sampleRate) < 0.05)
+  }
+
   @Test func sessionsWithoutGateFieldsDecodeAsBefore() throws {
     let session = MeetingSession(title: "Old")
     var json = try #require(
