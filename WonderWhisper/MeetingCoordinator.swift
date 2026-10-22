@@ -690,10 +690,12 @@ final class MeetingCoordinator: ObservableObject {
       ?? lastDetectedFamily
     cancelContextTasks()
     statusMessage = "Discarding automatic meeting…"
-    microphoneMuteRecorder = nil
-    isMicrophoneMuted = false
 
     let audioFiles = await capture.stop()
+    // Kept in case the discard fails and the session is retained (it can be resumed).
+    let mutedRanges = microphoneMuteRecorder?.ranges
+    microphoneMuteRecorder = nil
+    isMicrophoneMuted = false
     SystemAudioController.shared.setMeetingCaptureActive(false)
     audioContinuation?.finish()
     audioContinuation = nil
@@ -744,6 +746,9 @@ final class MeetingCoordinator: ObservableObject {
       statusMessage = "Automatic meeting discarded"
     } catch {
       session.audioFiles = audioFiles
+      if let mutedRanges {
+        session.microphoneMutedRanges = mutedRanges
+      }
       session.endedAt = Date()
       session.status = .failed
       session.errorMessage = "Meeting could not be discarded: \(error.localizedDescription)"
