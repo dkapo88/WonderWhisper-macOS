@@ -42,7 +42,7 @@ struct MeetingMicrophoneGate {
       noiseMargin: 10,
       usesSpeakingLevel: false,
       speakingRange: 20,
-      absoluteMinimum: -60,
+      absoluteMinimum: -72,
       hangoverFrames: 50,
       lookaheadFrames: 20,
       levelMemory: 20,
@@ -77,6 +77,10 @@ struct MeetingMicrophoneGate {
   /// speech cannot hold the gate open.
   static let stayOpenAboveFloor: Float = 6
   static let fadeSampleCount = 80
+  /// Saved audio fills capture pauses with exact digital silence (`MeetingAudioGapPadding`);
+  /// this much of it counts as a gap, as the live gate saw it. A microphone never gives exact
+  /// zeros for this long on its own (a hardware mute that does gets a harmless fresh start).
+  static let paddedPauseFrames = 30
   /// Speech rises and falls between syllables; steady noise does not. A frame only teaches the
   /// user's level when it is this far above the quietest frame of the last half second.
   static let speechModulation: Float = 12
@@ -119,6 +123,7 @@ struct MeetingMicrophoneGate {
   /// reaches back across a gap.
   private var contiguousStartIndex = 0
   private var nextFrameTime: TimeInterval?
+  private var digitalSilenceFrames = 0
   private var lastEmittedEnd: TimeInterval?
   private var recentAbove: [Bool] = []
   private var recentLevels: [Float] = []
@@ -257,8 +262,13 @@ struct MeetingMicrophoneGate {
 
   private mutating func append(_ frame: Frame) {
     var frame = frame
-    if let nextFrameTime, abs(frame.startTime - nextFrameTime) > 0.001 {
-      // A gap in the timeline (a resumed meeting): speech does not continue across it.
+    let isDigitalSilence = !frame.samples.contains { $0 != 0 }
+    let timelineGap = nextFrameTime.map { abs(frame.startTime - $0) > 0.001 } ?? false
+    let afterPaddedPause = !isDigitalSilence && digitalSilenceFrames >= Self.paddedPauseFrames
+    digitalSilenceFrames = isDigitalSilence ? digitalSilenceFrames + 1 : 0
+    if timelineGap || afterPaddedPause {
+      // A gap in the timeline (a resumed meeting, or a capture pause padded with silence in the
+      // saved audio): speech does not continue across it.
       isSpeaking = false
       hangoverRemaining = 0
       recentAbove.removeAll()

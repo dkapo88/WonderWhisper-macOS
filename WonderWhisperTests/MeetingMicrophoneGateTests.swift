@@ -500,6 +500,24 @@ struct MeetingMicrophoneGateTests {
     #expect(Self.keptShare(output, from: 6, to: 10) == 0)
   }
 
+  @Test func aPaddedPauseInSavedAudioStartsTheGateFresh() {
+    // Strict, loud user, then a capture pause saved as exact silence, then a 25 dB quieter
+    // microphone: like the live gate at the gap, recovery keeps the quieter user straight away.
+    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -12)
+      + [Float](repeating: 0, count: Int(Self.sampleRate))
+      + Self.noise(seconds: 0.5, level: -70) + Self.speech(seconds: 6, level: -37)
+    let output = Self.timeline(Self.run(input, mode: .strict), count: input.count)
+    #expect(Self.keptShare(output, from: 23, to: 28) > 0.95)
+  }
+
+  @Test func normalKeepsAVeryLowGainMicrophone() {
+    let input = Self.noise(seconds: 1, level: -88) + Self.speech(seconds: 4, level: -66)
+      + Self.noise(seconds: 1, level: -88)
+    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    #expect(Self.keptShare(output, from: 1.2, to: 5) > 0.95)
+    #expect(Self.keptShare(output, from: 5.7, to: 6) == 0)
+  }
+
   @Test func liveMuteFlagSilencesTheChunk() {
     var gate = MeetingMicrophoneGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]

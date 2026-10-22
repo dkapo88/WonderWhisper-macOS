@@ -126,7 +126,8 @@ and synthesizes its own audio with `say`.
   the learned level also caps the floor so speech without pauses stays open.
   Opening and staying open need a 6 dB swing within the last 2 s (speech, not a fan), and
   staying open 6 dB above the floor; 200 ms look-ahead, hangover, fades, and a fresh start at
-  timeline gaps. Normal never drops speech for being quieter than the user, so it cannot lose
+  timeline gaps (and after 300 ms of exact digital silence, which is how saved audio carries a
+  capture pause). Normal's absolute minimum is -72 dBFS, so low-gain microphones still open it. Normal never drops speech for being quieter than the user, so it cannot lose
   the user (other voices are transcribed); strict leaves out much quieter voices (for about ten
   seconds of a voice heard on its own) at the cost of about ten seconds of speech on a quieter
   microphone. Everything else becomes silence on the
