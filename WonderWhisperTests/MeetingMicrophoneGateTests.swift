@@ -956,6 +956,28 @@ struct MeetingMicrophoneGateTests {
       ),
       to: directory.appendingPathComponent("all-muted.caf")
     ))
+    // A saved minute that is only capture-pause padding is nothing to transcribe either.
+    let paddingURL = directory.appendingPathComponent("microphone-2.caf")
+    let padding = try AVAudioFile(
+      forWriting: paddingURL,
+      settings: format.settings,
+      commonFormat: .pcmFormatFloat32,
+      interleaved: false
+    )
+    let zeros = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32_000))
+    zeros.frameLength = 32_000
+    zeros.floatChannelData?.pointee.initialize(repeating: 0, count: 32_000)
+    try padding.write(from: zeros)
+    padding.close()
+    #expect(try !MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: paddingURL,
+      startTime: 0,
+      settings: MeetingMicrophoneGateSettings(
+        mode: .off,
+        mutedRanges: [MeetingTimeRange(start: 50, end: 51)]
+      ),
+      to: directory.appendingPathComponent("padding.caf")
+    ))
   }
 
   @Test func exactZerosDoNotTeachTheNoiseFloor() {
@@ -1010,6 +1032,18 @@ struct MeetingMicrophoneGateTests {
     }
     #expect(MeetingMicrophoneGate.decibels(.infinity).isFinite)
     #expect(MeetingMicrophoneGate.decibels(.nan).isFinite)
+  }
+
+  @Test func oneStrayFrameDoesNotSetAHighGain() {
+    // Silence, then a single loud-enough click on a quiet microphone: the gain moves by about
+    // 1 dB, not to the +30 dB a quiet voice would need.
+    var gain = MeetingMicrophoneAutoGain()
+    var input = Self.noise(seconds: 1, level: -75)
+    for index in Int(0.5 * Self.sampleRate)..<Int(0.51 * Self.sampleRate) {
+      input[index] *= 30
+    }
+    _ = gain.process(input, startTime: 0)
+    #expect((gain.gain ?? 0) <= MeetingMicrophoneAutoGain.learningRiseStep + 0.01)
   }
 
   @Test func sessionsWithoutGateFieldsDecodeAsBefore() throws {

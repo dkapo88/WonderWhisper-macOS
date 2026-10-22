@@ -217,7 +217,7 @@ struct MeetingMicrophoneGate {
     guard tuning != nil else {
       var samples = silencingMuted(chunk.samples, startTime: chunk.startTime, muted: muted)
       if recordsKeptRanges, !muted {
-        recordUnmuted(chunk.samples.count, startTime: chunk.startTime)
+        recordUnmuted(chunk.samples, startTime: chunk.startTime)
       }
       if autoGain != nil {
         samples = autoGain?.process(samples, startTime: chunk.startTime) ?? samples
@@ -257,12 +257,14 @@ struct MeetingMicrophoneGate {
     )
   }
 
-  /// With the gate off everything not muted is let through.
-  private mutating func recordUnmuted(_ count: Int, startTime: TimeInterval) {
-    for offset in stride(from: 0, to: count, by: Self.frameSampleCount) {
-      let frameCount = min(Self.frameSampleCount, count - offset)
+  /// With the gate off everything not muted is let through, except exact silence (a capture
+  /// pause padded in the saved audio), which is nothing to transcribe.
+  private mutating func recordUnmuted(_ samples: [Float], startTime: TimeInterval) {
+    for offset in stride(from: 0, to: samples.count, by: Self.frameSampleCount) {
+      let frameCount = min(Self.frameSampleCount, samples.count - offset)
       let start = startTime + Double(offset) / Double(Self.sampleRate)
-      guard !isInMutedRange(startTime: start, count: frameCount) else { continue }
+      guard samples[offset..<(offset + frameCount)].contains(where: { $0 != 0 }),
+            !isInMutedRange(startTime: start, count: frameCount) else { continue }
       recordKept(start: start, end: start + Double(frameCount) / Double(Self.sampleRate))
     }
   }

@@ -8,16 +8,17 @@ import Foundation
 /// frames: well above the quietest frame of the last half second, as syllables are and steady
 /// noise is not) and applies the gain that puts it at `targetLevel`, at most `maximumGain` and
 /// never below 0 dB, so a loud microphone is left as it is. Until the level is learned the
-/// loudest speech-like frame so far sets the gain. The gain drops at once and rises slowly, and
-/// a soft limiter keeps boosted peaks from clipping.
+/// loudest speech-like frame so far sets the gain, rising 1 dB per speech-like frame. The gain drops at once
+/// and then rises slowly, and a soft limiter keeps boosted peaks from clipping.
 struct MeetingMicrophoneAutoGain {
   /// Where the user's speaking level is put (dBFS of a 10 ms frame, 80th percentile).
   static let targetLevel: Float = -16
   static let maximumGain: Float = 30
   /// How far the loudest frame sits above the speaking level, for the gain before it is learned.
   static let loudestAboveLevel: Float = 8
-  /// dB per 10 ms frame the gain may rise (10 dB a second).
+  /// dB per 10 ms frame the gain may rise (10 dB a second), and before the level is learned.
   static let riseStep: Float = 0.1
+  static let learningRiseStep: Float = 1
   static let speechModulation: Float = 12
   static let quietestWindowFrames = 50
   static let lowestSpeechLevel: Float = -80
@@ -67,18 +68,20 @@ struct MeetingMicrophoneAutoGain {
     recentLevels.append(level)
     if recentLevels.count > Self.quietestWindowFrames { recentLevels.removeFirst() }
     let quietest = recentLevels.min() ?? level
-    if level >= Self.lowestSpeechLevel, level >= quietest + Self.speechModulation {
+    let speechLike = level >= Self.lowestSpeechLevel && level >= quietest + Self.speechModulation
+    if speechLike {
       estimator.add(level, at: time)
       loudestSpeech = max(loudestSpeech ?? level, level)
     }
     guard let speakingLevel = estimator.level
       ?? loudestSpeech.map({ $0 - Self.loudestAboveLevel }) else { return gain ?? 0 }
     let wanted = min(Self.maximumGain, max(0, Self.targetLevel - speakingLevel))
-    guard let current = gain else {
-      gain = wanted
-      return wanted
-    }
-    let updated = wanted < current ? wanted : min(wanted, current + Self.riseStep)
+    let current = gain ?? 0
+    // Until the user's level is learned (about 0.3 s of speech) each speech-like frame may raise
+    // it 1 dB, so the first words of a quiet microphone are heard, yet one stray frame cannot
+    // set a high gain on its own.
+    let step = estimator.isLearned ? Self.riseStep : speechLike ? Self.learningRiseStep : 0
+    let updated = wanted < current ? wanted : min(wanted, current + step)
     gain = updated
     return updated
   }
