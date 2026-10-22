@@ -5,6 +5,20 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-22</title>
+      <pubDate>Thu, 22 Oct 2026 14:50:26 +0000</pubDate>
+      <sparkle:version>2026102200</sparkle:version>
+      <sparkle:shortVersionString>2026-10-22</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Microphone noise gate for meetings:** When you're not speaking, your microphone now sends silence instead of room noise, so the transcriber can no longer invent words ("yeah, yeah, yeah") and put them under your name. Your saved meeting audio is never changed.</li>
+<li>**Choose how strict it is:** Settings &gt; Meetings &gt; Speakers &gt; Microphone noise gate. Normal (the default) leaves out silence and steady background noise and never cuts you. Strict also leaves out voices much quieter than yours, like someone else in the room. Off sends everything, as before.</li>
+<li>**Mute button in the meeting window:** Press the mic button next to collapse when you mute on the call. Your audio is still saved but not transcribed, and the header shows "Mic muted".</li>
+<li>**Recovered transcripts match:** If a meeting's transcript is rebuilt from saved audio, the same gate and your mutes apply, including across microphone changes and resumed meetings.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-22/WonderWhisper-2026-10-22.dmg" sparkle:edSignature="1lIrvwo/U+470pM2J5tQdGBpglU5mo8MqIAq3bZnehjkX94ingzyk8sEkF25zKhZYdO2OY24VatTiXqjUUr6BQ==" length="26027320" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-20</title>
       <pubDate>Mon, 19 Oct 2026 23:56:54 +0000</pubDate>
       <sparkle:version>2026102000</sparkle:version>
