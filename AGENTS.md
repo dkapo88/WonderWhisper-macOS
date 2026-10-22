@@ -130,8 +130,8 @@ and synthesizes its own audio with `say`.
   capture pause). Normal's absolute minimum is -72 dBFS, so low-gain microphones still open it. Normal never drops speech for being quieter than the user, so it cannot lose
   the user (other voices are transcribed); strict leaves out much quieter voices (for about ten
   seconds of a voice heard on its own) at the cost of about ten seconds of speech on a quieter
-  microphone. Everything else is turned down 20 dB on the
-  same timeline (not exact silence: Grok drops about half of the real speech around exact zeros),
+  microphone. Everything else is turned down 20 dB (relative to the speech: the gain after it
+  raises both) on the same timeline (not exact silence: Grok drops about half of the real speech around exact zeros),
   so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict) take quiet
   room voices as the user; muted audio is exact silence. Then `MeetingMicrophoneAutoGain` (in every
   mode) brings the user's speaking level (80th percentile of speech-like frames) to -16 dBFS, up

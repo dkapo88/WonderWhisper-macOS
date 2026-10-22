@@ -81,7 +81,10 @@ struct MeetingMicrophoneGate {
   static let stayOpenAboveFloor: Float = 6
   static let fadeSampleCount = 80
   /// What audio the gate leaves out is multiplied by (-20 dB): quiet enough that Grok invents
-  /// nothing from room noise, loud enough that the speech around it is not cut off.
+  /// nothing from room noise, loud enough that the speech around it is not cut off. The gain
+  /// then raises speech and left-out audio alike, so the noise stays 20 dB further under the
+  /// speech than it was; that is what was checked with Grok (room noise from a built-in
+  /// microphone, +26 dB then -20 dB: no words).
   static let rejectedGain: Float = 0.1
   /// Saved audio fills capture pauses with exact digital silence (`MeetingAudioGapPadding`);
   /// this much of it counts as a gap, as the live gate saw it. A microphone never gives exact
@@ -517,8 +520,11 @@ struct MeetingMicrophoneGate {
     )
   }
 
+  /// Always finite: a corrupt sample (infinite, or so large its square overflows) must not
+  /// reach the level estimators, which turn levels into histogram bins.
   static func decibels(_ power: Float) -> Float {
-    10 * log10(max(power, 1e-12))
+    guard !power.isNaN else { return -120 }
+    return min(10 * log10(max(power, 1e-12)), 40)
   }
 }
 

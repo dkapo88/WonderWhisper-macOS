@@ -998,6 +998,20 @@ struct MeetingMicrophoneGateTests {
     #expect(gain > 15, "\(gain)")
   }
 
+  @Test func corruptSamplesDoNotStopTheMeeting() {
+    var input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 3, level: -45)
+    input[Int(2.5 * Self.sampleRate)] = .infinity
+    input[Int(2.8 * Self.sampleRate)] = -.infinity
+    input[Int(3.1 * Self.sampleRate)] = .nan
+    input[Int(3.4 * Self.sampleRate)] = 1e20
+    for mode in MeetingMicrophoneGateMode.allCases {
+      let output = Self.runProduction(input, mode: mode)
+      #expect(output.reduce(0) { $0 + $1.samples.count } == input.count, "\(mode)")
+    }
+    #expect(MeetingMicrophoneGate.decibels(.infinity).isFinite)
+    #expect(MeetingMicrophoneGate.decibels(.nan).isFinite)
+  }
+
   @Test func sessionsWithoutGateFieldsDecodeAsBefore() throws {
     let session = MeetingSession(title: "Old")
     var json = try #require(

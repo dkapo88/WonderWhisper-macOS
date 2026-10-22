@@ -114,11 +114,12 @@ struct MeetingMicrophoneAutoGain {
   }
 
   private static func level(of frame: ArraySlice<Float>) -> Float {
-    guard !frame.isEmpty else { return -120 }
-    let mean = frame.reduce(0, +) / Float(frame.count)
+    let finite = frame.filter(\.isFinite)
+    guard !finite.isEmpty else { return -120 }
+    let mean = finite.reduce(0, +) / Float(finite.count)
     var power: Float = 0
-    for sample in frame {
-      let value = sample.isFinite ? sample - mean : 0
+    for sample in finite {
+      let value = sample - mean
       power += value * value
     }
     return MeetingMicrophoneGate.decibels(power / Float(frame.count))
