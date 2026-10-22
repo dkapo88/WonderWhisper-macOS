@@ -118,16 +118,17 @@ and synthesizes its own audio with `say`.
   `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
   strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
   100 ms of the last 5 s) plus a margin, the user's speaking level minus a range
-  (`MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from the last 20 s in
-  normal or 120 s in strict, learned whether or not the gate is open, kept through silences, and
-  an established level only drops a lot after 3 s (normal) or 10 s (strict) of quieter speech;
-  strict also weights quieter voices down) and an absolute minimum. Opening needs a 9 dB swing
-  in the last 0.5 s and staying open 6 dB in the last 2 s (speech, not a fan); 200 ms
-  look-ahead, hangover, fades, and a fresh start at timeline gaps. Normal never loses the user
-  for long (a quieter microphone is followed within about 15 s); strict keeps quieter room
-  voices out longer at the cost of up to two minutes on a quieter microphone. Everything else becomes silence on the
-  same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or take
-  quiet room voices as the user. The companion's microphone button mutes transcription (audio is
+  (strict only; `MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from the
+  last 120 s, learned whether or not the gate is open, kept through silences, an established
+  level only drops a lot after 300 speech-like frames, quieter voices weighted down) and an
+  absolute minimum; the learned level also caps the floor so speech without pauses stays open.
+  Opening and staying open need a 6 dB swing within the last 2 s (speech, not a fan), and
+  staying open 6 dB above the floor; 200 ms look-ahead, hangover, fades, and a fresh start at
+  timeline gaps. Normal never drops speech for being quieter than the user, so it cannot lose
+  the user (other voices are transcribed); strict leaves out much quieter voices at the cost of
+  a minute or two on a quieter microphone. Everything else becomes silence on the
+  same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict)
+  take quiet room voices as the user. The companion's microphone button mutes transcription (audio is
   still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into
   `microphoneMutedRanges`, and both recovery paths gate the saved microphone audio with the
   session's mode and ranges. Saved CAF audio is never gated. Audio

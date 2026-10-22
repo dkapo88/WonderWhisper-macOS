@@ -1,25 +1,30 @@
 import Foundation
 
 /// Replaces the meeting microphone's audio with silence while the user is not speaking, so
-/// the transcriber cannot invent words from near-silence ("yeah, yeah") or pick up quiet
-/// voices elsewhere in the room. The saved audio is never gated; only what is transcribed.
+/// the transcriber cannot invent words from near-silence ("yeah, yeah") or from room noise;
+/// strict mode also leaves out quieter voices elsewhere in the room. The saved audio is never
+/// gated; only what is transcribed.
 ///
 /// Works on 10 ms frames of 16 kHz audio. A frame counts as speech when its level (after a
 /// 120 Hz high-pass, so desk rumble does not count) is above all of:
 /// - the noise floor (the quietest 100 ms block of the last 5 s; once the user's level is
-///   known, at most 10 dB under it, so speech without pauses is not taken for noise) plus a
+///   known, low enough under it that speech without pauses is not taken for noise) plus a
 ///   margin,
-/// - once learned, the user's own speaking level (`MeetingSpeakingLevelEstimator`) minus a
-///   range (distant voices are much quieter on a headset or laptop microphone than the user),
+/// - strict only: the user's own speaking level (`MeetingSpeakingLevelEstimator`) minus a
+///   range (other voices are much quieter on a headset or laptop microphone than the user),
 /// - an absolute minimum.
-/// Speech opens after 3 of 4 frames pass, stays open within 6 dB of the threshold, and is
-/// held a little after it ends; opening needs the level to have swung by 9 dB within the last
-/// half second and staying open 6 dB within the last 2 s, as speech does and steady noise
-/// does not. Output runs 200 ms behind input so the start of a word is
-/// kept too. Times on the chunks are unchanged.
+/// Speech opens after 3 of 4 frames pass, stays open within 6 dB of the threshold (and 6 dB
+/// above the floor), and is
+/// held a little after it ends; it also needs the level to have swung by 6 dB within the last
+/// 2 s, as speech (with its syllables and breaths) does and a steady fan or hum does not.
+/// Output runs 200 ms behind input so the start of a word is kept too. Times on the chunks
+/// are unchanged.
 struct MeetingMicrophoneGate {
   struct Tuning: Equatable, Sendable {
     let noiseMargin: Float
+    /// Strict only: leave out speech more than `speakingRange` under the user's level. Normal
+    /// mode never uses the user's level to drop audio, so it cannot lose the user.
+    let usesSpeakingLevel: Bool
     let speakingRange: Float
     let absoluteMinimum: Float
     let hangoverFrames: Int
@@ -32,50 +37,54 @@ struct MeetingMicrophoneGate {
     /// Speech-like frames needed before the level drops by more than `speakingRange`.
     let largeDropFrames: Int
 
-    /// Never lose the user: the level follows them down within 20 s.
+    /// Silence and noise only: other voices are transcribed, the user is never lost.
     static let normal = Self(
       noiseMargin: 10,
+      usesSpeakingLevel: false,
       speakingRange: 20,
       absoluteMinimum: -60,
       hangoverFrames: 50,
       lookaheadFrames: 20,
       levelMemory: 20,
       distantVoiceWeight: 1,
-      largeDropFrames: 300
+      largeDropFrames: 0
     )
 
     /// Keep other voices out: the level is slow to follow quieter speech.
     static let strict = Self(
       noiseMargin: 15,
+      usesSpeakingLevel: true,
       speakingRange: 14,
       absoluteMinimum: -50,
       hangoverFrames: 35,
       lookaheadFrames: 20,
       levelMemory: 120,
       distantVoiceWeight: 4,
-      largeDropFrames: 1_000
+      largeDropFrames: 300
     )
   }
 
   static let sampleRate = MeetingAudioChunkFramer.sampleRate
   static let frameSampleCount = 160
   static let initialNoiseFloor: Float = -65
-  /// Once the user's level is known, the noise floor counts as at most this far under it.
-  static let floorBelowSpeaking: Float = 10
+  /// Once the user's level is known, the floor plus margin sits at least this far under it,
+  /// so evenly loud speech without a pause stays open.
+  static let thresholdBelowSpeaking: Float = 10
   static let noiseBlockFrames = 10
   static let noiseWindowBlocks = 50
   static let stayOpenHysteresis: Float = 6
+  /// Staying open also needs this much above the noise floor, so room noise right after
+  /// speech cannot hold the gate open.
+  static let stayOpenAboveFloor: Float = 6
   static let fadeSampleCount = 80
   /// Speech rises and falls between syllables; steady noise does not. A frame only teaches the
   /// user's level when it is this far above the quietest frame of the last half second.
   static let speechModulation: Float = 12
   static let modulationWindowFrames = 50
-  /// The gate only opens while the level has swung this much within the last half second, and
-  /// only stays open while it has swung `stayOpenModulation` within the last 2 s, as speech
-  /// (with its breaths) does and a fan or hum that starts mid-meeting does not.
-  static let openModulation: Float = 9
-  static let stayOpenModulation: Float = 6
-  static let stayOpenModulationFrames = 200
+  /// The gate only opens or stays open while the level has swung this much within the last
+  /// 2 s, as speech (syllables, breaths) does and a fan or hum that starts mid-meeting does not.
+  static let openModulation: Float = 6
+  static let openModulationFrames = 200
   /// In strict mode, once 3 s of the user's speech is known, speech far under their level
   /// (another voice in the room) is weighted down; before that a loud bump must be outgrown
   /// quickly.
@@ -113,7 +122,7 @@ struct MeetingMicrophoneGate {
   private var lastEmittedEnd: TimeInterval?
   private var recentAbove: [Bool] = []
   private var recentLevels: [Float] = []
-  private var longerLevels: [Float] = []
+  private var modulationLevels: [Float] = []
   private var distantFrameCount = 0
   private var isSpeaking = false
   private var hangoverRemaining = 0
@@ -161,12 +170,13 @@ struct MeetingMicrophoneGate {
     return Self.initialNoiseFloor
   }
 
-  /// Measured room noise; once the user's level is known, at most 10 dB under it, so long
-  /// speech without a pause cannot be taken for the noise floor. Room noise never feeds the
-  /// user's level, so this cannot pull the threshold under steady noise.
+  /// Measured room noise; once the user's level is known, capped so the threshold stays
+  /// 10 dB under it and long speech without a pause cannot be taken for the noise floor. The
+  /// cap only ever lowers the threshold, and room noise never feeds the user's level.
   var noiseFloor: Float {
     guard let speakingLevel else { return measuredNoiseFloor }
-    return min(measuredNoiseFloor, speakingLevel - Self.floorBelowSpeaking)
+    let margin = tuning?.noiseMargin ?? 0
+    return min(measuredNoiseFloor, speakingLevel - Self.thresholdBelowSpeaking - margin)
   }
 
   /// Gates one chunk. `muted` silences it whatever the gate decides (the user pressed Mute);
@@ -252,7 +262,7 @@ struct MeetingMicrophoneGate {
       hangoverRemaining = 0
       recentAbove.removeAll()
       recentLevels.removeAll()
-      longerLevels.removeAll()
+      modulationLevels.removeAll()
       // A resumed meeting may use another microphone: learn the user's level again.
       speakingLevelEstimator.reset()
       distantFrameCount = 0
@@ -307,12 +317,11 @@ struct MeetingMicrophoneGate {
 
     recentLevels.append(level)
     if recentLevels.count > Self.modulationWindowFrames { recentLevels.removeFirst() }
-    longerLevels.append(level)
-    if longerLevels.count > Self.stayOpenModulationFrames { longerLevels.removeFirst() }
+    modulationLevels.append(level)
+    if modulationLevels.count > Self.openModulationFrames { modulationLevels.removeFirst() }
     // Speech-like sound clearly above the room noise teaches the user's level, whether or not
     // the gate is open, so a wrong level always corrects itself; steady noise never does.
     let recentQuietest = recentLevels.min() ?? level
-    let recentLoudest = recentLevels.max() ?? level
     if !muted,
        level >= max(measuredNoiseFloor + tuning.noiseMargin, tuning.absoluteMinimum),
        level >= recentQuietest + Self.speechModulation {
@@ -328,14 +337,13 @@ struct MeetingMicrophoneGate {
         speakingLevelEstimator.add(level, at: time)
       }
     }
-    let opensModulated = recentLoudest - recentQuietest >= Self.openModulation
-    let staysModulated = (longerLevels.max() ?? level) - (longerLevels.min() ?? level)
-      >= Self.stayOpenModulation
+    let modulated = (modulationLevels.max() ?? level) - (modulationLevels.min() ?? level)
+      >= Self.openModulation
     // Until the user's level is known, the quietest recent frame also counts as the floor:
     // speech that starts before the first pause dips between syllables, steady noise barely.
     let floor = hasLearnedSpeakingLevel ? noiseFloor : min(noiseFloor, recentQuietest)
     var threshold = max(floor + tuning.noiseMargin, tuning.absoluteMinimum)
-    if let speakingLevel {
+    if tuning.usesSpeakingLevel, let speakingLevel {
       threshold = max(threshold, speakingLevel - tuning.speakingRange)
     }
     let above = level >= threshold
@@ -348,9 +356,10 @@ struct MeetingMicrophoneGate {
       return false
     }
     if isSpeaking {
-      isSpeaking = staysModulated && level >= threshold - Self.stayOpenHysteresis
+      isSpeaking = modulated
+        && level >= max(threshold - Self.stayOpenHysteresis, floor + Self.stayOpenAboveFloor)
     } else {
-      isSpeaking = opensModulated && recentAbove.filter { $0 }.count >= 3
+      isSpeaking = modulated && recentAbove.filter { $0 }.count >= 3
     }
     return isSpeaking
   }

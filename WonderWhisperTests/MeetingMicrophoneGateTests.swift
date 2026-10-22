@@ -153,12 +153,15 @@ struct MeetingMicrophoneGateTests {
     #expect(Self.keptShare(normal, from: 5.5, to: 7) > 0.9)
   }
 
-  @Test func normalLeavesOutFaintVoices() {
+  @Test func strictLeavesOutFaintVoicesAndNormalKeepsThem() {
     let quiet = Self.noise(seconds: 1, level: -65)
     let input = quiet + Self.speech(seconds: 3, level: -22) + quiet
       + Self.speech(seconds: 2, level: -52) + quiet
-    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
-    #expect(Self.keptShare(output, from: 5.5, to: 7) == 0)
+    let strict = Self.timeline(Self.run(input, mode: .strict), count: input.count)
+    #expect(Self.keptShare(strict, from: 5.5, to: 7) == 0)
+    // Normal never drops speech for being quieter than the user, so it cannot lose the user.
+    let normal = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    #expect(Self.keptShare(normal, from: 5.5, to: 7) > 0.9)
   }
 
   @Test func offPassesEverythingThroughUnchanged() {
@@ -333,9 +336,50 @@ struct MeetingMicrophoneGateTests {
     let listening = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
       + Self.noise(seconds: 150, level: -70) + Self.speech(seconds: 2, level: -45)
       + Self.noise(seconds: 1, level: -70)
+    let output = Self.timeline(Self.run(listening, mode: .strict), count: listening.count)
+    #expect(Self.keptShare(output, from: 155, to: 158) == 0)
+  }
+
+  @Test func normalNeverLosesAUserWhoGotQuieter() {
+    // Loud for 20 s, then for good 23 dB quieter, in 2 s interjections after 30 s silences.
+    let room = Self.noise(seconds: 30, level: -70)
+    var input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -12)
+    var interjections: [Double] = []
+    for _ in 0..<4 {
+      input += room
+      interjections.append(Double(input.count) / Self.sampleRate)
+      input += Self.speech(seconds: 2, level: -35)
+    }
+    let output = Self.timeline(Self.run(input, mode: .normal), count: input.count)
+    for start in interjections {
+      #expect(Self.keptShare(output, from: start + 0.1, to: start + 2) > 0.95, "at \(start)")
+    }
+  }
+
+  @Test func strictFollowsAQuieterUserOnceTheyHaveSpokenForAFewSeconds() {
+    let room = Self.noise(seconds: 30, level: -70)
+    var input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -12)
+    var interjections: [Double] = []
+    for _ in 0..<6 {
+      input += room
+      interjections.append(Double(input.count) / Self.sampleRate)
+      input += Self.speech(seconds: 2, level: -35)
+    }
+    let output = Self.timeline(Self.run(input, mode: .strict), count: input.count)
+    let last = interjections[interjections.count - 1]
+    #expect(Self.keptShare(output, from: last + 0.1, to: last + 2) > 0.95)
+  }
+
+  @Test func evenlyLoudSpeechWithNoPauseAtAllStaysOpen() {
+    let rate = Self.sampleRate
+    let input = Self.noise(seconds: 1, level: -70) + (0..<Int(30 * rate)).map { index in
+      let time = Double(index) / rate
+      let envelope = 0.7 + 0.3 * sin(2 * .pi * 4 * time)
+      return Float(envelope * sin(2 * .pi * 180 * time)) * 0.08
+    }
     for mode in [MeetingMicrophoneGateMode.normal, .strict] {
-      let output = Self.timeline(Self.run(listening, mode: mode), count: listening.count)
-      #expect(Self.keptShare(output, from: 155, to: 158) == 0, "\(mode)")
+      let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+      #expect(Self.keptShare(output, from: 1.2, to: 31) > 0.95, "\(mode)")
     }
   }
 
