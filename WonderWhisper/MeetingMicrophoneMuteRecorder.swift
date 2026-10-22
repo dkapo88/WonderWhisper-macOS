@@ -15,9 +15,14 @@ final class MeetingMicrophoneMuteRecorder: @unchecked Sendable {
   private var lastObservationMuted = false
   private var lastObservedEnd: TimeInterval?
 
-  init(ranges: [MeetingTimeRange] = []) {
+  /// `runStart` is where this recording run starts on the meeting timeline (a resume's
+  /// offset): a mute pressed before its first chunk starts there, never earlier.
+  init(ranges: [MeetingTimeRange] = [], runStart: TimeInterval = 0) {
     recordedRanges = ranges
+    self.runStart = runStart
   }
+
+  private let runStart: TimeInterval
 
   var isMuted: Bool {
     lock.lock()
@@ -66,7 +71,7 @@ final class MeetingMicrophoneMuteRecorder: @unchecked Sendable {
     if lastObservationMuted, !ranges.isEmpty {
       ranges[ranges.count - 1].end = Self.openEnd
     } else {
-      ranges.append(MeetingTimeRange(start: lastObservedEnd ?? 0, end: Self.openEnd))
+      ranges.append(MeetingTimeRange(start: lastObservedEnd ?? runStart, end: Self.openEnd))
     }
     return ranges
   }

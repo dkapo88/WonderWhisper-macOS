@@ -85,7 +85,7 @@ actor MeetingTranscriptRecoveryService {
     // One gate across the microphone segments, so what it learns carries from minute to minute.
     var microphoneGateState = MeetingMicrophoneGate(settings: microphoneGate)
     if microphoneGate.mode != .off {
-      try warmMicrophoneGate(
+      warmMicrophoneGate(
         &microphoneGateState,
         segments: segments,
         before: plan.segmentsToTranscribe.filter { $0.source == .microphone },
@@ -122,12 +122,14 @@ actor MeetingTranscriptRecoveryService {
   /// When only a tail is recovered, the gate first hears the saved microphone audio of the two
   /// minutes before it (not transcribed), as the live gate had, so it starts with the room's
   /// noise floor and the user's level instead of learning them again mid-meeting.
+  /// Warming only improves accuracy: an unreadable earlier segment leaves the gate cold rather
+  /// than failing the recovery.
   private func warmMicrophoneGate(
     _ gate: inout MeetingMicrophoneGate,
     segments: [Segment],
     before selected: [Segment],
     sessionDirectory: URL
-  ) throws {
+  ) {
     guard let first = selected.first else { return }
     let warmStart = first.startTime - Self.gateWarmUpDuration
     let earlier = segments.filter {
@@ -141,7 +143,10 @@ actor MeetingTranscriptRecoveryService {
           startTime: segment.startTime
         )
       } catch {
-        throw RecoveryError.unreadableAudioFile(segment.filename, error.localizedDescription)
+        let reason = error.localizedDescription
+        AppLog.dictation.error(
+          "MeetingTranscriptRecovery: gate warm-up skipped: \(reason, privacy: .public)"
+        )
       }
     }
   }

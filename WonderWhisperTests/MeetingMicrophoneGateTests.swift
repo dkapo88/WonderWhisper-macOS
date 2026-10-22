@@ -603,6 +603,18 @@ struct MeetingMicrophoneGateTests {
     #expect(kept < 0.05)
   }
 
+  @Test func aMuteBeforeTheFirstChunkOfAResumedRunStartsAtTheRun() {
+    let recorder = MeetingMicrophoneMuteRecorder(
+      ranges: [MeetingTimeRange(start: 1, end: 2)],
+      runStart: 300
+    )
+    recorder.setMuted(true)
+    #expect(recorder.persistableRanges.last == MeetingTimeRange(
+      start: 300,
+      end: MeetingMicrophoneMuteRecorder.openEnd
+    ))
+  }
+
   @Test func muteRecorderKeepsEarlierRangesOnResume() {
     let earlier = [MeetingTimeRange(start: 1, end: 2)]
     let recorder = MeetingMicrophoneMuteRecorder(ranges: earlier)

@@ -539,11 +539,14 @@ final class MeetingCoordinator: ObservableObject {
     guard let activeSessionID, let microphoneMuteRecorder else { return }
     microphoneMuteRecorder.setMuted(muted)
     isMicrophoneMuted = muted
-    // Saved straight away, so a crash or quit mid-meeting cannot lose a mute.
+    // Written to disk straight away, so a crash or quit mid-meeting cannot lose a mute.
     if var session = session(withID: activeSessionID) {
       session.microphoneMutedRanges = microphoneMuteRecorder.persistableRanges
       replace(session)
-      schedulePersist(session)
+      Task { @MainActor [weak self] in
+        guard let self, let latest = self.session(withID: activeSessionID) else { return }
+        _ = await self.persist(latest)
+      }
     }
   }
 
@@ -1684,7 +1687,10 @@ final class MeetingCoordinator: ObservableObject {
     } ?? session.microphoneMutedRanges
     session.microphoneMutedRanges = earlierMutes
     replace(session)
-    let muteRecorder = MeetingMicrophoneMuteRecorder(ranges: earlierMutes)
+    let muteRecorder = MeetingMicrophoneMuteRecorder(
+      ranges: earlierMutes,
+      runStart: resumePlan?.timelineOffset ?? 0
+    )
     microphoneMuteRecorder = muteRecorder
     isMicrophoneMuted = false
     await persist(session)
