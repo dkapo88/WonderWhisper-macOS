@@ -36,7 +36,9 @@ struct MeetingMicrophoneAutoGain {
   private var zeroFrames = 0
 
   /// Returns `samples` (starting at `startTime`) with the gain applied, frame by frame.
-  mutating func process(_ samples: [Float], startTime: TimeInterval) -> [Float] {
+  /// `learns` false (audio the gate left out, such as a quieter voice in strict mode) gets the
+  /// gain without teaching it: the user's level is learned from the user's speech only.
+  mutating func process(_ samples: [Float], startTime: TimeInterval, learns: Bool = true) -> [Float] {
     if let nextStartTime, abs(startTime - nextStartTime) > 0.001 {
       reset()
     }
@@ -47,13 +49,17 @@ struct MeetingMicrophoneAutoGain {
       let end = min(offset + frame, samples.count)
       let time = startTime + Double(offset) / Double(MeetingMicrophoneGate.sampleRate)
       let previous = gain ?? 0
-      let next = nextGain(for: samples[offset..<end], at: time)
+      let next = nextGain(for: samples[offset..<end], at: time, learns: learns)
       apply(from: previous, to: next, to: &result, range: offset..<end)
     }
     return result
   }
 
-  private mutating func nextGain(for frame: ArraySlice<Float>, at time: TimeInterval) -> Float {
+  private mutating func nextGain(
+    for frame: ArraySlice<Float>,
+    at time: TimeInterval,
+    learns: Bool
+  ) -> Float {
     // Exact silence (muted, or a microphone that has not started) teaches nothing: as the
     // quietest frame it would make room noise look like speech.
     guard frame.contains(where: { $0 != 0 }) else {
@@ -68,7 +74,9 @@ struct MeetingMicrophoneAutoGain {
     recentLevels.append(level)
     if recentLevels.count > Self.quietestWindowFrames { recentLevels.removeFirst() }
     let quietest = recentLevels.min() ?? level
-    let speechLike = level >= Self.lowestSpeechLevel && level >= quietest + Self.speechModulation
+    let speechLike = learns
+      && level >= Self.lowestSpeechLevel
+      && level >= quietest + Self.speechModulation
     if speechLike {
       estimator.add(level, at: time)
       loudestSpeech = max(loudestSpeech ?? level, level)

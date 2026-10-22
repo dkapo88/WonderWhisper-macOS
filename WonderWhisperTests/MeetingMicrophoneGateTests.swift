@@ -1020,6 +1020,60 @@ struct MeetingMicrophoneGateTests {
     #expect(gain > 15, "\(gain)")
   }
 
+  @Test func audioTheGateLeftOutDoesNotTeachTheGain() {
+    // The user, then half a minute of a quieter voice the gate leaves out: the gain stays the
+    // user's instead of learning the other voice and bringing it back up.
+    var gain = MeetingMicrophoneAutoGain()
+    _ = gain.process(Self.noise(seconds: 0.5, level: -70) + Self.speech(seconds: 3, level: -25), startTime: 0)
+    let learned = gain.gain ?? 0
+    _ = gain.process(Self.speech(seconds: 30, level: -45), startTime: 3.5, learns: false)
+    #expect(abs((gain.gain ?? 0) - learned) < 0.5, "\(learned) -> \(gain.gain ?? 0)")
+  }
+
+  @Test func paddingAfterSpeechInTheLastMinuteIsNotTranscribed() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gate-hangover-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let format = try #require(MeetingMicrophoneGatedWriter.processingFormat)
+    func write(_ samples: [Float], to url: URL) throws {
+      let file = try AVAudioFile(
+        forWriting: url,
+        settings: format.settings,
+        commonFormat: .pcmFormatFloat32,
+        interleaved: false
+      )
+      let buffer = try #require(
+        AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
+      )
+      buffer.frameLength = AVAudioFrameCount(samples.count)
+      for (index, sample) in samples.enumerated() {
+        buffer.floatChannelData?.pointee[index] = sample
+      }
+      try file.write(from: buffer)
+      file.close()
+    }
+    // A minute that ends mid-word, then a minute of capture-pause padding only.
+    let speaking = directory.appendingPathComponent("microphone-1.caf")
+    let padding = directory.appendingPathComponent("microphone-2.caf")
+    try write(Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 1, level: -25), to: speaking)
+    try write([Float](repeating: 0, count: 32_000), to: padding)
+    var gate = MeetingMicrophoneGate(mode: .normal)
+    #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: speaking,
+      startTime: 0,
+      gate: &gate,
+      next: (url: padding, startTime: 2),
+      to: directory.appendingPathComponent("speaking-gated.caf")
+    ))
+    #expect(try !MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: padding,
+      startTime: 2,
+      gate: &gate,
+      to: directory.appendingPathComponent("padding-gated.caf")
+    ))
+  }
+
   @Test func aPaddedPauseWhileMutedStillStartsTheGainAgain() {
     // Saved audio: a loud microphone, a capture pause padded with zeros while muted, then a
     // quiet microphone, unmuted half a second later. The quiet one is brought up.
