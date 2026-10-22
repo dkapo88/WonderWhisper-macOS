@@ -117,8 +117,11 @@ and synthesizes its own audio with `say`.
   and the user accepts each. The notes prompt gets a participants header. The microphone passes
   `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
   strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
-  100 ms of the last 5 s) plus a margin, the user's own learned speaking level minus a range, and
-  an absolute minimum; 200 ms look-ahead, hangover, fades. Everything else becomes silence on the
+  100 ms of the last 5 s) plus a margin, the user's speaking level minus a range
+  (`MeetingSpeakingLevelEstimator`: 80th percentile of the last 3,000 speech-like frames, learned
+  whether or not the gate is open, quieter voices weighted down once 3 s is known) and an
+  absolute minimum, with a 9 dB swing in the last half second (speech, not a fan); 200 ms
+  look-ahead, hangover, fades, reset at timeline gaps. Everything else becomes silence on the
   same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or take
   quiet room voices as the user. The companion's microphone button mutes transcription (audio is
   still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into

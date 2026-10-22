@@ -18,11 +18,16 @@ struct MeetingMicrophoneGateTests {
   }
 
   /// Voice-like audio: a 180 Hz tone with harmonics, its loudness rising and falling four
-  /// times a second like syllables, at roughly the given RMS level (dBFS).
+  /// times a second like syllables, with a short pause between words, at roughly the given
+  /// RMS level (dBFS).
   private static func speech(seconds: Double, level: Float) -> [Float] {
     let peak = pow(10, level / 20) * 2.2
     return (0..<Int(seconds * sampleRate)).map { index in
       let time = Double(index) / sampleRate
+      // A 120 ms pause between words, every 750 ms, with faint room noise in it.
+      if time.truncatingRemainder(dividingBy: 0.75) > 0.63 {
+        return Float((index &* 7_919) % 1_000 - 500) / 500 * 0.0005
+      }
       let syllable = 0.55 + 0.45 * sin(2 * .pi * 4 * time)
       let tone = sin(2 * .pi * 180 * time) + 0.5 * sin(2 * .pi * 360 * time)
         + 0.25 * sin(2 * .pi * 720 * time)
@@ -199,7 +204,7 @@ struct MeetingMicrophoneGateTests {
       #expect(Self.keptShare(timeline, from: 0, to: 0.45) == 0)
       #expect(Self.keptShare(timeline, from: 2.6, to: 4.6) == 0)
       #expect(Self.keptShare(timeline, from: 4.62, to: 5.0) == 1)
-      #expect(Self.keptShare(timeline, from: 2.0, to: 2.58) == 1)
+      #expect(Self.keptShare(timeline, from: 2.0, to: 2.58) > 0.99)
     }
   }
 
@@ -258,6 +263,71 @@ struct MeetingMicrophoneGateTests {
     let after = output.filter { $0.startTime >= 60 }.flatMap(\.samples)
     #expect(after.count == 32_000)
     #expect(after.allSatisfy { $0 == 0 })
+  }
+
+  @Test func aLoudBumpBeforeSpeakingDoesNotLockOutQuieterSpeech() {
+    let room = Self.noise(seconds: 1, level: -70)
+    let cases: [(bumpSeconds: Double, bump: Float, speech: Float)] = [
+      (0.06, -10, -32), (0.4, -14, -38), (0.3, -10, -32), (0.12, -15, -35)
+    ]
+    for (bumpSeconds, bump, speechLevel) in cases {
+      let input = room + Self.speech(seconds: bumpSeconds, level: bump)
+        + Self.speech(seconds: 6, level: speechLevel) + room
+      let end = 1 + bumpSeconds + 6
+      for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+        let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+        #expect(
+          Self.keptShare(output, from: end - 4, to: end) > 0.95,
+          "\(mode) bump \(bump) then \(speechLevel)"
+        )
+      }
+    }
+  }
+
+  @Test func loudSteadyRoomNoiseStaysSilenced() {
+    for level: Float in [-44, -40, -36, -32] {
+      let input = Self.noise(seconds: 20, level: level)
+      for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+        let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+        #expect(Self.keptShare(output, from: 0, to: 20) == 0, "\(mode) \(level)")
+      }
+    }
+  }
+
+  @Test func lookAheadDoesNotReachBackAcrossATimelineGap() {
+    var gate = MeetingMicrophoneGate(mode: .normal)
+    var output: [MeetingAudioChunk] = []
+    for chunk in Self.chunks(Self.noise(seconds: 2, level: -62)) {
+      output += gate.process(chunk)
+    }
+    for chunk in Self.chunks(Self.speech(seconds: 1, level: -25), startTime: 30) {
+      output += gate.process(chunk)
+    }
+    output += gate.flush()
+    let beforeGap = output.filter { $0.startTime < 30 }.flatMap(\.samples)
+    #expect(beforeGap.count == 32_000)
+    #expect(beforeGap.allSatisfy { $0 == 0 })
+    let afterGap = output.filter { $0.startTime >= 30 }.flatMap(\.samples)
+    #expect(afterGap.filter { $0 != 0 }.count > 13_000)
+  }
+
+  @Test func aFanStartingMidMeetingClosesTheGateQuickly() {
+    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 3, level: -25)
+      + Self.noise(seconds: 2, level: -70) + Self.noise(seconds: 30, level: -45, seed: 9)
+    for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+      let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+      #expect(Self.keptShare(output, from: 7.5, to: 36) == 0, "\(mode)")
+    }
+  }
+
+  @Test func anotherVoiceFarBelowTheUserIsLeftOut() {
+    let input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
+      + Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -45)
+    for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+      let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+      #expect(Self.keptShare(output, from: 1, to: 5) > 0.95, "\(mode)")
+      #expect(Self.keptShare(output, from: 6, to: 16) == 0, "\(mode)")
+    }
   }
 
   @Test func liveMuteFlagSilencesTheChunk() {
