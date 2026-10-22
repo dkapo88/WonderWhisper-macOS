@@ -86,6 +86,11 @@ struct MeetingMicrophoneAutoGain {
     return updated
   }
 
+  /// Moves past muted audio (silent, and nothing to learn from) without starting afresh.
+  mutating func skip(_ count: Int, startTime: TimeInterval) {
+    nextStartTime = startTime + Double(count) / Double(MeetingMicrophoneGate.sampleRate)
+  }
+
   /// Forgets the level and the gain; the next speech sets them afresh.
   private mutating func reset() {
     estimator.reset()

@@ -1046,6 +1046,24 @@ struct MeetingMicrophoneGateTests {
     #expect((gain.gain ?? 0) <= MeetingMicrophoneAutoGain.learningRiseStep + 0.01)
   }
 
+  @Test func theGainCarriesOnAcrossAMute() {
+    // A quiet microphone, muted for a second mid-meeting: the first words after unmuting are
+    // brought up straight away, not learned again from nothing.
+    let input = Self.noise(seconds: 1, level: -72) + Self.speech(seconds: 7, level: -45)
+    let muted = [MeetingTimeRange(start: 5, end: 6)]
+    for mode in MeetingMicrophoneGateMode.allCases {
+      var gate = MeetingMicrophoneGate(mode: mode, mutedRanges: muted)
+      var chunks: [MeetingAudioChunk] = []
+      for chunk in Self.chunks(input) {
+        chunks += gate.process(chunk)
+      }
+      let output = Self.timeline(chunks + gate.flush(), count: input.count)
+      #expect(output[Int(5.1 * Self.sampleRate)..<Int(5.9 * Self.sampleRate)].allSatisfy { $0 == 0 })
+      let gain = Self.level(output, from: 6.0, to: 6.12) - Self.level(input, from: 6.0, to: 6.12)
+      #expect(gain > 20, "\(mode) \(gain)")
+    }
+  }
+
   @Test func sessionsWithoutGateFieldsDecodeAsBefore() throws {
     let session = MeetingSession(title: "Old")
     var json = try #require(

@@ -220,7 +220,7 @@ struct MeetingMicrophoneGate {
         recordUnmuted(chunk.samples, startTime: chunk.startTime)
       }
       if autoGain != nil {
-        samples = autoGain?.process(samples, startTime: chunk.startTime) ?? samples
+        samples = applyingGain(to: samples, startTime: chunk.startTime, muted: muted)
       }
       return [chunk.replacingSamples(samples)]
     }
@@ -468,6 +468,13 @@ struct MeetingMicrophoneGate {
         ? Array(repeating: 0, count: frame.samples.count)
         : render(frame.samples, gain: gain)
       lastGain = gain
+      if autoGain != nil {
+        frame.samples = applyingGain(
+          to: frame.samples,
+          startTime: frame.startTime,
+          muted: frame.muted
+        )
+      }
       let expected = runStart + Double(runSamples.count) / Double(Self.sampleRate)
       if !runSamples.isEmpty, abs(frame.startTime - expected) > 0.001 {
         chunks.append(Self.chunk(startTime: runStart, samples: runSamples))
@@ -481,12 +488,27 @@ struct MeetingMicrophoneGate {
     if !runSamples.isEmpty {
       chunks.append(Self.chunk(startTime: runStart, samples: runSamples))
     }
-    guard autoGain != nil else { return chunks }
-    return chunks.map { chunk in
-      chunk.replacingSamples(
-        autoGain?.process(chunk.samples, startTime: chunk.startTime) ?? chunk.samples
-      )
+    return chunks
+  }
+
+  /// The gain, frame by frame. Muted audio is skipped rather than learned from: a mute is not
+  /// another microphone, so the user's level and gain carry on when they unmute.
+  private mutating func applyingGain(
+    to samples: [Float],
+    startTime: TimeInterval,
+    muted: Bool
+  ) -> [Float] {
+    var result = samples
+    for offset in stride(from: 0, to: samples.count, by: Self.frameSampleCount) {
+      let end = min(offset + Self.frameSampleCount, samples.count)
+      let frameStart = startTime + Double(offset) / Double(Self.sampleRate)
+      if muted || isInMutedRange(startTime: frameStart, count: end - offset) {
+        autoGain?.skip(end - offset, startTime: frameStart)
+      } else if let gained = autoGain?.process(Array(samples[offset..<end]), startTime: frameStart) {
+        result.replaceSubrange(offset..<end, with: gained)
+      }
     }
+    return result
   }
 
   /// The times let through since the last call (with `recordsKeptRanges` set).
