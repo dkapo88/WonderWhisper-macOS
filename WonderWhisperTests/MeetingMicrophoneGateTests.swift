@@ -469,6 +469,24 @@ struct MeetingMicrophoneGateTests {
     }
   }
 
+  @Test func mutedRoomTalkDoesNotTeachTheGate() {
+    // Muted at the start while loud conversation goes on, then unmuted: the user's speech at a
+    // similar level is kept straight away.
+    // Conversation with no pause, so it would set the noise floor if muted audio counted.
+    let talk = (0..<Int(6 * Self.sampleRate)).map { index in
+      let time = Double(index) / Self.sampleRate
+      return Float((0.7 + 0.3 * sin(2 * .pi * 4 * time)) * sin(2 * .pi * 210 * time)) * 0.06
+    }
+    let input = Self.noise(seconds: 1, level: -70) + talk + talk.prefix(Int(4 * Self.sampleRate))
+    let muted = [MeetingTimeRange(start: 1, end: 7)]
+    let output = Self.timeline(
+      Self.run(input, mode: .normal, mutedRanges: muted),
+      count: input.count
+    )
+    #expect(Self.keptShare(output, from: 1, to: 7) == 0)
+    #expect(Self.keptShare(output, from: 7.2, to: 11) > 0.95)
+  }
+
   @Test func liveMuteFlagSilencesTheChunk() {
     var gate = MeetingMicrophoneGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]

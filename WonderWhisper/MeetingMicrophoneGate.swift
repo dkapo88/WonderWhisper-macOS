@@ -308,6 +308,14 @@ struct MeetingMicrophoneGate {
     }
     power /= Float(max(1, samples.count))
     let level = Self.decibels(power)
+    // Muted audio (the user talking to someone in the room) must not teach the gate anything:
+    // not the noise floor, not the level swing, not the user's level.
+    guard !muted else {
+      isSpeaking = false
+      hangoverRemaining = 0
+      recentAbove.removeAll()
+      return false
+    }
 
     noiseBlockPower += power
     noiseBlockCount += 1
@@ -327,8 +335,7 @@ struct MeetingMicrophoneGate {
     // Speech-like sound clearly above the room noise teaches the user's level, whether or not
     // the gate is open, so a wrong level always corrects itself; steady noise never does.
     let recentQuietest = recentLevels.min() ?? level
-    if !muted,
-       level >= max(measuredNoiseFloor + tuning.noiseMargin, tuning.absoluteMinimum),
+    if level >= max(measuredNoiseFloor + tuning.noiseMargin, tuning.absoluteMinimum),
        level >= recentQuietest + Self.speechModulation {
       if let speakingLevel,
          tuning.distantVoiceWeight > 1,
@@ -357,11 +364,6 @@ struct MeetingMicrophoneGate {
     recentAbove.append(above)
     if recentAbove.count > 4 { recentAbove.removeFirst() }
 
-    guard !muted else {
-      isSpeaking = false
-      hangoverRemaining = 0
-      return false
-    }
     if isSpeaking {
       isSpeaking = modulated
         && level >= max(threshold - Self.stayOpenHysteresis, floor + Self.stayOpenAboveFloor)
