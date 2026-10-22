@@ -1020,6 +1020,24 @@ struct MeetingMicrophoneGateTests {
     #expect(gain > 15, "\(gain)")
   }
 
+  @Test func aPaddedPauseWhileMutedStillStartsTheGainAgain() {
+    // Saved audio: a loud microphone, a capture pause padded with zeros while muted, then a
+    // quiet microphone, unmuted half a second later. The quiet one is brought up.
+    let loud = Self.noise(seconds: 0.5, level: -60) + Self.speech(seconds: 2.5, level: -12)
+    let pause = [Float](repeating: 0, count: Int(0.5 * Self.sampleRate))
+    let quiet = Self.speech(seconds: 5, level: -45)
+    let input = loud + pause + quiet
+    let muted = [MeetingTimeRange(start: 2.9, end: 4)]
+    var gate = MeetingMicrophoneGate(mode: .normal, mutedRanges: muted)
+    var chunks: [MeetingAudioChunk] = []
+    for chunk in Self.chunks(input) {
+      chunks += gate.process(chunk)
+    }
+    let output = Self.timeline(chunks + gate.flush(), count: input.count)
+    let raised = Self.level(output, from: 5, to: 8) - Self.level(input, from: 5, to: 8)
+    #expect(raised > 20, "\(raised)")
+  }
+
   @Test func aGapThatEndsMutedStillStartsTheGainAgain() {
     // Resumed on a quiet microphone while still muted: once unmuted, the quiet one is brought
     // up instead of keeping the loud one's 0 dB.

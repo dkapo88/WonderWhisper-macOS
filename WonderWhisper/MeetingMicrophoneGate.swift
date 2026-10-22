@@ -220,7 +220,12 @@ struct MeetingMicrophoneGate {
         recordUnmuted(chunk.samples, startTime: chunk.startTime)
       }
       if autoGain != nil {
-        samples = applyingGain(to: samples, startTime: chunk.startTime, muted: muted)
+        samples = applyingGain(
+          to: samples,
+          input: chunk.samples,
+          startTime: chunk.startTime,
+          muted: muted
+        )
       }
       return [chunk.replacingSamples(samples)]
     }
@@ -464,6 +469,7 @@ struct MeetingMicrophoneGate {
         recordKept(start: frame.startTime, end: frameEnd)
       }
       let gain: Float = frame.muted ? 0 : keep ? 1 : rejectedGain
+      let input = frame.samples
       frame.samples = frame.muted
         ? Array(repeating: 0, count: frame.samples.count)
         : render(frame.samples, gain: gain)
@@ -471,6 +477,7 @@ struct MeetingMicrophoneGate {
       if autoGain != nil {
         frame.samples = applyingGain(
           to: frame.samples,
+          input: input,
           startTime: frame.startTime,
           muted: frame.muted
         )
@@ -492,9 +499,12 @@ struct MeetingMicrophoneGate {
   }
 
   /// The gain, frame by frame. Muted audio is skipped rather than learned from: a mute is not
-  /// another microphone, so the user's level and gain carry on when they unmute.
+  /// another microphone, so the user's level and gain carry on when they unmute. Muted input
+  /// that is exact zeros (a capture pause padded in the saved audio) still counts towards a
+  /// fresh start, as it does for the gate. `input` is the audio before the gate.
   private mutating func applyingGain(
     to samples: [Float],
+    input: [Float],
     startTime: TimeInterval,
     muted: Bool
   ) -> [Float] {
@@ -503,7 +513,11 @@ struct MeetingMicrophoneGate {
       let end = min(offset + Self.frameSampleCount, samples.count)
       let frameStart = startTime + Double(offset) / Double(Self.sampleRate)
       if muted || isInMutedRange(startTime: frameStart, count: end - offset) {
-        autoGain?.skip(end - offset, startTime: frameStart)
+        if input[offset..<min(end, input.count)].contains(where: { $0 != 0 }) {
+          autoGain?.skip(end - offset, startTime: frameStart)
+        } else {
+          _ = autoGain?.process(Array(samples[offset..<end]), startTime: frameStart)
+        }
       } else if let gained = autoGain?.process(Array(samples[offset..<end]), startTime: frameStart) {
         result.replaceSubrange(offset..<end, with: gained)
       }
