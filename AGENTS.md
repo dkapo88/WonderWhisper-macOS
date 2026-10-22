@@ -293,6 +293,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-22: Released 2026-10-22 with the meeting microphone noise gate (Off/Normal/Strict) and the companion mute button.
 - 2026-10-22: Meeting microphone noise gate (Off/Normal/Strict, default Normal) so silence and
   background sound are no longer transcribed as the user, plus a mute button in the meeting
   companion; recovery from saved audio applies the same gate and mutes.
