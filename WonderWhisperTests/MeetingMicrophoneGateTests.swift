@@ -1020,6 +1020,18 @@ struct MeetingMicrophoneGateTests {
     #expect(gain > 15, "\(gain)")
   }
 
+  @Test func aGapThatEndsMutedStillStartsTheGainAgain() {
+    // Resumed on a quiet microphone while still muted: once unmuted, the quiet one is brought
+    // up instead of keeping the loud one's 0 dB.
+    var gain = MeetingMicrophoneAutoGain()
+    _ = gain.process(Self.noise(seconds: 0.5, level: -60) + Self.speech(seconds: 4, level: -12), startTime: 0)
+    gain.skip(16_000, startTime: 10)
+    let quiet = Self.speech(seconds: 3, level: -45)
+    let output = gain.process(quiet, startTime: 11)
+    let raised = Self.level(output, from: 1.5, to: 3) - Self.level(quiet, from: 1.5, to: 3)
+    #expect(raised > 15, "\(raised)")
+  }
+
   @Test func corruptSamplesDoNotStopTheMeeting() {
     var input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 3, level: -45)
     input[Int(2.5 * Self.sampleRate)] = .infinity

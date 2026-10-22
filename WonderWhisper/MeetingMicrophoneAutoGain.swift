@@ -86,8 +86,12 @@ struct MeetingMicrophoneAutoGain {
     return updated
   }
 
-  /// Moves past muted audio (silent, and nothing to learn from) without starting afresh.
+  /// Moves past muted audio (silent, and nothing to learn from) without starting afresh,
+  /// unless it follows a gap in the timeline.
   mutating func skip(_ count: Int, startTime: TimeInterval) {
+    if let nextStartTime, abs(startTime - nextStartTime) > 0.001 {
+      reset()
+    }
     nextStartTime = startTime + Double(count) / Double(MeetingMicrophoneGate.sampleRate)
   }
 
