@@ -135,8 +135,8 @@ and synthesizes its own audio with `say`.
   so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict) take quiet
   room voices as the user; muted audio is exact silence. Then `MeetingMicrophoneAutoGain` (in every
   mode) brings the user's speaking level (80th percentile of speech-like frames) to -16 dBFS, up
-  to +30 dB, never down, rising 10 dB/s and dropping at once, with a soft limiter: Grok returns no
-  words at all for a built-in microphone at half input volume (speech near -40 dBFS). Meeting
+  to +30 dB, never down, rising 1 dB per speech-like frame until the level is learned and 10 dB/s
+  after, dropping at once, with a soft limiter: Grok returns no words at all for a built-in microphone at half input volume (speech near -40 dBFS). Meeting
   capture also raises the input volume to full at start, as dictation does (whatever the voice
   processing setting: meeting capture never uses voice processing). The gain is learned again
   after a timeline gap or 300 ms of exact zeros, and exact zeros teach neither it nor the gate. Recovery skips a saved minute only when the gate let nothing through
