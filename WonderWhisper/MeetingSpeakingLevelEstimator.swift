@@ -5,10 +5,12 @@ import Foundation
 /// frames cannot be pinned by one loud bump, and because old frames expire the level follows
 /// the user down within `memory` seconds when they get quieter (another microphone, gain, or
 /// distance). Once learned it is kept through silences: it only changes when there is new
-/// speech-like sound to learn from. A level backed by at least a second of speech near it only
-/// drops by more than `largeDrop` once `largeDropFrames` frames support the drop, so a short
-/// phrase from someone quieter in the room cannot re-teach it after the user has listened in
-/// silence for a while; a level set by a brief bump drops straight away.
+/// speech-like sound to learn from. With `largeDropFrames` set (strict), a level backed by at
+/// least a second of speech near it does not drop by more than `largeDrop`: a short phrase from
+/// someone quieter in the room cannot re-teach it, however long the user has been silent. Once
+/// `largeDropFrames` speech-like frames in total have been only quieter than that, with nothing
+/// near the level in between, the quieter voice is taken to be the user's (another microphone)
+/// and the level is learned again. A level set by a brief bump drops straight away.
 struct MeetingSpeakingLevelEstimator {
   static let learningFrames = 30
   static let percentile = 0.8
@@ -29,6 +31,7 @@ struct MeetingSpeakingLevelEstimator {
   private(set) var count = 0
   private(set) var level: Float?
   private var levelSupport = 0
+  private var quieterSinceSupport = 0
 
   init(memory: TimeInterval, largeDrop: Float, largeDropFrames: Int) {
     self.memory = memory
@@ -41,7 +44,20 @@ struct MeetingSpeakingLevelEstimator {
 
   var isLearned: Bool { level != nil }
 
-  mutating func add(_ frameLevel: Float, at time: TimeInterval) {
+  /// Notes a speech-like frame. `counts` false only updates the quieter-speech tally (strict
+  /// mode weights quieter voices down).
+  mutating func add(_ frameLevel: Float, at time: TimeInterval, counts: Bool = true) {
+    if largeDropFrames > 0, let level {
+      if frameLevel >= level - largeDrop {
+        quieterSinceSupport = 0
+      } else {
+        quieterSinceSupport += 1
+        if quieterSinceSupport >= largeDropFrames {
+          reset()
+        }
+      }
+    }
+    guard counts else { return }
     expire(before: time - memory)
     let bin = UInt8(
       min(max(Int(frameLevel.rounded(.down)) - Self.lowestLevel, 0), Self.binCount - 1)
@@ -58,8 +74,8 @@ struct MeetingSpeakingLevelEstimator {
     histogram[Int(bin)] += 1
     guard count >= Self.learningFrames else { return }
     let candidate = percentileLevel()
-    if let level, candidate < level - largeDrop,
-       levelSupport >= Self.establishedSupport, count < largeDropFrames {
+    if largeDropFrames > 0, let level, candidate < level - largeDrop,
+       levelSupport >= Self.establishedSupport {
       return
     }
     level = candidate

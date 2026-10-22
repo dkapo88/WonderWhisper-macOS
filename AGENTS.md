@@ -117,16 +117,18 @@ and synthesizes its own audio with `say`.
   and the user accepts each. The notes prompt gets a participants header. The microphone passes
   `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
   strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
-  100 ms of the last 5 s) plus a margin, the user's speaking level minus a range
-  (strict only; `MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from the
-  last 120 s, learned whether or not the gate is open, kept through silences, an established
-  level only drops a lot after 300 speech-like frames, quieter voices weighted down) and an
-  absolute minimum; the learned level also caps the floor so speech without pauses stays open.
+  100 ms of the last 5 s, at most -45 dBFS) plus a margin, the user's speaking level minus a
+  range (strict only; `MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from
+  the last 120 s, learned whether or not the gate is open, kept through silences, quieter voices
+  weighted down; an established level does not drop a lot until 600 speech-like frames in total
+  have been only quieter, about ten seconds, then it is learned again) and an absolute minimum;
+  the learned level also caps the floor so speech without pauses stays open.
   Opening and staying open need a 6 dB swing within the last 2 s (speech, not a fan), and
   staying open 6 dB above the floor; 200 ms look-ahead, hangover, fades, and a fresh start at
   timeline gaps. Normal never drops speech for being quieter than the user, so it cannot lose
-  the user (other voices are transcribed); strict leaves out much quieter voices at the cost of
-  a minute or two on a quieter microphone. Everything else becomes silence on the
+  the user (other voices are transcribed); strict leaves out much quieter voices (for about ten
+  seconds of a voice heard on its own) at the cost of about ten seconds of speech on a quieter
+  microphone. Everything else becomes silence on the
   same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict)
   take quiet room voices as the user. The companion's microphone button mutes transcription (audio is
   still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into

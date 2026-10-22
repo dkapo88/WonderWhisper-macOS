@@ -324,12 +324,14 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func anotherVoiceFarBelowTheUserIsLeftOut() {
-    // Strict: ten seconds of someone quieter talking straight after the user.
+    // Strict: someone quieter talking straight after the user is left out for its first
+    // seconds (after about ten seconds of only that voice, strict takes it for the user on a
+    // quieter microphone).
     let talking = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 4, level: -22)
       + Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -45)
     let strict = Self.timeline(Self.run(talking, mode: .strict), count: talking.count)
     #expect(Self.keptShare(strict, from: 1, to: 5) > 0.95)
-    #expect(Self.keptShare(strict, from: 6, to: 16) == 0)
+    #expect(Self.keptShare(strict, from: 6, to: 11) == 0)
 
     // Both: a short phrase from someone quieter after the user has listened in silence for
     // longer than the level's memory.
@@ -368,6 +370,35 @@ struct MeetingMicrophoneGateTests {
     let output = Self.timeline(Self.run(input, mode: .strict), count: input.count)
     let last = interjections[interjections.count - 1]
     #expect(Self.keptShare(output, from: last + 0.1, to: last + 2) > 0.95)
+  }
+
+  @Test func evenlyLoudSpeechFromTheVeryFirstSampleIsKept() {
+    let rate = Self.sampleRate
+    let input = (0..<Int(30 * rate)).map { index in
+      let time = Double(index) / rate
+      let envelope = 0.7 + 0.3 * sin(2 * .pi * 4 * time)
+      return Float(envelope * sin(2 * .pi * 180 * time)) * 0.06
+    }
+    for mode in [MeetingMicrophoneGateMode.normal, .strict] {
+      let output = Self.timeline(Self.run(input, mode: mode), count: input.count)
+      #expect(Self.keptShare(output, from: 1, to: 30) > 0.95, "\(mode)")
+    }
+  }
+
+  @Test func strictFollowsAQuieterUserWhoOnlySaysShortThings() {
+    let room = Self.noise(seconds: 30, level: -70)
+    var input = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 20, level: -12)
+    var utterances: [Double] = []
+    for _ in 0..<20 {
+      input += room
+      utterances.append(Double(input.count) / Self.sampleRate)
+      input += Self.speech(seconds: 1, level: -35)
+    }
+    let output = Self.timeline(Self.run(input, mode: .strict), count: input.count)
+    let lastFew = utterances.suffix(3)
+    for start in lastFew {
+      #expect(Self.keptShare(output, from: start + 0.1, to: start + 1) > 0.9, "at \(start)")
+    }
   }
 
   @Test func evenlyLoudSpeechWithNoPauseAtAllStaysOpen() {

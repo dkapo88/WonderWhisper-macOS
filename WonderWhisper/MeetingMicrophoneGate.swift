@@ -55,18 +55,22 @@ struct MeetingMicrophoneGate {
       noiseMargin: 15,
       usesSpeakingLevel: true,
       speakingRange: 14,
-      absoluteMinimum: -50,
+      absoluteMinimum: -55,
       hangoverFrames: 35,
       lookaheadFrames: 20,
       levelMemory: 120,
       distantVoiceWeight: 4,
-      largeDropFrames: 300
+      largeDropFrames: 600
     )
   }
 
   static let sampleRate = MeetingAudioChunkFramer.sampleRate
   static let frameSampleCount = 160
   static let initialNoiseFloor: Float = -65
+  /// The noise floor never counts as louder than this, so speech without any pause from the
+  /// first moment is not taken for room noise. Steady loud rooms stay closed through the
+  /// modulation rule instead.
+  static let noiseFloorCeiling: Float = -45
   /// Once the user's level is known, the floor plus margin sits at least this far under it,
   /// so evenly loud speech without a pause stays open.
   static let thresholdBelowSpeaking: Float = 10
@@ -174,9 +178,10 @@ struct MeetingMicrophoneGate {
   /// 10 dB under it and long speech without a pause cannot be taken for the noise floor. The
   /// cap only ever lowers the threshold, and room noise never feeds the user's level.
   var noiseFloor: Float {
-    guard let speakingLevel else { return measuredNoiseFloor }
+    let measured = min(measuredNoiseFloor, Self.noiseFloorCeiling)
+    guard let speakingLevel else { return measured }
     let margin = tuning?.noiseMargin ?? 0
-    return min(measuredNoiseFloor, speakingLevel - Self.thresholdBelowSpeaking - margin)
+    return min(measured, speakingLevel - Self.thresholdBelowSpeaking - margin)
   }
 
   /// Gates one chunk. `muted` silences it whatever the gate decides (the user pressed Mute);
@@ -330,9 +335,11 @@ struct MeetingMicrophoneGate {
          speakingLevelEstimator.count >= Self.distantVoiceAfterFrames,
          level < speakingLevel - tuning.speakingRange {
         distantFrameCount += 1
-        if distantFrameCount % tuning.distantVoiceWeight == 0 {
-          speakingLevelEstimator.add(level, at: time)
-        }
+        speakingLevelEstimator.add(
+          level,
+          at: time,
+          counts: distantFrameCount % tuning.distantVoiceWeight == 0
+        )
       } else {
         speakingLevelEstimator.add(level, at: time)
       }

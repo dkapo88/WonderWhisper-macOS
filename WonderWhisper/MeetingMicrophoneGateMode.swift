@@ -29,11 +29,12 @@ enum MeetingMicrophoneGateMode: String, Codable, CaseIterable, Identifiable, Sen
     case .off:
       return "Everything the microphone hears is transcribed."
     case .normal:
-      return "Silence and background noise are not transcribed. Other voices the microphone "
-        + "picks up still are."
+      return "Silence and steady background noise are not transcribed. Other voices the "
+        + "microphone picks up still are."
     case .strict:
       return "Also leaves out voices much quieter than yours. If you switch to a quieter "
-        + "microphone mid-meeting, your speech may be cut for a minute or two."
+        + "microphone mid-meeting, your speech may be cut until you have spoken for about ten "
+        + "seconds."
     }
   }
 }
