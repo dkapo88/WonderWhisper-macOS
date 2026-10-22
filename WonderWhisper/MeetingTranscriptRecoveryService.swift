@@ -3,6 +3,8 @@ import Foundation
 
 actor MeetingTranscriptRecoveryService {
   static let segmentDuration: TimeInterval = 60
+  /// Saved microphone audio heard by the gate before a recovered tail.
+  static let gateWarmUpDuration: TimeInterval = 120
 
   typealias FileTranscriber = @Sendable (URL) async throws -> String
 
@@ -82,6 +84,14 @@ actor MeetingTranscriptRecoveryService {
     var recoveredTokens: [MeetingTranscriptToken] = []
     // One gate across the microphone segments, so what it learns carries from minute to minute.
     var microphoneGateState = MeetingMicrophoneGate(settings: microphoneGate)
+    if microphoneGate.mode != .off {
+      try warmMicrophoneGate(
+        &microphoneGateState,
+        segments: segments,
+        before: plan.segmentsToTranscribe.filter { $0.source == .microphone },
+        sessionDirectory: sessionDirectory
+      )
+    }
 
     for segment in plan.segmentsToTranscribe {
       let url = sessionDirectory.appendingPathComponent(segment.filename)
@@ -107,6 +117,33 @@ actor MeetingTranscriptRecoveryService {
       ),
       recoveredSources: plan.recoverableSources
     )
+  }
+
+  /// When only a tail is recovered, the gate first hears the saved microphone audio of the two
+  /// minutes before it (not transcribed), as the live gate had, so it starts with the room's
+  /// noise floor and the user's level instead of learning them again mid-meeting.
+  private func warmMicrophoneGate(
+    _ gate: inout MeetingMicrophoneGate,
+    segments: [Segment],
+    before selected: [Segment],
+    sessionDirectory: URL
+  ) throws {
+    guard let first = selected.first else { return }
+    let warmStart = first.startTime - Self.gateWarmUpDuration
+    let earlier = segments.filter {
+      $0.source == .microphone && $0.index < first.index && $0.endTime > warmStart
+    }
+    for segment in earlier {
+      do {
+        try MeetingMicrophoneGatedWriter.warm(
+          &gate,
+          with: sessionDirectory.appendingPathComponent(segment.filename),
+          startTime: segment.startTime
+        )
+      } catch {
+        throw RecoveryError.unreadableAudioFile(segment.filename, error.localizedDescription)
+      }
+    }
   }
 
   /// Transcribes a gated copy of a saved microphone segment; nil when the gate let nothing

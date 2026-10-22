@@ -536,9 +536,15 @@ final class MeetingCoordinator: ObservableObject {
 
   /// Mutes or unmutes the meeting microphone for transcription. The audio is still saved.
   func setMicrophoneMuted(_ muted: Bool) {
-    guard activeSessionID != nil, let microphoneMuteRecorder else { return }
+    guard let activeSessionID, let microphoneMuteRecorder else { return }
     microphoneMuteRecorder.setMuted(muted)
     isMicrophoneMuted = muted
+    // Saved straight away, so a crash or quit mid-meeting cannot lose a mute.
+    if var session = session(withID: activeSessionID) {
+      session.microphoneMutedRanges = microphoneMuteRecorder.persistableRanges
+      replace(session)
+      schedulePersist(session)
+    }
   }
 
   func toggleMicrophoneMute() {
@@ -1634,7 +1640,8 @@ final class MeetingCoordinator: ObservableObject {
       resumedSession.transcriptionEngine = activeTranscriptionEngine
       resumedSession.status = .recording
       resumedSession.errorMessage = nil
-      resumedSession.microphoneGateMode = microphoneGateMode
+      // The saved audio keeps the mode it was recorded with (recovery re-reads all of it), so a
+      // resume never changes it; meetings from before the gate stay ungated.
       session = resumedSession
       replace(session)
       resumedSessionIDs.insert(session.id)
@@ -1671,7 +1678,13 @@ final class MeetingCoordinator: ObservableObject {
     liveTranscriptPreviews.removeAll()
     liveAudioLevels.removeAll()
     overlayMinimizedSessionID = nil
-    let muteRecorder = MeetingMicrophoneMuteRecorder(ranges: session.microphoneMutedRanges)
+    // A mute still on when an earlier run ended (a crash) ends with that run.
+    let earlierMutes = resumePlan.map {
+      session.microphoneMutedRanges.ending(by: $0.timelineOffset)
+    } ?? session.microphoneMutedRanges
+    session.microphoneMutedRanges = earlierMutes
+    replace(session)
+    let muteRecorder = MeetingMicrophoneMuteRecorder(ranges: earlierMutes)
     microphoneMuteRecorder = muteRecorder
     isMicrophoneMuted = false
     await persist(session)

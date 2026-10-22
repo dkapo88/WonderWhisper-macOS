@@ -91,6 +91,54 @@ final class MeetingMicrophoneGatedWriter {
     return try writeGatedCopy(of: inputURL, startTime: startTime, gate: &gate, to: outputURL)
   }
 
+  /// Runs a saved microphone segment through `gate` without writing anything, so it learns the
+  /// noise floor and the user's level from audio before the part being recovered.
+  static func warm(
+    _ gate: inout MeetingMicrophoneGate,
+    with inputURL: URL,
+    startTime: TimeInterval
+  ) throws {
+    try forEachBlock(of: inputURL, startTime: startTime) { chunk in
+      _ = gate.process(chunk)
+    }
+    _ = gate.flush()
+  }
+
+  private static func forEachBlock(
+    of inputURL: URL,
+    startTime: TimeInterval,
+    _ body: (MeetingAudioChunk) throws -> Void
+  ) throws {
+    let input = try AVAudioFile(
+      forReading: inputURL,
+      commonFormat: .pcmFormatFloat32,
+      interleaved: false
+    )
+    guard let format = processingFormat,
+          input.processingFormat.sampleRate == format.sampleRate,
+          input.processingFormat.channelCount == 1 else {
+      throw WriterError.unsupportedFormat
+    }
+    let blockSize = AVAudioFrameCount(MeetingStereoAligner.frameSampleCount)
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: blockSize) else {
+      throw WriterError.allocationFailed
+    }
+    var position: AVAudioFramePosition = 0
+    while input.framePosition < input.length {
+      let remaining = AVAudioFrameCount(min(Int64(blockSize), input.length - input.framePosition))
+      try input.read(into: buffer, frameCount: remaining)
+      guard buffer.frameLength > 0, let channel = buffer.floatChannelData?.pointee else { break }
+      let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+      try body(MeetingAudioChunk(
+        source: .microphone,
+        samples: samples,
+        startTime: startTime + Double(position) / format.sampleRate,
+        duration: Double(samples.count) / format.sampleRate
+      ))
+      position += AVAudioFramePosition(buffer.frameLength)
+    }
+  }
+
   /// As above, continuing `gate` from the previous segment so its noise floor and the user's
   /// level carry over instead of being learned again for every saved minute.
   static func writeGatedCopy(

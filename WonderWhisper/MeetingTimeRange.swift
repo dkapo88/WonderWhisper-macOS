@@ -11,6 +11,15 @@ struct MeetingTimeRange: Codable, Equatable, Sendable {
 }
 
 extension Array where Element == MeetingTimeRange {
+  /// The ranges cut off at `time` (ranges starting after it dropped), for a resumed meeting
+  /// whose earlier run ended there, possibly mid-mute after a crash.
+  func ending(by time: TimeInterval) -> [MeetingTimeRange] {
+    compactMap { range in
+      guard range.start < time else { return nil }
+      return MeetingTimeRange(start: range.start, end: Swift.min(range.end, time))
+    }
+  }
+
   /// Whether the middle of `start..<end` falls inside one of the ranges.
   func covers(start: TimeInterval, end: TimeInterval) -> Bool {
     let middle = (start + end) / 2

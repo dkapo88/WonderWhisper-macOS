@@ -264,8 +264,12 @@ struct MeetingMicrophoneGate {
       recentAbove.removeAll()
       recentLevels.removeAll()
       modulationLevels.removeAll()
-      // A resumed meeting may use another microphone: learn the user's level again.
+      // A resumed meeting may use another microphone and room: learn the user's level and the
+      // noise floor again.
       speakingLevelEstimator.reset()
+      noiseBlockPower = 0
+      noiseBlockCount = 0
+      noiseBlockLevels.removeAll()
       distantFrameCount = 0
       highPassPreviousInput = 0
       highPassPreviousOutput = 0

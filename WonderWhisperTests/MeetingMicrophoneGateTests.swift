@@ -524,6 +524,85 @@ struct MeetingMicrophoneGateTests {
     #expect(gate.flush().isEmpty)
   }
 
+  @Test func muteRecorderDoesNotJoinAcrossAnUnmutedChunk() {
+    let recorder = MeetingMicrophoneMuteRecorder()
+    recorder.setMuted(true)
+    recorder.observe(start: 0, end: 0.1)
+    recorder.setMuted(false)
+    recorder.observe(start: 0.1, end: 0.2)
+    recorder.setMuted(true)
+    recorder.observe(start: 0.2, end: 0.3)
+    #expect(recorder.ranges == [
+      MeetingTimeRange(start: 0, end: 0.1),
+      MeetingTimeRange(start: 0.2, end: 0.3)
+    ])
+    #expect(!recorder.covers(start: 0.1, end: 0.2))
+  }
+
+  @Test func aMuteStillOnIsSavedOpenAndEndsWithItsRunOnResume() {
+    let recorder = MeetingMicrophoneMuteRecorder()
+    recorder.observe(start: 0, end: 0.1)
+    recorder.setMuted(true)
+    // Pressed before any muted chunk arrived: saved from the last chunk on.
+    #expect(recorder.persistableRanges == [
+      MeetingTimeRange(start: 0.1, end: MeetingMicrophoneMuteRecorder.openEnd)
+    ])
+    recorder.observe(start: 0.1, end: 0.2)
+    #expect(recorder.persistableRanges == [
+      MeetingTimeRange(start: 0.1, end: MeetingMicrophoneMuteRecorder.openEnd)
+    ])
+    recorder.setMuted(false)
+    #expect(recorder.persistableRanges == [MeetingTimeRange(start: 0.1, end: 0.2)])
+
+    // After a crash mid-mute, resuming at 30 s ends the open mute there.
+    let saved = [
+      MeetingTimeRange(start: 2, end: 3),
+      MeetingTimeRange(start: 20, end: MeetingMicrophoneMuteRecorder.openEnd)
+    ]
+    #expect(saved.ending(by: 30) == [
+      MeetingTimeRange(start: 2, end: 3),
+      MeetingTimeRange(start: 20, end: 30)
+    ])
+    #expect([MeetingTimeRange(start: 40, end: 50)].ending(by: 30).isEmpty)
+  }
+
+  @Test func gapPaddingKeepsSavedAudioOnTheLiveTimeline() {
+    #expect(MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: 0, chunkStart: 0, sampleRate: 16_000
+    ) == 0)
+    #expect(MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: 1, chunkStart: 1.02, sampleRate: 16_000
+    ) == 0)
+    #expect(MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: 1, chunkStart: 3.5, sampleRate: 16_000
+    ) == 40_000)
+    #expect(MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: 5, chunkStart: 4, sampleRate: 16_000
+    ) == 0)
+    #expect(MeetingAudioGapPadding.silenceSamples(
+      writtenEnd: 0, chunkStart: 10_000, sampleRate: 16_000
+    ) == 600 * 16_000)
+  }
+
+  @Test func aGapStartsTheNoiseFloorAgain() {
+    // A quiet room, then after a gap a loud room with clatter: the old quiet floor must not
+    // let the new room through.
+    var gate = MeetingMicrophoneGate(mode: .normal)
+    var output: [MeetingAudioChunk] = []
+    for chunk in Self.chunks(Self.noise(seconds: 5, level: -72)) { output += gate.process(chunk) }
+    var loud = Self.noise(seconds: 6, level: -40, seed: 5)
+    let clatter = Self.noise(seconds: 0.06, level: -34, seed: 6)
+    for start in stride(from: 0.3, to: 5.8, by: 0.5) {
+      let offset = Int(start * Self.sampleRate)
+      for (index, value) in clatter.enumerated() { loud[offset + index] += value }
+    }
+    for chunk in Self.chunks(loud, startTime: 100) { output += gate.process(chunk) }
+    output += gate.flush()
+    let afterGap = output.filter { $0.startTime >= 100 }.flatMap(\.samples)
+    let kept = Double(afterGap.filter { $0 != 0 }.count) / Double(afterGap.count)
+    #expect(kept < 0.05)
+  }
+
   @Test func muteRecorderKeepsEarlierRangesOnResume() {
     let earlier = [MeetingTimeRange(start: 1, end: 2)]
     let recorder = MeetingMicrophoneMuteRecorder(ranges: earlier)
@@ -629,6 +708,11 @@ struct MeetingMicrophoneGateTests {
       gate: &carried,
       to: directory.appendingPathComponent("carried-2.caf")
     ))
+
+    // Warming on earlier audio teaches the gate without writing anything.
+    var warmed = MeetingMicrophoneGate(mode: .strict)
+    try MeetingMicrophoneGatedWriter.warm(&warmed, with: speechURL, startTime: 0)
+    #expect(warmed.hasLearnedSpeakingLevel)
 
     // A segment recorded while muted (on the meeting timeline) is not transcribed at all.
     let mutedCopy = directory.appendingPathComponent("muted-gated.caf")

@@ -4,12 +4,16 @@ import Foundation
 /// marks each microphone chunk as it arrives, so the live gate and later recovery from the
 /// saved audio silence exactly the same stretches.
 final class MeetingMicrophoneMuteRecorder: @unchecked Sendable {
-  /// Chunks closer than this join one range.
-  static let joinTolerance: TimeInterval = 0.15
+  /// The end saved for a mute that is still on, so a crash mid-mute keeps the rest of that
+  /// recording muted (JSON cannot hold infinity). Clamped to the run's end on resume.
+  static let openEnd: TimeInterval = 1_000_000_000
 
   private let lock = NSLock()
   private var muted = false
   private var recordedRanges: [MeetingTimeRange]
+  /// Whether the last observed chunk was muted: only consecutive muted chunks join one range.
+  private var lastObservationMuted = false
+  private var lastObservedEnd: TimeInterval?
 
   init(ranges: [MeetingTimeRange] = []) {
     recordedRanges = ranges
@@ -38,15 +42,33 @@ final class MeetingMicrophoneMuteRecorder: @unchecked Sendable {
   func observe(start: TimeInterval, end: TimeInterval) -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard muted, end > start else { return muted }
-    if let last = recordedRanges.last,
-       start <= last.end + Self.joinTolerance,
-       start >= last.start {
+    guard end > start else { return muted }
+    defer {
+      lastObservationMuted = muted
+      lastObservedEnd = max(lastObservedEnd ?? end, end)
+    }
+    guard muted else { return false }
+    if lastObservationMuted, let last = recordedRanges.last, start >= last.start {
       recordedRanges[recordedRanges.count - 1].end = max(last.end, end)
     } else {
       recordedRanges.append(MeetingTimeRange(start: start, end: end))
     }
     return true
+  }
+
+  /// The ranges to save while recording: a mute that is still on runs to `openEnd`, so
+  /// recovery after a crash leaves it muted.
+  var persistableRanges: [MeetingTimeRange] {
+    lock.lock()
+    defer { lock.unlock() }
+    guard muted else { return recordedRanges }
+    var ranges = recordedRanges
+    if lastObservationMuted, !ranges.isEmpty {
+      ranges[ranges.count - 1].end = Self.openEnd
+    } else {
+      ranges.append(MeetingTimeRange(start: lastObservedEnd ?? 0, end: Self.openEnd))
+    }
+    return ranges
   }
 
   /// Whether a chunk at these timeline times was captured while muted.

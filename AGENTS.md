@@ -133,8 +133,12 @@ and synthesizes its own audio with `say`.
   same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or (strict)
   take quiet room voices as the user. The companion's microphone button mutes transcription (audio is
   still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into
-  `microphoneMutedRanges`, and both recovery paths gate the saved microphone audio with the
-  session's mode and ranges. Saved CAF audio is never gated. Audio
+  `microphoneMutedRanges` (saved at every mute press, a mute still on saved open-ended and cut
+  at the run's end on resume), and both recovery paths gate the saved microphone audio with the
+  session's mode (kept from the first recording, never changed by a resume) and ranges; tail
+  recovery first warms the gate on the two saved minutes before the tail. Saved CAF audio is
+  never gated, and saved microphone audio is padded with silence across capture pauses
+  (`MeetingAudioGapPadding`) so it stays on the live timeline. Audio
   is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
