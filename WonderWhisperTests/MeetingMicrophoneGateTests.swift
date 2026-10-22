@@ -47,12 +47,34 @@ struct MeetingMicrophoneGateTests {
     }
   }
 
+  /// A gate whose output shows only its decisions: what it leaves out is exact silence and no
+  /// gain is applied.
+  private static func decisionGate(
+    mode: MeetingMicrophoneGateMode,
+    mutedRanges: [MeetingTimeRange] = []
+  ) -> MeetingMicrophoneGate {
+    MeetingMicrophoneGate(mode: mode, mutedRanges: mutedRanges, rejectedGain: 0, levelsAudio: false)
+  }
+
   private static func run(
     _ samples: [Float],
     mode: MeetingMicrophoneGateMode,
     mutedRanges: [MeetingTimeRange] = []
   ) -> [MeetingAudioChunk] {
-    var gate = MeetingMicrophoneGate(mode: mode, mutedRanges: mutedRanges)
+    var gate = Self.decisionGate(mode: mode, mutedRanges: mutedRanges)
+    var output: [MeetingAudioChunk] = []
+    for chunk in chunks(samples) {
+      output += gate.process(chunk)
+    }
+    return output + gate.flush()
+  }
+
+  /// What the transcriber gets: left-out audio turned down and the gain applied.
+  private static func runProduction(
+    _ samples: [Float],
+    mode: MeetingMicrophoneGateMode
+  ) -> [MeetingAudioChunk] {
+    var gate = MeetingMicrophoneGate(mode: mode)
     var output: [MeetingAudioChunk] = []
     for chunk in chunks(samples) {
       output += gate.process(chunk)
@@ -73,6 +95,15 @@ struct MeetingMicrophoneGateTests {
   }
 
   /// Share of samples in `range` (seconds) that were let through.
+  /// RMS level (dBFS) of `samples` between two times (seconds).
+  private static func level(_ samples: [Float], from start: Double, to end: Double) -> Float {
+    let lower = Int(start * sampleRate)
+    let upper = min(samples.count, Int(end * sampleRate))
+    guard upper > lower else { return -120 }
+    let power = samples[lower..<upper].reduce(0) { $0 + $1 * $1 } / Float(upper - lower)
+    return MeetingMicrophoneGate.decibels(power)
+  }
+
   private static func keptShare(_ samples: [Float], from start: Double, to end: Double) -> Double {
     let lower = Int(start * sampleRate)
     let upper = min(samples.count, Int(end * sampleRate))
@@ -129,7 +160,7 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func timelineGapsAreKept() {
-    var gate = MeetingMicrophoneGate(mode: .normal)
+    var gate = Self.decisionGate(mode: .normal)
     let first = Self.chunks(Self.speech(seconds: 0.5, level: -25))
     let second = Self.chunks(Self.speech(seconds: 0.5, level: -25), startTime: 10)
     var output: [MeetingAudioChunk] = []
@@ -166,7 +197,7 @@ struct MeetingMicrophoneGateTests {
 
   @Test func offPassesEverythingThroughUnchanged() {
     let input = Self.noise(seconds: 2, level: -62)
-    var gate = MeetingMicrophoneGate(mode: .off)
+    var gate = Self.decisionGate(mode: .off)
     var output: [MeetingAudioChunk] = []
     for chunk in Self.chunks(input) { output += gate.process(chunk) }
     #expect(gate.flush().isEmpty)
@@ -191,7 +222,7 @@ struct MeetingMicrophoneGateTests {
     let input = Self.speech(seconds: 8, level: -25)
     let muted = [MeetingTimeRange(start: 2.6, end: 4.6), MeetingTimeRange(start: 0, end: 0.45)]
     for mode in MeetingMicrophoneGateMode.allCases {
-      var gate = MeetingMicrophoneGate(mode: mode, mutedRanges: muted)
+      var gate = Self.decisionGate(mode: mode, mutedRanges: muted)
       var output: [MeetingAudioChunk] = []
       for offset in stride(from: 0, to: input.count, by: 16_000) {
         let block = Array(input[offset..<min(offset + 16_000, input.count)])
@@ -254,7 +285,7 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func speechDoesNotCarryAcrossATimelineGap() {
-    var gate = MeetingMicrophoneGate(mode: .normal)
+    var gate = Self.decisionGate(mode: .normal)
     var output: [MeetingAudioChunk] = []
     let before = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 1, level: -25)
     for chunk in Self.chunks(before) { output += gate.process(chunk) }
@@ -298,7 +329,7 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func lookAheadDoesNotReachBackAcrossATimelineGap() {
-    var gate = MeetingMicrophoneGate(mode: .normal)
+    var gate = Self.decisionGate(mode: .normal)
     var output: [MeetingAudioChunk] = []
     for chunk in Self.chunks(Self.noise(seconds: 2, level: -62)) {
       output += gate.process(chunk)
@@ -519,7 +550,7 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func liveMuteFlagSilencesTheChunk() {
-    var gate = MeetingMicrophoneGate(mode: .off)
+    var gate = Self.decisionGate(mode: .off)
     let chunk = Self.chunks(Self.speech(seconds: 0.1, level: -25))[0]
     let output = gate.process(chunk, muted: true)
     #expect(output.count == 1)
@@ -528,7 +559,7 @@ struct MeetingMicrophoneGateTests {
   }
 
   @Test func systemAudioIsNeverGated() {
-    var gate = MeetingMicrophoneGate(mode: .strict)
+    var gate = Self.decisionGate(mode: .strict)
     let chunk = MeetingAudioChunk(
       source: .systemAudio,
       samples: Self.noise(seconds: 0.1, level: -62),
@@ -567,9 +598,9 @@ struct MeetingMicrophoneGateTests {
     recorder.observe(start: 0.2, end: 0.3)
     let output = chunks.flatMap { gate.process($0) }
     #expect(output.count == 3)
-    #expect(output[0].samples == chunks[0].samples)
+    #expect(output[0].samples.contains { $0 != 0 })
     #expect(output[1].samples.allSatisfy { $0 == 0 })
-    #expect(output[2].samples == chunks[2].samples)
+    #expect(output[2].samples.contains { $0 != 0 })
     #expect(gate.flush().isEmpty)
   }
 
@@ -636,7 +667,7 @@ struct MeetingMicrophoneGateTests {
   @Test func aGapStartsTheNoiseFloorAgain() {
     // A quiet room, then after a gap a loud room with clatter: the old quiet floor must not
     // let the new room through.
-    var gate = MeetingMicrophoneGate(mode: .normal)
+    var gate = Self.decisionGate(mode: .normal)
     var output: [MeetingAudioChunk] = []
     for chunk in Self.chunks(Self.noise(seconds: 5, level: -72)) { output += gate.process(chunk) }
     var loud = Self.noise(seconds: 6, level: -40, seed: 5)
@@ -751,11 +782,11 @@ struct MeetingMicrophoneGateTests {
     ))
     let gated = try read(speechCopy)
     #expect(gated.count == input.count)
-    #expect(Self.keptShare(gated, from: 1, to: 2) > 0.97)
-    #expect(Self.keptShare(gated, from: 3, to: 4) == 0)
+    // Speech is kept (and brought up); the room noise after it is turned well down.
+    #expect(Self.level(gated, from: 1, to: 2) - Self.level(gated, from: 3, to: 4) > 50)
 
     // One gate carried across segments keeps what it learned about the user's level.
-    var carried = MeetingMicrophoneGate(mode: .normal)
+    var carried = Self.decisionGate(mode: .normal)
     _ = try MeetingMicrophoneGatedWriter.writeGatedCopy(
       of: speechURL,
       startTime: 0,
@@ -779,7 +810,7 @@ struct MeetingMicrophoneGateTests {
     let nextURL = directory.appendingPathComponent("microphone-6.caf")
     try write(firstMinute, to: firstURL)
     try write(nextMinute, to: nextURL)
-    var boundaryGate = MeetingMicrophoneGate(mode: .normal)
+    var boundaryGate = Self.decisionGate(mode: .normal)
     let boundaryCopy = directory.appendingPathComponent("boundary-gated.caf")
     #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
       of: firstURL,
@@ -797,7 +828,7 @@ struct MeetingMicrophoneGateTests {
     let oddLength = Self.noise(seconds: 1, level: -70) + Self.speech(seconds: 0.5006, level: -25)
     let oddURL = directory.appendingPathComponent("microphone-7.caf")
     try write(oddLength, to: oddURL)
-    var oddGate = MeetingMicrophoneGate(mode: .normal)
+    var oddGate = Self.decisionGate(mode: .normal)
     let oddCopy = directory.appendingPathComponent("odd-gated.caf")
     #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
       of: oddURL,
@@ -809,7 +840,7 @@ struct MeetingMicrophoneGateTests {
     #expect(try read(oddCopy).count == oddLength.count)
 
     // Warming on earlier audio teaches the gate without writing anything.
-    var warmed = MeetingMicrophoneGate(mode: .strict)
+    var warmed = Self.decisionGate(mode: .strict)
     try MeetingMicrophoneGatedWriter.warm(&warmed, with: speechURL, startTime: 0)
     #expect(warmed.hasLearnedSpeakingLevel)
 
@@ -823,6 +854,107 @@ struct MeetingMicrophoneGateTests {
         mutedRanges: [MeetingTimeRange(start: 59, end: 65)]
       ),
       to: mutedCopy
+    ))
+  }
+
+  @Test func leftOutAudioIsTurnedDownNotSilenced() {
+    let quiet = Self.noise(seconds: 2, level: -65)
+    let input = quiet + Self.speech(seconds: 2, level: -25) + quiet
+    var gate = MeetingMicrophoneGate(
+      mode: .normal,
+      mutedRanges: [MeetingTimeRange(start: 5, end: 6)],
+      levelsAudio: false
+    )
+    var chunks: [MeetingAudioChunk] = []
+    for chunk in Self.chunks(input) {
+      chunks += gate.process(chunk)
+    }
+    let output = Self.timeline(chunks + gate.flush(), count: input.count)
+    // Room noise before the speech: exactly 20 dB down, not exact silence.
+    let start = Int(0.5 * Self.sampleRate)
+    let end = Int(1.5 * Self.sampleRate)
+    #expect(Array(output[start..<end]) == input[start..<end].map { $0 * MeetingMicrophoneGate.rejectedGain })
+    // Speech passes unchanged; muted audio is exact silence.
+    let speechStart = Int(2.5 * Self.sampleRate)
+    let speechEnd = Int(3.5 * Self.sampleRate)
+    #expect(Array(output[speechStart..<speechEnd]) == Array(input[speechStart..<speechEnd]))
+    #expect(output[Int(5 * Self.sampleRate)..<Int(6 * Self.sampleRate)].allSatisfy { $0 == 0 })
+  }
+
+  @Test func aQuietMicrophoneIsBroughtUpForTheTranscriber() {
+    // A built-in microphone at half input volume: speech around -45 dBFS.
+    var input: [Float] = []
+    for _ in 0..<5 {
+      input += Self.noise(seconds: 1, level: -72) + Self.speech(seconds: 2, level: -45)
+    }
+    for mode in MeetingMicrophoneGateMode.allCases {
+      let output = Self.timeline(Self.runProduction(input, mode: mode), count: input.count)
+      let gain = Self.level(output, from: 13, to: 15) - Self.level(input, from: 13, to: 15)
+      #expect(gain > 20 && gain <= MeetingMicrophoneAutoGain.maximumGain + 0.5, "\(mode) \(gain)")
+      #expect(output.allSatisfy { abs($0) <= 1 }, "\(mode)")
+    }
+  }
+
+  @Test func aLoudMicrophoneIsLeftAsItIs() {
+    let input = Self.noise(seconds: 1, level: -60) + Self.speech(seconds: 3, level: -12)
+    let output = Self.timeline(Self.runProduction(input, mode: .normal), count: input.count)
+    let start = Int(1.5 * Self.sampleRate)
+    let end = Int(3.5 * Self.sampleRate)
+    #expect(Array(output[start..<end]) == Array(input[start..<end]))
+  }
+
+  @Test func boostedPeaksDoNotClip() {
+    var input = Self.speech(seconds: 3, level: -45)
+    // A loud knock on the desk while the gain is high.
+    for index in Int(2.5 * Self.sampleRate)..<Int(2.52 * Self.sampleRate) {
+      input[index] = index % 2 == 0 ? 0.8 : -0.8
+    }
+    let output = Self.timeline(Self.runProduction(input, mode: .normal), count: input.count)
+    #expect(output.allSatisfy { abs($0) <= 1 })
+    #expect(MeetingMicrophoneAutoGain.limit(0.3) == 0.3)
+    #expect(MeetingMicrophoneAutoGain.limit(-25) >= -1)
+  }
+
+  @Test func gatedCopyWithTheGateOffKeepsWhatWasNotMuted() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gate-off-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let format = try #require(MeetingMicrophoneGatedWriter.processingFormat)
+    let samples = Self.speech(seconds: 2, level: -25)
+    let url = directory.appendingPathComponent("microphone-1.caf")
+    let file = try AVAudioFile(
+      forWriting: url,
+      settings: format.settings,
+      commonFormat: .pcmFormatFloat32,
+      interleaved: false
+    )
+    let buffer = try #require(
+      AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
+    )
+    buffer.frameLength = AVAudioFrameCount(samples.count)
+    for (index, sample) in samples.enumerated() {
+      buffer.floatChannelData?.pointee[index] = sample
+    }
+    try file.write(from: buffer)
+    file.close()
+    #expect(try MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: url,
+      startTime: 0,
+      settings: MeetingMicrophoneGateSettings(
+        mode: .off,
+        mutedRanges: [MeetingTimeRange(start: 0, end: 1)]
+      ),
+      to: directory.appendingPathComponent("partly-muted.caf")
+    ))
+    #expect(try !MeetingMicrophoneGatedWriter.writeGatedCopy(
+      of: url,
+      startTime: 0,
+      settings: MeetingMicrophoneGateSettings(
+        mode: .off,
+        mutedRanges: [MeetingTimeRange(start: 0, end: 2)]
+      ),
+      to: directory.appendingPathComponent("all-muted.caf")
     ))
   }
 

@@ -239,6 +239,12 @@ final class MeetingCaptureService: NSObject {
        let uid = AudioDeviceManager.resolvedInputUID(for: inputSelection) {
       configuration.microphoneCaptureDeviceID = uid
     }
+    // As dictation does: a microphone at half input volume is too quiet for the transcriber.
+    if !AppConfig.defaults.bool(forKey: "audio.voiceProcessing.enabled") {
+      DispatchQueue.global(qos: .userInitiated).async {
+        _ = AudioDeviceManager.raiseInputVolumeIfNeeded(for: inputSelection)
+      }
+    }
 
     self.onChunk = onChunk
     self.onError = onError

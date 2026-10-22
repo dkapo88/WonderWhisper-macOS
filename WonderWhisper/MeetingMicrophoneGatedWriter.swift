@@ -32,9 +32,15 @@ final class MeetingMicrophoneGatedWriter {
   /// must not add its audio here).
   private var appendedSamples = 0
   private var sampleLimit = Int.max
+  /// Where this file starts on the meeting timeline (its first write).
+  private var fileStartTime: TimeInterval?
 
   init(output: AVAudioFile, gate: MeetingMicrophoneGate) {
     self.output = output
+    var gate = gate
+    gate.recordsKeptRanges = true
+    // What a warm-up or the previous file let through does not count for this one.
+    _ = gate.takeKeptRanges()
     self.gate = gate
   }
 
@@ -50,15 +56,18 @@ final class MeetingMicrophoneGatedWriter {
       startTime: startTime,
       duration: Double(samples.count) / Double(MeetingMicrophoneGate.sampleRate)
     )
+    if fileStartTime == nil { fileStartTime = startTime }
     for gated in gate.process(chunk) {
       try append(gated.samples)
     }
+    noteKept(gate.takeKeptRanges())
   }
 
   func finish() throws {
     for gated in gate.flush() {
       try append(gated.samples)
     }
+    noteKept(gate.takeKeptRanges())
   }
 
   /// Finishes this file using the start of the next one as look-ahead, as the live gate had:
@@ -76,7 +85,16 @@ final class MeetingMicrophoneGatedWriter {
     for gated in tail {
       try append(gated.samples)
     }
+    // Speech the peek let through in the next file is that file's, not this one's.
+    let fileEnd = (fileStartTime ?? 0)
+      + Double(fileSamples) / Double(MeetingMicrophoneGate.sampleRate)
+    noteKept(peek.takeKeptRanges().filter { $0.start < fileEnd - 0.0001 })
     _ = gate.flush()
+    _ = gate.takeKeptRanges()
+  }
+
+  private func noteKept(_ ranges: [MeetingTimeRange]) {
+    if !ranges.isEmpty { keptAudio = true }
   }
 
   private func append(_ samples: [Float]) throws {
@@ -98,9 +116,6 @@ final class MeetingMicrophoneGatedWriter {
       if let baseAddress = pointer.baseAddress {
         channel.update(from: baseAddress, count: samples.count)
       }
-    }
-    if !keptAudio, samples.contains(where: { $0 != 0 }) {
-      keptAudio = true
     }
     try output.write(from: buffer)
   }

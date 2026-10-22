@@ -1,9 +1,12 @@
 import Foundation
 
-/// Replaces the meeting microphone's audio with silence while the user is not speaking, so
-/// the transcriber cannot invent words from near-silence ("yeah, yeah") or from room noise;
-/// strict mode also leaves out quieter voices elsewhere in the room. The saved audio is never
-/// gated; only what is transcribed.
+/// Turns the meeting microphone's audio down by 20 dB while the user is not speaking, so the
+/// transcriber cannot invent words from near-silence ("yeah, yeah") or from room noise; strict
+/// mode also turns down quieter voices elsewhere in the room. It is turned down rather than
+/// replaced with digital silence because Grok drops about half of the real speech when the
+/// audio around it is exact zeros. Muted audio is exact silence. Then
+/// `MeetingMicrophoneAutoGain` brings a quiet microphone up to a level the transcriber hears.
+/// The saved audio is never gated; only what is transcribed.
 ///
 /// Works on 10 ms frames of 16 kHz audio. A frame counts as speech when its level (after a
 /// 120 Hz high-pass, so desk rumble does not count) is above all of:
@@ -18,7 +21,7 @@ import Foundation
 /// held a little after it ends; it also needs the level to have swung by 6 dB within the last
 /// 2 s, as speech (with its syllables and breaths) does and a steady fan or hum does not.
 /// Output runs 200 ms behind input so the start of a word is kept too. Times on the chunks
-/// are unchanged.
+/// are unchanged. With the gate off, only the gain and mutes apply.
 struct MeetingMicrophoneGate {
   struct Tuning: Equatable, Sendable {
     let noiseMargin: Float
@@ -77,6 +80,9 @@ struct MeetingMicrophoneGate {
   /// speech cannot hold the gate open.
   static let stayOpenAboveFloor: Float = 6
   static let fadeSampleCount = 80
+  /// What audio the gate leaves out is multiplied by (-20 dB): quiet enough that Grok invents
+  /// nothing from room noise, loud enough that the speech around it is not cut off.
+  static let rejectedGain: Float = 0.1
   /// Saved audio fills capture pauses with exact digital silence (`MeetingAudioGapPadding`);
   /// this much of it counts as a gap, as the live gate saw it. A microphone never gives exact
   /// zeros for this long on its own (a hardware mute that does gets a harmless fresh start).
@@ -104,12 +110,19 @@ struct MeetingMicrophoneGate {
   let mode: MeetingMicrophoneGateMode
   private let tuning: Tuning?
   private let mutedRanges: [MeetingTimeRange]
+  let rejectedGain: Float
+  private var autoGain: MeetingMicrophoneAutoGain?
+  /// When set, `keptRanges` collects the times of the audio let through, so recovery can tell
+  /// a saved minute with no speech in it (only turned-down noise) and skip transcribing it.
+  var recordsKeptRanges = false
+  private(set) var keptRanges: [MeetingTimeRange] = []
 
   private var pending: [Frame] = []
   private var partial: [Float] = []
   private var partialStartTime: TimeInterval = 0
   private var partialMuted = false
-  private var lastKept = false
+  /// The gain the last emitted frame ended at: 1 kept, `rejectedGain` left out, 0 muted.
+  private var lastGain: Float = 0
 
   private var highPassPreviousInput: Float = 0
   private var highPassPreviousOutput: Float = 0
@@ -133,9 +146,17 @@ struct MeetingMicrophoneGate {
   private var hangoverRemaining = 0
 
   /// `mutedRanges` are on the same timeline as the chunks; audio inside them is always silenced.
-  init(mode: MeetingMicrophoneGateMode, mutedRanges: [MeetingTimeRange] = []) {
+  /// `rejectedGain` 0 and `levelsAudio` false show the gate's decisions alone (tests).
+  init(
+    mode: MeetingMicrophoneGateMode,
+    mutedRanges: [MeetingTimeRange] = [],
+    rejectedGain: Float = Self.rejectedGain,
+    levelsAudio: Bool = true
+  ) {
     self.mode = mode
     self.mutedRanges = mutedRanges
+    self.rejectedGain = rejectedGain
+    autoGain = levelsAudio ? MeetingMicrophoneAutoGain() : nil
     switch mode {
     case .off: tuning = nil
     case .normal: tuning = .normal
@@ -191,7 +212,13 @@ struct MeetingMicrophoneGate {
   mutating func process(_ chunk: MeetingAudioChunk, muted: Bool = false) -> [MeetingAudioChunk] {
     guard chunk.source == .microphone, !chunk.samples.isEmpty else { return [chunk] }
     guard tuning != nil else {
-      let samples = silencingMuted(chunk.samples, startTime: chunk.startTime, muted: muted)
+      var samples = silencingMuted(chunk.samples, startTime: chunk.startTime, muted: muted)
+      if recordsKeptRanges, !muted {
+        recordUnmuted(chunk.samples.count, startTime: chunk.startTime)
+      }
+      if autoGain != nil {
+        samples = autoGain?.process(samples, startTime: chunk.startTime) ?? samples
+      }
       return [chunk.replacingSamples(samples)]
     }
 
@@ -225,6 +252,24 @@ struct MeetingMicrophoneGate {
       start: startTime,
       end: startTime + Double(count) / Double(Self.sampleRate)
     )
+  }
+
+  /// With the gate off everything not muted is let through.
+  private mutating func recordUnmuted(_ count: Int, startTime: TimeInterval) {
+    for offset in stride(from: 0, to: count, by: Self.frameSampleCount) {
+      let frameCount = min(Self.frameSampleCount, count - offset)
+      let start = startTime + Double(offset) / Double(Self.sampleRate)
+      guard !isInMutedRange(startTime: start, count: frameCount) else { continue }
+      recordKept(start: start, end: start + Double(frameCount) / Double(Self.sampleRate))
+    }
+  }
+
+  private mutating func recordKept(start: TimeInterval, end: TimeInterval) {
+    if let last = keptRanges.last, abs(last.end - start) <= 0.001 {
+      keptRanges[keptRanges.count - 1] = MeetingTimeRange(start: last.start, end: end)
+    } else {
+      keptRanges.append(MeetingTimeRange(start: start, end: end))
+    }
   }
 
   /// With the gate off: silence the muted chunk, or the muted 10 ms frames within it.
@@ -395,14 +440,19 @@ struct MeetingMicrophoneGate {
     for index in 0..<readyCount {
       var frame = pending[index]
       if let lastEmittedEnd, abs(frame.startTime - lastEmittedEnd) > 0.001 {
-        lastKept = false
+        lastGain = 0
       }
-      lastEmittedEnd = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
+      let frameEnd = frame.startTime + Double(frame.samples.count) / Double(Self.sampleRate)
+      lastEmittedEnd = frameEnd
       let keep = frame.keep && !frame.muted
+      if keep, recordsKeptRanges {
+        recordKept(start: frame.startTime, end: frameEnd)
+      }
+      let gain: Float = frame.muted ? 0 : keep ? 1 : rejectedGain
       frame.samples = frame.muted
         ? Array(repeating: 0, count: frame.samples.count)
-        : render(frame.samples, keep: keep)
-      lastKept = keep
+        : render(frame.samples, gain: gain)
+      lastGain = gain
       let expected = runStart + Double(runSamples.count) / Double(Self.sampleRate)
       if !runSamples.isEmpty, abs(frame.startTime - expected) > 0.001 {
         chunks.append(Self.chunk(startTime: runStart, samples: runSamples))
@@ -416,26 +466,34 @@ struct MeetingMicrophoneGate {
     if !runSamples.isEmpty {
       chunks.append(Self.chunk(startTime: runStart, samples: runSamples))
     }
-    return chunks
+    guard autoGain != nil else { return chunks }
+    return chunks.map { chunk in
+      chunk.replacingSamples(
+        autoGain?.process(chunk.samples, startTime: chunk.startTime) ?? chunk.samples
+      )
+    }
   }
 
-  /// Kept frames pass unchanged; the first one after silence fades in and the first dropped
-  /// frame fades out, so the gate does not click. Muted frames are always pure silence.
-  private func render(_ samples: [Float], keep: Bool) -> [Float] {
+  /// The times let through since the last call (with `recordsKeptRanges` set).
+  mutating func takeKeptRanges() -> [MeetingTimeRange] {
+    defer { keptRanges.removeAll() }
+    return keptRanges
+  }
+
+  /// Kept frames pass unchanged and left-out ones are turned down; where the gain changes it
+  /// moves over the first 5 ms of the frame, so the gate does not click. Muted frames are always
+  /// pure silence.
+  private func render(_ samples: [Float], gain: Float) -> [Float] {
     let fade = min(Self.fadeSampleCount, samples.count)
-    if keep {
-      guard !lastKept, fade > 0 else { return samples }
-      var result = samples
-      for index in 0..<fade {
-        result[index] *= Float(index) / Float(fade)
-      }
-      return result
+    if gain == lastGain || fade == 0 {
+      return gain == 1 ? samples : samples.map { $0 * gain }
     }
-    var result = Array(repeating: Float.zero, count: samples.count)
-    if lastKept {
-      for index in 0..<fade {
-        result[index] = samples[index] * (1 - Float(index) / Float(fade))
-      }
+    var result = samples
+    for index in result.indices {
+      let ramp = index < fade
+        ? lastGain + (gain - lastGain) * Float(index) / Float(fade)
+        : gain
+      result[index] *= ramp
     }
     return result
   }
