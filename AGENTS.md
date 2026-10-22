@@ -117,7 +117,8 @@ and synthesizes its own audio with `say`.
   and the user accepts each. The notes prompt gets a participants header. The microphone passes
   `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
   strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
-  100 ms of the last 5 s, at most -45 dBFS) plus a margin, the user's speaking level minus a
+  100 ms of the last 5 s; speech with no pause at all from the first moment is gated until the
+  first breath) plus a margin, the user's speaking level minus a
   range (strict only; `MeetingSpeakingLevelEstimator`: 80th percentile of speech-like frames from
   the last 120 s, learned whether or not the gate is open, kept through silences, quieter voices
   weighted down; an established level does not drop a lot until 600 speech-like frames in total

@@ -67,10 +67,6 @@ struct MeetingMicrophoneGate {
   static let sampleRate = MeetingAudioChunkFramer.sampleRate
   static let frameSampleCount = 160
   static let initialNoiseFloor: Float = -65
-  /// The noise floor never counts as louder than this, so speech without any pause from the
-  /// first moment is not taken for room noise. Steady loud rooms stay closed through the
-  /// modulation rule instead.
-  static let noiseFloorCeiling: Float = -45
   /// Once the user's level is known, the floor plus margin sits at least this far under it,
   /// so evenly loud speech without a pause stays open.
   static let thresholdBelowSpeaking: Float = 10
@@ -178,7 +174,7 @@ struct MeetingMicrophoneGate {
   /// 10 dB under it and long speech without a pause cannot be taken for the noise floor. The
   /// cap only ever lowers the threshold, and room noise never feeds the user's level.
   var noiseFloor: Float {
-    let measured = min(measuredNoiseFloor, Self.noiseFloorCeiling)
+    let measured = measuredNoiseFloor
     guard let speakingLevel else { return measured }
     let margin = tuning?.noiseMargin ?? 0
     return min(measured, speakingLevel - Self.thresholdBelowSpeaking - margin)
