@@ -58,7 +58,8 @@ actor MeetingTranscriptRecoveryService {
     audioFilenames: [String],
     existingTokens: [MeetingTranscriptToken],
     sourcesNeedingRecovery: Set<MeetingAudioSource>,
-    fullRecoverySources: Set<MeetingAudioSource> = []
+    fullRecoverySources: Set<MeetingAudioSource> = [],
+    microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> RecoveryResult {
     guard !sourcesNeedingRecovery.isEmpty else {
       return RecoveryResult(
@@ -82,7 +83,17 @@ actor MeetingTranscriptRecoveryService {
 
     for segment in plan.segmentsToTranscribe {
       let url = sessionDirectory.appendingPathComponent(segment.filename)
-      let transcript = try await transcribeFile(url)
+      let transcript: String
+      if segment.source == .microphone, microphoneGate.changesAudio {
+        guard let gated = try await transcribeGated(
+          url,
+          segment: segment,
+          settings: microphoneGate
+        ) else { continue }
+        transcript = gated
+      } else {
+        transcript = try await transcribeFile(url)
+      }
       if let token = Self.recoveredToken(segment: segment, transcript: transcript) {
         recoveredTokens.append(token)
       }
@@ -94,6 +105,31 @@ actor MeetingTranscriptRecoveryService {
       ),
       recoveredSources: plan.recoverableSources
     )
+  }
+
+  /// Transcribes a gated copy of a saved microphone segment; nil when the gate let nothing
+  /// through (the segment held no speech, or the user had muted).
+  private func transcribeGated(
+    _ url: URL,
+    segment: Segment,
+    settings: MeetingMicrophoneGateSettings
+  ) async throws -> String? {
+    let gatedURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("WonderWhisper-gated-\(UUID().uuidString).caf")
+    defer { try? FileManager.default.removeItem(at: gatedURL) }
+    let keptAudio: Bool
+    do {
+      keptAudio = try MeetingMicrophoneGatedWriter.writeGatedCopy(
+        of: url,
+        startTime: segment.startTime,
+        settings: settings,
+        to: gatedURL
+      )
+    } catch {
+      throw RecoveryError.unreadableAudioFile(segment.filename, error.localizedDescription)
+    }
+    guard keptAudio else { return nil }
+    return try await transcribeFile(gatedURL)
   }
 
   nonisolated static func segment(

@@ -54,6 +54,7 @@ enum SettingsSyncRegistry {
   private static let reasoningModes = Set(OpenRouterReasoningMode.allCases.map(\.rawValue))
   private static let voiceEngines = Set(SimpleVoiceEngine.allCases.map(\.rawValue))
   private static let meetingEngines = Set(MeetingTranscriptionEngine.allCases.map(\.rawValue))
+  private static let microphoneGateModes = Set(MeetingMicrophoneGateMode.allCases.map(\.rawValue))
   private static let hotkeys = Set(HotkeyManager.Selection.allCases.map(\.rawValue))
   private static let captureModes = Set(ScreenContextCaptureMode.allCases.map(\.rawValue))
   private static let seconds: Expectation = .double(1...600)
@@ -107,6 +108,7 @@ enum SettingsSyncRegistry {
     Setting("meeting.userName", .meetings, .string),
     Setting("meeting.speakers.localPass", .meetings, .bool),
     Setting("meeting.speakers.suggestNames", .meetings, .bool),
+    Setting(MeetingMicrophoneGateMode.defaultsKey, .meetings, .oneOf(microphoneGateModes)),
 
     // Beeper chats (IDs + aliases) and response monitoring
     Setting("beeper.chats", .beeper, .json(.beeperChats)),

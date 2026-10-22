@@ -114,7 +114,16 @@ and synthesizes its own audio with `say`.
   `MeetingSpeakerEditor`; tokens are never rewritten for a rename. The only other attendee names
   the only voice on the call. `MeetingSpeakerNameSuggester` (`meeting.speakers.suggestNames`,
   needs AI notes) asks the summary model for names, keeps only quoted, attendee-constrained ones,
-  and the user accepts each. The notes prompt gets a participants header. Audio
+  and the user accepts each. The notes prompt gets a participants header. The microphone passes
+  `MeetingMicrophoneGate` before any engine (`meeting.microphone.gate`: off, normal (default),
+  strict): 10 ms frames, a 120 Hz high-pass, and speech only above the noise floor (quietest
+  100 ms of the last 5 s) plus a margin, the user's own learned speaking level minus a range, and
+  an absolute minimum; 200 ms look-ahead, hangover, fades. Everything else becomes silence on the
+  same timeline, so cloud engines cannot invent words from near-silence ("yeah, yeah") or take
+  quiet room voices as the user. The companion's microphone button mutes transcription (audio is
+  still saved); `MeetingMicrophoneMuteRecorder` stamps muted chunks at capture into
+  `microphoneMutedRanges`, and both recovery paths gate the saved microphone audio with the
+  session's mode and ranges. Saved CAF audio is never gated. Audio
   is retained as bounded one-minute CAF segments under `Meetings/<uuid>/`. Manual sessions capture
   all Mac system audio; automatically detected sessions restrict capture to the detected
   application scope. Trigger apps are editable: Slack and supported browsers retain strict
@@ -268,6 +277,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-10-22: Meeting microphone noise gate (Off/Normal/Strict, default Normal) so silence and
+  background sound are no longer transcribed as the user, plus a mute button in the meeting
+  companion; recovery from saved audio applies the same gate and mutes.
 - 2026-10-20: Released 2026-10-20 with meeting speakers: the mic is you, call voices are told apart (Grok Voice Transcribe 2.0, separate Soniox streams, an on-Mac pass for Parakeet), and speakers can be renamed, merged and given suggested names.
 - 2026-10-19: Meeting speakers: the microphone is the user ("Your name" setting), only the call is
   diarized (Soniox system stream, Grok channel 1), single-stream Soniox retired, new Grok Voice

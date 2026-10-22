@@ -344,6 +344,22 @@ final class MeetingCoordinator: ObservableObject {
 
   @Published private(set) var speakerSuggestionSessionIDs: Set<UUID> = []
 
+  /// How the meeting microphone is gated; applies from the next recording.
+  @Published var microphoneGateMode: MeetingMicrophoneGateMode = {
+    MeetingMicrophoneGateMode.selected()
+  }() {
+    didSet {
+      AppConfig.defaults.set(
+        microphoneGateMode.rawValue,
+        forKey: MeetingMicrophoneGateMode.defaultsKey
+      )
+    }
+  }
+
+  /// The user muted the meeting microphone: what it hears is recorded but not transcribed.
+  @Published private(set) var isMicrophoneMuted = false
+  private var microphoneMuteRecorder: MeetingMicrophoneMuteRecorder?
+
   private let store = MeetingSessionStore()
   private let capture = MeetingCaptureService()
   private let detector = MeetingDetector()
@@ -518,6 +534,17 @@ final class MeetingCoordinator: ObservableObject {
     commitManualNotes(for: activeSessionID)
   }
 
+  /// Mutes or unmutes the meeting microphone for transcription. The audio is still saved.
+  func setMicrophoneMuted(_ muted: Bool) {
+    guard activeSessionID != nil, let microphoneMuteRecorder else { return }
+    microphoneMuteRecorder.setMuted(muted)
+    isMicrophoneMuted = muted
+  }
+
+  func toggleMicrophoneMute() {
+    setMicrophoneMuted(!isMicrophoneMuted)
+  }
+
   func restoreMeetingOverlayForCurrentSession() {
     guard overlayMinimizedSessionID == activeSessionID else { return }
     overlayMinimizedSessionID = nil
@@ -591,6 +618,11 @@ final class MeetingCoordinator: ObservableObject {
         + MeetingIngestionBacklogPolicy.warningMessage
     }
     session.audioFiles = Array(Set(session.audioFiles + audioFiles)).sorted()
+    if let microphoneMuteRecorder {
+      session.microphoneMutedRanges = microphoneMuteRecorder.ranges
+    }
+    microphoneMuteRecorder = nil
+    isMicrophoneMuted = false
     let endedAt = Date()
     if let recordingStartedAt = session.recordingStartedAt {
       session.recordedDuration = (session.recordedDuration ?? 0)
@@ -658,6 +690,8 @@ final class MeetingCoordinator: ObservableObject {
       ?? lastDetectedFamily
     cancelContextTasks()
     statusMessage = "Discarding automatic meeting…"
+    microphoneMuteRecorder = nil
+    isMicrophoneMuted = false
 
     let audioFiles = await capture.stop()
     SystemAudioController.shared.setMeetingCaptureActive(false)
@@ -798,7 +832,8 @@ final class MeetingCoordinator: ObservableObject {
             output = (
               try await sonioxAsyncRecovery.recover(
                 sessionDirectory: directory,
-                audioFilenames: interruptedSession.audioFiles
+                audioFilenames: interruptedSession.audioFiles,
+                microphoneGate: MeetingMicrophoneGateSettings(session: interruptedSession)
               ),
               MeetingAudioSource.captureSources,
               "with Soniox async diarization"
@@ -819,7 +854,8 @@ final class MeetingCoordinator: ObservableObject {
             audioFilenames: interruptedSession.audioFiles,
             existingTokens: interruptedSession.transcriptTokens,
             sourcesNeedingRecovery: recoverySources,
-            fullRecoverySources: fullRecoverySources
+            fullRecoverySources: fullRecoverySources,
+            microphoneGate: MeetingMicrophoneGateSettings(session: interruptedSession)
           )
           output = (result.tokens, result.recoveredSources, "locally")
         }
@@ -1593,6 +1629,7 @@ final class MeetingCoordinator: ObservableObject {
       resumedSession.transcriptionEngine = activeTranscriptionEngine
       resumedSession.status = .recording
       resumedSession.errorMessage = nil
+      resumedSession.microphoneGateMode = microphoneGateMode
       session = resumedSession
       replace(session)
       resumedSessionIDs.insert(session.id)
@@ -1605,7 +1642,8 @@ final class MeetingCoordinator: ObservableObject {
         recordingStartedAt: startedAt,
         detectedApp: detectedApp,
         automaticallyStarted: automaticallyStarted,
-        transcriptionEngine: activeTranscriptionEngine
+        transcriptionEngine: activeTranscriptionEngine,
+        microphoneGateMode: microphoneGateMode
       )
       sessions.insert(session, at: 0)
     }
@@ -1628,6 +1666,9 @@ final class MeetingCoordinator: ObservableObject {
     liveTranscriptPreviews.removeAll()
     liveAudioLevels.removeAll()
     overlayMinimizedSessionID = nil
+    let muteRecorder = MeetingMicrophoneMuteRecorder(ranges: session.microphoneMutedRanges)
+    microphoneMuteRecorder = muteRecorder
+    isMicrophoneMuted = false
     await persist(session)
 
     do {
@@ -1641,6 +1682,8 @@ final class MeetingCoordinator: ObservableObject {
           userName: MeetingSpeakerDirectory.currentUserName(),
           attendees: session.attendees
         ),
+        microphoneGateMode: session.microphoneGateMode ?? .off,
+        microphoneMuteRecorder: muteRecorder,
         tokenHandler: { [weak self] tokens in
           await self?.receive(tokens: tokens, for: sessionID)
         },
@@ -1691,6 +1734,12 @@ final class MeetingCoordinator: ObservableObject {
             startTime: timelineOffset + chunk.startTime,
             duration: chunk.duration
           )
+          if chunk.source == .microphone {
+            muteRecorder.observe(
+              start: timelineChunk.startTime,
+              end: timelineChunk.startTime + timelineChunk.duration
+            )
+          }
           if audioLevelGate.isEnabled {
             let level = MeetingAudioMeter.level(from: chunk.samples)
             Task { @MainActor [weak self] in
@@ -1771,6 +1820,8 @@ final class MeetingCoordinator: ObservableObject {
       await persist(session)
       activeSessionID = nil
       transcriber = nil
+      microphoneMuteRecorder = nil
+      isMicrophoneMuted = false
       preparationTask = nil
       preparationMonitorTask = nil
       automaticCandidate = nil
