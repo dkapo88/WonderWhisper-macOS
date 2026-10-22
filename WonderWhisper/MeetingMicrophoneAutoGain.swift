@@ -28,9 +28,18 @@ struct MeetingMicrophoneAutoGain {
   private var loudestSpeech: Float?
   /// The gain now applied, in dB; nil until speech has been heard.
   private(set) var gain: Float?
+  /// Where the next sample is expected on the timeline, and how many exact-zero frames came
+  /// last: a gap in the timeline, or a capture pause padded with silence, may mean another
+  /// microphone, so the level is learned again (as the gate does).
+  private var nextStartTime: TimeInterval?
+  private var zeroFrames = 0
 
   /// Returns `samples` (starting at `startTime`) with the gain applied, frame by frame.
   mutating func process(_ samples: [Float], startTime: TimeInterval) -> [Float] {
+    if let nextStartTime, abs(startTime - nextStartTime) > 0.001 {
+      reset()
+    }
+    nextStartTime = startTime + Double(samples.count) / Double(MeetingMicrophoneGate.sampleRate)
     var result = samples
     let frame = MeetingMicrophoneGate.frameSampleCount
     for offset in stride(from: 0, to: samples.count, by: frame) {
@@ -46,7 +55,14 @@ struct MeetingMicrophoneAutoGain {
   private mutating func nextGain(for frame: ArraySlice<Float>, at time: TimeInterval) -> Float {
     // Exact silence (muted, or a microphone that has not started) teaches nothing: as the
     // quietest frame it would make room noise look like speech.
-    guard frame.contains(where: { $0 != 0 }) else { return gain ?? 0 }
+    guard frame.contains(where: { $0 != 0 }) else {
+      zeroFrames += 1
+      return gain ?? 0
+    }
+    if zeroFrames >= MeetingMicrophoneGate.paddedPauseFrames {
+      reset()
+    }
+    zeroFrames = 0
     let level = Self.level(of: frame)
     recentLevels.append(level)
     if recentLevels.count > Self.quietestWindowFrames { recentLevels.removeFirst() }
@@ -65,6 +81,15 @@ struct MeetingMicrophoneAutoGain {
     let updated = wanted < current ? wanted : min(wanted, current + Self.riseStep)
     gain = updated
     return updated
+  }
+
+  /// Forgets the level and the gain; the next speech sets them afresh.
+  private mutating func reset() {
+    estimator.reset()
+    recentLevels.removeAll()
+    loudestSpeech = nil
+    gain = nil
+    zeroFrames = 0
   }
 
   /// Ramps from the previous frame's gain to this one's across the frame, so a change does not

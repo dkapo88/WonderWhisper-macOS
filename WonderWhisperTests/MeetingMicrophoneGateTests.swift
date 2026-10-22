@@ -971,6 +971,33 @@ struct MeetingMicrophoneGateTests {
     #expect(Self.keptShare(output, from: 1, to: Double(input.count) / Self.sampleRate) < 0.05)
   }
 
+  @Test func theGainIsLearnedAgainAfterATimelineGap() {
+    // A loud microphone, then a resumed meeting on a quiet one: the quiet one is brought up
+    // within a second instead of keeping the loud one's 0 dB for the next twenty.
+    let loud = Self.noise(seconds: 0.5, level: -60) + Self.speech(seconds: 4, level: -12)
+    let quiet = Self.noise(seconds: 0.5, level: -72) + Self.speech(seconds: 3, level: -45)
+    var gate = MeetingMicrophoneGate(mode: .normal)
+    var output: [MeetingAudioChunk] = []
+    for chunk in Self.chunks(loud) + Self.chunks(quiet, startTime: 5) {
+      output += gate.process(chunk)
+    }
+    output += gate.flush()
+    let resumed = output.filter { $0.startTime >= 5 }
+    let samples = Self.timeline(
+      resumed.map { chunk in
+        MeetingAudioChunk(
+          source: chunk.source,
+          samples: chunk.samples,
+          startTime: chunk.startTime - 5,
+          duration: chunk.duration
+        )
+      },
+      count: quiet.count
+    )
+    let gain = Self.level(samples, from: 1.5, to: 3.5) - Self.level(quiet, from: 1.5, to: 3.5)
+    #expect(gain > 15, "\(gain)")
+  }
+
   @Test func sessionsWithoutGateFieldsDecodeAsBefore() throws {
     let session = MeetingSession(title: "Old")
     var json = try #require(
