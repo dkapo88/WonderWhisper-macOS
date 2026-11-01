@@ -146,6 +146,23 @@ struct ParakeetResidencyTests {
     #expect(await gate.loads.count == 1)
   }
 
+  @Test func aWarmUpRequestedBeforeAMemoryPressureUnloadDoesNotReload() async {
+    let gate = Gate()
+    let provider = makeProvider(gate)
+    await provider.setSelected(true)
+    await provider.waitForBackgroundWorkForTesting()
+    let requestedBeforeUnload = DictationClock.now()
+    try? await Task.sleep(nanoseconds: 2_000_000)
+    await provider.handleMemoryPressure()
+    await provider.warmUp(requestedAt: requestedBeforeUnload)
+    #expect(await !provider.isResident())
+    #expect(await gate.loads.count == 1)
+    // The next dictation after the unload loads it again.
+    await provider.warmUp(requestedAt: DictationClock.now())
+    #expect(await provider.isResident())
+    #expect(await gate.loads.count == 2)
+  }
+
   @Test func deselectingUnloads() async {
     let gate = Gate()
     let provider = makeProvider(gate)

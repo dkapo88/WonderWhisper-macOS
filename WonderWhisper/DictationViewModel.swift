@@ -1325,6 +1325,23 @@ final class DictationViewModel: ObservableObject {
         return true
     }
 
+    /// Stops and transcribes an integration recording. The stop guard is released as soon as
+    /// transcription returns (or throws), before the turn is submitted, so the next recording's
+    /// stop is never refused while an agent is still answering.
+    private func finishIntegrationTranscription(
+        activePrompt: PromptConfiguration?,
+        trigger: DictationTriggerTimes?
+    ) async throws -> DictationController.TranscriptionOnlyResult? {
+        defer { endIntegrationStop() }
+        return try await controller.finishTranscriptionOnly(
+            activePrompt: activePrompt,
+            trigger: trigger,
+            onCaptureStopped: { [weak self] in
+                await MainActor.run { self?.disarmEscapeAfterTail() }
+            }
+        )
+    }
+
     private func endIntegrationStop() {
         integrationStopInProgress = false
         disarmEscapeAfterTail()
@@ -3430,7 +3447,6 @@ final class DictationViewModel: ObservableObject {
         trigger: DictationTriggerTimes? = nil
     ) async {
         guard beginIntegrationStop() else { return }
-        defer { endIntegrationStop() }
         await MainActor.run {
             self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingFinished(
                 self.hermesResponseWindowStates,
@@ -3447,12 +3463,9 @@ final class DictationViewModel: ObservableObject {
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
         do {
-            guard let result = try await controller.finishTranscriptionOnly(
+            guard let result = try await finishIntegrationTranscription(
                 activePrompt: activePrompt,
-                trigger: trigger,
-                onCaptureStopped: { [weak self] in
-                    await MainActor.run { self?.disarmEscapeAfterTail() }
-                }
+                trigger: trigger
             ) else {
                 await MainActor.run {
                     self.activeHermesPromptID = nil
@@ -3547,7 +3560,6 @@ final class DictationViewModel: ObservableObject {
 
     private func finishCodexRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
         guard beginIntegrationStop() else { return }
-        defer { endIntegrationStop() }
         let threadID = activeCodexThreadID
         let responseWindowID = activeCodexResponseWindowID
         await MainActor.run {
@@ -3570,12 +3582,9 @@ final class DictationViewModel: ObservableObject {
             self.prompts.first(where: { $0.id == promptID })
         }
         do {
-            guard let result = try await controller.finishTranscriptionOnly(
+            guard let result = try await finishIntegrationTranscription(
                 activePrompt: activePrompt,
-                trigger: trigger,
-                onCaptureStopped: { [weak self] in
-                    await MainActor.run { self?.disarmEscapeAfterTail() }
-                }
+                trigger: trigger
             ) else {
                 await MainActor.run {
                     self.clearActiveCodexRecording(cancelContext: true)
@@ -3821,7 +3830,6 @@ final class DictationViewModel: ObservableObject {
             "Beeper recording finish prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
         guard beginIntegrationStop() else { return }
-        defer { endIntegrationStop() }
         await MainActor.run {
             self.recordingStopInProgress = true
             // Escape keeps cancelling through the release tail.
@@ -3835,12 +3843,9 @@ final class DictationViewModel: ObservableObject {
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
         do {
-            guard let result = try await controller.finishTranscriptionOnly(
+            guard let result = try await finishIntegrationTranscription(
                 activePrompt: activePrompt,
-                trigger: trigger,
-                onCaptureStopped: { [weak self] in
-                    await MainActor.run { self?.disarmEscapeAfterTail() }
-                }
+                trigger: trigger
             ) else {
                 AppLog.dictation.warning("Beeper finish produced no transcription result")
                 await MainActor.run {

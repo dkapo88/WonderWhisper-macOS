@@ -178,10 +178,11 @@ actor DictationController {
                 if let pk = transcriber as? ParakeetTranscriptionProvider {
                     let epoch = sessionEpoch
                     let settingsAtStart = transcriberSettings
+                    let requestedAt = DictationClock.now()
                     Task {
                         let resident = await pk.isResident(for: settingsAtStart)
                         await self.noteModelWarmAtStart(resident, epoch: epoch)
-                        await pk.warmUp()
+                        await pk.warmUp(requestedAt: requestedAt)
                     }
                 }
                 if let qwen = transcriber as? QwenASRTranscriptionProvider {

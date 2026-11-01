@@ -83,6 +83,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private var preloadKey: (generation: Int, kind: ParakeetModelKind)?
     private var prewarmTask: Task<Void, Never>?
     private(set) var lastInferenceAt: TimeInterval?
+    private var lastUnloadAt: TimeInterval?
     private let padsInput: Bool
     private let isInstalled: @Sendable (ParakeetModelKind) -> Bool
     private let prewarmRunner: PrewarmRunner?
@@ -146,10 +147,13 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // Public warm-up to preload models on recording start (key-down). Loads the model if it is
     // not resident and prewarms it when it has not run for `idlePrewarmThreshold`, alongside
     // capture.
-    func warmUp() async {
+    /// - Parameter requestedAt: when the dictation that wants this warm-up started (uptime). A
+    ///   warm-up requested before the latest unload is stale and does nothing.
+    func warmUp(requestedAt: TimeInterval? = nil) async {
         // A dictation engine that is no longer selected (a warm-up queued before an engine
         // switch) never loads in the background; a real transcription still can.
         if residency == .whileSelected, !isSelected { return }
+        if let requestedAt, let lastUnloadAt, requestedAt < lastUnloadAt { return }
         memoryPressureHold = false
         let generation = residencyGeneration
         do {
@@ -200,6 +204,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     /// prewarm already in flight cannot keep or bring back the engine.
     private func unloadModels(reason: String) async {
         residencyGeneration += 1
+        lastUnloadAt = DictationClock.now()
         idleUnloadTask?.cancel()
         idleUnloadTask = nil
         let hadModels = (asrManager != nil) || (unifiedManager != nil)
