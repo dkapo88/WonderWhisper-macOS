@@ -89,7 +89,7 @@ final class DictationViewModel: ObservableObject {
     @Published var settingsNotice: String?
     @Published var isRecording: Bool = false {
         didSet {
-            updateEscapeMonitor(isRecording: isRecording)
+            refreshEscapeMonitor()
             // Play chime sounds for recording start/stop
             if isRecording {
                 SoundFeedback.playStart()
@@ -713,6 +713,18 @@ final class DictationViewModel: ObservableObject {
 
     // Provider cache to avoid unnecessary recreation
     private var transcriptionProviderCache: [String: TranscriptionProvider] = [:]
+    /// The one Parakeet instance dictation uses (every Parakeet model id maps to it): resident
+    /// while selected, with padded input.
+    private var dictationParakeet: ParakeetTranscriptionProvider?
+    private var parakeetResidencySelected: Bool?
+    private var parakeetResidencyKind: ParakeetModelKind?
+    private var parakeetResidencyTask: Task<Void, Never>?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var parakeetDefaultsObserver: NSObjectProtocol?
+    /// Main dictation sessions (dictation and command prompt hotkeys, toggle, finish).
+    private var dictationSessions = DictationSessionMachine()
+    /// Keeps the Escape monitor alive after release until the release tail has ended.
+    private var escapeArmedForStop = false
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -771,8 +783,11 @@ final class DictationViewModel: ObservableObject {
         let transcriptionTimeout = max(5, min(120, AppConfig.defaults.object(forKey: "transcription.timeout") as? Double ?? 10))
         let transcriber: TranscriptionProvider
         let transcriberSettings: TranscriptionSettings
+        var initialParakeet: ParakeetTranscriptionProvider?
         if activeTranscriptionModel.lowercased().contains("parakeet") {
-            transcriber = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
+            let parakeet = Self.makeDictationParakeet()
+            initialParakeet = parakeet
+            transcriber = parakeet
             transcriberSettings = TranscriptionSettings(
                 endpoint: URL(string: "https://localhost")!,
                 model: activeTranscriptionModel,
@@ -876,6 +891,12 @@ final class DictationViewModel: ObservableObject {
             history: history,
             fileFallbackTranscriber: fileFallbackTranscriber
         )
+        // The controller's initial transcriber is the instance the provider cache keeps, so the
+        // launch warm-up and every later dictation use the same loaded model.
+        if let initialParakeet {
+            dictationParakeet = initialParakeet
+            transcriptionProviderCache[activeTranscriptionModel] = initialParakeet
+        }
         isApplyingPromptFromSelection = true
         prompts = promptBootstrap.prompts
         selectedPromptID = promptBootstrap.selectedID
@@ -927,6 +948,7 @@ final class DictationViewModel: ObservableObject {
 
         updateProviders()
         updatePasteShortcut()
+        startParakeetResidencyMonitoring()
 
         // Poll state periodically for a simple UI reflection
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -1004,6 +1026,8 @@ final class DictationViewModel: ObservableObject {
 
     deinit {
         timer?.invalidate()
+        memoryPressureSource?.cancel()
+        if let parakeetDefaultsObserver { NotificationCenter.default.removeObserver(parakeetDefaultsObserver) }
         if let m = escapeEventMonitor { NSEvent.removeMonitor(m) }
         escapeEventMonitor = nil
         escapeKeyInterceptor?.stop()
@@ -1074,55 +1098,14 @@ final class DictationViewModel: ObservableObject {
                 return
             }
 
+            if dictationSessions.isActive {
+                await stopDictationSession(trigger: trigger)
+                return
+            }
             switch currentState {
             case .idle, .error:
-                let targetPromptID = SimplePromptKind.dictation.promptID
-
-                // Update UI IMMEDIATELY for instant feedback
-                await MainActor.run { 
-                    self.isRecording = true
-                    self.recordingStartTimestamp = Date()
-                    self.recordingStartInProgress = true
-                    self.recordingStopInProgress = false
-                }
-
-                // Determine which prompt to use based on the hotkey that was pressed,
-                // NOT based on the UI tab selection. Don't change the visible UI tab.
-                await MainActor.run {
-                    if self.selectedPromptID != targetPromptID {
-                        // Suppress sidebar sync to prevent UI navigation when using hotkeys
-                        self.suppressSimpleSidebarSync = true
-                        self.selectedPromptID = targetPromptID
-                    }
-                }
-                
-                // Wait briefly for applySelection() to complete, then restore sync
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                await MainActor.run {
-                    self.suppressSimpleSidebarSync = false
-                }
-
-                // Now perform slower operations after UI is updated
-                await MainActor.run { self.persistPromptLibrary() }
-                await MainActor.run { self.updateProvidersImmediately() }
-                await waitForLatestProviderUpdate()
-
-                // Fast check for selected text (AX only, ~5ms, no pasteboard fallback)
-                await checkAndStoreSelectedTextPromptFast()
-
-                let prompt = await MainActor.run { self.userPrompt }
-                let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
-                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt, trigger: trigger)
-                // If the controller failed to start, clear the optimistic recording UI right away
-                // (mirrors the Hermes/Beeper paths) instead of waiting on the polling-timer grace.
-                let postState = await controller.currentState()
-                await MainActor.run {
-                    if case .error = postState {
-                        self.isRecording = false
-                        self.recordingStartTimestamp = nil
-                    }
-                    self.recordingStartInProgress = false
-                }
+                // Hotkey prompt, not the UI tab selection; the visible tab does not change.
+                await startDictationSession(promptID: SimplePromptKind.dictation.promptID, trigger: trigger)
 
             case .recording:
                 await MainActor.run { 
@@ -1144,7 +1127,13 @@ final class DictationViewModel: ObservableObject {
 
     func finish() {
         persistPromptLibrary()
+        let trigger = DictationTriggerTimes()
         Task {
+            if dictationSessions.isActive, activeHermesPromptID == nil,
+               activeBeeperPromptID == nil, activeCodexPromptID == nil {
+                await stopDictationSession(trigger: trigger)
+                return
+            }
             if let hermesPromptID = activeHermesPromptID,
                let sessionID = activeHermesRecordingSessionID {
                 await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
@@ -1189,6 +1178,10 @@ final class DictationViewModel: ObservableObject {
 
     func cancel() {
         Task {
+            let session = dictationSessions.sessionID
+            let wasStopping = dictationSessions.phase == .stopping
+            // During startup the cancel is remembered and applied once the recorder runs.
+            let cancelNow = dictationSessions.requestCancel()
             // Optimistically update UI immediately for snappy visual feedback
             await MainActor.run { 
                 self.recordingStopInProgress = true
@@ -1200,10 +1193,204 @@ final class DictationViewModel: ObservableObject {
                 self.clearActiveCodexRecording(cancelContext: true)
             }
             await controller.cancel()
+            disarmEscapeAfterTail()
+            // A cancel during the release tail ends that stop's processing, which then finishes
+            // the session itself.
+            if cancelNow, !wasStopping {
+                dictationSessions.finished(session: session)
+            }
 
             // Restore original prompt if we had a selected text override
             await restoreOriginalPromptIfNeeded()
         }
+    }
+
+    // MARK: - Dictation sessions
+
+    /// Starts a dictation for `promptID`. Its prompt and ASR/LLM configuration are resolved
+    /// synchronously, before any async work, and applied with the recorder start in one
+    /// controller step; the recorder starts first and the selected-text check runs while it
+    /// records. A release or cancel that arrives during startup is applied once it is running.
+    private func startDictationSession(promptID: UUID, trigger: DictationTriggerTimes) async {
+        guard let session = dictationSessions.begin(promptID: promptID) else { return }
+        isRecording = true
+        recordingStartTimestamp = Date()
+        recordingStartInProgress = true
+        recordingStopInProgress = false
+
+        // Select the hotkey's prompt now, without moving the visible sidebar.
+        if selectedPromptID != promptID {
+            suppressSimpleSidebarSync = true
+            selectedPromptID = promptID
+            applySelection()
+            // The didSet runs applySelection again on a later main-actor turn; keep the sidebar
+            // sync suppressed until then, off the critical path.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                self?.suppressSimpleSidebarSync = false
+            }
+        }
+        let prompt = prompts.prompt(withID: promptID)
+        let configuration = makeConfiguration(using: prompt)
+        // A pending debounced update must not land mid-session with another prompt's settings.
+        providerUpdateTimer?.invalidate()
+        providerUpdateTimer = nil
+        providerUpdateTask?.cancel()
+        providerUpdateTask = nil
+
+        await controller.toggle(
+            userPrompt: prompt?.userPrompt ?? userPrompt,
+            activePrompt: prompt,
+            trigger: trigger,
+            configuration: configuration
+        )
+        let started = await controller.currentState() == .recording
+        if started {
+            // Fast AX-only selected-text check, while recording.
+            await checkAndStoreSelectedTextPromptFast()
+        }
+        persistPromptLibrary()
+        recordingStartInProgress = false
+
+        switch dictationSessions.startFinished(session: session, started: started) {
+        case .recording:
+            break
+        case .stop(let stopTrigger):
+            AppLog.dictation.log("Applying a stop that arrived during startup")
+            await finishDictationSession(session, trigger: stopTrigger)
+        case .cancel:
+            AppLog.dictation.log("Applying a cancel that arrived during startup")
+            await controller.cancel()
+            isRecording = false
+            recordingStartTimestamp = nil
+            dictationSessions.finished(session: session)
+        case .failed:
+            // Clear the optimistic recording UI right away instead of waiting on the poll grace.
+            isRecording = false
+            recordingStartTimestamp = nil
+        }
+    }
+
+    /// Release, second press, or toggle stop for the active session.
+    private func stopDictationSession(trigger: DictationTriggerTimes) async {
+        let session = dictationSessions.sessionID
+        switch dictationSessions.requestStop(trigger) {
+        case .stop:
+            await finishDictationSession(session, trigger: trigger)
+        case .deferred:
+            AppLog.dictation.log("Stop requested during startup; stopping once recording")
+        case .ignored:
+            break
+        }
+    }
+
+    private func finishDictationSession(_ session: Int, trigger: DictationTriggerTimes) async {
+        let promptID = dictationSessions.promptID
+        // Escape keeps cancelling through the release tail.
+        escapeArmedForStop = true
+        recordingStopInProgress = true
+        isRecording = false
+        recordingStartTimestamp = nil
+        recordingStartInProgress = false
+
+        // A selected-text prompt override applies to this stop.
+        if let override = selectedTextPromptOverride {
+            applySelectedTextPromptOverride(override)
+            await updateProvidersWithSelectedTextOverride()
+        }
+        let activePrompt = prompts.first { $0.id == promptID }
+        await controller.finish(
+            userPrompt: userPrompt,
+            activePrompt: activePrompt,
+            trigger: trigger,
+            onCaptureStopped: { [weak self] in
+                await MainActor.run { self?.disarmEscapeAfterTail() }
+            }
+        )
+        disarmEscapeAfterTail()
+        await restoreOriginalPromptIfNeeded()
+        dictationSessions.finished(session: session)
+    }
+
+    private func disarmEscapeAfterTail() {
+        guard escapeArmedForStop else { return }
+        escapeArmedForStop = false
+        refreshEscapeMonitor()
+    }
+
+    private func refreshEscapeMonitor() {
+        let wanted = isRecording || escapeArmedForStop
+        let installed = escapeKeyInterceptor != nil || escapeEventMonitor != nil
+        if wanted != installed || !wanted {
+            updateEscapeMonitor(isRecording: wanted)
+        }
+    }
+
+    // MARK: - Parakeet residency
+
+    static func makeDictationParakeet() -> ParakeetTranscriptionProvider {
+        ParakeetTranscriptionProvider(
+            modelsDirectory: AppConfig.testScratchParakeetModels,
+            residency: .whileSelected,
+            padsInput: true
+        )
+    }
+
+    private func dictationParakeetProvider() -> ParakeetTranscriptionProvider {
+        if let dictationParakeet { return dictationParakeet }
+        let provider = Self.makeDictationParakeet()
+        dictationParakeet = provider
+        return provider
+    }
+
+    /// Parakeet is selected when it is the dictation engine or a prompt's voice override.
+    private var parakeetIsSelected: Bool {
+        if transcriptionModel.lowercased().contains("parakeet") { return true }
+        return prompts.contains { $0.voiceModelOverride?.lowercased().contains("parakeet") == true }
+    }
+
+    /// Loads the selected Parakeet backend in the background (and keeps it) while Parakeet is
+    /// selected; unloads it when another engine is chosen. Re-runs on a Unified/Ultra switch.
+    private func refreshParakeetResidency() {
+        // Unit tests never load the shared models in the background.
+        guard !AppConfig.isTestRun || AppConfig.runsModelTests else { return }
+        let selected = parakeetIsSelected
+        let kind = ParakeetModelKind.selected
+        guard selected != parakeetResidencySelected || (selected && kind != parakeetResidencyKind) else {
+            return
+        }
+        parakeetResidencySelected = selected
+        parakeetResidencyKind = kind
+        guard selected || dictationParakeet != nil else { return }
+        let provider = dictationParakeetProvider()
+        // Chained so a quick deselect/select pair reaches the provider in order.
+        let previous = parakeetResidencyTask
+        parakeetResidencyTask = Task {
+            await previous?.value
+            await provider.setSelected(selected)
+        }
+    }
+
+    private func startParakeetResidencyMonitoring() {
+        // The Unified/Ultra picker writes `parakeet.version` straight to defaults.
+        parakeetDefaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshParakeetResidency() }
+        }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            Task { @MainActor in
+                guard let provider = self?.dictationParakeet else { return }
+                AppLog.dictation.log("Memory pressure warning; unloading Parakeet")
+                await provider.handleMemoryPressure()
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+        refreshParakeetResidency()
     }
 
     private func updateEscapeMonitor(isRecording: Bool) {
@@ -5155,42 +5342,14 @@ final class DictationViewModel: ObservableObject {
         case .down:
             promptPressTimes[id] = Date()
 
+            if dictationSessions.isActive {
+                // Second press of a toggle-mode dictation; a press during startup is remembered.
+                await stopDictationSession(trigger: trigger)
+                return
+            }
             switch state {
             case .idle, .error:
-                // Update UI IMMEDIATELY for instant feedback
-                await MainActor.run { 
-                    self.isRecording = true
-                    self.recordingStartTimestamp = Date()
-                    self.recordingStartInProgress = true
-                    self.recordingStopInProgress = false
-                }
-
-                // Select the prompt for this hotkey FIRST, without changing the visible UI tab
-                await MainActor.run {
-                    if self.selectedPromptID != id {
-                        // Suppress sidebar sync to prevent UI navigation when using hotkeys
-                        self.suppressSimpleSidebarSync = true
-                        self.selectedPromptID = id
-                    }
-                }
-                
-                // Wait briefly for applySelection() to complete, then restore sync
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                await MainActor.run {
-                    self.suppressSimpleSidebarSync = false
-                }
-
-                // Now update providers for the correct prompt immediately
-                await MainActor.run { self.updateProvidersImmediately() }
-                await waitForLatestProviderUpdate()
-
-                // Fast check for selected text (AX only, ~5ms)
-                await checkAndStoreSelectedTextPromptFast()
-
-                let promptText = await MainActor.run { self.userPrompt }
-                let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
-                await controller.toggle(userPrompt: promptText, activePrompt: activePrompt, trigger: trigger)
-                await MainActor.run { self.recordingStartInProgress = false }
+                await startDictationSession(promptID: id, trigger: trigger)
 
             case .recording:
                 await MainActor.run { 
@@ -5222,7 +5381,10 @@ final class DictationViewModel: ObservableObject {
         case .up:
             guard let start = promptPressTimes.removeValue(forKey: id) else { return }
             let duration = Date().timeIntervalSince(start)
-            if duration >= promptPressThreshold {
+            if duration >= promptPressThreshold, dictationSessions.isActive {
+                // Push-to-talk release, also while the session is still starting.
+                await stopDictationSession(trigger: trigger)
+            } else if duration >= promptPressThreshold {
                 let state = await controller.currentState()
                 if case .recording = state {
                     await MainActor.run { 
@@ -5282,6 +5444,21 @@ final class DictationViewModel: ObservableObject {
 
     @discardableResult
     private func applyProviders(using prompt: PromptConfiguration?) -> Task<Void, Never> {
+        let configuration = makeConfiguration(using: prompt)
+        refreshParakeetResidency()
+        return Task {
+            // A superseded update never lands: applying is one controller step, all or nothing.
+            guard !Task.isCancelled else { return }
+            await controller.apply(configuration)
+        }
+    }
+
+    /// Resolves everything a dictation with `prompt` needs, synchronously, so a hotkey start can
+    /// hand it to the controller before any async work.
+    private func makeConfiguration(
+        using prompt: PromptConfiguration?,
+        systemPromptOverride: String? = nil
+    ) -> DictationConfiguration {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         let voiceModel = resolvedVoiceModel(for: prompt)
         let voiceLanguage = resolvedVoiceLanguage(for: prompt)
@@ -5359,7 +5536,7 @@ final class DictationViewModel: ObservableObject {
             )
         }
 
-        let renderedSystem = systemPrompt
+        let renderedSystem = systemPromptOverride ?? systemPrompt
         // Align LLM timeout with the user-configured timeout setting
         let llmTimeout = max(5, min(120, transcriptionTimeoutSeconds))
         let routingForActivePrompt = resolvedOpenRouterRouting(for: prompt)
@@ -5379,32 +5556,20 @@ final class DictationViewModel: ObservableObject {
             openRouterReasoning: reasoningForActivePrompt
         )
 
-        let transcriberSettings = tSettings
-        let llmSettingsToApply = lSettings
-        let isLLMEnabled = llmEnabled
-        let useScreenContext = resolvedScreenContext(for: prompt)
-        let useClipboardContext = resolvedClipboardContext(for: prompt)
-        let useSelectedText = resolvedSelectedText(for: prompt)
-        let useActiveTextField = resolvedActiveTextField(for: prompt)
-        let captureMode = resolvedScreenContextCaptureMode(for: prompt)
-        let includeScreenImage = resolvedScreenImage(for: prompt)
-
-        return Task {
-            if let providerToApply = provider {
-                await controller.updateTranscriberProvider(providerToApply)
-            }
-            await controller.updateTranscriberSettings(transcriberSettings)
-            await controller.updateLLMProvider(llmProviderToApply)
-            await controller.updateLLMSettings(llmSettingsToApply)
-            await controller.updateLLMEnabled(isLLMEnabled)
-            await controller.updateScreenContextEnabled(useScreenContext)
-            await controller.updateScreenContextCaptureMode(captureMode)
-            await controller.updateClipboardContextEnabled(useClipboardContext)
-            await controller.updateSelectedTextEnabled(useSelectedText)
-            await controller.updateActiveTextFieldEnabled(useActiveTextField)
-            await controller.updateScreenImageEnabled(includeScreenImage)
-            await controller.updateAutoMuteEnabled(autoMuteEnabled)
-        }
+        return DictationConfiguration(
+            transcriber: provider,
+            transcriberSettings: tSettings,
+            llm: llmProviderToApply,
+            llmSettings: lSettings,
+            llmEnabled: llmEnabled,
+            screenContextEnabled: resolvedScreenContext(for: prompt),
+            screenContextCaptureMode: resolvedScreenContextCaptureMode(for: prompt),
+            clipboardContextEnabled: resolvedClipboardContext(for: prompt),
+            selectedTextEnabled: resolvedSelectedText(for: prompt),
+            activeTextFieldEnabled: resolvedActiveTextField(for: prompt),
+            screenImageEnabled: resolvedScreenImage(for: prompt),
+            autoMuteEnabled: autoMuteEnabled
+        )
     }
 
     // Reprocess a saved history entry with current settings
@@ -5427,9 +5592,11 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
 
-        // Use the selected text prompt override for provider updates
+        // Use the selected text prompt override for provider updates, and wait for it so the
+        // stop that follows processes with the override applied.
         let task = applyProviders(using: selectedTextPromptOverride)
         providerUpdateTask = task
+        await task.value
     }
 
     // MARK: - Provider Cache Management
@@ -5441,7 +5608,8 @@ final class DictationViewModel: ObservableObject {
 
         let provider: TranscriptionProvider
         if model.lowercased().contains("parakeet") {
-            provider = ParakeetTranscriptionProvider(modelsDirectory: AppConfig.testScratchParakeetModels)
+            // Every Parakeet model id shares the one resident dictation instance.
+            provider = dictationParakeetProvider()
         } else if QwenASRManager.isQwenModel(model) {
             provider = QwenASRTranscriptionProvider()
         } else if model == "groq-streaming" {

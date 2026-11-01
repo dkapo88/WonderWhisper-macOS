@@ -12,6 +12,20 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         case ultra(AsrManager)
     }
     typealias BackendLoader = @Sendable (ParakeetModelKind) async throws -> LoadedBackend
+    /// Test seam: stands in for the silent prewarm decode (nil in production).
+    typealias PrewarmRunner = @Sendable (ParakeetModelKind) async -> Void
+
+    /// How long a loaded model stays in memory.
+    enum Residency: Sendable, Equatable {
+        /// Unload after this many idle seconds (meeting recovery, one-off fallbacks).
+        case idleUnload(TimeInterval)
+        /// Dictation: stay loaded while the engine is selected; unload when it is deselected or
+        /// the system reports memory pressure.
+        case whileSelected
+    }
+
+    /// Key-down prewarms when the model has not run for longer than this.
+    static let idlePrewarmThreshold: TimeInterval = 120
 
     // TDT backend (Parakeet Ultra, multilingual)
     private var asrManager: AsrManager?
@@ -52,9 +66,26 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private let vocabularyTerms: @Sendable () -> [String]
     private var modelsDirectory: URL
     private let log = Logger(subsystem: AppConfig.bundleIdentifier, category: "Parakeet")
-    // Idle unload after inactivity to balance memory and reliability
+    // Idle unload after inactivity (`.idleUnload`, or `.whileSelected` while not selected).
     private var idleUnloadTask: Task<Void, Never>?
-    private let idleSeconds: TimeInterval = 300 // 5 minutes
+    private let residency: Residency
+    private var idleSeconds: TimeInterval {
+        if case .idleUnload(let seconds) = residency { return seconds }
+        return 300
+    }
+    // Dictation residency (`.whileSelected`). Every unload bumps `residencyGeneration`; a
+    // background load or prewarm that started under an older generation never keeps the
+    // engine loaded.
+    private var isSelected = false
+    private var memoryPressureHold = false
+    private var residencyGeneration = 0
+    private var preloadTask: Task<Void, Never>?
+    private var preloadKey: (generation: Int, kind: ParakeetModelKind)?
+    private var prewarmTask: Task<Void, Never>?
+    private(set) var lastInferenceAt: TimeInterval?
+    private let padsInput: Bool
+    private let isInstalled: @Sendable (ParakeetModelKind) -> Bool
+    private let prewarmRunner: PrewarmRunner?
     // Coalesce model loading to avoid duplicate work/logs. `loadGeneration`
     // identifies the registered load so only its owner clears it.
     private var loadTask: Task<Void, Error>?
@@ -74,14 +105,28 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // tests do, so their output is consistently boosted.
     private let waitsForVocabularyModel: Bool
 
+    /// - Parameters:
+    ///   - residency: dictation uses `.whileSelected`; everything else unloads when idle.
+    ///   - padsInput: pad audio with trailing silence before decoding (dictation only; see
+    ///     `ParakeetInputPadding`).
     init(
         modelsDirectory: URL? = nil,
         waitsForVocabularyModel: Bool = false,
+        residency: Residency = .idleUnload(300),
+        padsInput: Bool = false,
         boostingEnabled: @escaping @Sendable () -> Bool = { ParakeetVocabularyBoosting.isEnabled() },
         vocabularyTerms: @escaping @Sendable () -> [String] = { ParakeetVocabularyBoosting.currentTerms() },
-        backendLoader: BackendLoader? = nil
+        isInstalled: @escaping @Sendable (ParakeetModelKind) -> Bool = { kind in
+            ParakeetManager.missingFiles(kind.requiredFiles, in: ParakeetManager.modelDirectory(for: kind)).isEmpty
+        },
+        backendLoader: BackendLoader? = nil,
+        prewarmRunner: PrewarmRunner? = nil
     ) {
         self.backendLoader = backendLoader
+        self.residency = residency
+        self.padsInput = padsInput
+        self.isInstalled = isInstalled
+        self.prewarmRunner = prewarmRunner
         if let dir = modelsDirectory {
             self.modelsDirectory = dir
         } else {
@@ -98,11 +143,18 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         ParakeetVocabularyBoosting.termsToBoost(enabled: boostingEnabled(), terms: vocabularyTerms())
     }
 
-    // Public warm-up to preload models on recording start
+    // Public warm-up to preload models on recording start (key-down). Loads the model if it is
+    // not resident and prewarms it when it has not run for `idlePrewarmThreshold`, alongside
+    // capture.
     func warmUp() async {
+        memoryPressureHold = false
         do {
             let kind = preferredKind()
+            let wasResident = isResident()
             try await ensureModelsLoaded(kind: kind)
+            if !wasResident || isIdle(now: DictationClock.now()) {
+                await prewarm(generation: residencyGeneration)
+            }
             if kind == .unified, let mgr = unifiedManager {
                 // Load the CTC model and configure boosting while the user is
                 // still speaking. Preferences are re-read after the (slow) CTC
@@ -120,6 +172,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     private func scheduleIdleUnload() {
         idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+        // A selected dictation engine stays resident until deselected or memory pressure.
+        if residency == .whileSelected, isSelected, !memoryPressureHold { return }
         idleUnloadTask = Task { [weak self, idleSeconds] in
             // Sleep for idle window; cancel will abort
             try? await Task.sleep(nanoseconds: UInt64(idleSeconds * 1_000_000_000))
@@ -129,10 +184,19 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     private func performIdleUnload() async {
+        await unloadModels(reason: "idle timeout \(Int(idleSeconds))s")
+    }
+
+    /// Releases both backends. Bumps the residency generation first, so any background load or
+    /// prewarm already in flight cannot keep or bring back the engine.
+    private func unloadModels(reason: String) async {
+        residencyGeneration += 1
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
         let hadModels = (asrManager != nil) || (unifiedManager != nil)
         if hadModels {
-            log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
-            AppLog.dictation.log("[Parakeet] idle unload")
+            log.notice("[Parakeet] Unloading models: \(reason, privacy: .public)")
+            AppLog.dictation.log("[Parakeet] unload reason=\(reason, privacy: .public)")
         }
         if let mgr = asrManager {
             await mgr.cleanup()
@@ -141,6 +205,149 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         // UnifiedAsrManager releases its CoreML models when deallocated.
         unifiedManager = nil
         if hadModels { loadedKind = nil }
+    }
+
+    // MARK: - Dictation residency
+
+    /// Selected: load the chosen backend in the background (coalesced) and run one silent
+    /// prewarm after loading. Deselected: unload. Also re-run after a Unified/Ultra change.
+    func setSelected(_ selected: Bool) async {
+        guard residency == .whileSelected else { return }
+        let wasSelected = isSelected
+        isSelected = selected
+        if selected {
+            ensureResidentInBackground()
+        } else if wasSelected {
+            preloadTask = nil
+            preloadKey = nil
+            await unloadModels(reason: "engine deselected")
+        }
+    }
+
+    /// System memory-pressure warning: drop the model. The next dictation loads it again.
+    func handleMemoryPressure() async {
+        guard residency == .whileSelected else { return }
+        memoryPressureHold = true
+        preloadTask = nil
+        preloadKey = nil
+        await unloadModels(reason: "memory pressure")
+    }
+
+    private func ensureResidentInBackground() {
+        guard isSelected, !memoryPressureHold else { return }
+        let kind = preferredKind()
+        let generation = residencyGeneration
+        if preloadTask != nil, let key = preloadKey, key.generation == generation, key.kind == kind {
+            return // already loading this backend for this generation
+        }
+        preloadKey = (generation, kind)
+        preloadTask = Task { [weak self] in
+            await self?.runPreload(kind: kind, generation: generation)
+        }
+    }
+
+    private func runPreload(kind: ParakeetModelKind, generation: Int) async {
+        defer {
+            if let key = preloadKey, key.generation == generation, key.kind == kind {
+                preloadTask = nil
+                preloadKey = nil
+            }
+        }
+        guard isInstalled(kind) else {
+            AppLog.dictation.log("[Parakeet] background load skipped: \(kind.rawValue, privacy: .public) not installed")
+            return
+        }
+        let wasResident = loadedKind == kind && isLoaded(kind)
+        let started = DictationClock.now()
+        do {
+            try await ensureModelsLoaded(kind: kind)
+        } catch {
+            AppLog.dictation.error("[Parakeet] background load failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        guard generation == residencyGeneration, isSelected, !memoryPressureHold else {
+            // Deselected or under memory pressure while loading: never bring the engine back.
+            if !isSelected || memoryPressureHold {
+                await unloadModels(reason: "late background load")
+            }
+            return
+        }
+        if !wasResident {
+            let loadMs = Int((DictationClock.now() - started) * 1_000)
+            AppLog.dictation.log("[Parakeet] background load done kind=\(kind.rawValue, privacy: .public) loadMs=\(loadMs, privacy: .public)")
+            await prewarm(generation: generation)
+        }
+    }
+
+    private func isIdle(now: TimeInterval) -> Bool {
+        guard let lastInferenceAt else { return true }
+        return now - lastInferenceAt > Self.idlePrewarmThreshold
+    }
+
+    /// One silent decode on the resident backend, coalesced, and serialised with real decoding
+    /// through the boosting coordinator. Skipped if an unload happened since `generation`.
+    private func prewarm(generation: Int) async {
+        if let inFlight = prewarmTask {
+            await inFlight.value
+            return
+        }
+        let task = Task { await self.runPrewarm(generation: generation) }
+        prewarmTask = task
+        await task.value
+        prewarmTask = nil
+    }
+
+    private func runPrewarm(generation: Int) async {
+        guard generation == residencyGeneration, let kind = loadedKind, isLoaded(kind) else { return }
+        let started = DictationClock.now()
+        let runner = prewarmRunner
+        switch kind {
+        case .unified:
+            guard let mgr = unifiedManager else { return }
+            await boosting.exclusive {
+                if let runner { await runner(kind); return }
+                guard let buffer = Self.silentPrewarmBuffer() else { return }
+                _ = try? await mgr.transcribe(buffer)
+            }
+        case .ultra:
+            guard let mgr = asrManager else { return }
+            await boosting.exclusive {
+                if let runner { await runner(kind); return }
+                guard let buffer = Self.silentPrewarmBuffer() else { return }
+                var state = TdtDecoderState.make(decoderLayers: await mgr.decoderLayerCount)
+                _ = try? await mgr.transcribe(buffer, decoderState: &state, language: nil)
+            }
+        }
+        lastInferenceAt = DictationClock.now()
+        let prewarmMs = Int((DictationClock.now() - started) * 1_000)
+        AppLog.dictation.log("[Parakeet] prewarm done kind=\(kind.rawValue, privacy: .public) prewarmMs=\(prewarmMs, privacy: .public)")
+    }
+
+    /// One second of digital silence at 16 kHz.
+    private static func silentPrewarmBuffer() -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000),
+              let samples = buffer.floatChannelData?[0] else { return nil }
+        for index in 0..<16_000 { samples[index] = 0 }
+        buffer.frameLength = 16_000
+        return buffer
+    }
+
+    var isSelectedForTesting: Bool { isSelected }
+
+    func prewarmForTesting() async {
+        await prewarm(generation: residencyGeneration)
+    }
+
+    func waitForBackgroundWorkForTesting() async {
+        for _ in 0..<10 {
+            guard let task = preloadTask ?? prewarmTask else { return }
+            await task.value
+        }
+    }
+
+    func setLastInferenceForTesting(_ uptime: TimeInterval?) {
+        lastInferenceAt = uptime
     }
 
     /// Whether the model a transcription with `settings` would use is loaded right now.
@@ -282,11 +489,17 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             let (text, outcome) = try await boosting.run(on: mgr, desired: desired) {
                 try await self.transcribeUnified(mgr: mgr, fileURL: fileURL)
             }
+            lastInferenceAt = DictationClock.now()
             handleBoostingOutcome(outcome, manager: mgr)
             return text
         case .ultra:
             guard let mgr = asrManager else { throw ProviderError.notImplemented }
-            return try await transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
+            // Serialised with the prewarm decode, which goes through the same lock.
+            let text = try await boosting.exclusiveThrowing {
+                try await self.transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
+            }
+            lastInferenceAt = DictationClock.now()
+            return text
         }
     }
 
@@ -393,15 +606,25 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     /// fragile (threw `_GenericObjCError`) on real recordings.
     private func transcribeUnified(mgr: UnifiedAsrManager, fileURL: URL) async throws -> String {
         AppLog.dictation.log("[Parakeet] Unified ASR begin file=\(fileURL.lastPathComponent)")
-        let file = try AVAudioFile(forReading: fileURL)
-        let frameCount = AVAudioFrameCount(file.length)
-        guard frameCount > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
-            log.notice("[Parakeet] Unified: empty/invalid audio file frames=\(file.length, privacy: .public)")
-            AppLog.dictation.log("[Parakeet] Unified: empty/invalid audio file")
-            return ""
+        let buffer: AVAudioPCMBuffer
+        if padsInput {
+            guard let padded = try ParakeetInputPadding.paddedBuffer(contentsOf: fileURL) else {
+                AppLog.dictation.log("[Parakeet] Unified: empty/invalid audio file")
+                return ""
+            }
+            buffer = padded
+        } else {
+            let file = try AVAudioFile(forReading: fileURL)
+            let frameCount = AVAudioFrameCount(file.length)
+            guard frameCount > 0,
+                  let unpadded = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
+                log.notice("[Parakeet] Unified: empty/invalid audio file frames=\(file.length, privacy: .public)")
+                AppLog.dictation.log("[Parakeet] Unified: empty/invalid audio file")
+                return ""
+            }
+            try file.read(into: unpadded)
+            buffer = unpadded
         }
-        try file.read(into: buffer)
         let result: String
         do {
             result = try await mgr.transcribe(buffer)
@@ -431,11 +654,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         do {
             let decoderLayers = await mgr.decoderLayerCount
             var decoderState = TdtDecoderState.make(decoderLayers: decoderLayers)
-            result = try await mgr.transcribe(
-                fileURL,
-                decoderState: &decoderState,
-                language: Self.fluidLanguage(for: settings.language)
-            )
+            let language = Self.fluidLanguage(for: settings.language)
+            if padsInput, let padded = try ParakeetInputPadding.paddedBuffer(contentsOf: fileURL) {
+                result = try await mgr.transcribe(padded, decoderState: &decoderState, language: language)
+            } else {
+                result = try await mgr.transcribe(fileURL, decoderState: &decoderState, language: language)
+            }
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -572,8 +796,19 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 }
 #else
 actor ParakeetTranscriptionProvider: TranscriptionProvider {
-    init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {}
+    enum Residency: Sendable, Equatable {
+        case idleUnload(TimeInterval)
+        case whileSelected
+    }
+    init(
+        modelsDirectory: URL? = nil,
+        waitsForVocabularyModel: Bool = false,
+        residency: Residency = .idleUnload(300),
+        padsInput: Bool = false
+    ) {}
     func isResident(for settings: TranscriptionSettings? = nil) -> Bool { false }
+    func setSelected(_ selected: Bool) async {}
+    func handleMemoryPressure() async {}
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         throw ProviderError.notImplemented
     }

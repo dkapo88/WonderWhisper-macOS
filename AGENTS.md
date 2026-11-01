@@ -12,6 +12,38 @@ WonderWhisper stores SwiftUI sources under `WonderWhisper/`, with views, view mo
 ### Architecture Overview
 Core components: `DictationViewModel` (orchestrates recording → transcription → OpenRouter → insertion), `MeetingCoordinator` (orchestrates dual-source meeting capture, streaming transcription, notes, and export), `HistoryStore` & `ConversationHistoryStore` (file-based JSON persistence), the `TranscriptionProvider` protocol (`ParakeetTranscriptionProvider`, `QwenASRTranscriptionProvider`, cloud providers), and service layers (`AudioRecorder`, `ScreenContextService`, `InsertionService`, `PromptHotkeyManager`). `HotkeyManager` retains only the Paste Last Carbon shortcut and shared shortcut value types. Storage paths remain under `~/Library/Application Support/HermesWhisper/` for compatibility with existing history, meeting audio, screenshots, and conversation state. The bundle identifier and Keychain service likewise retain their Hermes-era values so the WonderWhisper rebrand does not reset macOS permissions, settings, or credentials. API keys are stored in macOS Keychain via `KeychainService`.
 
+### Dictation Pipeline Timing and Local Dictation
+Each dictation logs one `[Timing]` line (`DictationStageTimings`): physical key-down, hotkey
+callback, recorder started, key-up, capture stopped, audio prep, ASR, vocabulary, LLM, paste issued
+("issued", not verified insertion) and key-up to paste issued, plus engine id, audio length and
+whether Parakeet was resident. It never carries transcript text. Hotkey times come from the key
+event (`DictationClock`), so a chord-guarded modifier shows its 160 ms guard.
+
+A hotkey dictation is a `DictationSessionMachine` session (starting, recording, stopping): the
+hotkey's prompt and ASR/LLM settings are resolved synchronously into a `DictationConfiguration`
+and applied with the recorder start in one controller step; the selected-text check runs while
+recording; a release during startup stops the session once recording; repeated stops finalise
+once. Recording continues 200 ms after release or a toggle stop (`releaseTail`); Escape or cancel
+during that tail stops at once and inserts nothing. In `finalizeTranscript`, after the recording is
+complete, `DictationSilenceGate` (30 ms DC-removed RMS windows every 15 ms, loudest below -50 dBFS
+= silent) skips ASR, LLM and insertion for file engines and closes Soniox/xAI streams without a
+fallback; the backup WAV still goes to history. The file-stable poll runs only when the recorder's
+finish delegate did not report success; the 80 ms insertion settle runs only when the target app
+had to be activated.
+
+Dictation uses one `ParakeetTranscriptionProvider` (`residency: .whileSelected`,
+`padsInput: true`), shared by every Parakeet model id and the controller's initial transcriber.
+While Parakeet is the engine (or a prompt's voice override) the selected backend loads in the
+background at launch and after a Unified/Ultra switch, followed by one silent prewarm decode
+serialised with real decoding through `ParakeetBoostingCoordinator`; it unloads on an engine switch
+or a system memory-pressure warning, and a generation counter stops a late load or prewarm from
+bringing it back. Key-down prewarms again after 2 idle minutes. Audio sent to Unified and Ultra is
+padded to `max(n, 24_000) + 6_400` samples at 16 kHz (`ParakeetInputPadding`); the saved recording
+is unchanged. Meeting recovery and Qwen fallbacks keep their own idle-unload instances.
+
+Debug builds launched under another bundle identifier (QA builds, e.g. `...hermeswhisper.qa`) keep
+their storage (`$WW_QA_ROOT` or `$TMPDIR/WonderWhisper-QA`) and Keychain items apart from the user's.
+
 ### Microphone Selection
 The app includes persistent microphone priority ordering in **Settings → Audio**. Users can choose
 the system default or rank remembered microphones; unavailable choices fall through to the
@@ -307,6 +339,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-01: Faster, more complete local dictation (issue #8, phase 1): stage timing log, Parakeet
+  kept warm while selected with a background load and prewarm, session-safe faster start without
+  the 100 ms sleep, 200 ms release tail, Parakeet input padding, silence gate, and narrower waits.
 - 2026-10-23: Released 2026-10-23 with automatic gain for quiet meeting microphones and the gentler noise gate.
 - 2026-10-23: Fixed meeting transcripts going quiet on a quiet microphone: automatic gain on the
   meeting microphone, input volume raised at meeting start, and the noise gate turns audio down

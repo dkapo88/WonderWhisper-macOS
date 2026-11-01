@@ -5,6 +5,23 @@ import AVFoundation
 import OSLog
 import os.signpost
 
+/// Everything a dictation needs from its prompt, resolved before it starts and applied in one
+/// step, so a session can never mix the previous prompt's provider or settings with its own.
+struct DictationConfiguration {
+    var transcriber: TranscriptionProvider?
+    var transcriberSettings: TranscriptionSettings
+    var llm: OpenRouterLLMProvider
+    var llmSettings: LLMSettings
+    var llmEnabled: Bool
+    var screenContextEnabled: Bool
+    var screenContextCaptureMode: ScreenContextCaptureMode
+    var clipboardContextEnabled: Bool
+    var selectedTextEnabled: Bool
+    var activeTextFieldEnabled: Bool
+    var screenImageEnabled: Bool
+    var autoMuteEnabled: Bool
+}
+
 actor DictationController {
     private let spLog = OSLog(subsystem: AppConfig.bundleIdentifier, category: "Dictation-SP")
     enum State: Equatable { case idle, recording, transcribing, processing, inserting, error(String) }
@@ -23,12 +40,12 @@ actor DictationController {
     }
     private(set) var state: State = .idle
 
-    private let recorder: AudioRecorder
+    private let recorder: DictationAudioCapturing
     private var transcriber: TranscriptionProvider
     private var transcriberSettings: TranscriptionSettings
     private var llm: OpenRouterLLMProvider
     private var llmSettings: LLMSettings
-    private let inserter: InsertionService
+    private let inserter: DictationTextInserting
     private let screenContext: ScreenContextService
     private let history: HistoryStore?
     private let conversationHistoryStore: ConversationHistoryStore
@@ -73,16 +90,30 @@ actor DictationController {
     private var stageTimings: DictationStageTimings?
     private var timingSessionCounter = 0
 
-    init(recorder: AudioRecorder,
+    /// Recording keeps running this long after a release or toggle stop, so the last word is not
+    /// clipped. Cancel (Escape) during the tail stops at once.
+    static let defaultReleaseTail: TimeInterval = 0.2
+    private let releaseTail: TimeInterval
+    private var releaseTailTask: Task<Void, Error>?
+    /// Set while a stop is finishing, so repeated stop requests finalise once.
+    private var stopInProgress = false
+    /// Bumped by every start and cancel; a stop that resumes into a newer epoch does nothing.
+    private var sessionEpoch = 0
+    /// True when the recorder's finish delegate reported success for the current recording.
+    private var recordingFinishedCleanly = false
+
+    init(recorder: DictationAudioCapturing,
          transcriber: TranscriptionProvider,
          transcriberSettings: TranscriptionSettings,
          llm: OpenRouterLLMProvider,
          llmSettings: LLMSettings,
-         inserter: InsertionService,
+         inserter: DictationTextInserting,
          screenContext: ScreenContextService = ScreenContextService(),
          history: HistoryStore? = nil,
-         fileFallbackTranscriber: TranscriptionProvider? = nil) {
+         fileFallbackTranscriber: TranscriptionProvider? = nil,
+         releaseTail: TimeInterval = DictationController.defaultReleaseTail) {
         self.recorder = recorder
+        self.releaseTail = releaseTail
         self.transcriber = transcriber
         self.transcriberSettings = transcriberSettings
         self.llm = llm
@@ -107,11 +138,16 @@ actor DictationController {
     func toggle(
         userPrompt: String,
         activePrompt: PromptConfiguration? = nil,
-        trigger: DictationTriggerTimes? = nil
+        trigger: DictationTriggerTimes? = nil,
+        configuration: DictationConfiguration? = nil
     ) async {
         self.currentPrompt = activePrompt
         switch state {
         case .idle, .error:
+            // Apply the session's own configuration before anything else, in one step.
+            if let configuration { await apply(configuration) }
+            sessionEpoch += 1
+            recordingFinishedCleanly = false
             timingSessionCounter += 1
             var timings = DictationStageTimings(session: timingSessionCounter, engine: transcriberSettings.model)
             timings.physicalKeyDown = trigger?.keyEvent
@@ -220,6 +256,7 @@ actor DictationController {
                 state = .error("Recording start failed: \(error.localizedDescription)")
             }
         case .recording:
+            guard !stopInProgress else { return }
             markStopRequested(trigger)
             await stopAndProcess(userPrompt: userPrompt)
         default:
@@ -241,18 +278,35 @@ actor DictationController {
     private func finalizeTranscript(recordingFileURL: URL?, settings: TranscriptionSettings) async throws -> String {
         let streamer = activeStreamingProvider ?? transcriber
 
-        // Non-streaming providers transcribe the recorded file directly. Errors here propagate
-        // to the caller's error handler exactly as before (there is nothing to recover from).
         let isStreamingProvider = streamer is SonioxStreamingProvider
             || streamer is XAIStreamingTranscriptionProvider
+
+        // Audio prep: make sure the recording is complete, then the silence gate. A silent clip
+        // is never transcribed: no ASR, no fallback, no LLM, no insertion. The backup recording is
+        // kept (it goes to history) so it can still be recovered.
+        if let fileURL = recordingFileURL {
+            let prepStart = DictationClock.now()
+            await waitForCompleteRecording(fileURL)
+            let analysis = DictationSilenceGate.analyze(fileURL: fileURL)
+            stageTimings?.audioPrep = DictationClock.now() - prepStart
+            if let analysis, analysis.isSilent {
+                let level = analysis.loudestWindowDBFS
+                AppLog.dictation.log("Silence gate: loudest window \(level, format: .fixed(precision: 1), privacy: .public) dBFS; skipping transcription")
+                stageTimings?.outcome = "silent"
+                if isStreamingProvider {
+                    // Close the stream (normal closure) and discard whatever it had.
+                    await abortStreamer(streamer)
+                }
+                return ""
+            }
+        }
+
+        // Non-streaming providers transcribe the recorded file directly. Errors here propagate
+        // to the caller's error handler exactly as before (there is nothing to recover from).
         guard isStreamingProvider else {
             guard let fileURL = recordingFileURL else {
                 throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
             }
-            AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
-            let prepStart = DictationClock.now()
-            await Self.waitUntilFileIsStable(fileURL)
-            stageTimings?.audioPrep = DictationClock.now() - prepStart
             AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(settings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
             stageTimings?.modelWarmAtASR = await modelResidency(settings: settings)
             let asrStart = DictationClock.now()
@@ -295,7 +349,7 @@ actor DictationController {
             }
             let recoverySettings = Self.fileRecoverySettings(from: settings)
             AppLog.dictation.log("Streaming empty/punctuation-only; recovering via file transcription model=\(recoverySettings.model, privacy: .public)")
-            await Self.waitUntilFileIsStable(fileURL)
+            await waitForCompleteRecording(fileURL)
             let recovered: String?
             do {
                 recovered = try await fallback.transcribe(fileURL: fileURL, settings: recoverySettings)
@@ -401,8 +455,15 @@ actor DictationController {
         else if let xaiStreaming = streamer as? XAIStreamingTranscriptionProvider { await xaiStreaming.abort() }
     }
 
-    private func stopAndProcess(userPrompt: String) async {
-        guard state == .recording else { return }
+    private func stopAndProcess(
+        userPrompt: String,
+        onCaptureStopped: (@Sendable () async -> Void)? = nil
+    ) async {
+        guard state == .recording, !stopInProgress else { return }
+        stopInProgress = true
+        defer { stopInProgress = false }
+        // Keep recording through the release tail; a cancel during it ends the session here.
+        guard await recordReleaseTail() else { return }
         AppLog.dictation.log("Stop requested provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         // Stop live streaming if active
         AppLog.dictation.log("Stopping streaming recorder")
@@ -411,8 +472,11 @@ actor DictationController {
         // and provide a fast, low-latency final transcript.
 
         AppLog.dictation.log("Stopping file recorder")
-        let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
+        let capture = await recorder.stopRecordingAndWaitForFinish() // Always have file as backup
+        let recordingFileURL = capture.url
+        recordingFinishedCleanly = capture.finishedSuccessfully
         stageTimings?.captureStopped = DictationClock.now()
+        await onCaptureStopped?()
         if let recordingFileURL {
             AppLog.dictation.log("File recorder finalized file=\(recordingFileURL.lastPathComponent, privacy: .public)")
         } else {
@@ -467,7 +531,7 @@ actor DictationController {
             // Skip LLM and insertion if transcript is still empty after all fallbacks
             if looksEmptyOrPunctuation(transcript) {
                 AppLog.dictation.warning("Transcript empty or punctuation-only; skipping LLM and insertion")
-                stageTimings?.outcome = "empty"
+                if stageTimings?.outcome != "silent" { stageTimings?.outcome = "empty" }
                 state = .idle
                 // Record history entry with empty transcript
                 var appNameHist: String? = nil
@@ -707,6 +771,7 @@ actor DictationController {
     }
 
     private func resetTransientSessionState() {
+        recordingFinishedCleanly = false
         screenContextCaptureTask?.cancel()
         screenContextCaptureTask = nil
         activeStreamingProvider = nil
@@ -756,6 +821,47 @@ actor DictationController {
         }
     }
 
+    // MARK: - Session configuration, release tail, recording completion
+
+    /// Applies a whole configuration in one actor step.
+    func apply(_ configuration: DictationConfiguration) async {
+        if let provider = configuration.transcriber { transcriber = provider }
+        transcriberSettings = configuration.transcriberSettings
+        llm = configuration.llm
+        llmSettings = configuration.llmSettings
+        llmEnabled = configuration.llmEnabled
+        screenContextEnabled = configuration.screenContextEnabled
+        screenContextCaptureMode = configuration.screenContextCaptureMode
+        updateClipboardContextEnabled(configuration.clipboardContextEnabled)
+        await updateSelectedTextEnabled(configuration.selectedTextEnabled)
+        await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
+        screenImageEnabled = configuration.screenImageEnabled
+        autoMuteEnabled = configuration.autoMuteEnabled
+    }
+
+    /// Waits out the release tail while still recording. False when the session was cancelled
+    /// (or replaced) during the tail, in which case the caller must do nothing more.
+    private func recordReleaseTail() async -> Bool {
+        let epoch = sessionEpoch
+        if releaseTail > 0 {
+            let nanoseconds = UInt64(releaseTail * 1_000_000_000)
+            let tail = Task { try await Task.sleep(nanoseconds: nanoseconds) }
+            releaseTailTask = tail
+            let completed = (try? await tail.value) != nil
+            if releaseTailTask == tail { releaseTailTask = nil }
+            guard completed else { return false }
+        }
+        return epoch == sessionEpoch && state == .recording
+    }
+
+    /// The recorder's finish delegate already reported a complete file; only the safety-timeout
+    /// path (or an error) still polls for the file size to settle.
+    private func waitForCompleteRecording(_ url: URL) async {
+        if recordingFinishedCleanly { return }
+        AppLog.dictation.log("Waiting for stable file file=\(url.lastPathComponent, privacy: .public)")
+        await Self.waitUntilFileIsStable(url)
+    }
+
     // MARK: - Stage timings
 
     /// Records when the stop was asked for: the key release (or toggle press) event time.
@@ -790,28 +896,37 @@ actor DictationController {
     }
 
     // Explicit controls for UI actions
+    /// Stops after the release tail and processes. `onCaptureStopped` runs once the recorder has
+    /// stopped (before transcription), not at all if the session is cancelled during the tail.
     func finish(
         userPrompt: String,
         activePrompt: PromptConfiguration? = nil,
-        trigger: DictationTriggerTimes? = nil
+        trigger: DictationTriggerTimes? = nil,
+        onCaptureStopped: (@Sendable () async -> Void)? = nil
     ) async {
+        guard state == .recording, !stopInProgress else { return }
         self.currentPrompt = activePrompt
-        if state == .recording { markStopRequested(trigger) }
-        await stopAndProcess(userPrompt: userPrompt)
+        markStopRequested(trigger)
+        await stopAndProcess(userPrompt: userPrompt, onCaptureStopped: onCaptureStopped)
     }
 
     func finishTranscriptionOnly(
         activePrompt: PromptConfiguration? = nil,
         trigger: DictationTriggerTimes? = nil
     ) async throws -> TranscriptionOnlyResult? {
+        guard state == .recording, !stopInProgress else { return nil }
         self.currentPrompt = activePrompt
-        guard state == .recording else { return nil }
         markStopRequested(trigger)
+        stopInProgress = true
+        defer { stopInProgress = false }
+        guard await recordReleaseTail() else { return nil }
 
         AppLog.dictation.log("Stop requested for transcription-only flow provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         recorder.stopStreamingPCM16()
 
-        let recordingFileURL = await recorder.stopRecordingAndWait()
+        let capture = await recorder.stopRecordingAndWaitForFinish()
+        let recordingFileURL = capture.url
+        recordingFinishedCleanly = capture.finishedSuccessfully
         stageTimings?.captureStopped = DictationClock.now()
         if autoMuteEnabled {
             SystemAudioController.shared.unmuteSystemAudioAndWait()
@@ -880,6 +995,10 @@ actor DictationController {
     func cancel() async {
         // Cancel only applies to active recording; do not emit any output or history
         guard state == .recording else { return }
+        // Ends a release tail in progress too: its stop resumes into a newer epoch and returns.
+        sessionEpoch += 1
+        releaseTailTask?.cancel()
+        releaseTailTask = nil
         // Stop live mic streaming if active
         recorder.stopStreamingPCM16()
         // Abort the active streaming provider session immediately (best-effort)
@@ -917,7 +1036,7 @@ actor DictationController {
         }
         // Only add a single trailing space; no other formatting
         output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
-        inserter.insert(output)
+        inserter.insert(output, targetProcessIdentifier: nil)
         state = .idle
     }
 
