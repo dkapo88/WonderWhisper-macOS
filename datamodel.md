@@ -384,7 +384,7 @@ erDiagram
 
 | Case | Description | Underlying Model |
 |------|-------------|------------------|
-| `parakeet-local` | On-device Parakeet Unified (English) or Ultra (multilingual) | `parakeet-local` |
+| `parakeet-local` | On-device Parakeet: Bark Clean (English, removes fillers), Unified (English) or Ultra (multilingual), per `parakeet.version` | `parakeet-local` |
 | `qwen-local` | On-device Qwen3-ASR 0.6B (MLX 4-bit), offline file decode | `qwen-local` |
 | `groq-streaming` | Groq Whisper Large V3 Turbo over HTTPS chunks | `whisper-large-v3-turbo` (via Groq) |
 | `openrouter-transcription` | OpenRouter speech-to-text endpoint for cloud voice models | `openai/gpt-4o-mini-transcribe` by default |
@@ -616,8 +616,11 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `clipboardContext.enabled` | Bool | Clipboard context enabled |
 | `vocab.custom` | String | Custom vocabulary list |
 | `vocab.spelling` | String | Text replacement rules |
-| `parakeet.version` | String | Parakeet model (`unified` default or `ultra`); legacy `v3` reads as `ultra`. Synced as a string for cross-version compatibility. |
-| `parakeet.vocabularyBoosting.enabled` | Bool | Boost Vocabulary terms with CTC rescoring for Parakeet Unified dictation and meetings (default true). Synced through iCloud as a bool; Ultra does not use boosting. |
+| `parakeet.version` | String | Dictation Parakeet model: `bark-clean`, `unified` or `ultra`; legacy `v3` reads as `ultra`, unknown values as `unified`. Unset means `parakeet.unsetDefault` when present (existing installs: `unified`), else `bark-clean` (new installs). Synced as a string for cross-version compatibility; never written by the launch migration. Meetings always use Unified. |
+| `parakeet.unsetDefault` | String | Per-Mac, not synced. What an unset `parakeet.version` means on an install that ran a version before Bark Clean became the default: `unified`. Written once by the launch migration (`ParakeetModelDefaults`); absent on new installs. |
+| `parakeet.barkCleanDefault.migrated` | Bool | Per-Mac, not synced. Set once the Bark Clean default migration has run on this Mac (new or existing install). |
+| `parakeet.barkCleanRecommendation.pending` | Bool | Per-Mac, not synced. Shows the one-time "New recommended model" note in Settings → Transcription; set for existing installs not on Bark Clean, cleared by Dismiss or by choosing Bark Clean. |
+| `parakeet.vocabularyBoosting.enabled` | Bool | Boost Vocabulary terms with CTC rescoring for Parakeet Bark Clean and Unified dictation and for meetings (default true). Synced through iCloud as a bool; Ultra does not use boosting. |
 | `qwen.injectVocabulary` | Bool | Inject Vocabulary-tab terms into Qwen decoder context (default true). Post-decode spelling correction still runs when this is off. |
 | `audio.input.uid` | String | Preferred microphone UID; absent means follow the macOS system default |
 | `audio.input.priorities` | Data | JSON-encoded ordered `AudioDeviceInfo[]` with stable UIDs and last-known names; the first available device is used before falling back to the system default |
@@ -856,6 +859,12 @@ struct AppConfig {
 - After updates: adjust migrations (if applicable), update tests, and verify any storage paths referenced in code and in AGENTS.md.
 
 ### Changelog
+
+- **v1.27 (November 2, 2026)**: Added Bark Clean (`parakeet.version` = `bark-clean`) as the
+  new-install dictation default. Existing installs keep their model: the one-time launch migration
+  pins the old default in the unsynced `parakeet.unsetDefault` instead of writing the synced
+  `parakeet.version`, and flags `parakeet.barkCleanRecommendation.pending`
+  (`parakeet.barkCleanDefault.migrated` marks it done). No schema change for sync.
 
 - **v1.26 (October 8, 2026)**: Added `parakeet.vocabularyBoosting.enabled` to the iCloud
   allowlist as a bool. No schema migration; older apps preserve this key as unknown. Documented
@@ -1150,7 +1159,7 @@ protocol TranscriptionProvider {
   - `OpenRouterTranscriptionProvider` (OpenRouter speech-to-text JSON API)
   - `XAITranscriptionProvider` (xAI Grok Speech-to-Text REST API)
   - `XAIStreamingTranscriptionProvider` (xAI real-time Speech-to-Text)
-  - `ParakeetTranscriptionProvider` (local Unified or V3 on-device)
+  - `ParakeetTranscriptionProvider` (local Bark Clean, Unified or Ultra on-device)
   - `SonioxStreamingProvider` (Soniox V5 real-time streaming)
 
 - **LLM processing**:
