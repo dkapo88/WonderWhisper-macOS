@@ -36,13 +36,18 @@ struct ParakeetPaddingE2ETests {
         let withPadding = try await Self.transcribe(padded, model: model, wav: wav)
         let without = try await Self.transcribe(plain, model: model, wav: wav)
         let missing = Self.missingWords(reference: phrase, output: withPadding)
-        let missingWithout = Self.missingWords(reference: phrase, output: without)
-        report.append("\(model) short \(String(format: "%.2f", Self.duration(wav)))s \"\(phrase)\" "
-          + "padded=\"\(withPadding)\" unpadded=\"\(without)\" paddedMissing=\(missing) unpaddedMissing=\(missingWithout)")
-        // Synthetic speech this short can be misheard either way; padding must never lose words.
-        if missing.count > missingWithout.count {
-          failures.append("\(model) short \"\(phrase)\" padded lost \(missing)")
+        // Reference words the unpadded decode got right but the padded one lost.
+        let lost = Self.words(phrase).filter {
+          Self.words(without).contains($0) && !Self.words(withPadding).contains($0)
         }
+        report.append("\(model) short \(String(format: "%.2f", Self.duration(wav)))s \"\(phrase)\" "
+          + "padded=\"\(withPadding)\" unpadded=\"\(without)\" paddedMissing=\(missing) lostByPadding=\(lost)")
+        // Synthetic speech this short can be misheard either way; padding must never lose a word
+        // the unpadded decode heard, and must always produce text.
+        if withPadding.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          failures.append("\(model) short \"\(phrase)\" padded output empty")
+        }
+        if !lost.isEmpty { failures.append("\(model) short \"\(phrase)\" padded lost \(lost)") }
       }
 
       // Speech ends at 14.8 s, so the padded input (15.2 s) crosses the 15 s window.

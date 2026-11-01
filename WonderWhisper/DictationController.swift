@@ -168,16 +168,21 @@ actor DictationController {
                 state = .recording
                 timings.recorderStarted = DictationClock.now()
                 stageTimings = timings
-                // Checked before the warm-up below starts, so it says whether the model was
-                // already resident when this dictation began.
-                stageTimings?.modelWarmAtStart = await modelResidency(settings: transcriberSettings)
 
                 let recordingStart = Date()
                 currentRecordingURL = url
 
-                // If Parakeet is active, preload models in the background to hide cold-start latency
+                // If Parakeet is active, preload models in the background to hide cold-start latency.
+                // Residency is read first, in the same task, so the timing line says whether the
+                // model was already loaded when this dictation began (no suspension on this path).
                 if let pk = transcriber as? ParakeetTranscriptionProvider {
-                    Task { await pk.warmUp() }
+                    let epoch = sessionEpoch
+                    let settingsAtStart = transcriberSettings
+                    Task {
+                        let resident = await pk.isResident(for: settingsAtStart)
+                        await self.noteModelWarmAtStart(resident, epoch: epoch)
+                        await pk.warmUp()
+                    }
                 }
                 if let qwen = transcriber as? QwenASRTranscriptionProvider {
                     Task { await qwen.warmUp() }
@@ -873,6 +878,11 @@ actor DictationController {
         stageTimings?.keyUp = trigger?.keyEvent ?? trigger?.callback ?? DictationClock.now()
     }
 
+    private func noteModelWarmAtStart(_ resident: Bool, epoch: Int) {
+        guard epoch == sessionEpoch else { return }
+        stageTimings?.modelWarmAtStart = resident
+    }
+
     /// Whether the model the next transcription would use is already loaded (local engines only).
     private func modelResidency(settings: TranscriptionSettings) async -> Bool? {
         if let parakeet = transcriber as? ParakeetTranscriptionProvider {
@@ -917,7 +927,8 @@ actor DictationController {
 
     func finishTranscriptionOnly(
         activePrompt: PromptConfiguration? = nil,
-        trigger: DictationTriggerTimes? = nil
+        trigger: DictationTriggerTimes? = nil,
+        onCaptureStopped: (@Sendable () async -> Void)? = nil
     ) async throws -> TranscriptionOnlyResult? {
         guard state == .recording, !stopInProgress else { return nil }
         self.currentPrompt = activePrompt
@@ -934,6 +945,7 @@ actor DictationController {
         let recordingFileURL = capture.url
         recordingFinishedCleanly = capture.finishedSuccessfully
         stageTimings?.captureStopped = DictationClock.now()
+        await onCaptureStopped?()
         if autoMuteEnabled {
             SystemAudioController.shared.unmuteSystemAudioAndWait()
         }

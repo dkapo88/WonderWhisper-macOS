@@ -148,12 +148,18 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // capture.
     func warmUp() async {
         memoryPressureHold = false
+        let generation = residencyGeneration
         do {
             let kind = preferredKind()
             let wasResident = isResident()
             try await ensureModelsLoaded(kind: kind)
+            // Deselected or under memory pressure while this load ran: never keep the engine.
+            if residency == .whileSelected, generation != residencyGeneration, !isSelected || memoryPressureHold {
+                await unloadModels(reason: "late warm-up load")
+                return
+            }
             if !wasResident || isIdle(now: DictationClock.now()) {
-                await prewarm(generation: residencyGeneration)
+                await prewarm(generation: generation)
             }
             if kind == .unified, let mgr = unifiedManager {
                 // Load the CTC model and configure boosting while the user is
@@ -728,6 +734,20 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         log.notice("[Parakeet] Raw mode samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
         AppLog.dictation.log("[Parakeet] Raw mode: samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")
         
+        // Dictation pads like the other paths: max(n, 1.5 s) + 400 ms of trailing silence.
+        if padsInput {
+            let padded = ParakeetInputPadding.paddedSampleCount(forModelSamples: samples.count)
+            if stats.meanAbs < 0.002 && stats.peak < 0.01 {
+                throw NSError(domain: "Parakeet", code: -1002, userInfo: [NSLocalizedDescriptionKey: "Audio appears near-silent; check microphone and input gain"])
+            }
+            let result = try await transcribeRawSamples(
+                mgr: mgr,
+                samples: samples + [Float](repeating: 0, count: padded - samples.count)
+            )
+            scheduleIdleUnload()
+            return result
+        }
+
         // Validate audio
         if samples.count < 16_000 {
             throw NSError(domain: "Parakeet", code: -1001, userInfo: [NSLocalizedDescriptionKey: "Audio too short for ASR (need >= 1s)"])
@@ -745,13 +765,25 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             finalSamples += [Float](repeating: 0, count: 16_000)
         }
 
+        let text = try await transcribeRawSamples(mgr: mgr, samples: finalSamples)
+
+        // Schedule idle unload instead of immediate cleanup
+        // Immediate cleanup breaks subsequent transcriptions by de-initializing the manager
+        // The idle timeout (60s) provides the same benefits without breaking rapid-fire transcriptions
+        AppLog.dictation.log("[Parakeet] Raw mode: scheduling idle unload (\(Int(self.idleSeconds))s)")
+        scheduleIdleUnload()
+
+        return text
+    }
+
+    private func transcribeRawSamples(mgr: AsrManager, samples: [Float]) async throws -> String {
         // Transcribe without source hint (VoiceInk-style for this pinned API)
         AppLog.dictation.log("[Parakeet] Raw mode: transcribing (no source hint)")
         let result: ASRResult
         do {
             let decoderLayers = await mgr.decoderLayerCount
             var decoderState = TdtDecoderState.make(decoderLayers: decoderLayers)
-            result = try await mgr.transcribe(finalSamples, decoderState: &decoderState)
+            result = try await mgr.transcribe(samples, decoderState: &decoderState)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] Raw mode transcribe error=\(ns.localizedDescription, privacy: .public)")
@@ -762,13 +794,6 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         let preview = result.text.prefix(120)
         log.notice("[Parakeet] Raw mode result length=\(result.text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
         AppLog.dictation.log("[Parakeet] Raw mode: result length=\(result.text.count) preview=\(String(preview))")
-        
-        // Schedule idle unload instead of immediate cleanup
-        // Immediate cleanup breaks subsequent transcriptions by de-initializing the manager
-        // The idle timeout (60s) provides the same benefits without breaking rapid-fire transcriptions
-        AppLog.dictation.log("[Parakeet] Raw mode: scheduling idle unload (\(Int(self.idleSeconds))s)")
-        scheduleIdleUnload()
-        
         return result.text
     }
     

@@ -114,6 +114,25 @@ struct ParakeetResidencyTests {
     #expect(await provider.isResident())
   }
 
+  @Test func aKeyDownLoadAfterMemoryPressureStaysUnloadedWhenDeselectedMeanwhile() async {
+    let gate = Gate()
+    let provider = makeProvider(gate)
+    await provider.setSelected(true)
+    await provider.waitForBackgroundWorkForTesting()
+    await provider.handleMemoryPressure()
+    #expect(await !provider.isResident())
+
+    await gate.hold()
+    let warm = Task { await provider.warmUp() }
+    await waitUntil { await gate.loads.count == 2 }
+    await provider.setSelected(false)
+    await gate.release()
+    await warm.value
+    await provider.waitForBackgroundWorkForTesting()
+    #expect(await !provider.isResident())
+    #expect(await gate.prewarms.count == 1, "only the launch prewarm")
+  }
+
   @Test func deselectingUnloads() async {
     let gate = Gate()
     let provider = makeProvider(gate)

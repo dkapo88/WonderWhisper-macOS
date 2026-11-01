@@ -3411,6 +3411,7 @@ final class DictationViewModel: ObservableObject {
         sessionID: UUID,
         trigger: DictationTriggerTimes? = nil
     ) async {
+        defer { disarmEscapeAfterTail() }
         await MainActor.run {
             self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingFinished(
                 self.hermesResponseWindowStates,
@@ -3418,6 +3419,8 @@ final class DictationViewModel: ObservableObject {
             )
             self.hermesResponseWindowState = self.hermesResponseWindowStates.first
             self.recordingStopInProgress = true
+            // Escape keeps cancelling through the release tail.
+            self.escapeArmedForStop = true
             self.isRecording = false
             self.recordingStartTimestamp = nil
             self.recordingStartInProgress = false
@@ -3427,7 +3430,10 @@ final class DictationViewModel: ObservableObject {
         do {
             guard let result = try await controller.finishTranscriptionOnly(
                 activePrompt: activePrompt,
-                trigger: trigger
+                trigger: trigger,
+                onCaptureStopped: { [weak self] in
+                    await MainActor.run { self?.disarmEscapeAfterTail() }
+                }
             ) else {
                 await MainActor.run {
                     self.activeHermesPromptID = nil
@@ -3521,6 +3527,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func finishCodexRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
+        defer { disarmEscapeAfterTail() }
         let threadID = activeCodexThreadID
         let responseWindowID = activeCodexResponseWindowID
         await MainActor.run {
@@ -3532,6 +3539,8 @@ final class DictationViewModel: ObservableObject {
                     )
             }
             self.recordingStopInProgress = true
+            // Escape keeps cancelling through the release tail.
+            self.escapeArmedForStop = true
             self.isRecording = false
             self.recordingStartTimestamp = nil
             self.recordingStartInProgress = false
@@ -3543,7 +3552,10 @@ final class DictationViewModel: ObservableObject {
         do {
             guard let result = try await controller.finishTranscriptionOnly(
                 activePrompt: activePrompt,
-                trigger: trigger
+                trigger: trigger,
+                onCaptureStopped: { [weak self] in
+                    await MainActor.run { self?.disarmEscapeAfterTail() }
+                }
             ) else {
                 await MainActor.run {
                     self.clearActiveCodexRecording(cancelContext: true)
@@ -3788,8 +3800,11 @@ final class DictationViewModel: ObservableObject {
         AppLog.dictation.log(
             "Beeper recording finish prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
+        defer { disarmEscapeAfterTail() }
         await MainActor.run {
             self.recordingStopInProgress = true
+            // Escape keeps cancelling through the release tail.
+            self.escapeArmedForStop = true
             self.isRecording = false
             self.recordingStartTimestamp = nil
             self.recordingStartInProgress = false
@@ -3801,7 +3816,10 @@ final class DictationViewModel: ObservableObject {
         do {
             guard let result = try await controller.finishTranscriptionOnly(
                 activePrompt: activePrompt,
-                trigger: trigger
+                trigger: trigger,
+                onCaptureStopped: { [weak self] in
+                    await MainActor.run { self?.disarmEscapeAfterTail() }
+                }
             ) else {
                 AppLog.dictation.warning("Beeper finish produced no transcription result")
                 await MainActor.run {
