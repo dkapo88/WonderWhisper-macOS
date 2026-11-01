@@ -99,7 +99,7 @@ Transcription and language-model processing are separate choices.
 
 | Engine | Where it runs | Best for |
 | --- | --- | --- |
-| **Parakeet Unified / Ultra** | On device | Private, free transcription. Unified (English, punctuated) is the default and boosts words from your Vocabulary list; Ultra adds multilingual coverage. |
+| **Parakeet: Bark Clean / Unified / Ultra** | On device | Private, free transcription. Bark Clean (English) is the dictation default for new installs and removes ums, false starts and repeated words as you speak; Unified (English, punctuated) runs meetings and remains available for dictation; Ultra adds multilingual coverage. Bark Clean and Unified boost words from your Vocabulary list. |
 | **Qwen3-ASR 0.6B** | On device | Offline file transcription after you stop recording. Multilingual MLX model; first use downloads about 1 GB. The model verifies itself on load, and dictation falls back to Parakeet or Groq if it misbehaves. Not used for meetings. |
 | **Groq Whisper Large V3 Turbo** | Cloud | Fast batch transcription through Groq. |
 | **Soniox V5** | Cloud | Low-latency streaming dictation and optional live meeting transcription. |
@@ -112,8 +112,8 @@ API credentials are stored in macOS Keychain. You only need keys for the provide
 
 ### Vocabulary
 
-Add names, jargon, and product terms under **Vocabulary** in the sidebar. Parakeet Unified uses
-the list to rescore recognition on device, including in meetings, and Groq, Soniox, and
+Add names, jargon, and product terms under **Vocabulary** in the sidebar. Parakeet Bark Clean and
+Unified use the list to rescore recognition on device, including in meetings, and Groq, Soniox, and
 OpenRouter cleanup receive it as spelling hints. Toggle on-device boosting in **Settings → Transcription**.
 
 ## Where things live
@@ -273,3 +273,13 @@ Issues and focused pull requests are welcome. Please keep changes scoped, includ
 ## License
 
 WonderWhisper is available under the [MIT License](LICENSE).
+
+### Model credits
+
+The Bark Clean dictation model is built on
+[NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), post-trained by
+Conway Research as [Underdog Bark 3.0 Clean](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean),
+and converted to Core ML by [FluidInference](https://huggingface.co/FluidInference/bark-3.0-coreml).
+It is used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) and downloaded from
+Hugging Face on first use; WonderWhisper does not redistribute it. On-device speech recognition runs
+through [FluidAudio](https://github.com/FluidInference/FluidAudio).

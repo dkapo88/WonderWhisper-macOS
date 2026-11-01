@@ -12,6 +12,8 @@ import Combine
 @main
 struct WonderWhisperApp: App {
     init() {
+        // Before anything writes preferences: tells an existing install from a new one.
+        ParakeetModelDefaults.migrateAtLaunch()
         QwenSelfTest.runIfRequested()
     }
 

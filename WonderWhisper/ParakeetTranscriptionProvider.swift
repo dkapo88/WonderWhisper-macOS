@@ -9,7 +9,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     /// A loaded backend, as returned by a test `BackendLoader`.
     enum LoadedBackend: Sendable {
         case unified(UnifiedAsrManager)
-        case ultra(AsrManager)
+        /// Ultra or Bark Clean (`ParakeetModelKind.tdtVersion`).
+        case tdt(AsrManager)
     }
     typealias BackendLoader = @Sendable (ParakeetModelKind) async throws -> LoadedBackend
     /// Test seam: stands in for the silent prewarm decode (nil in production).
@@ -27,8 +28,37 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     /// Key-down prewarms when the model has not run for longer than this.
     static let idlePrewarmThreshold: TimeInterval = 120
 
-    // TDT backend (Parakeet Ultra, multilingual)
-    private var asrManager: AsrManager?
+    // TDT backend: Parakeet Ultra (multilingual) or Bark Clean (English), per `loadedKind`.
+    private var asrManager: AsrManager? {
+        didSet {
+            if oldValue !== asrManager { tdtBoostingSlot = nil }
+        }
+    }
+    // Bark Clean's vocabulary boosting state, bound to the resident `asrManager`.
+    private var tdtBoostingSlot: ParakeetTdtBoostingSlot?
+    // Serializes TDT inference (Ultra and Bark Clean), prewarm, cleanup and Bark Clean's
+    // vocabulary configuration, under the same invariants as `boosting` for Unified.
+    private let tdtBoosting = ParakeetBoostingCoordinator<ParakeetTdtBoostingSlot>(
+        configure: { slot, terms in
+            if terms.isEmpty {
+                await slot.setSession(nil)
+                return
+            }
+            guard let ctcModels = await ParakeetCtcModelStore.shared.modelsIfLoaded() else {
+                throw ParakeetVocabularyBoostingError.ctcModelNotLoaded
+            }
+            let session = try await VocabularyBoostingSession(
+                vocabulary: ParakeetVocabularyBoosting.vocabularyContext(for: terms),
+                ctcModels: ctcModels
+            )
+            await slot.setSession(session)
+        },
+        ctcReady: { wait in
+            let store = ParakeetCtcModelStore.shared
+            return wait ? await store.modelsIfAvailable() != nil : await store.modelsIfLoaded() != nil
+        },
+        log: { AppLog.dictation.log("[ParakeetVocab] bark: \($0)") }
+    )
     // Unified backend (Parakeet Unified 0.6B, English, offline batch)
     private var unifiedManager: UnifiedAsrManager? {
         didSet {
@@ -87,6 +117,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private let padsInput: Bool
     private let isInstalled: @Sendable (ParakeetModelKind) -> Bool
     private let prewarmRunner: PrewarmRunner?
+    // Told once per selected/used pair when a missing Bark Clean falls back to another model.
+    private var onModelFallback: (@Sendable (_ selected: ParakeetModelKind, _ used: ParakeetModelKind) async -> Void)?
+    private var reportedFallbacks: Set<ParakeetModelKind> = []
     // Coalesce model loading to avoid duplicate work/logs. `loadGeneration`
     // identifies the registered load so only its owner clears it.
     private var loadTask: Task<Void, Error>?
@@ -139,6 +172,13 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         self.vocabularyTerms = vocabularyTerms
     }
 
+    /// Called when Bark Clean is selected but not downloaded and another downloaded model ran.
+    func setOnModelFallback(
+        _ callback: (@Sendable (_ selected: ParakeetModelKind, _ used: ParakeetModelKind) async -> Void)?
+    ) {
+        onModelFallback = callback
+    }
+
     /// Terms to boost right now, from the injected preferences.
     private nonisolated func currentTermsToBoost() -> [String] {
         ParakeetVocabularyBoosting.termsToBoost(enabled: boostingEnabled(), terms: vocabularyTerms())
@@ -157,8 +197,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         memoryPressureHold = false
         let generation = residencyGeneration
         do {
-            let kind = preferredKind()
-            let wasResident = isResident()
+            let kind = effectiveKind(for: nil)
+            let wasResident = loadedKind == kind && isLoaded(kind)
             try await ensureModelsLoaded(kind: kind)
             // Deselected or under memory pressure while this load ran: never keep the engine.
             if residency == .whileSelected, generation != residencyGeneration, !isSelected || memoryPressureHold {
@@ -174,6 +214,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
                 // load, and the result is dropped if a transcription ran first.
                 let outcome = await boosting.prepare(mgr) { [self] in currentTermsToBoost() }
                 handleBoostingOutcome(outcome, manager: mgr)
+            } else if kind == .barkClean, let slot = currentTdtBoostingSlot() {
+                let outcome = await tdtBoosting.prepare(slot) { [self] in currentTermsToBoost() }
+                logTdtBoostingOutcome(outcome)
             }
             scheduleIdleUnload()
         } catch {
@@ -208,6 +251,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         idleUnloadTask?.cancel()
         idleUnloadTask = nil
         let hadModels = (asrManager != nil) || (unifiedManager != nil)
+        tdtBoostingSlot = nil
         if hadModels {
             log.notice("[Parakeet] Unloading models: \(reason, privacy: .public)")
             AppLog.dictation.log("[Parakeet] unload reason=\(reason, privacy: .public)")
@@ -215,22 +259,22 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         // UnifiedAsrManager releases its CoreML models when deallocated.
         unifiedManager = nil
         if hadModels { loadedKind = nil }
-        await releaseUltraManager()
+        await releaseTdtManager()
     }
 
-    /// Detaches the Ultra manager, then cleans it up under the coordinator lock: an Ultra decode
-    /// in flight holds that lock, so cleanup waits for it instead of pulling the models from
-    /// under it.
-    private func releaseUltraManager() async {
+    /// Detaches the TDT manager (Ultra or Bark Clean), then cleans it up under the TDT lock: a
+    /// decode in flight holds that lock, so cleanup waits for it instead of pulling the models
+    /// from under it.
+    private func releaseTdtManager() async {
         guard let mgr = asrManager else { return }
         asrManager = nil
-        await boosting.exclusive { await mgr.cleanup() }
+        await tdtBoosting.exclusive { await mgr.cleanup() }
     }
 
     // MARK: - Dictation residency
 
     /// Selected: load the chosen backend in the background (coalesced) and run one silent
-    /// prewarm after loading. Deselected: unload. Also re-run after a Unified/Ultra change.
+    /// prewarm after loading. Deselected: unload. Also re-run after a model change.
     func setSelected(_ selected: Bool) async {
         guard residency == .whileSelected else { return }
         let wasSelected = isSelected
@@ -255,7 +299,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     private func ensureResidentInBackground() {
         guard isSelected, !memoryPressureHold else { return }
-        let kind = preferredKind()
+        let kind = effectiveKind(for: nil)
         let generation = residencyGeneration
         if preloadTask != nil, let key = preloadKey, key.generation == generation, key.kind == kind {
             return // already loading this backend for this generation
@@ -329,9 +373,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
                 guard let buffer = Self.silentPrewarmBuffer() else { return }
                 _ = try? await mgr.transcribe(buffer)
             }
-        case .ultra:
+        case .ultra, .barkClean:
             guard let mgr = asrManager else { return }
-            await boosting.exclusive {
+            await tdtBoosting.exclusive {
                 if let runner { await runner(kind); return }
                 guard let buffer = Self.silentPrewarmBuffer() else { return }
                 var state = TdtDecoderState.make(decoderLayers: await mgr.decoderLayerCount)
@@ -372,14 +416,14 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     /// Whether the model a transcription with `settings` would use is loaded right now.
     func isResident(for settings: TranscriptionSettings? = nil) -> Bool {
-        let kind = preferredKind(for: settings)
+        let kind = effectiveKind(for: settings)
         return loadedKind == kind && isLoaded(kind)
     }
 
     private func isLoaded(_ kind: ParakeetModelKind) -> Bool {
         switch kind {
         case .unified: return unifiedManager != nil
-        case .ultra: return asrManager != nil
+        case .ultra, .barkClean: return asrManager != nil
         }
     }
 
@@ -426,42 +470,48 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         if let backendLoader {
             switch try await backendLoader(kind) {
             case .unified(let manager): unifiedManager = manager
-            case .ultra(let manager): asrManager = manager
+            case .tdt(let manager): asrManager = manager
             }
         } else {
             switch kind {
-            case .ultra:
-                try await loadTdtModel(version: .ultra)
+            case .ultra, .barkClean:
+                try await loadTdtModel(kind: kind)
             case .unified:
                 try await loadUnifiedModel()
             }
+        }
+        if kind == .barkClean, let mgr = asrManager {
+            tdtBoostingSlot = ParakeetTdtBoostingSlot(manager: mgr)
         }
         loadedKind = kind
         scheduleIdleUnload()
     }
 
+    /// Frees every backend except a resident `kind`. Ultra and Bark Clean share `asrManager`,
+    /// so switching between them releases the other TDT model too.
     private func unloadOtherBackend(keeping kind: ParakeetModelKind) async {
-        if kind != .ultra {
-            await releaseUltraManager()
+        if loadedKind != kind || kind == .unified {
+            await releaseTdtManager()
         }
         if kind != .unified {
             unifiedManager = nil
         }
     }
 
-    private func loadTdtModel(version: AsrModelVersion) async throws {
-        // Ultra is the only TDT model offered; FluidAudio places it canonically
-        // under FluidAudio/Models/<Repo.folderName>.
-        modelsDirectory = ParakeetManager.modelDirectory(for: .ultra)
-        log.notice("[Parakeet] ensureModelsLoaded (ultra) dir=\(self.modelsDirectory.path, privacy: .public)")
-        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (ultra) dir=\(self.modelsDirectory.path)")
-        let missing = ParakeetManager.missingFiles(ParakeetModelKind.ultra.requiredFiles, in: modelsDirectory)
+    private func loadTdtModel(kind: ParakeetModelKind) async throws {
+        guard let version = kind.tdtVersion else { throw ProviderError.notImplemented }
+        // FluidAudio places TDT models canonically under FluidAudio/Models/<Repo.folderName>.
+        modelsDirectory = ParakeetManager.modelDirectory(for: kind)
+        let name = kind.rawValue
+        log.notice("[Parakeet] ensureModelsLoaded (\(name, privacy: .public)) dir=\(self.modelsDirectory.path, privacy: .public)")
+        AppLog.dictation.log("[Parakeet] ensureModelsLoaded (\(name)) dir=\(self.modelsDirectory.path)")
+        let missing = ParakeetManager.missingFiles(kind.requiredFiles, in: modelsDirectory)
         if !missing.isEmpty {
             // Not an error: downloadAndLoad fetches whatever is missing.
-            log.notice("[Parakeet] ultra files missing=\(String(describing: missing), privacy: .public); downloading")
-            AppLog.dictation.log("[Parakeet] ultra files missing=\(String(describing: missing)); downloading")
+            log.notice("[Parakeet] \(name, privacy: .public) files missing=\(String(describing: missing), privacy: .public); downloading")
+            AppLog.dictation.log("[Parakeet] \(name) files missing=\(String(describing: missing)); downloading")
         }
-        // Ultra ships a single int8 encoder build (no precision variants).
+        // Ultra and Bark Clean each ship a single encoder build (no precision variants).
         let models = try await AsrModels.downloadAndLoad(version: version)
         let mgr = AsrManager(config: .default)
         try await mgr.loadModels(models)
@@ -487,7 +537,11 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        let kind = preferredKind(for: settings)
+        let requested = preferredKind(for: settings)
+        let kind = effectiveKind(for: settings)
+        if kind != requested {
+            await reportFallbackIfNeeded(selected: requested, used: kind)
+        }
         try await ensureModelsLoaded(kind: kind)
         scheduleIdleUnload()
         switch kind {
@@ -514,12 +568,111 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         case .ultra:
             guard let mgr = asrManager else { throw ProviderError.notImplemented }
             // Serialised with the prewarm decode, which goes through the same lock.
-            let text = try await boosting.exclusiveThrowing {
+            let text = try await tdtBoosting.exclusiveThrowing {
                 try await self.transcribeTdt(mgr: mgr, fileURL: fileURL, settings: settings)
             }
             lastInferenceAt = DictationClock.now()
             return text
+        case .barkClean:
+            guard let mgr = asrManager, let slot = currentTdtBoostingSlot() else {
+                throw ProviderError.notImplemented
+            }
+            let desired = ParakeetVocabularyBoosting.termsToBoost(
+                enabled: boostingEnabled(),
+                terms: settings.vocabularyTerms
+            )
+            if waitsForVocabularyModel, !desired.isEmpty {
+                _ = await ParakeetCtcModelStore.shared.modelsIfAvailable()
+            }
+            // Same contract as Unified: boosting is aligned, then the decode and the rescoring
+            // run with no configuration able to interleave.
+            let (raw, outcome) = try await tdtBoosting.run(on: slot, desired: desired) {
+                try await self.transcribeBark(mgr: mgr, slot: slot, fileURL: fileURL)
+            }
+            lastInferenceAt = DictationClock.now()
+            logTdtBoostingOutcome(outcome)
+            return BarkTranscriptCleanup.clean(raw)
         }
+    }
+
+    // MARK: - Model fallback (Bark Clean not downloaded)
+
+    /// The model a transcription actually runs. Bark Clean selected but not downloaded runs the
+    /// first downloaded English-capable model instead (Unified, then Ultra), so a fresh install
+    /// or a deleted model never blocks on a download mid-dictation. With no model downloaded,
+    /// Bark Clean is downloaded on demand as before. Never anything off-device.
+    private func effectiveKind(for settings: TranscriptionSettings?) -> ParakeetModelKind {
+        let requested = preferredKind(for: settings)
+        guard requested == .barkClean, !(loadedKind == .barkClean && isLoaded(.barkClean)),
+              !isInstalled(.barkClean) else { return requested }
+        guard let fallback = ParakeetModelKind.barkCleanFallbackOrder.first(where: isInstalled) else {
+            return requested
+        }
+        return fallback
+    }
+
+    private func reportFallbackIfNeeded(selected: ParakeetModelKind, used: ParakeetModelKind) async {
+        AppLog.dictation.log("[Parakeet] \(selected.rawValue, privacy: .public) not downloaded; using \(used.rawValue, privacy: .public)")
+        guard !reportedFallbacks.contains(used) else { return }
+        reportedFallbacks.insert(used)
+        await onModelFallback?(selected, used)
+    }
+
+    // MARK: - Bark Clean
+
+    private func currentTdtBoostingSlot() -> ParakeetTdtBoostingSlot? {
+        guard loadedKind == .barkClean, let mgr = asrManager else { return nil }
+        if let slot = tdtBoostingSlot, slot.manager === mgr { return slot }
+        let slot = ParakeetTdtBoostingSlot(manager: mgr)
+        tdtBoostingSlot = slot
+        return slot
+    }
+
+    private func logTdtBoostingOutcome(_ outcome: ParakeetBoostingCoordinator<ParakeetTdtBoostingSlot>.Outcome) {
+        switch outcome {
+        case .configured(let terms):
+            AppLog.dictation.log("[ParakeetVocab] bark boosting configured terms=\(terms.count)")
+        case .neutralized:
+            AppLog.dictation.log("[ParakeetVocab] bark boosting off")
+        case .unchanged, .skipped, .stale:
+            break
+        }
+    }
+
+    /// Bark Clean decode (English, no language hint), then vocabulary rescoring when the slot
+    /// holds a boosting session. Returns the raw model text; the caller cleans it up.
+    private func transcribeBark(mgr: AsrManager, slot: ParakeetTdtBoostingSlot, fileURL: URL) async throws -> String {
+        AppLog.dictation.log("[Parakeet] Bark ASR begin file=\(fileURL.lastPathComponent)")
+        var samples = try AudioConverter().resampleAudioFile(fileURL)
+        guard !samples.isEmpty else {
+            AppLog.dictation.log("[Parakeet] Bark: empty/invalid audio file")
+            return ""
+        }
+        if padsInput {
+            let padded = ParakeetInputPadding.paddedSampleCount(forModelSamples: samples.count)
+            samples += [Float](repeating: 0, count: padded - samples.count)
+        }
+        let result: ASRResult
+        do {
+            var decoderState = TdtDecoderState.make(decoderLayers: await mgr.decoderLayerCount)
+            result = try await mgr.transcribe(samples, decoderState: &decoderState, language: nil)
+        } catch {
+            let ns = error as NSError
+            log.notice("[Parakeet] Bark transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public)")
+            AppLog.dictation.error("[Parakeet] Bark transcribe error domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+            throw error
+        }
+        var text = result.text
+        if let session = await slot.session, let timings = result.tokenTimings,
+           let rescored = await session.rescore(text: text, tokenTimings: timings, audioSamples: samples) {
+            if rescored.wasModified {
+                AppLog.dictation.log("[ParakeetVocab] bark rescoring replaced \(rescored.replacements.filter(\.shouldReplace).count)")
+            }
+            text = rescored.text
+        }
+        AppLog.dictation.log("[Parakeet] Bark result length=\(text.count)")
+        scheduleIdleUnload()
+        return text
     }
 
     // MARK: - Vocabulary boosting (Unified only)
@@ -617,6 +770,10 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     var loadedKindForTesting: ParakeetModelKind? { loadedKind }
 
+    func effectiveKindForTesting(_ settings: TranscriptionSettings?) -> ParakeetModelKind {
+        effectiveKind(for: settings)
+    }
+
 
     /// Parakeet Unified offline-batch path: hand the recording to the
     /// FastConformer-RNNT manager via an `AVAudioPCMBuffer` (it resamples to
@@ -708,11 +865,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // Determine preferred Parakeet model from settings or user defaults
     private func preferredKind(for settings: TranscriptionSettings? = nil) -> ParakeetModelKind {
-        if let model = settings?.model.lowercased() {
-            if model.contains("unified") { return .unified }
-            if model.contains("ultra") { return .ultra }
-            // v3 and v2 retired -> Ultra, the multilingual TDT successor
-            if model.contains("v3") || model.contains("v2") { return .ultra }
+        if let model = settings?.model {
+            if let kind = ParakeetModelKind(modelIdentifier: model) { return kind }
         }
         return ParakeetModelKind.selected
     }

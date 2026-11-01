@@ -346,6 +346,8 @@ actor MeetingTranscriptionService {
   }
 
   private func prepareParakeet() async throws {
+    // Meetings always run Unified, whatever the dictation model (`parakeet.version`) is: it is
+    // the only model with a live decoder (`ParakeetModelKind.supportsLiveStreaming`).
     let system = StreamingUnifiedAsrManager()
     let microphone = StreamingUnifiedAsrManager()
     systemManager = system

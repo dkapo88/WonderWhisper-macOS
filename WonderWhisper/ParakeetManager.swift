@@ -7,11 +7,18 @@ import FluidAudio
 ///
 /// The choice is persisted under the `parakeet.version` UserDefaults key and read
 /// by both `ParakeetTranscriptionProvider` (which model to load/run) and the
-/// settings UI (which model to download / show status for).
+/// settings UI (which model to download / show status for). Dictation only:
+/// meetings always run Parakeet Unified streaming.
 enum ParakeetModelKind: String, CaseIterable, Identifiable {
-    /// Parakeet Unified 0.6B. English-only, but the highest on-device accuracy
-    /// and throughput and the only model that emits punctuation/capitalization
+    /// Underdog Bark 3.0 Clean (Conway Research): a post-training of Parakeet
+    /// TDT 0.6B v3 for English that drops fillers, false starts and repeated
+    /// words. Loaded via FluidAudio's `AsrManager` (`AsrModelVersion.bark3Clean`),
+    /// like Ultra. Its raw output needs `BarkTranscriptCleanup`. The default for
+    /// new installs.
+    case barkClean = "bark-clean"
+    /// Parakeet Unified 0.6B. English-only, with punctuation/capitalization
     /// natively. Loaded via FluidAudio's `UnifiedAsrManager` (offline batch).
+    /// The default before Bark Clean, so existing installs keep it.
     case unified
     /// Parakeet Ultra: moondream's post-training of Parakeet TDT 0.6B v3. Same
     /// 25 European languages and decode contract as v3, more accurate on every
@@ -24,20 +31,55 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// multilingual option, so existing selections carry over.
     static let defaultsKey = "parakeet.version"
 
+    /// What an unset `parakeet.version` means. Existing installs never see it:
+    /// `ParakeetModelDefaults` writes their old default (`.unified`) on the
+    /// first launch of the version that introduced Bark Clean.
+    static let newInstallDefault: ParakeetModelKind = .barkClean
+
+    /// The default before Bark Clean.
+    static let legacyDefault: ParakeetModelKind = .unified
+
     var id: String { rawValue }
 
-    /// Resolve a stored `parakeet.version` value. `"ultra"` and the retired
-    /// `"v3"` select Ultra; everything else (unset, `"unified"`, the retired
-    /// `"v2"`, unknown values) resolves to the `.unified` default.
+    /// Resolve a stored `parakeet.version` value. Unset means the new-install
+    /// default (Bark Clean). `"ultra"` and the retired `"v3"` select Ultra;
+    /// `"unified"`, the retired `"v2"` and unknown values select Unified, as
+    /// they always have.
     init(storedValue: String?) {
-        switch (storedValue ?? "").lowercased() {
+        guard let storedValue else {
+            self = Self.newInstallDefault
+            return
+        }
+        switch storedValue.lowercased() {
+        case "bark-clean": self = .barkClean
         case "ultra", "v3": self = .ultra
         default: self = .unified
         }
     }
 
+    /// The model a transcription model id names (`"parakeet-unified"`, `"parakeet-bark-clean"`,
+    /// the retired `"parakeet-v3"`), or nil for an id that names none (`"parakeet-local"`: use
+    /// the selection).
+    init?(modelIdentifier: String) {
+        let model = modelIdentifier.lowercased()
+        if model.contains("bark") {
+            self = .barkClean
+        } else if model.contains("unified") {
+            self = .unified
+        } else if model.contains("ultra") || model.contains("v3") || model.contains("v2") {
+            // v3 and v2 retired -> Ultra, the multilingual TDT successor
+            self = .ultra
+        } else {
+            return nil
+        }
+    }
+
+    /// Downloaded models that stand in, in order, for a Bark Clean that is not downloaded.
+    static let barkCleanFallbackOrder: [ParakeetModelKind] = [.unified, .ultra]
+
     var displayName: String {
         switch self {
+        case .barkClean: return "Clean English (Bark Clean)"
         case .unified: return "English (Unified)"
         case .ultra: return "Multilingual (Ultra)"
         }
@@ -45,9 +87,12 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
+        case .barkClean:
+            return "Underdog Bark 3.0 Clean. English only. Removes ums, false starts and "
+                + "repeated words as you dictate. Recommended for dictation."
         case .unified:
-            return "Parakeet Unified. English only. Highest on-device accuracy and speed, "
-                + "with automatic punctuation and capitalization."
+            return "Parakeet Unified. English only, with automatic punctuation and "
+                + "capitalization. Keeps every word you say."
         case .ultra:
             return "Parakeet Ultra. 25 European languages. More accurate than Parakeet v3 "
                 + "at the same speed."
@@ -57,18 +102,59 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// Approximate download size of the dictation model files.
     var approximateDownloadSize: String {
         switch self {
+        case .barkClean: return "About 460 MB"
         case .unified: return "About 600 MB"
         case .ultra: return "About 630 MB"
         }
     }
 
+    /// Model credit shown in Settings (CC-BY-4.0 attribution), or nil.
+    var credit: ParakeetModelCredit? {
+        switch self {
+        case .barkClean: return .barkClean
+        case .unified, .ultra: return nil
+        }
+    }
+
+    /// Bark Clean and Unified only transcribe English.
+    var isEnglishOnly: Bool {
+        switch self {
+        case .barkClean, .unified: return true
+        case .ultra: return false
+        }
+    }
+
+    /// FluidAudio's TDT model version for the `AsrManager` backends; nil for Unified.
+    #if canImport(FluidAudio)
+    var tdtVersion: AsrModelVersion? {
+        switch self {
+        case .barkClean: return .bark3Clean
+        case .ultra: return .ultra
+        case .unified: return nil
+        }
+    }
+    #endif
+
+    /// Whether the model has a live (streaming) decoder in this app. Only Unified does
+    /// today, through `StreamingUnifiedAsrManager` (meetings). Phase 2 streaming must
+    /// dispatch on this capability and never run Unified in place of another selection:
+    /// a selected model without a live decoder falls back to its batch path.
+    var supportsLiveStreaming: Bool {
+        switch self {
+        case .unified: return true
+        case .barkClean, .ultra: return false
+        }
+    }
+
     /// On-disk model folder under `FluidAudio/Models`, matching FluidAudio's
-    /// `Repo.folderName`. As of 0.17.7 neither repo has an explicit `folderName`
-    /// case, so both hit the default branch which strips the `-coreml` suffix
-    /// from the repo slug (`name.replacingOccurrences(of: "-coreml", with: "")`).
-    /// A unit test pins these against `Repo.folderName`.
+    /// `Repo.folderName`. As of 0.18.0 Unified and Ultra have no explicit
+    /// `folderName` case, so both hit the default branch which strips the
+    /// `-coreml` suffix from the repo slug; Bark Clean has an explicit case for
+    /// its subfolder of `bark-3.0-coreml`. A unit test pins these against
+    /// `Repo.folderName`.
     var folderName: String {
         switch self {
+        case .barkClean: return "bark-3.0-clean"
         case .unified: return "parakeet-unified-en-0.6b"
         case .ultra: return "parakeet-ultra"
         }
@@ -77,13 +163,13 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// Files that must exist in `folderName` for the model to count as
     /// downloaded, taken from FluidAudio's own lists. Unified offline ships no
     /// CoreML preprocessor since 0.15.6 (mel runs in Swift); the v3 family
-    /// (Ultra) still does.
+    /// (Ultra, Bark Clean) still does.
     var requiredFiles: [String] {
         #if canImport(FluidAudio)
         switch self {
         case .unified:
             return ModelNames.ParakeetUnified.requiredModels(variant: "offline").sorted()
-        case .ultra:
+        case .ultra, .barkClean:
             return ModelNames.ASR.requiredModelsV3().sorted() + [ModelNames.ASR.vocabularyFile]
         }
         #else
@@ -144,8 +230,8 @@ enum ParakeetManager {
         modelsDirectory.appendingPathComponent(kind.folderName, isDirectory: true)
     }
 
-    /// Whether the given model is downloaded. Both models are only ever placed
-    /// canonically by FluidAudio, so no legacy discovery applies.
+    /// Whether the given model is downloaded. Every selectable model is only ever
+    /// placed canonically by FluidAudio, so no legacy discovery applies.
     static func modelsPresent(for kind: ParakeetModelKind) -> Bool {
         missingFiles(kind.requiredFiles, in: modelDirectory(for: kind)).isEmpty
     }

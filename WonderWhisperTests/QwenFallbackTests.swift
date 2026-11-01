@@ -10,8 +10,8 @@ private final class StubProvider: TranscriptionProvider {
   func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String { name }
 }
 
-/// The non-default Parakeet model (v3 here, Ultra after the FluidAudio 0.17 bump).
-private let multilingual = ParakeetModelKind.allCases.first { $0 != .unified } ?? .unified
+/// The multilingual Parakeet model (v3, Ultra since the FluidAudio 0.17 bump).
+private let multilingual = ParakeetModelKind.ultra
 
 struct QwenFallbackTests {
   private let qwenSettings = TranscriptionSettings(
@@ -50,6 +50,26 @@ struct QwenFallbackTests {
     }
   }
 
+  /// Bark Clean is English-only: non-English recovery skips it like Unified.
+  @Test func nonEnglishSkipsBarkClean() {
+    for language in ["fr", "de-DE", "es"] {
+      let all = QwenASRFallback.choice(language: language, selectedParakeet: .barkClean) { _ in true }
+      #expect(all == .parakeet(.ultra), "language \(language)")
+      let onlyBark = QwenASRFallback.choice(
+        language: language, selectedParakeet: .barkClean
+      ) { $0 == .barkClean }
+      #expect(onlyBark == .groq, "language \(language)")
+    }
+    let english = QwenASRFallback.choice(language: "en", selectedParakeet: .barkClean) { _ in true }
+    #expect(english == .parakeet(.barkClean))
+  }
+
+  @Test func barkCleanRecoverySettingsNameTheModelTheProviderRuns() {
+    let settings = QwenASRFallback.settings(for: .parakeet(.barkClean), from: qwenSettings)
+    #expect(settings.model == "parakeet-bark-clean")
+    #expect(ParakeetModelKind(modelIdentifier: settings.model) == .barkClean)
+  }
+
   @Test func englishAndAutoKeepTheSelectedModel() {
     for language in ["en", "en-US", "auto", nil] as [String?] {
       let choice = QwenASRFallback.choice(language: language, selectedParakeet: .unified) { _ in true }
@@ -59,7 +79,9 @@ struct QwenFallbackTests {
 
   @Test func englishOnlyCapabilityIsKindAgnostic() {
     #expect(ParakeetModelKind.unified.isEnglishOnly)
-    #expect(ParakeetModelKind.allCases.filter(\.isEnglishOnly) == [.unified])
+    #expect(ParakeetModelKind.barkClean.isEnglishOnly)
+    #expect(ParakeetModelKind.allCases.filter(\.isEnglishOnly) == [.barkClean, .unified])
+    #expect(ParakeetModelKind.barkClean.qwenFallbackLanguages == ["en"])
     #expect(!multilingual.qwenFallbackSupports(language: "ja"))
     #expect(!ParakeetModelKind.unified.qwenFallbackSupports(language: "ja"))
   }

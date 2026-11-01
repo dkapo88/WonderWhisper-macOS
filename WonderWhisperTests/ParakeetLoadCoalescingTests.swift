@@ -25,7 +25,7 @@ struct ParakeetLoadCoalescingTests {
       inFlight -= 1
       switch kind {
       case .unified: return .unified(UnifiedAsrManager())
-      case .ultra: return .ultra(AsrManager())
+      case .ultra, .barkClean: return .tdt(AsrManager())
       }
     }
 
@@ -96,7 +96,7 @@ struct ParakeetLoadCoalescingTests {
           try await Task.sleep(nanoseconds: 20_000_000)
           throw LoadFailed()
         }
-        return kind == .unified ? .unified(UnifiedAsrManager()) : .ultra(AsrManager())
+        return kind == .unified ? .unified(UnifiedAsrManager()) : .tdt(AsrManager())
       }
     )
     let unified = Task { try await provider.ensureModelsLoadedForTesting(.unified) }

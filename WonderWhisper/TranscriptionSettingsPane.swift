@@ -19,9 +19,13 @@ struct TranscriptionSettingsPane: View {
   @State private var isDownloadingCtc = false
   @State private var ctcDownloadError: String?
   // Selected on-device Parakeet model, persisted under "parakeet.version". Stored
-  // as a raw string so a legacy "v3" reads as Ultra via ParakeetModelKind(storedValue:).
+  // as a raw optional string so unset (new-install default) and a legacy "v3" resolve
+  // exactly as in ParakeetModelKind(storedValue:).
   @AppStorage(ParakeetModelKind.defaultsKey, store: AppConfig.defaults)
-  private var parakeetVersion = ParakeetModelKind.unified.rawValue
+  private var parakeetVersion: String?
+  // One-time "new recommended model" note for installs that kept their old model.
+  @AppStorage(ParakeetModelDefaults.recommendationPendingKey, store: AppConfig.defaults)
+  private var barkRecommendationPending = false
   @AppStorage(ParakeetVocabularyBoosting.enabledKey, store: AppConfig.defaults)
   private var parakeetVocabularyBoosting = true
   @AppStorage("qwen.injectVocabulary", store: AppConfig.defaults)
@@ -168,7 +172,10 @@ struct TranscriptionSettingsPane: View {
   private var parakeetModelBinding: Binding<ParakeetModelKind> {
     Binding(
       get: { ParakeetModelKind(storedValue: parakeetVersion) },
-      set: { parakeetVersion = $0.rawValue }
+      set: {
+        parakeetVersion = $0.rawValue
+        if $0 == .barkClean { barkRecommendationPending = false }
+      }
     )
   }
 
@@ -181,6 +188,10 @@ struct TranscriptionSettingsPane: View {
 
   private var parakeetSection: some View {
     Section {
+      if barkRecommendationPending, parakeetModel != .barkClean {
+        barkRecommendation
+      }
+
       Picker(selection: parakeetModelBinding) {
         ForEach(ParakeetModelKind.allCases) { kind in
           Text(kind.displayName).tag(kind)
@@ -188,6 +199,10 @@ struct TranscriptionSettingsPane: View {
       } label: {
         Text("Model")
         Text(parakeetModel.detail)
+      }
+
+      if let credit = parakeetModel.credit {
+        ParakeetModelCreditView(credit: credit)
       }
 
       LabeledContent("Status") {
@@ -255,11 +270,31 @@ struct TranscriptionSettingsPane: View {
     } header: {
       Text("Parakeet (on-device)")
     } footer: {
-      Text("Vocabulary boosting applies to English (Unified) dictation and to Parakeet "
-        + "meetings, where corrections land in the final transcript when the meeting ends. "
-        + "It adds a short on-device pass.")
+      Text("Vocabulary boosting applies to English (Bark Clean and Unified) dictation and to "
+        + "Parakeet meetings, where corrections land in the final transcript when the meeting "
+        + "ends. It adds a short on-device pass. Meetings always use Unified.")
         .settingsFootnote()
     }
+  }
+
+  private var barkRecommendation: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
+      Text("New recommended model: \(ParakeetModelKind.barkClean.displayName)")
+        .font(.headline)
+      Text("Bark Clean removes ums, false starts and repeated words as you dictate. "
+        + "Your current model stays selected until you switch.")
+        .settingsFootnote()
+      HStack(spacing: DesignTokens.Spacing.xSmall) {
+        Button("Use Bark Clean") {
+          parakeetVersion = ParakeetModelKind.barkClean.rawValue
+          barkRecommendationPending = false
+        }
+        Button("Dismiss") {
+          barkRecommendationPending = false
+        }
+      }
+    }
+    .padding(.vertical, DesignTokens.Spacing.xSmall)
   }
 
   private var vocabularyBoostingDetail: String {
@@ -286,6 +321,9 @@ struct TranscriptionSettingsPane: View {
   @ViewBuilder private var parakeetStatus: some View {
     if !ParakeetManager.isLinked {
       StatusBadge(.error, "Framework missing")
+    } else if let standIn = barkStandIn {
+      // Bark Clean selected but missing: dictation runs a downloaded model instead.
+      StatusBadge(.warning, "Not downloaded. Using \(standIn.displayName) until you download it")
     } else {
       StatusBadge.presence(
         ParakeetManager.modelsPresent(for: parakeetModel),
@@ -293,6 +331,12 @@ struct TranscriptionSettingsPane: View {
         missing: "Not downloaded"
       )
     }
+  }
+
+  /// The downloaded model dictation uses while a selected Bark Clean is not downloaded.
+  private var barkStandIn: ParakeetModelKind? {
+    guard parakeetModel == .barkClean, !ParakeetManager.modelsPresent(for: .barkClean) else { return nil }
+    return ParakeetModelKind.barkCleanFallbackOrder.first(where: ParakeetManager.modelsPresent(for:))
   }
 
   private var qwenSection: some View {
@@ -394,9 +438,11 @@ struct TranscriptionSettingsPane: View {
       defer { isDownloadingParakeet = false }
       do {
         switch kind {
-        case .ultra:
+        case .ultra, .barkClean:
           // Download only; the provider loads it on first dictation.
-          _ = try await AsrModels.download(version: .ultra)
+          if let version = kind.tdtVersion {
+            _ = try await AsrModels.download(version: version)
+          }
         case .unified:
           let manager = UnifiedAsrManager()
           try await manager.loadModels(to: ParakeetManager.modelsDirectory)

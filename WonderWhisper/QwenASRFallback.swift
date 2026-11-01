@@ -24,7 +24,7 @@ enum QwenASRFallback {
   /// but only models that can transcribe `language` (the dictation's language
   /// setting). An English-only model never gets non-English speech: if no
   /// downloaded Parakeet model fits, Groq Whisper (multilingual) is used.
-  /// Auto-detect preserves the selected downloaded model, even Unified: there
+  /// Auto-detect preserves the selected downloaded model, even an English-only one: there
   /// is no explicit language to rule it out. Try another only if it is missing.
   static func choice(
     language: String?,
@@ -117,10 +117,6 @@ enum QwenASRFallback {
 }
 
 extension ParakeetModelKind {
-  /// Stable across the sibling v3 → Ultra rename; capability lives in this
-  /// Qwen-owned file rather than coupling recovery to either case name.
-  var isEnglishOnly: Bool { self == .unified }
-
   /// https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3 lists these 25 languages.
   /// FluidInference's Ultra card was unreachable on 2026-10-08; assume the
   /// same v3 language set for Ultra until that card can be verified.
