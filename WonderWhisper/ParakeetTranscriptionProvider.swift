@@ -143,6 +143,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         if hadModels { loadedKind = nil }
     }
 
+    /// Whether the model a transcription with `settings` would use is loaded right now.
+    func isResident(for settings: TranscriptionSettings? = nil) -> Bool {
+        let kind = preferredKind(for: settings)
+        return loadedKind == kind && isLoaded(kind)
+    }
+
     private func isLoaded(_ kind: ParakeetModelKind) -> Bool {
         switch kind {
         case .unified: return unifiedManager != nil
@@ -567,6 +573,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 #else
 actor ParakeetTranscriptionProvider: TranscriptionProvider {
     init(modelsDirectory: URL? = nil, waitsForVocabularyModel: Bool = false) {}
+    func isResident(for settings: TranscriptionSettings? = nil) -> Bool { false }
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         throw ProviderError.notImplemented
     }

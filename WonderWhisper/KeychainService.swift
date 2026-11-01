@@ -30,8 +30,9 @@ enum KeychainReadResult: Equatable {
 }
 
 final class KeychainService {
-    private static let service = AppConfig.bundleIdentifier
-    private static let originalService = AppConfig.originalBundleIdentifier
+    // A QA build reads and writes only its own items, never the user's.
+    private static let service = AppConfig.qaBundleIdentifier ?? AppConfig.bundleIdentifier
+    private static let originalService = AppConfig.qaBundleIdentifier ?? AppConfig.originalBundleIdentifier
 
     static func normalizedSecret(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -51,6 +51,33 @@ struct AppConfig {
         return url
     }()
 
+    /// A Debug build launched under a bundle identifier other than the shipping one, e.g. built
+    /// with `PRODUCT_BUNDLE_IDENTIFIER=com.danekapoor.hermeswhisper.qa` for hands-on QA. Such a
+    /// build keeps its storage and Keychain items apart from the user's (its UserDefaults domain
+    /// already follows the bundle identifier). Always nil in Release builds and under tests.
+    static let qaBundleIdentifier: String? = {
+        #if DEBUG
+        guard !isTestRun, let id = Bundle.main.bundleIdentifier, id != bundleIdentifier else {
+            return nil
+        }
+        return id
+        #else
+        return nil
+        #endif
+    }()
+
+    /// Stand-in for `~/Library/Application Support` in a QA build: `$WW_QA_ROOT` when set, else
+    /// `$TMPDIR/WonderWhisper-QA`. Nil outside QA builds.
+    static let qaApplicationSupport: URL? = qaBundleIdentifier.map { _ in
+        let root = ProcessInfo.processInfo.environment["WW_QA_ROOT"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+            "WonderWhisper-QA",
+            isDirectory: true
+        )
+        return scratchDirectory(root.appendingPathComponent("Application Support", isDirectory: true))
+    }
+
     private static func scratchDirectory(_ url: URL) -> URL {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

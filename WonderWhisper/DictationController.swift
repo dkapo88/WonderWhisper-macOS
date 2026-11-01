@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import ApplicationServices
+import AVFoundation
 import OSLog
 import os.signpost
 
@@ -68,6 +69,10 @@ actor DictationController {
     /// nothing else reports the error.
     private var onUserFacingError: (@Sendable (String) async -> Void)?
 
+    /// Stage timeline of the dictation in progress, logged as one `[Timing]` line when it ends.
+    private var stageTimings: DictationStageTimings?
+    private var timingSessionCounter = 0
+
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
          transcriberSettings: TranscriptionSettings,
@@ -99,10 +104,18 @@ actor DictationController {
         await onUserFacingError?(message)
     }
 
-    func toggle(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
+    func toggle(
+        userPrompt: String,
+        activePrompt: PromptConfiguration? = nil,
+        trigger: DictationTriggerTimes? = nil
+    ) async {
         self.currentPrompt = activePrompt
         switch state {
         case .idle, .error:
+            timingSessionCounter += 1
+            var timings = DictationStageTimings(session: timingSessionCounter, engine: transcriberSettings.model)
+            timings.physicalKeyDown = trigger?.keyEvent
+            timings.hotkeyCallback = trigger?.callback ?? DictationClock.now()
             do {
                 AppLog.dictation.log("Recording start")
                 insertionTargetProcessIdentifier = Self.currentExternalFrontmostProcessIdentifier()
@@ -117,6 +130,11 @@ actor DictationController {
                 // Update state IMMEDIATELY after starting recording for instant UI feedback
                 let url = try recorder.startRecording()
                 state = .recording
+                timings.recorderStarted = DictationClock.now()
+                stageTimings = timings
+                // Checked before the warm-up below starts, so it says whether the model was
+                // already resident when this dictation began.
+                stageTimings?.modelWarmAtStart = await modelResidency(settings: transcriberSettings)
 
                 let recordingStart = Date()
                 currentRecordingURL = url
@@ -197,9 +215,12 @@ actor DictationController {
                     SystemAudioController.shared.unmuteSystemAudioAndWait()
                 }
                 resetTransientSessionState()
+                stageTimings = stageTimings ?? timings
+                logStageTimings(outcome: "startFailed", recordingURL: nil)
                 state = .error("Recording start failed: \(error.localizedDescription)")
             }
         case .recording:
+            markStopRequested(trigger)
             await stopAndProcess(userPrompt: userPrompt)
         default:
             break
@@ -229,8 +250,13 @@ actor DictationController {
                 throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"])
             }
             AppLog.dictation.log("Waiting for stable file file=\(fileURL.lastPathComponent, privacy: .public)")
+            let prepStart = DictationClock.now()
             await Self.waitUntilFileIsStable(fileURL)
+            stageTimings?.audioPrep = DictationClock.now() - prepStart
             AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(settings.model, privacy: .public) file=\(fileURL.lastPathComponent, privacy: .public)")
+            stageTimings?.modelWarmAtASR = await modelResidency(settings: settings)
+            let asrStart = DictationClock.now()
+            defer { stageTimings?.asr = DictationClock.now() - asrStart }
             do {
                 return try await transcriber.transcribe(fileURL: fileURL, settings: settings)
             } catch let qwenError as QwenASRError where qwenError.shouldFallBack {
@@ -242,6 +268,8 @@ actor DictationController {
 
         // Streaming providers: finalize, but never let a thrown finalizer lose the utterance —
         // fall through to the file fallback instead.
+        let asrStart = DictationClock.now()
+        defer { stageTimings?.asr = DictationClock.now() - asrStart }
         var transcript = ""
         do {
             if let soniox = streamer as? SonioxStreamingProvider {
@@ -384,6 +412,7 @@ actor DictationController {
 
         AppLog.dictation.log("Stopping file recorder")
         let recordingFileURL = await recorder.stopRecordingAndWait() // Always have file as backup
+        stageTimings?.captureStopped = DictationClock.now()
         if let recordingFileURL {
             AppLog.dictation.log("File recorder finalized file=\(recordingFileURL.lastPathComponent, privacy: .public)")
         } else {
@@ -397,6 +426,7 @@ actor DictationController {
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "HW.pipeline.total", signpostID: pipeId)
         defer {
+            logStageTimings(outcome: nil, recordingURL: recordingFileURL)
             resetTransientSessionState()
             os_signpost(.end, log: spLog, name: "HW.pipeline.total", signpostID: pipeId)
         }
@@ -426,7 +456,9 @@ actor DictationController {
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
+            let vocabularyStart = DictationClock.now()
             transcript = applyVocabularyCorrections(to: transcript)
+            stageTimings?.vocabulary = DictationClock.now() - vocabularyStart
 
             let selected = resolveSelectedTextForSession()
             let activeTextField = resolveActiveTextFieldForSession()
@@ -435,6 +467,7 @@ actor DictationController {
             // Skip LLM and insertion if transcript is still empty after all fallbacks
             if looksEmptyOrPunctuation(transcript) {
                 AppLog.dictation.warning("Transcript empty or punctuation-only; skipping LLM and insertion")
+                stageTimings?.outcome = "empty"
                 state = .idle
                 // Record history entry with empty transcript
                 var appNameHist: String? = nil
@@ -540,11 +573,13 @@ actor DictationController {
                     }
 
                     llmDT = Date().timeIntervalSince(t1)
+                    stageTimings?.llm = llmDT
                     AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
                     os_signpost(.end, log: spLog, name: "HW.llm.process", signpostID: pipeId)
                 } catch {
                     let ns = error as NSError
                     llmDT = Date().timeIntervalSince(t1)
+                    stageTimings?.llm = llmDT
                     AppLog.dictation.error("LLM error after \(llmDT, format: .fixed(precision: 3))s: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
                     // Fallback to raw transcript on LLM failure
                     output = transcript
@@ -561,7 +596,11 @@ actor DictationController {
 
             state = .inserting
             os_signpost(.begin, log: spLog, name: "HW.insert.total", signpostID: pipeId)
+            let pasteStart = DictationClock.now()
             inserter.insert(output, targetProcessIdentifier: insertionTargetProcessIdentifier)
+            stageTimings?.pasteIssued = DictationClock.now()
+            stageTimings?.pasteIssue = DictationClock.now() - pasteStart
+            stageTimings?.outcome = "pasteIssued"
             os_signpost(.end, log: spLog, name: "HW.insert.total", signpostID: pipeId)
 
             state = .idle
@@ -597,6 +636,7 @@ actor DictationController {
             let ns = error as NSError
             let diagnostic = (error as? ProviderError)?.diagnosticDescription ?? "\(ns.domain) code=\(ns.code) \(ns.localizedDescription)"
             AppLog.dictation.error("Pipeline error: \(diagnostic, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
+            stageTimings?.outcome = "error"
             // Persist audio so the user can reprocess later even on failure
             var appNameHist: String? = nil
             var bundleIDHist: String? = nil
@@ -716,20 +756,63 @@ actor DictationController {
         }
     }
 
+    // MARK: - Stage timings
+
+    /// Records when the stop was asked for: the key release (or toggle press) event time.
+    private func markStopRequested(_ trigger: DictationTriggerTimes?) {
+        guard stageTimings != nil, stageTimings?.keyUp == nil else { return }
+        stageTimings?.keyUp = trigger?.keyEvent ?? trigger?.callback ?? DictationClock.now()
+    }
+
+    /// Whether the model the next transcription would use is already loaded (local engines only).
+    private func modelResidency(settings: TranscriptionSettings) async -> Bool? {
+        if let parakeet = transcriber as? ParakeetTranscriptionProvider {
+            return await parakeet.isResident(for: settings)
+        }
+        return nil
+    }
+
+    /// Emits the `[Timing]` line for the dictation in progress, once.
+    private func logStageTimings(outcome: String?, recordingURL: URL?) {
+        guard var timings = stageTimings else { return }
+        stageTimings = nil
+        if let outcome { timings.outcome = outcome }
+        if let recordingURL { timings.audioSeconds = Self.audioDuration(of: recordingURL) }
+        let line = timings.logLine()
+        AppLog.dictation.log("\(line, privacy: .public)")
+    }
+
+    private static func audioDuration(of url: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else {
+            return nil
+        }
+        return Double(file.length) / file.processingFormat.sampleRate
+    }
+
     // Explicit controls for UI actions
-    func finish(userPrompt: String, activePrompt: PromptConfiguration? = nil) async {
+    func finish(
+        userPrompt: String,
+        activePrompt: PromptConfiguration? = nil,
+        trigger: DictationTriggerTimes? = nil
+    ) async {
         self.currentPrompt = activePrompt
+        if state == .recording { markStopRequested(trigger) }
         await stopAndProcess(userPrompt: userPrompt)
     }
 
-    func finishTranscriptionOnly(activePrompt: PromptConfiguration? = nil) async throws -> TranscriptionOnlyResult? {
+    func finishTranscriptionOnly(
+        activePrompt: PromptConfiguration? = nil,
+        trigger: DictationTriggerTimes? = nil
+    ) async throws -> TranscriptionOnlyResult? {
         self.currentPrompt = activePrompt
         guard state == .recording else { return nil }
+        markStopRequested(trigger)
 
         AppLog.dictation.log("Stop requested for transcription-only flow provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         recorder.stopStreamingPCM16()
 
         let recordingFileURL = await recorder.stopRecordingAndWait()
+        stageTimings?.captureStopped = DictationClock.now()
         if autoMuteEnabled {
             SystemAudioController.shared.unmuteSystemAudioAndWait()
         }
@@ -737,6 +820,7 @@ actor DictationController {
         let pipeId = OSSignpostID(log: spLog)
         os_signpost(.begin, log: spLog, name: "HW.pipeline.transcriptionOnly", signpostID: pipeId)
         defer {
+            logStageTimings(outcome: nil, recordingURL: recordingFileURL)
             resetTransientSessionState()
             os_signpost(.end, log: spLog, name: "HW.pipeline.transcriptionOnly", signpostID: pipeId)
         }
@@ -760,7 +844,10 @@ actor DictationController {
             transcript = try await finalizeTranscript(recordingFileURL: recordingFileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             os_signpost(.end, log: spLog, name: "HW.file.transcribe", signpostID: pipeId)
+            let vocabularyStart = DictationClock.now()
             transcript = applyVocabularyCorrections(to: transcript)
+            stageTimings?.vocabulary = DictationClock.now() - vocabularyStart
+            stageTimings?.outcome = "transcriptOnly"
 
             let selected = resolveSelectedTextForSession()
             let activeTextField = resolveActiveTextFieldForSession()
@@ -784,6 +871,7 @@ actor DictationController {
         } catch {
             let ns = error as NSError
             AppLog.dictation.error("Transcription-only pipeline error: \(ns.localizedDescription, privacy: .public)")
+            stageTimings?.outcome = "error"
             state = .error(error.localizedDescription)
             throw error
         }
@@ -806,6 +894,7 @@ actor DictationController {
         
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
+        logStageTimings(outcome: "cancelled", recordingURL: nil)
         // Reset any pre-captured context
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil

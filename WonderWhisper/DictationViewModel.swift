@@ -905,8 +905,9 @@ final class DictationViewModel: ObservableObject {
             }
         }
 
-        promptHotkeyManager.onPromptEvent = { [weak self] id, phase in
-            Task { await self?.handlePromptHotkey(id: id, phase: phase) }
+        promptHotkeyManager.onPromptEvent = { [weak self] id, phase, eventTime in
+            let trigger = DictationTriggerTimes(keyEvent: eventTime)
+            Task { await self?.handlePromptHotkey(id: id, phase: phase, trigger: trigger) }
         }
         refreshPromptHotkeys()
         refreshBeeperResponseMonitor()
@@ -1039,6 +1040,7 @@ final class DictationViewModel: ObservableObject {
     private var toggleInFlight = false
 
     func toggle() {
+        let trigger = DictationTriggerTimes()
         Task {
             // Guard against rapid re-entry. The start path has a >100ms async preamble during which
             // the controller is still .idle; without this, a second press reads .idle too and spins
@@ -1058,17 +1060,17 @@ final class DictationViewModel: ObservableObject {
             if case .recording = currentState,
                let hermesPromptID = activeHermesPromptID,
                let sessionID = activeHermesRecordingSessionID {
-                await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID)
+                await finishHermesRecording(promptID: hermesPromptID, sessionID: sessionID, trigger: trigger)
                 return
             }
             if case .recording = currentState,
                let beeperPromptID = activeBeeperPromptID {
-                await finishBeeperRecording(promptID: beeperPromptID)
+                await finishBeeperRecording(promptID: beeperPromptID, trigger: trigger)
                 return
             }
             if case .recording = currentState,
                let codexPromptID = activeCodexPromptID {
-                await finishCodexRecording(promptID: codexPromptID)
+                await finishCodexRecording(promptID: codexPromptID, trigger: trigger)
                 return
             }
 
@@ -1110,7 +1112,7 @@ final class DictationViewModel: ObservableObject {
 
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
-                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
+                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt, trigger: trigger)
                 // If the controller failed to start, clear the optimistic recording UI right away
                 // (mirrors the Hermes/Beeper paths) instead of waiting on the polling-timer grace.
                 let postState = await controller.currentState()
@@ -1132,7 +1134,7 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run { self.persistPromptLibrary() }
                 let prompt = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == self.selectedPromptID }) }
-                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt)
+                await controller.toggle(userPrompt: prompt, activePrompt: activePrompt, trigger: trigger)
 
             default:
                 break
@@ -3063,19 +3065,21 @@ final class DictationViewModel: ObservableObject {
 
     private func handleHermesPromptHotkey(id: UUID,
                                           phase: PromptHotkeyManager.TriggerPhase,
-                                          currentState: DictationController.State) async {
+                                          currentState: DictationController.State,
+                                          trigger: DictationTriggerTimes? = nil) async {
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
             switch currentState {
             case .idle, .error:
                 let sessionID = hermesSessionIDForHotkey()
-                await beginHermesRecording(promptID: id, sessionID: sessionID)
+                await beginHermesRecording(promptID: id, sessionID: sessionID, trigger: trigger)
             case .recording:
                 if let sessionID = activeHermesRecordingSessionID {
                     await finishHermesRecording(
                         promptID: activeHermesPromptID ?? id,
-                        sessionID: sessionID
+                        sessionID: sessionID,
+                        trigger: trigger
                     )
                 }
             default:
@@ -3089,7 +3093,8 @@ final class DictationViewModel: ObservableObject {
             if case .recording = state, let sessionID = activeHermesRecordingSessionID {
                 await finishHermesRecording(
                     promptID: activeHermesPromptID ?? id,
-                    sessionID: sessionID
+                    sessionID: sessionID,
+                    trigger: trigger
                 )
             }
         }
@@ -3097,19 +3102,20 @@ final class DictationViewModel: ObservableObject {
 
     private func handleBeeperPromptHotkey(id: UUID,
                                           phase: PromptHotkeyManager.TriggerPhase,
-                                          currentState: DictationController.State) async {
+                                          currentState: DictationController.State,
+                                          trigger: DictationTriggerTimes? = nil) async {
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
             if let beeperPromptID = activeBeeperPromptID {
                 AppLog.dictation.log("Beeper hotkey down finishing active recording")
-                await finishBeeperRecording(promptID: beeperPromptID)
+                await finishBeeperRecording(promptID: beeperPromptID, trigger: trigger)
                 return
             }
             switch currentState {
             case .idle, .error:
                 AppLog.dictation.log("Beeper hotkey down beginning recording")
-                await beginBeeperRecording(promptID: id)
+                await beginBeeperRecording(promptID: id, trigger: trigger)
             case .recording:
                 AppLog.dictation.log("Beeper hotkey down ignored recording state without active prompt")
             default:
@@ -3121,24 +3127,25 @@ final class DictationViewModel: ObservableObject {
             guard duration >= promptPressThreshold else { return }
             let state = await controller.currentState()
             if case .recording = state, activeBeeperPromptID != nil {
-                await finishBeeperRecording(promptID: activeBeeperPromptID ?? id)
+                await finishBeeperRecording(promptID: activeBeeperPromptID ?? id, trigger: trigger)
             }
         }
     }
 
     private func handleCodexPromptHotkey(id: UUID,
                                          phase: PromptHotkeyManager.TriggerPhase,
-                                         currentState: DictationController.State) async {
+                                         currentState: DictationController.State,
+                                         trigger: DictationTriggerTimes? = nil) async {
         switch phase {
         case .down:
             promptPressTimes[id] = Date()
             if let codexPromptID = activeCodexPromptID {
-                await finishCodexRecording(promptID: codexPromptID)
+                await finishCodexRecording(promptID: codexPromptID, trigger: trigger)
                 return
             }
             switch currentState {
             case .idle, .error:
-                await beginCodexRecording(promptID: id)
+                await beginCodexRecording(promptID: id, trigger: trigger)
             default:
                 break
             }
@@ -3147,12 +3154,16 @@ final class DictationViewModel: ObservableObject {
             guard Date().timeIntervalSince(start) >= promptPressThreshold else { return }
             let state = await controller.currentState()
             if case .recording = state, activeCodexPromptID != nil {
-                await finishCodexRecording(promptID: activeCodexPromptID ?? id)
+                await finishCodexRecording(promptID: activeCodexPromptID ?? id, trigger: trigger)
             }
         }
     }
 
-    private func beginHermesRecording(promptID: UUID, sessionID: UUID) async {
+    private func beginHermesRecording(
+        promptID: UUID,
+        sessionID: UUID,
+        trigger: DictationTriggerTimes? = nil
+    ) async {
         guard let session = hermesSessions.first(where: { $0.id == sessionID }) else { return }
         guard canReplyToHermesSession(session) else {
             settingsNotice = "Hermes session is \(session.status.rawValue)."
@@ -3197,7 +3208,7 @@ final class DictationViewModel: ObservableObject {
         await checkAndStoreSelectedTextPromptFast()
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
-        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt, trigger: trigger)
         let state = await controller.currentState()
         await MainActor.run {
             self.recordingStartInProgress = false
@@ -3208,7 +3219,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func finishHermesRecording(promptID: UUID, sessionID: UUID) async {
+    private func finishHermesRecording(
+        promptID: UUID,
+        sessionID: UUID,
+        trigger: DictationTriggerTimes? = nil
+    ) async {
         await MainActor.run {
             self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingFinished(
                 self.hermesResponseWindowStates,
@@ -3223,7 +3238,10 @@ final class DictationViewModel: ObservableObject {
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
         do {
-            guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
+            guard let result = try await controller.finishTranscriptionOnly(
+                activePrompt: activePrompt,
+                trigger: trigger
+            ) else {
                 await MainActor.run {
                     self.activeHermesPromptID = nil
                     self.activeHermesRecordingSessionID = nil
@@ -3261,7 +3279,8 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func beginCodexRecording(promptID: UUID,
-                                     responseWindowID explicitResponseWindowID: UUID? = nil) async {
+                                     responseWindowID explicitResponseWindowID: UUID? = nil,
+                                     trigger: DictationTriggerTimes? = nil) async {
         guard codexEnabled else { return }
         let responseWindowID = explicitResponseWindowID ?? focusedCodexResponseWindowID()
         let threadID = responseWindowID.flatMap { codexResponseWindowTargets[$0] }
@@ -3303,7 +3322,7 @@ final class DictationViewModel: ObservableObject {
         let activePrompt = await MainActor.run {
             self.prompts.first(where: { $0.id == promptID })
         }
-        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt, trigger: trigger)
         let state = await controller.currentState()
         await MainActor.run {
             self.recordingStartInProgress = false
@@ -3314,7 +3333,7 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func finishCodexRecording(promptID: UUID) async {
+    private func finishCodexRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
         let threadID = activeCodexThreadID
         let responseWindowID = activeCodexResponseWindowID
         await MainActor.run {
@@ -3336,7 +3355,8 @@ final class DictationViewModel: ObservableObject {
         }
         do {
             guard let result = try await controller.finishTranscriptionOnly(
-                activePrompt: activePrompt
+                activePrompt: activePrompt,
+                trigger: trigger
             ) else {
                 await MainActor.run {
                     self.clearActiveCodexRecording(cancelContext: true)
@@ -3529,7 +3549,7 @@ final class DictationViewModel: ObservableObject {
         syncCurrentHermesResponseWindowState(sessionID: responseWindowID)
     }
 
-    private func beginBeeperRecording(promptID: UUID) async {
+    private func beginBeeperRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
         guard beeperEnabled else { return }
         beeperIsAwaitingResponse = false
         beginBeeperReplyRecordingLock()
@@ -3565,7 +3585,7 @@ final class DictationViewModel: ObservableObject {
         await controller.updateClipboardContextEnabled(false)
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
-        await controller.toggle(userPrompt: "", activePrompt: activePrompt)
+        await controller.toggle(userPrompt: "", activePrompt: activePrompt, trigger: trigger)
         let state = await controller.currentState()
         await MainActor.run {
             self.recordingStartInProgress = false
@@ -3577,7 +3597,7 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func finishBeeperRecording(promptID: UUID) async {
+    private func finishBeeperRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
         AppLog.dictation.log(
             "Beeper recording finish prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
@@ -3592,7 +3612,10 @@ final class DictationViewModel: ObservableObject {
 
         let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == promptID }) }
         do {
-            guard let result = try await controller.finishTranscriptionOnly(activePrompt: activePrompt) else {
+            guard let result = try await controller.finishTranscriptionOnly(
+                activePrompt: activePrompt,
+                trigger: trigger
+            ) else {
                 AppLog.dictation.warning("Beeper finish produced no transcription result")
                 await MainActor.run {
                     self.clearActiveBeeperRecording(cancelContext: true)
@@ -5086,14 +5109,19 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    private func handlePromptHotkey(id: UUID, phase: PromptHotkeyManager.TriggerPhase) async {
+    private func handlePromptHotkey(
+        id: UUID,
+        phase: PromptHotkeyManager.TriggerPhase,
+        trigger: DictationTriggerTimes = DictationTriggerTimes()
+    ) async {
         let state = await controller.currentState()
         if id == HermesAgentHotkey.promptID {
             guard hermesAgentEnabled else { return }
             await handleHermesPromptHotkey(
                 id: SimplePromptKind.command.promptID,
                 phase: phase,
-                currentState: state
+                currentState: state,
+                trigger: trigger
             )
             return
         }
@@ -5102,7 +5130,8 @@ final class DictationViewModel: ObservableObject {
             await handleBeeperPromptHotkey(
                 id: SimplePromptKind.dictation.promptID,
                 phase: phase,
-                currentState: state
+                currentState: state,
+                trigger: trigger
             )
             return
         }
@@ -5111,7 +5140,8 @@ final class DictationViewModel: ObservableObject {
             await handleCodexPromptHotkey(
                 id: SimplePromptKind.command.promptID,
                 phase: phase,
-                currentState: state
+                currentState: state,
+                trigger: trigger
             )
             return
         }
@@ -5159,7 +5189,7 @@ final class DictationViewModel: ObservableObject {
 
                 let promptText = await MainActor.run { self.userPrompt }
                 let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
-                await controller.toggle(userPrompt: promptText, activePrompt: activePrompt)
+                await controller.toggle(userPrompt: promptText, activePrompt: activePrompt, trigger: trigger)
                 await MainActor.run { self.recordingStartInProgress = false }
 
             case .recording:
@@ -5182,7 +5212,7 @@ final class DictationViewModel: ObservableObject {
                 }
 
                 let promptText = await MainActor.run { self.userPrompt }
-                await controller.finish(userPrompt: promptText)
+                await controller.finish(userPrompt: promptText, trigger: trigger)
                 await restoreOriginalPromptIfNeeded()
 
             default:
@@ -5215,7 +5245,7 @@ final class DictationViewModel: ObservableObject {
 
                     let promptText = await MainActor.run { self.userPrompt }
                     let activePrompt = await MainActor.run { self.prompts.first(where: { $0.id == id }) }
-                    await controller.finish(userPrompt: promptText, activePrompt: activePrompt)
+                    await controller.finish(userPrompt: promptText, activePrompt: activePrompt, trigger: trigger)
                     await restoreOriginalPromptIfNeeded()
                 }
             }
