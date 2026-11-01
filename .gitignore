@@ -58,3 +58,6 @@ dist/
 
 # Amp orb portals
 .amp/portals/*
+
+# LLVM coverage output from test runs
+*.profraw
