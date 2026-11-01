@@ -296,6 +296,10 @@ actor DictationController {
             let analysis = DictationSilenceGate.analyze(fileURL: fileURL)
             stageTimings?.audioPrep = DictationClock.now() - prepStart
             if let duration = analysis?.durationSeconds, duration > 0 { stageTimings?.audioSeconds = duration }
+            if let analysis, !analysis.isSilent {
+                let level = analysis.loudestWindowDBFS
+                AppLog.dictation.log("Silence gate: loudest window \(level, format: .fixed(precision: 1), privacy: .public) dBFS; transcribing")
+            }
             if let analysis, analysis.isSilent {
                 let level = analysis.loudestWindowDBFS
                 AppLog.dictation.log("Silence gate: loudest window \(level, format: .fixed(precision: 1), privacy: .public) dBFS; skipping transcription")
