@@ -926,6 +926,7 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run { self?.dictationError = message }
             }
         }
+        if let initialParakeet { wireParakeetFallbackNotice(initialParakeet) }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase, eventTime in
             let trigger = DictationTriggerTimes(keyEvent: eventTime)
@@ -1375,7 +1376,19 @@ final class DictationViewModel: ObservableObject {
         if let dictationParakeet { return dictationParakeet }
         let provider = Self.makeDictationParakeet()
         dictationParakeet = provider
+        wireParakeetFallbackNotice(provider)
         return provider
+    }
+
+    /// Bark Clean selected but not downloaded: say once which downloaded model ran instead.
+    private func wireParakeetFallbackNotice(_ provider: ParakeetTranscriptionProvider) {
+        Task {
+            await provider.setOnModelFallback { [weak self] selected, used in
+                let message = "\(selected.displayName) isn't downloaded yet, so this dictation used "
+                    + "\(used.displayName). Download it in Settings → Transcription."
+                await MainActor.run { self?.dictationError = message }
+            }
+        }
     }
 
     /// Parakeet is selected when it is the dictation engine or a prompt's voice override.
@@ -1385,7 +1398,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Loads the selected Parakeet backend in the background (and keeps it) while Parakeet is
-    /// selected; unloads it when another engine is chosen. Re-runs on a Unified/Ultra switch.
+    /// selected; unloads it when another engine is chosen. Re-runs on a Parakeet model switch.
     private func refreshParakeetResidency() {
         // Unit tests never load the shared models in the background.
         guard !AppConfig.isTestRun || AppConfig.runsModelTests else { return }
@@ -1407,7 +1420,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func startParakeetResidencyMonitoring() {
-        // The Unified/Ultra picker writes `parakeet.version` straight to defaults.
+        // The Parakeet model picker writes `parakeet.version` straight to defaults.
         parakeetDefaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,

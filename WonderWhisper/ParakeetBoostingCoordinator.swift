@@ -38,8 +38,13 @@ actor ParakeetBoostingCoordinator<Manager: AnyObject & Sendable> {
   private let ctcReady: CtcReady
   private let log: @Sendable (String) -> Void
   /// Terms configured per manager. Absent = fresh (never configured);
-  /// empty = neutralized; non-empty = boosted.
-  private var configuredTerms: [ObjectIdentifier: [String]] = [:]
+  /// empty = neutralized; non-empty = boosted. Each entry holds its manager weakly and only
+  /// counts for that same object, so a new manager at a released one's address starts fresh.
+  private struct Entry {
+    weak var manager: Manager?
+    var terms: [String]
+  }
+  private var configuredTerms: [ObjectIdentifier: Entry] = [:]
   private var generation = 0
   private var locked = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -56,7 +61,10 @@ actor ParakeetBoostingCoordinator<Manager: AnyObject & Sendable> {
 
   /// Terms currently configured on `manager` (nil = never configured).
   func configuredTerms(of manager: Manager) -> [String]? {
-    configuredTerms[ObjectIdentifier(manager)]
+    guard let entry = configuredTerms[ObjectIdentifier(manager)], entry.manager === manager else {
+      return nil
+    }
+    return entry.terms
   }
 
   /// Drop bookkeeping for a manager that is being released.
@@ -118,13 +126,13 @@ actor ParakeetBoostingCoordinator<Manager: AnyObject & Sendable> {
 
   private func align(_ manager: Manager, desired: [String]) async -> Outcome {
     let id = ObjectIdentifier(manager)
-    let current = configuredTerms[id]
+    let current = configuredTerms(of: manager)
     if desired.isEmpty {
       // Fresh or already neutral: nothing to clear.
       guard let current, !current.isEmpty else { return .unchanged }
       do {
         try await configure(manager, [])
-        configuredTerms[id] = []
+        record([], for: manager)
         log("boosting off; neutralized without reloading ASR")
         return .neutralized
       } catch {
@@ -141,12 +149,17 @@ actor ParakeetBoostingCoordinator<Manager: AnyObject & Sendable> {
     }
     do {
       try await configure(manager, desired)
-      configuredTerms[id] = desired
+      record(desired, for: manager)
       return .configured(desired)
     } catch {
       log("configure failed; transcribing without updating boosting: \(error.localizedDescription)")
       return .skipped
     }
+  }
+
+  private func record(_ terms: [String], for manager: Manager) {
+    configuredTerms = configuredTerms.filter { $0.value.manager != nil }
+    configuredTerms[ObjectIdentifier(manager)] = Entry(manager: manager, terms: terms)
   }
 
   private func acquire() async {

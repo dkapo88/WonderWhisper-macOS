@@ -188,4 +188,29 @@ struct ParakeetBoostingCoordinatorTests {
     #expect(manager.history == [["A"], ["B"]])
     #expect(!manager.overlapDetected)
   }
+
+  /// Review round 2: a manager released without `forget` must not hand its terms to a new
+  /// manager that lands at the same address.
+  @Test func aNewManagerAtAReleasedAddressStartsFresh() async throws {
+    let coordinator = makeCoordinator(gate: CtcGate())
+    var released: FakeManager? = FakeManager()
+    let oldID = ObjectIdentifier(try #require(released))
+    _ = try await coordinator.run(on: try #require(released), desired: ["Anika"]) { "text" }
+    released = nil
+    // Try to get the released address back (normally at once). An allocator that never reuses
+    // it (e.g. under AddressSanitizer) still leaves a new manager, which must start fresh too.
+    var keep: [FakeManager] = []
+    var reused: FakeManager?
+    for _ in 0..<1_000 {
+      let candidate = FakeManager()
+      keep.append(candidate)
+      if ObjectIdentifier(candidate) == oldID { reused = candidate; break }
+    }
+    let fresh = reused ?? FakeManager()
+    #expect(await coordinator.configuredTerms(of: fresh) == nil)
+    let (_, outcome) = try await coordinator.run(on: fresh, desired: ["Anika"]) { "text" }
+    #expect(outcome == .configured(["Anika"]))
+    #expect(fresh.history == [["Anika"]])
+    withExtendedLifetime(keep) {}
+  }
 }

@@ -25,7 +25,7 @@ struct ParakeetResidencyTests {
       if held { await withCheckedContinuation { waiters.append($0) } }
       switch kind {
       case .unified: return .unified(UnifiedAsrManager())
-      case .ultra: return .ultra(AsrManager())
+      case .ultra, .barkClean: return .tdt(AsrManager())
       }
     }
 
@@ -59,8 +59,8 @@ struct ParakeetResidencyTests {
     await provider.setSelected(true)
     await provider.setSelected(true)
     await provider.waitForBackgroundWorkForTesting()
-    #expect(await gate.loads == [.unified])
-    #expect(await gate.prewarms == [.unified])
+    #expect(await gate.loads == [ParakeetModelKind.newInstallDefault])
+    #expect(await gate.prewarms == [ParakeetModelKind.newInstallDefault])
     #expect(await provider.isResident())
     #expect(await provider.lastInferenceAt != nil)
   }
@@ -77,8 +77,8 @@ struct ParakeetResidencyTests {
     await gate.release()
     await warm
     await provider.waitForBackgroundWorkForTesting()
-    #expect(await gate.loads == [.unified])
-    #expect(await gate.prewarms == [.unified])
+    #expect(await gate.loads == [ParakeetModelKind.newInstallDefault])
+    #expect(await gate.prewarms == [ParakeetModelKind.newInstallDefault])
   }
 
   @Test func aLateLoadNeverBringsBackADeselectedEngine() async {
@@ -194,7 +194,7 @@ struct ParakeetResidencyTests {
     await provider.setLastInferenceForTesting(nil)
     await provider.warmUp()
     #expect(await gate.prewarms.count == 3)
-    #expect(await gate.loads == [.unified])
+    #expect(await gate.loads == [ParakeetModelKind.newInstallDefault])
   }
 
   @Test func concurrentPrewarmsAreCoalesced() async {
