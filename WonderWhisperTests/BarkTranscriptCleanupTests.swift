@@ -62,7 +62,31 @@ struct BarkTranscriptCleanupTests {
     #expect(BarkTranscriptCleanup.normalizeNumbers("seventeen days", normalizer: digits) == "17 days")
     // Next to another number word or a unit, a small number is part of the expression.
     #expect(BarkTranscriptCleanup.normalizeNumbers("one two three", normalizer: digits) == "1 2 3")
-    #expect(BarkTranscriptCleanup.normalizeNumbers("two percent", normalizer: digits) == "2 percent")
+    #expect(BarkTranscriptCleanup.normalizeNumbers("two percent", normalizer: digits) == "2%")
+  }
+
+  @Test func repairsSpokenFormsBeforeNormalizing() {
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("twenty-three attendees") == "twenty three attendees")
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("Forty-Five dollars") == "Forty Five dollars")
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("the nine a m call") == "the nine a.m. call")
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("Thursday the16, until the1 December")
+      == "Thursday the 16, until the 1 December")
+    // Ordinary hyphens, letters and model names are left alone.
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("a well-known I am m") == "a well-known I am m")
+    #expect(BarkTranscriptCleanup.preparingSpokenNumbers("mp3 and h264") == "mp3 and h264")
+  }
+
+  @Test func neverLetsTheNormalizerDropAWord() {
+    // Mimics NeMo reading "eleven and invite" as one number.
+    let greedy: BarkTranscriptCleanup.Normalizer = {
+      $0.replacingOccurrences(of: "eleven and", with: "11")
+        .replacingOccurrences(of: "eleven", with: "11")
+        .replacingOccurrences(of: "invite ", with: "")
+    }
+    #expect(BarkTranscriptCleanup.normalizeNumbers("move it to eleven and invite Anika", normalizer: greedy)
+      == "move it to eleven and invite Anika")
+    #expect(BarkTranscriptCleanup.normalizeNumbers("move it to eleven. Then call", normalizer: greedy)
+      == "move it to 11. Then call")
   }
 
   @Test func keepsTheTextWhenTheNormalizerDropsAProtectedWord() {
@@ -84,7 +108,21 @@ struct BarkTranscriptCleanupTests {
     ("I think one of the best options is to wait.", "I think one of the best options is to wait."),
     ("I'll send it in a second, okay?", "I'll send it in a second, okay?"),
     ("Please do not approve the invoice for $3,450 until Priya Raman signs it.",
-     "Please do not approve the invoice for $3,450 until Priya Raman signs it.")
+     "Please do not approve the invoice for $3,450 until Priya Raman signs it."),
+    // Raw Bark Clean output for the benchmark's number clips.
+    ("the meeting moved from Tuesday the fourteenth to Thursday the16 at two thirty p.m.",
+     "The meeting moved from Tuesday the 14th to Thursday the 16 at 2:30 p.m."),
+    ("we are not shipping version4 .2 this week. The release is on hold until the1 December.",
+     "We are not shipping version 4.2 this week. The release is on hold until the 1 December."),
+    ("no I said seventeen percent not seventy percent and the budget is one point two million",
+     "No I said 17% not 70% and the budget is 1.2 million"),
+    ("there were twenty-three attendees, nine of whom never received the agenda.",
+     "There were 23 attendees, nine of whom never received the agenda."),
+    ("marcus chen can't make the nine a m call so move it to eleven and invite anika patel",
+     "Marcus chen can't make the 9 a.m. call so move it to 11 and invite anika patel"),
+    ("the refund of forty-five dollars and fifty cents was never processed, and it isn't our error.",
+     "The refund of $45.50 was never processed, and it isn't our error."),
+    ("I bought five and gave away three.", "I bought five and gave away three.")
   ])
   func writesNumbersConsistentlyWithTheBundledNormalizer(raw: String, expected: String) {
     #expect(BarkTranscriptCleanup.clean(raw) == expected)
