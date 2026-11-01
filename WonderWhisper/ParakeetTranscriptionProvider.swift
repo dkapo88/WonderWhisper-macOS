@@ -212,13 +212,19 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             log.notice("[Parakeet] Unloading models: \(reason, privacy: .public)")
             AppLog.dictation.log("[Parakeet] unload reason=\(reason, privacy: .public)")
         }
-        if let mgr = asrManager {
-            await mgr.cleanup()
-            asrManager = nil
-        }
         // UnifiedAsrManager releases its CoreML models when deallocated.
         unifiedManager = nil
         if hadModels { loadedKind = nil }
+        await releaseUltraManager()
+    }
+
+    /// Detaches the Ultra manager, then cleans it up under the coordinator lock: an Ultra decode
+    /// in flight holds that lock, so cleanup waits for it instead of pulling the models from
+    /// under it.
+    private func releaseUltraManager() async {
+        guard let mgr = asrManager else { return }
+        asrManager = nil
+        await boosting.exclusive { await mgr.cleanup() }
     }
 
     // MARK: - Dictation residency
@@ -435,9 +441,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     }
 
     private func unloadOtherBackend(keeping kind: ParakeetModelKind) async {
-        if kind != .ultra, let mgr = asrManager {
-            await mgr.cleanup()
-            asrManager = nil
+        if kind != .ultra {
+            await releaseUltraManager()
         }
         if kind != .unified {
             unifiedManager = nil
