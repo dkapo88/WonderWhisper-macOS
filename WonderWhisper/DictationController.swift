@@ -289,6 +289,7 @@ actor DictationController {
             await waitForCompleteRecording(fileURL)
             let analysis = DictationSilenceGate.analyze(fileURL: fileURL)
             stageTimings?.audioPrep = DictationClock.now() - prepStart
+            if let duration = analysis?.durationSeconds, duration > 0 { stageTimings?.audioSeconds = duration }
             if let analysis, analysis.isSilent {
                 let level = analysis.loudestWindowDBFS
                 AppLog.dictation.log("Silence gate: loudest window \(level, format: .fixed(precision: 1), privacy: .public) dBFS; skipping transcription")
@@ -464,6 +465,8 @@ actor DictationController {
         defer { stopInProgress = false }
         // Keep recording through the release tail; a cancel during it ends the session here.
         guard await recordReleaseTail() else { return }
+        // Past the tail a cancel can no longer discard this recording.
+        state = .transcribing
         AppLog.dictation.log("Stop requested provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         // Stop live streaming if active
         AppLog.dictation.log("Stopping streaming recorder")
@@ -883,7 +886,9 @@ actor DictationController {
         guard var timings = stageTimings else { return }
         stageTimings = nil
         if let outcome { timings.outcome = outcome }
-        if let recordingURL { timings.audioSeconds = Self.audioDuration(of: recordingURL) }
+        if timings.audioSeconds == nil, let recordingURL {
+            timings.audioSeconds = Self.audioDuration(of: recordingURL)
+        }
         let line = timings.logLine()
         AppLog.dictation.log("\(line, privacy: .public)")
     }
@@ -920,6 +925,7 @@ actor DictationController {
         stopInProgress = true
         defer { stopInProgress = false }
         guard await recordReleaseTail() else { return nil }
+        state = .transcribing
 
         AppLog.dictation.log("Stop requested for transcription-only flow provider=\(String(describing: type(of: self.transcriber)), privacy: .public) model=\(self.transcriberSettings.model, privacy: .public)")
         recorder.stopStreamingPCM16()

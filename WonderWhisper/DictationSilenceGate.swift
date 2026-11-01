@@ -18,6 +18,8 @@ enum DictationSilenceGate {
   struct Analysis: Equatable {
     var loudestWindowDBFS: Double
     var windowCount: Int
+    /// Length of the analysed audio (0 for in-memory samples analysed without a file).
+    var durationSeconds: Double = 0
 
     var isSilent: Bool { windowCount == 0 || loudestWindowDBFS < DictationSilenceGate.silenceThresholdDBFS }
   }
@@ -56,19 +58,21 @@ enum DictationSilenceGate {
     guard let file = try? AVAudioFile(forReading: url) else { return nil }
     let format = file.processingFormat
     let frames = AVAudioFrameCount(file.length)
+    let duration = format.sampleRate > 0 ? Double(frames) / format.sampleRate : 0
     guard frames > 0 else { return Analysis(loudestWindowDBFS: floorDBFS, windowCount: 0) }
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
           (try? file.read(into: buffer)) != nil,
           let channels = buffer.floatChannelData else { return nil }
     // Dictation records mono; for more channels the loudest channel decides.
-    var result = Analysis(loudestWindowDBFS: floorDBFS, windowCount: 0)
+    var result = Analysis(loudestWindowDBFS: floorDBFS, windowCount: 0, durationSeconds: duration)
     for channel in 0..<Int(format.channelCount) {
       let samples = UnsafeBufferPointer(start: channels[channel], count: Int(buffer.frameLength))
       let analysis = analyze(samples: samples, sampleRate: format.sampleRate)
       if analysis.windowCount > result.windowCount || analysis.loudestWindowDBFS > result.loudestWindowDBFS {
         result = Analysis(
           loudestWindowDBFS: max(result.loudestWindowDBFS, analysis.loudestWindowDBFS),
-          windowCount: max(result.windowCount, analysis.windowCount)
+          windowCount: max(result.windowCount, analysis.windowCount),
+          durationSeconds: duration
         )
       }
     }
