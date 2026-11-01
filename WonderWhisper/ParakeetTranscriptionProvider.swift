@@ -25,6 +25,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         case whileSelected
     }
 
+    /// Bark Clean removes fillers, which leaves 1.5-3 s gaps between tokens. FluidAudio's
+    /// seam-gap repair re-decodes around every gap of 1.5 s or more in long audio, doubling
+    /// Bark's decode time on disfluent dictation with no change in text (benchmark, 2026-11-02).
+    /// A 3 s threshold keeps the repair for real chunk-seam drops.
+    static let barkCleanConfig = ASRConfig(seamGapRepairMinGapSeconds: 3.0)
+
     /// Key-down prewarms when the model has not run for longer than this.
     static let idlePrewarmThreshold: TimeInterval = 120
 
@@ -513,7 +519,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         // Ultra and Bark Clean each ship a single encoder build (no precision variants).
         let models = try await AsrModels.downloadAndLoad(version: version)
-        let mgr = AsrManager(config: .default)
+        let mgr = AsrManager(config: kind == .barkClean ? Self.barkCleanConfig : .default)
         try await mgr.loadModels(models)
         let available = await mgr.isAvailable
         log.notice("[Parakeet] manager available=\(available, privacy: .public)")
