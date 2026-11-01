@@ -5,6 +5,20 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-10-23</title>
+      <pubDate>Sun, 01 Nov 2026 07:51:35 +0000</pubDate>
+      <sparkle:version>2026102300</sparkle:version>
+      <sparkle:shortVersionString>2026-10-23</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Meetings hear a quiet microphone again:** With a built-in MacBook microphone (or input volume below full), Grok could return nothing at all, or stop transcribing partway through a meeting. WonderWhisper now brings a quiet microphone up to a level the transcriber hears, and it sets the microphone's input volume to full when a meeting starts, as dictation already did.</li>
+<li>**Fewer missed words with the noise gate on:** When you're not speaking, your microphone is now turned well down instead of cut to pure silence. Grok was dropping about half of the real speech next to pure silence; it no longer does, and it still doesn't invent words from room noise.</li>
+<li>**Steadier at the start of a meeting:** The second or two of silence a microphone sends while it starts no longer makes the gate let room noise through.</li>
+<li>**Mute keeps your level:** Muting and unmuting in the meeting window no longer makes your first words quiet again.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-10-23/WonderWhisper-2026-10-23.dmg" sparkle:edSignature="a8GnoU+e/JMJCgKDubGbRjcqt+FO+m7E1R4MYv5ywkT9fDnB9aRrGslEwriOCKoXg5K2JNUI6FhLC0CpFvfsCg==" length="26032923" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-22</title>
       <pubDate>Thu, 22 Oct 2026 14:50:26 +0000</pubDate>
       <sparkle:version>2026102200</sparkle:version>
