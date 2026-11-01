@@ -725,6 +725,7 @@ final class DictationViewModel: ObservableObject {
     private var dictationSessions = DictationSessionMachine()
     /// Keeps the Escape monitor alive after release until the release tail has ended.
     private var escapeArmedForStop = false
+    private var integrationStopInProgress = false
 
     // Global Escape key monitor (enabled only while recording)
     private var escapeEventMonitor: Any?
@@ -1310,6 +1311,23 @@ final class DictationViewModel: ObservableObject {
         disarmEscapeAfterTail()
         await restoreOriginalPromptIfNeeded()
         dictationSessions.finished(session: session)
+    }
+
+    /// Hermes, Beeper and Codex stops: a repeated stop while one is finishing is dropped before
+    /// it touches the UI or the Escape monitor, so it cannot disarm Escape during the first
+    /// stop's release tail.
+    private func beginIntegrationStop() -> Bool {
+        guard !integrationStopInProgress else {
+            AppLog.dictation.log("Integration stop ignored: a stop is already finishing")
+            return false
+        }
+        integrationStopInProgress = true
+        return true
+    }
+
+    private func endIntegrationStop() {
+        integrationStopInProgress = false
+        disarmEscapeAfterTail()
     }
 
     private func disarmEscapeAfterTail() {
@@ -3411,7 +3429,8 @@ final class DictationViewModel: ObservableObject {
         sessionID: UUID,
         trigger: DictationTriggerTimes? = nil
     ) async {
-        defer { disarmEscapeAfterTail() }
+        guard beginIntegrationStop() else { return }
+        defer { endIntegrationStop() }
         await MainActor.run {
             self.hermesResponseWindowStates = HermesResponseWindowLifecycle.replyRecordingFinished(
                 self.hermesResponseWindowStates,
@@ -3527,7 +3546,8 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func finishCodexRecording(promptID: UUID, trigger: DictationTriggerTimes? = nil) async {
-        defer { disarmEscapeAfterTail() }
+        guard beginIntegrationStop() else { return }
+        defer { endIntegrationStop() }
         let threadID = activeCodexThreadID
         let responseWindowID = activeCodexResponseWindowID
         await MainActor.run {
@@ -3800,7 +3820,8 @@ final class DictationViewModel: ObservableObject {
         AppLog.dictation.log(
             "Beeper recording finish prompt=\(promptID.uuidString, privacy: .public) replyWindow=\(self.beeperResponseWindowIDForActiveRecording?.uuidString ?? "none", privacy: .public)"
         )
-        defer { disarmEscapeAfterTail() }
+        guard beginIntegrationStop() else { return }
+        defer { endIntegrationStop() }
         await MainActor.run {
             self.recordingStopInProgress = true
             // Escape keeps cancelling through the release tail.

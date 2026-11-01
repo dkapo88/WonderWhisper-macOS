@@ -133,6 +133,19 @@ struct ParakeetResidencyTests {
     #expect(await gate.prewarms.count == 1, "only the launch prewarm")
   }
 
+  @Test func aWarmUpQueuedAfterDeselectionDoesNotLoad() async {
+    let gate = Gate()
+    let provider = makeProvider(gate)
+    await provider.setSelected(true)
+    await provider.waitForBackgroundWorkForTesting()
+    await provider.handleMemoryPressure()
+    await provider.setSelected(false)
+    await provider.warmUp()
+    await provider.waitForBackgroundWorkForTesting()
+    #expect(await !provider.isResident())
+    #expect(await gate.loads.count == 1)
+  }
+
   @Test func deselectingUnloads() async {
     let gate = Gate()
     let provider = makeProvider(gate)

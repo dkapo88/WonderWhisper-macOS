@@ -147,6 +147,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // not resident and prewarms it when it has not run for `idlePrewarmThreshold`, alongside
     // capture.
     func warmUp() async {
+        // A dictation engine that is no longer selected (a warm-up queued before an engine
+        // switch) never loads in the background; a real transcription still can.
+        if residency == .whileSelected, !isSelected { return }
         memoryPressureHold = false
         let generation = residencyGeneration
         do {
