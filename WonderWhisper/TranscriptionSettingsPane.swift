@@ -19,8 +19,8 @@ struct TranscriptionSettingsPane: View {
   @State private var isDownloadingCtc = false
   @State private var ctcDownloadError: String?
   // Selected on-device Parakeet model, persisted under "parakeet.version". Stored
-  // as a raw optional string so unset (new-install default) and a legacy "v3" resolve
-  // exactly as in ParakeetModelKind(storedValue:).
+  // as a raw optional string so unset (new-install or pinned default) and a legacy "v3"
+  // resolve exactly as in ParakeetModelKind.resolved(stored:).
   @AppStorage(ParakeetModelKind.defaultsKey, store: AppConfig.defaults)
   private var parakeetVersion: String?
   // One-time "new recommended model" note for installs that kept their old model.
@@ -166,12 +166,12 @@ struct TranscriptionSettingsPane: View {
   // MARK: - On-device models
 
   private var parakeetModel: ParakeetModelKind {
-    ParakeetModelKind(storedValue: parakeetVersion)
+    ParakeetModelKind.resolved(stored: parakeetVersion)
   }
 
   private var parakeetModelBinding: Binding<ParakeetModelKind> {
     Binding(
-      get: { ParakeetModelKind(storedValue: parakeetVersion) },
+      get: { ParakeetModelKind.resolved(stored: parakeetVersion) },
       set: {
         parakeetVersion = $0.rawValue
         if $0 == .barkClean { barkRecommendationPending = false }

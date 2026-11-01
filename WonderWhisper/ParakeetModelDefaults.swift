@@ -5,13 +5,19 @@ import Foundation
 /// An unset `parakeet.version` now resolves to Bark Clean (`ParakeetModelKind.newInstallDefault`).
 /// Existing installs must keep the model they were using, including those that never touched the
 /// picker and ran the old unset default (Unified). On the first launch of this version, an
-/// existing install with no stored choice gets the old default written explicitly, and is flagged
-/// to show a one-time "new recommended model" note in Settings. New installs keep the key unset.
+/// existing install gets that old default pinned in `pinnedDefaultKey`, and is flagged to show a
+/// one-time "new recommended model" note in Settings. New installs pin nothing.
+///
+/// The pin never writes `parakeet.version` itself: that key syncs through iCloud, and a launch-time
+/// write would count as a new edit there and could replace another Mac's real choice. A value the
+/// user picks, here or on another Mac, always wins over the pin.
 enum ParakeetModelDefaults {
   /// Set once the migration has run on this Mac (any outcome).
   static let migrationKey = "parakeet.barkCleanDefault.migrated"
   /// True while the Settings note recommending Bark Clean should show.
   static let recommendationPendingKey = "parakeet.barkCleanRecommendation.pending"
+  /// What an unset `parakeet.version` means on an existing install. Not synced.
+  static let pinnedDefaultKey = "parakeet.unsetDefault"
 
   enum Outcome: Equatable {
     /// Already ran on an earlier launch.
@@ -29,12 +35,11 @@ enum ParakeetModelDefaults {
     guard !defaults.bool(forKey: migrationKey) else { return .alreadyMigrated }
     defer { defaults.set(true, forKey: migrationKey) }
     guard isExistingInstall else { return .newInstall }
-    let stored = defaults.string(forKey: ParakeetModelKind.defaultsKey)
-    if stored == nil {
-      // Pin what the old version resolved an unset key to.
-      defaults.set(ParakeetModelKind.legacyDefault.rawValue, forKey: ParakeetModelKind.defaultsKey)
-    }
-    let kept = ParakeetModelKind(storedValue: stored ?? ParakeetModelKind.legacyDefault.rawValue)
+    // Pin what the old version resolved an unset key to, whether or not it is set right now.
+    defaults.set(ParakeetModelKind.legacyDefault.rawValue, forKey: pinnedDefaultKey)
+    let kept = ParakeetModelKind.resolved(
+      stored: defaults.string(forKey: ParakeetModelKind.defaultsKey), defaults: defaults
+    )
     if kept != .barkClean {
       defaults.set(true, forKey: recommendationPendingKey)
     }
@@ -46,7 +51,7 @@ enum ParakeetModelDefaults {
   /// launch (window and status-item state, Sparkle, settings), and nothing has written to it yet
   /// this launch when the migration runs from `WonderWhisperApp.init`.
   static func hasPriorLaunch(defaults: UserDefaults, bundleIdentifier: String) -> Bool {
-    let ownKeys: Set<String> = [migrationKey, recommendationPendingKey]
+    let ownKeys: Set<String> = [migrationKey, recommendationPendingKey, pinnedDefaultKey]
     let domain = defaults.persistentDomain(forName: bundleIdentifier) ?? [:]
     return domain.keys.contains { !ownKeys.contains($0) }
   }
@@ -63,6 +68,11 @@ enum ParakeetModelDefaults {
     if outcome != .alreadyMigrated {
       AppLog.dictation.log("[Parakeet] default model migration: \(String(describing: outcome))")
     }
+  }
+
+  /// The pinned default for an unset `parakeet.version`, or nil on a new install.
+  static func pinnedDefault(defaults: UserDefaults = AppConfig.defaults) -> String? {
+    defaults.string(forKey: pinnedDefaultKey)
   }
 
   static func isRecommendationPending(defaults: UserDefaults = AppConfig.defaults) -> Bool {

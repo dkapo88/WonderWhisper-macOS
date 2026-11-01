@@ -13,7 +13,7 @@ struct ParakeetModelDefaultsTests {
   }
 
   private func selection(_ defaults: UserDefaults) -> ParakeetModelKind {
-    ParakeetModelKind(storedValue: defaults.string(forKey: ParakeetModelKind.defaultsKey))
+    ParakeetModelKind.resolved(stored: defaults.string(forKey: ParakeetModelKind.defaultsKey), defaults: defaults)
   }
 
   @Test func newInstallGetsBarkCleanWithoutTheNote() {
@@ -21,6 +21,7 @@ struct ParakeetModelDefaultsTests {
     defer { defaults.removePersistentDomain(forName: suite) }
     #expect(ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: false) == .newInstall)
     #expect(defaults.string(forKey: ParakeetModelKind.defaultsKey) == nil)
+    #expect(ParakeetModelDefaults.pinnedDefault(defaults: defaults) == nil)
     #expect(selection(defaults) == .barkClean)
     #expect(!ParakeetModelDefaults.isRecommendationPending(defaults: defaults))
   }
@@ -30,9 +31,25 @@ struct ParakeetModelDefaultsTests {
     defer { defaults.removePersistentDomain(forName: suite) }
     let outcome = ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: true)
     #expect(outcome == .existingInstall(kept: .unified))
-    #expect(defaults.string(forKey: ParakeetModelKind.defaultsKey) == "unified")
     #expect(selection(defaults) == .unified)
     #expect(ParakeetModelDefaults.isRecommendationPending(defaults: defaults))
+    // The synced key is never written at launch: iCloud sync would count it as a new edit.
+    #expect(defaults.string(forKey: ParakeetModelKind.defaultsKey) == nil)
+    #expect(!SettingsSyncRegistry.isSynced(ParakeetModelDefaults.pinnedDefaultKey))
+    #expect(SettingsSyncRegistry.isSynced(ParakeetModelKind.defaultsKey))
+  }
+
+  @Test func aChoiceSyncedInLaterBeatsThePinnedDefault() {
+    let (defaults, suite) = scratchDefaults()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: true)
+    defaults.set("ultra", forKey: ParakeetModelKind.defaultsKey)
+    #expect(selection(defaults) == .ultra)
+    defaults.set("bark-clean", forKey: ParakeetModelKind.defaultsKey)
+    #expect(selection(defaults) == .barkClean)
+    // A synced reset falls back to the pin, not to Bark Clean.
+    defaults.removeObject(forKey: ParakeetModelKind.defaultsKey)
+    #expect(selection(defaults) == .unified)
   }
 
   @Test func existingExplicitSelectionsAreLeftAlone() {
@@ -44,6 +61,7 @@ struct ParakeetModelDefaultsTests {
       let outcome = ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: true)
       #expect(outcome == .existingInstall(kept: kept), "stored \(stored)")
       #expect(defaults.string(forKey: ParakeetModelKind.defaultsKey) == stored, "stored \(stored)")
+      #expect(selection(defaults) == kept, "stored \(stored)")
       #expect(ParakeetModelDefaults.isRecommendationPending(defaults: defaults), "stored \(stored)")
     }
   }
@@ -62,10 +80,8 @@ struct ParakeetModelDefaultsTests {
     defer { defaults.removePersistentDomain(forName: suite) }
     ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: true)
     ParakeetModelDefaults.dismissRecommendation(defaults: defaults)
-    // A later reset of the key (e.g. synced removal) is not re-pinned, and the note stays dismissed.
-    defaults.removeObject(forKey: ParakeetModelKind.defaultsKey)
     #expect(ParakeetModelDefaults.migrateIfNeeded(defaults: defaults, isExistingInstall: true) == .alreadyMigrated)
-    #expect(defaults.string(forKey: ParakeetModelKind.defaultsKey) == nil)
+    #expect(selection(defaults) == .unified)
     #expect(!ParakeetModelDefaults.isRecommendationPending(defaults: defaults))
   }
 
@@ -85,6 +101,7 @@ struct ParakeetModelDefaultsTests {
     #expect(!ParakeetModelDefaults.hasPriorLaunch(defaults: defaults, bundleIdentifier: suite))
     defaults.set(true, forKey: ParakeetModelDefaults.migrationKey)
     defaults.set(true, forKey: ParakeetModelDefaults.recommendationPendingKey)
+    defaults.set("unified", forKey: ParakeetModelDefaults.pinnedDefaultKey)
     #expect(!ParakeetModelDefaults.hasPriorLaunch(defaults: defaults, bundleIdentifier: suite))
     defaults.set(true, forKey: "SUHasLaunchedBefore")
     #expect(ParakeetModelDefaults.hasPriorLaunch(defaults: defaults, bundleIdentifier: suite))

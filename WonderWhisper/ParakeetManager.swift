@@ -31,9 +31,10 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// multilingual option, so existing selections carry over.
     static let defaultsKey = "parakeet.version"
 
-    /// What an unset `parakeet.version` means. Existing installs never see it:
-    /// `ParakeetModelDefaults` writes their old default (`.unified`) on the
-    /// first launch of the version that introduced Bark Clean.
+    /// What an unset `parakeet.version` means on a new install. Existing installs
+    /// that never set it resolve to their old default (`.unified`) instead, which
+    /// `ParakeetModelDefaults` pins in a separate, unsynced key on the first launch
+    /// of the version that introduced Bark Clean.
     static let newInstallDefault: ParakeetModelKind = .barkClean
 
     /// The default before Bark Clean.
@@ -178,9 +179,15 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     }
 
     /// Currently selected model, read fresh from UserDefaults. Shares
-    /// `init(storedValue:)` with the settings picker so both always agree.
+    /// `resolved(stored:defaults:)` with the settings picker so both always agree.
     static var selected: ParakeetModelKind {
-        ParakeetModelKind(storedValue: AppConfig.defaults.string(forKey: defaultsKey))
+        resolved(stored: AppConfig.defaults.string(forKey: defaultsKey))
+    }
+
+    /// The model a `parakeet.version` value selects on this Mac: the stored value, else the
+    /// default pinned for an existing install, else the new-install default.
+    static func resolved(stored: String?, defaults: UserDefaults = AppConfig.defaults) -> ParakeetModelKind {
+        ParakeetModelKind(storedValue: stored ?? ParakeetModelDefaults.pinnedDefault(defaults: defaults))
     }
 }
 

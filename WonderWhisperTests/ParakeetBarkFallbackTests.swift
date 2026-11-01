@@ -78,4 +78,20 @@ struct ParakeetBarkFallbackTests {
     #expect(await parakeet.isResident(for: settings("parakeet-bark-clean")))
     #expect(!(await parakeet.isResident(for: settings("parakeet-ultra"))))
   }
+
+  /// Review round 1: a released Bark Clean slot's boosting record must go with it.
+  @Test func switchingAwayFromBarkCleanRetiresItsBoostingSlot() async throws {
+    let recorder = Recorder()
+    let parakeet = provider(recorder, installed: [.barkClean, .ultra])
+    try await parakeet.ensureModelsLoadedForTesting(.barkClean)
+    await parakeet.prepareTdtBoostingForTesting()
+    let first = try #require(await parakeet.tdtBoostingSlotForTesting)
+    try await parakeet.ensureModelsLoadedForTesting(.ultra)
+    #expect(await parakeet.tdtBoostingSlotForTesting == nil)
+    try await parakeet.ensureModelsLoadedForTesting(.barkClean)
+    await parakeet.prepareTdtBoostingForTesting()
+    let second = try #require(await parakeet.tdtBoostingSlotForTesting)
+    #expect(first !== second)
+    #expect(second.manager !== first.manager)
+  }
 }

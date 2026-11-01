@@ -37,10 +37,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // TDT backend: Parakeet Ultra (multilingual) or Bark Clean (English), per `loadedKind`.
     private var asrManager: AsrManager? {
         didSet {
-            if oldValue !== asrManager { tdtBoostingSlot = nil }
+            if oldValue !== asrManager { retireTdtBoostingSlot() }
         }
     }
-    // Bark Clean's vocabulary boosting state, bound to the resident `asrManager`.
+    // Bark Clean's vocabulary boosting state, bound to the resident `asrManager`. Created on
+    // first use (`tdtBoostingSlotForUse`); retired, with its coordinator bookkeeping, whenever
+    // the manager goes.
     private var tdtBoostingSlot: ParakeetTdtBoostingSlot?
     // Serializes TDT inference (Ultra and Bark Clean), prewarm, cleanup and Bark Clean's
     // vocabulary configuration, under the same invariants as `boosting` for Unified.
@@ -220,7 +222,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
                 // load, and the result is dropped if a transcription ran first.
                 let outcome = await boosting.prepare(mgr) { [self] in currentTermsToBoost() }
                 handleBoostingOutcome(outcome, manager: mgr)
-            } else if kind == .barkClean, let slot = currentTdtBoostingSlot() {
+            } else if kind == .barkClean, let slot = await tdtBoostingSlotForUse() {
                 let outcome = await tdtBoosting.prepare(slot) { [self] in currentTermsToBoost() }
                 logTdtBoostingOutcome(outcome)
             }
@@ -257,7 +259,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         idleUnloadTask?.cancel()
         idleUnloadTask = nil
         let hadModels = (asrManager != nil) || (unifiedManager != nil)
-        tdtBoostingSlot = nil
+        retireTdtBoostingSlot()
         if hadModels {
             log.notice("[Parakeet] Unloading models: \(reason, privacy: .public)")
             AppLog.dictation.log("[Parakeet] unload reason=\(reason, privacy: .public)")
@@ -486,9 +488,6 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
                 try await loadUnifiedModel()
             }
         }
-        if kind == .barkClean, let mgr = asrManager {
-            tdtBoostingSlot = ParakeetTdtBoostingSlot(manager: mgr)
-        }
         loadedKind = kind
         scheduleIdleUnload()
     }
@@ -580,7 +579,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             lastInferenceAt = DictationClock.now()
             return text
         case .barkClean:
-            guard let mgr = asrManager, let slot = currentTdtBoostingSlot() else {
+            guard let mgr = asrManager, let slot = await tdtBoostingSlotForUse() else {
                 throw ProviderError.notImplemented
             }
             let desired = ParakeetVocabularyBoosting.termsToBoost(
@@ -626,12 +625,31 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // MARK: - Bark Clean
 
-    private func currentTdtBoostingSlot() -> ParakeetTdtBoostingSlot? {
+    /// The boosting slot for the resident Bark Clean manager, created on first use. A new slot
+    /// first clears any coordinator entry left at its address by a released slot, so a stale
+    /// "already configured" record can never skip configuring it.
+    private func tdtBoostingSlotForUse() async -> ParakeetTdtBoostingSlot? {
         guard loadedKind == .barkClean, let mgr = asrManager else { return nil }
         if let slot = tdtBoostingSlot, slot.manager === mgr { return slot }
         let slot = ParakeetTdtBoostingSlot(manager: mgr)
         tdtBoostingSlot = slot
+        await tdtBoosting.forget(slot)
         return slot
+    }
+
+    /// Drops the boosting slot and its coordinator bookkeeping.
+    private func retireTdtBoostingSlot() {
+        guard let slot = tdtBoostingSlot else { return }
+        tdtBoostingSlot = nil
+        let coordinator = tdtBoosting
+        Task { await coordinator.forget(slot) }
+    }
+
+    var tdtBoostingSlotForTesting: ParakeetTdtBoostingSlot? { tdtBoostingSlot }
+
+    func prepareTdtBoostingForTesting() async {
+        guard let slot = await tdtBoostingSlotForUse() else { return }
+        _ = await tdtBoosting.prepare(slot) { [self] in currentTermsToBoost() }
     }
 
     private func logTdtBoostingOutcome(_ outcome: ParakeetBoostingCoordinator<ParakeetTdtBoostingSlot>.Outcome) {
