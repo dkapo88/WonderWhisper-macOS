@@ -222,7 +222,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
                 // load, and the result is dropped if a transcription ran first.
                 let outcome = await boosting.prepare(mgr) { [self] in currentTermsToBoost() }
                 handleBoostingOutcome(outcome, manager: mgr)
-            } else if kind == .barkClean, let slot = await tdtBoostingSlotForUse() {
+            } else if kind == .barkClean, let slot = tdtBoostingSlotForUse() {
                 let outcome = await tdtBoosting.prepare(slot) { [self] in currentTermsToBoost() }
                 logTdtBoostingOutcome(outcome)
             }
@@ -579,7 +579,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             lastInferenceAt = DictationClock.now()
             return text
         case .barkClean:
-            guard let mgr = asrManager, let slot = await tdtBoostingSlotForUse() else {
+            guard let mgr = asrManager, let slot = tdtBoostingSlotForUse() else {
                 throw ProviderError.notImplemented
             }
             let desired = ParakeetVocabularyBoosting.termsToBoost(
@@ -625,15 +625,14 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     // MARK: - Bark Clean
 
-    /// The boosting slot for the resident Bark Clean manager, created on first use. A new slot
-    /// first clears any coordinator entry left at its address by a released slot, so a stale
-    /// "already configured" record can never skip configuring it.
-    private func tdtBoostingSlotForUse() async -> ParakeetTdtBoostingSlot? {
+    /// The boosting slot for the resident Bark Clean manager, created on first use. Synchronous,
+    /// so nothing can unload the manager between capturing it and taking the decode lock. The
+    /// coordinator matches entries by object, so a new slot never inherits a released one's terms.
+    private func tdtBoostingSlotForUse() -> ParakeetTdtBoostingSlot? {
         guard loadedKind == .barkClean, let mgr = asrManager else { return nil }
         if let slot = tdtBoostingSlot, slot.manager === mgr { return slot }
         let slot = ParakeetTdtBoostingSlot(manager: mgr)
         tdtBoostingSlot = slot
-        await tdtBoosting.forget(slot)
         return slot
     }
 
@@ -648,7 +647,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     var tdtBoostingSlotForTesting: ParakeetTdtBoostingSlot? { tdtBoostingSlot }
 
     func prepareTdtBoostingForTesting() async {
-        guard let slot = await tdtBoostingSlotForUse() else { return }
+        guard let slot = tdtBoostingSlotForUse() else { return }
         _ = await tdtBoosting.prepare(slot) { [self] in currentTermsToBoost() }
     }
 
