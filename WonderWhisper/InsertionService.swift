@@ -2,17 +2,27 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 
-final class InsertionService {
+/// What `DictationController` needs from text insertion; tests substitute a recorder of calls.
+protocol DictationTextInserting: AnyObject {
+    var useAXInsertion: Bool { get set }
+    func insert(_ text: String, targetProcessIdentifier: pid_t?)
+}
+
+final class InsertionService: DictationTextInserting {
     var useAXInsertion: Bool = false
     private static let syntheticPasteSuppressionDuration: TimeInterval = 0.35
 
     func insert(_ text: String, targetProcessIdentifier: pid_t? = nil) {
         let initialFront = NSWorkspace.shared.frontmostApplication
         AppLog.insertion.log("Insertion start targetPid=\(targetProcessIdentifier ?? -1, privacy: .public) frontmost=\(initialFront?.bundleIdentifier ?? "?", privacy: .public) textChars=\(text.count, privacy: .public)")
+        let targetWasFrontmost = targetProcessIdentifier != nil
+            && initialFront?.processIdentifier == targetProcessIdentifier
         let activatedTarget = activateTargetApplicationIfNeeded(processIdentifier: targetProcessIdentifier)
         let activeFront = NSWorkspace.shared.frontmostApplication
-        AppLog.insertion.log("Insertion active target=\(activatedTarget, privacy: .public) frontmost=\(activeFront?.bundleIdentifier ?? "?", privacy: .public)")
-        if activatedTarget {
+        AppLog.insertion.log("Insertion active target=\(activatedTarget, privacy: .public) alreadyFrontmost=\(targetWasFrontmost, privacy: .public) frontmost=\(activeFront?.bundleIdentifier ?? "?", privacy: .public)")
+        // Let a freshly activated app settle before pasting. A target that was already
+        // frontmost needs no settling, so it skips the wait.
+        if Self.needsActivationSettle(activatedTarget: activatedTarget, targetWasFrontmost: targetWasFrontmost) {
             Thread.sleep(forTimeInterval: 0.08)
         }
 
@@ -95,6 +105,10 @@ final class InsertionService {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.restorePasteboard(snapshot, ifChangeCountEquals: ourChange, orContentMatches: text)
         }
+    }
+
+    static func needsActivationSettle(activatedTarget: Bool, targetWasFrontmost: Bool) -> Bool {
+        activatedTarget && !targetWasFrontmost
     }
 
     private func activateTargetApplicationIfNeeded(processIdentifier: pid_t?) -> Bool {

@@ -4,7 +4,25 @@ import AVFAudio
 import AudioToolbox
 import Accelerate
 
-final class AudioRecorder: NSObject {
+/// How a dictation capture ended: the recording and whether `AVAudioRecorder` itself reported a
+/// successful finish (false on its error path and on the 2 s safety timeout).
+struct DictationCaptureStop: Equatable {
+    var url: URL?
+    var finishedSuccessfully: Bool
+}
+
+/// The capture surface `DictationController` drives. `AudioRecorder` is the only production
+/// implementation; tests substitute a fake that writes a WAV file.
+protocol DictationAudioCapturing: AnyObject {
+    var captureProfile: AudioRecorder.CaptureProfile { get set }
+    func startRecording() throws -> URL
+    func stopRecording() -> URL?
+    func stopRecordingAndWaitForFinish() async -> DictationCaptureStop
+    func startStreamingPCM16(onFrame: @escaping (Data) -> Void) throws
+    func stopStreamingPCM16()
+}
+
+final class AudioRecorder: NSObject, DictationAudioCapturing {
     enum CaptureProfile {
         case standard16k            // default for cloud/local Whisper providers
     }
@@ -15,7 +33,7 @@ final class AudioRecorder: NSObject {
     private(set) var isStreaming: Bool = false
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
-    private var finishContinuation: CheckedContinuation<URL?, Never>?
+    private var finishContinuation: CheckedContinuation<DictationCaptureStop, Never>?
 
     // Temporary file cleanup
     private static var lastCleanupTime: Date?
@@ -146,9 +164,17 @@ final class AudioRecorder: NSObject {
 
     // Wait until AVAudioRecorder flushes and finishes writing before returning the URL
     func stopRecordingAndWait() async -> URL? {
-        guard isRecording, let recorder else { return nil }
+        await stopRecordingAndWaitForFinish().url
+    }
+
+    /// Stops and waits for `AVAudioRecorder` to finish writing. `finishedSuccessfully` is true
+    /// only when its finish delegate reported success; the safety timeout reports false.
+    func stopRecordingAndWaitForFinish() async -> DictationCaptureStop {
+        guard isRecording, let recorder else {
+            return DictationCaptureStop(url: nil, finishedSuccessfully: false)
+        }
         let url = recorder.url
-        return await withCheckedContinuation { (cont: CheckedContinuation<URL?, Never>) in
+        return await withCheckedContinuation { (cont: CheckedContinuation<DictationCaptureStop, Never>) in
             finishContinuation = cont
             self.recorder?.stop()
             isRecording = false
@@ -166,7 +192,7 @@ final class AudioRecorder: NSObject {
                 if let c = self.finishContinuation {
                     self.finishContinuation = nil
                     AppLog.dictation.log("AudioRecorder: delegate did not fire in time, resuming with URL after safety timeout")
-                    c.resume(returning: url)
+                    c.resume(returning: DictationCaptureStop(url: url, finishedSuccessfully: false))
                 }
             }
         }
@@ -522,7 +548,7 @@ extension AudioRecorder: AVAudioRecorderDelegate {
         // Resume any waiter with the final URL (even if not successful, caller can decide)
         if let c = finishContinuation {
             finishContinuation = nil
-            c.resume(returning: recorder.url)
+            c.resume(returning: DictationCaptureStop(url: recorder.url, finishedSuccessfully: flag))
         }
     }
 }

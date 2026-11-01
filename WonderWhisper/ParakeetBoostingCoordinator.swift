@@ -107,6 +107,13 @@ actor ParakeetBoostingCoordinator<Manager: AnyObject & Sendable> {
     return await body()
   }
 
+  /// Throwing form of `exclusive`, e.g. for decoding with a backend that has no boosting.
+  func exclusiveThrowing<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+    await acquire()
+    defer { release() }
+    return try await body()
+  }
+
   // MARK: - Private
 
   private func align(_ manager: Manager, desired: [String]) async -> Outcome {

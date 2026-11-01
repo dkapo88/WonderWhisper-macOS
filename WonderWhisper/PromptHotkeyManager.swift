@@ -10,7 +10,10 @@ final class PromptHotkeyManager {
         case up
     }
 
-    var onPromptEvent: ((UUID, TriggerPhase) -> Void)?
+    /// Fired for each prompt hotkey press and release. The time is when the physical key event
+    /// happened (uptime seconds, `DictationClock`), not when the callback runs: a guarded modifier
+    /// press is reported 160 ms after the key went down.
+    var onPromptEvent: ((UUID, TriggerPhase, TimeInterval) -> Void)?
 
     private struct ShortcutEntry {
         let promptID: UUID
@@ -23,6 +26,10 @@ final class PromptHotkeyManager {
     private var selectionBindings: [HotkeyManager.Selection: Set<UUID>] = [:]
     private var selectionActiveStates: [HotkeyManager.Selection: Bool] = [:]
     private var pendingSelectionWorkItems: [HotkeyManager.Selection: DispatchWorkItem] = [:]
+    // When each pending (chord-guarded) selection's key physically went down.
+    private var pendingSelectionPressTimes: [HotkeyManager.Selection: TimeInterval] = [:]
+    // Timestamp of the event being handled, so callbacks report the physical key time.
+    private var currentEventTime: TimeInterval?
     private let modifierActivationDelay: TimeInterval = 0.16
 
     private var selectionTap: CFMachPort?
@@ -141,7 +148,9 @@ final class PromptHotkeyManager {
             guard !HotkeyManager.isActivationSuppressed else { return noErr }
             guard status == noErr, let entry = manager.shortcutEntries[hotKeyID.id] else { return noErr }
             let phase: TriggerPhase = (GetEventKind(evt) == UInt32(kEventHotKeyPressed)) ? .down : .up
-            manager.onPromptEvent?(entry.promptID, phase)
+            // Carbon event times are uptime seconds, the same base as DictationClock.
+            let eventTime = evt.map { GetEventTime($0) } ?? DictationClock.now()
+            manager.onPromptEvent?(entry.promptID, phase, eventTime > 0 ? eventTime : DictationClock.now())
             return noErr
         }
         let ptr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -172,6 +181,8 @@ final class PromptHotkeyManager {
                 return Unmanaged.passUnretained(event)
             }
             var shouldSuppress = false
+            manager.currentEventTime = DictationClock.uptime(fromEventTimestamp: event.timestamp)
+            defer { manager.currentEventTime = nil }
             if type == .flagsChanged {
                 manager.handleFlagsChanged(event: event)
             } else if type == .keyDown {
@@ -279,7 +290,7 @@ final class PromptHotkeyManager {
                 cancelPendingSelectionActivation(selection)
                 selectionActiveStates[selection] = false
                 for id in promptIDs {
-                    onPromptEvent?(id, .up)
+                    onPromptEvent?(id, .up, eventTime())
                 }
             } else if !isActive && isPending {
                 firePendingSelectionTapOnRelease(selection, promptIDs: promptIDs)
@@ -399,7 +410,7 @@ final class PromptHotkeyManager {
         if wasActive {
             selectionActiveStates[.backslash] = false
             for id in promptIDs {
-                onPromptEvent?(id, .up)
+                onPromptEvent?(id, .up, eventTime())
             }
         }
         return shouldCapture
@@ -438,7 +449,7 @@ final class PromptHotkeyManager {
             AppLog.hotkeys.log("Observed F5 keyUp via prompt event tap")
             selectionActiveStates[.f5] = false
             for id in promptIDs {
-                onPromptEvent?(id, .up)
+                onPromptEvent?(id, .up, eventTime())
             }
         }
         return shouldCapture
@@ -485,28 +496,42 @@ final class PromptHotkeyManager {
         return false
     }
 
-    private func fireSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {
+    /// Time of the event being handled, or now outside an event callback.
+    private func eventTime() -> TimeInterval {
+        currentEventTime ?? DictationClock.now()
+    }
+
+    private func fireSelectionActivation(
+        _ selection: HotkeyManager.Selection,
+        promptIDs: Set<UUID>,
+        pressedAt: TimeInterval? = nil
+    ) {
         selectionActiveStates[selection] = true
+        let pressTime = pressedAt ?? eventTime()
         for id in promptIDs {
-            onPromptEvent?(id, .down)
+            onPromptEvent?(id, .down, pressTime)
         }
     }
 
     private func scheduleSelectionActivation(_ selection: HotkeyManager.Selection, promptIDs: Set<UUID>) {
+        let pressTime = eventTime()
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard !HotkeyManager.isActivationSuppressed else { return }
             guard self.isSelectionCurrentlyActive(selection) else { return }
             self.pendingSelectionWorkItems[selection] = nil
-            self.fireSelectionActivation(selection, promptIDs: promptIDs)
+            self.pendingSelectionPressTimes[selection] = nil
+            self.fireSelectionActivation(selection, promptIDs: promptIDs, pressedAt: pressTime)
         }
         pendingSelectionWorkItems[selection] = item
+        pendingSelectionPressTimes[selection] = pressTime
         DispatchQueue.main.asyncAfter(deadline: .now() + modifierActivationDelay, execute: item)
     }
 
     private func cancelPendingSelectionActivation(_ selection: HotkeyManager.Selection) {
         pendingSelectionWorkItems[selection]?.cancel()
         pendingSelectionWorkItems[selection] = nil
+        pendingSelectionPressTimes[selection] = nil
     }
 
     private func cancelAllPendingSelectionActivations() {
@@ -514,17 +539,19 @@ final class PromptHotkeyManager {
             item.cancel()
         }
         pendingSelectionWorkItems.removeAll()
+        pendingSelectionPressTimes.removeAll()
     }
 
     private func firePendingSelectionTapOnRelease(
         _ selection: HotkeyManager.Selection,
         promptIDs: Set<UUID>
     ) {
+        let pressTime = pendingSelectionPressTimes[selection] ?? eventTime()
         cancelPendingSelectionActivation(selection)
         guard !HotkeyManager.isActivationSuppressed else { return }
         for id in promptIDs {
-            onPromptEvent?(id, .down)
-            onPromptEvent?(id, .up)
+            onPromptEvent?(id, .down, pressTime)
+            onPromptEvent?(id, .up, eventTime())
         }
     }
 
