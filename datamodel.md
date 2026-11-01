@@ -11,6 +11,13 @@ rebrand intentionally retains the Hermes-era bundle identifier, UserDefaults dom
 service, and storage root so existing history, meetings, settings, credentials, and macOS privacy
 grants continue to work without a large or destructive migration.
 
+Exception, Debug builds only: a Debug build launched under a bundle identifier other than
+`com.danekapoor.hermeswhisper` (a QA build, e.g. `com.danekapoor.hermeswhisper.qa`) uses
+`$WW_QA_ROOT/Application Support/HermesWhisper/` (default `$TMPDIR/WonderWhisper-QA/...`) as its
+storage root and its own bundle identifier as its Keychain service, and its UserDefaults domain
+follows that bundle identifier (`AppConfig.qaBundleIdentifier`, `AppConfig.qaApplicationSupport`).
+Release builds and unit tests never take this path.
+
 ---
 
 ## Table of Contents
@@ -556,6 +563,8 @@ erDiagram
 
 ### File System Layout
 
+QA Debug builds (see Overview) use the same layout under `$WW_QA_ROOT/Application Support/HermesWhisper/`.
+
 ```
 ~/Library/Application Support/HermesWhisper/
 ├── History/
@@ -751,7 +760,9 @@ Secure storage via `KeychainService` for API keys. WonderWhisper deliberately co
 the Hermes-era `com.danekapoor.hermeswhisper` service and can also read the original
 `com.slumdev88.wonderwhisper.WonderWhisper-Mac` service for one-time migration. Reads fail
 without showing macOS authentication UI. If macOS blocks legacy access, keys may need to be
-saved once under the compatibility service.
+saved once under the compatibility service. A QA Debug build (non-shipping bundle identifier)
+reads and writes only the service named after its own bundle identifier, for both the current and
+the original service, so it never sees the user's keys.
 
 | Key Alias | Purpose |
 |-----------|---------|
