@@ -1,4 +1,5 @@
 import Foundation
+import Accelerate
 import AVFoundation
 
 /// Decides whether a finished dictation recording holds anything worth transcribing.
@@ -80,17 +81,16 @@ enum DictationSilenceGate {
   }
 
   private static func dcRemovedLevel(_ samples: UnsafeBufferPointer<Float>, start: Int, end: Int) -> Double {
-    let length = Double(end - start)
-    var sum = 0.0
-    for index in start..<end { sum += Double(samples[index]) }
-    let mean = sum / length
-    var squares = 0.0
-    for index in start..<end {
-      let centred = Double(samples[index]) - mean
-      squares += centred * centred
-    }
-    let rms = (squares / length).squareRoot()
-    guard rms > 0, rms.isFinite else { return floorDBFS }
-    return max(floorDBFS, 20 * log10(rms))
+    guard let base = samples.baseAddress, end > start else { return floorDBFS }
+    let pointer = base + start
+    let count = vDSP_Length(end - start)
+    var mean: Float = 0
+    var meanSquare: Float = 0
+    vDSP_meanv(pointer, 1, &mean, count)
+    vDSP_measqv(pointer, 1, &meanSquare, count)
+    // Variance about the window mean: the DC-removed power.
+    let variance = Double(meanSquare) - Double(mean) * Double(mean)
+    guard variance > 0, variance.isFinite else { return floorDBFS }
+    return max(floorDBFS, 10 * log10(variance))
   }
 }
