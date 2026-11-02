@@ -136,10 +136,6 @@ final class MenuBarController: NSObject {
         vm?.openRouterTranscriptionModel ?? AppConfig.defaultOpenRouterTranscriptionModel
     }
 
-    private var currentVoiceEngine: SimpleVoiceEngine {
-        vm?.simpleVoiceEngine ?? .parakeetLocal
-    }
-
     private var openRouterVoiceModelOptions: [String] {
         let models = [
             AppConfig.defaultOpenRouterTranscriptionModel,
@@ -299,12 +295,13 @@ final class MenuBarController: NSObject {
     private func buildVoiceEngineMenu() -> NSMenuItem {
         let engineMenu = NSMenuItem(title: "Voice Engine", action: nil, keyEquivalent: "")
         let sub = NSMenu()
-        for engine in SimpleVoiceEngine.availableEngines {
+        let current = vm?.transcriptionChoice
+        for choice in TranscriptionChoice.available {
             sub.addItem(makeCheckedMenuItem(
-                title: engine.displayName,
+                title: choice.displayName,
                 action: #selector(selectVoiceEngine(_:)),
-                representedObject: engine.rawValue,
-                isSelected: currentVoiceEngine == engine
+                representedObject: choice.id,
+                isSelected: current == choice
             ))
         }
         engineMenu.submenu = sub
@@ -463,8 +460,8 @@ final class MenuBarController: NSObject {
     }
     @objc private func selectVoiceEngine(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let engine = SimpleVoiceEngine(rawValue: raw) else { return }
-        vm?.simpleVoiceEngine = engine
+              let choice = TranscriptionChoice(id: raw) else { return }
+        vm?.selectTranscriptionChoice(choice)
         refreshStatusAndMenu()
     }
     @objc private func selectOpenRouterVoiceModel(_ sender: NSMenuItem) {

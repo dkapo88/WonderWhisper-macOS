@@ -38,7 +38,15 @@ actor DictationController {
         var transcriptionSeconds: Double
         var totalSeconds: Double
     }
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            // A configuration that arrived mid-session lands once the session is over.
+            guard deferredConfiguration != nil, !isSessionActive else { return }
+            Task { await self.applyDeferredConfigurationIfIdle() }
+        }
+    }
+    /// The newest configuration received while a session was active (see `apply`).
+    private var deferredConfiguration: DictationConfiguration?
 
     private let recorder: DictationAudioCapturing
     private var transcriber: TranscriptionProvider
@@ -144,8 +152,15 @@ actor DictationController {
         self.currentPrompt = activePrompt
         switch state {
         case .idle, .error:
-            // Apply the session's own configuration before anything else, in one step.
-            if let configuration { await apply(configuration) }
+            // Apply the session's own configuration before anything else, in one step. It was
+            // built from the latest settings, so it supersedes any deferred one.
+            if let configuration {
+                deferredConfiguration = nil
+                await apply(configuration)
+            } else if let deferred = deferredConfiguration {
+                deferredConfiguration = nil
+                await apply(deferred)
+            }
             sessionEpoch += 1
             recordingFinishedCleanly = false
             timingSessionCounter += 1
@@ -836,8 +851,34 @@ actor DictationController {
 
     // MARK: - Session configuration, release tail, recording completion
 
-    /// Applies a whole configuration in one actor step.
+    /// Whether a dictation is between its start and its end (recording through inserting).
+    private var isSessionActive: Bool {
+        switch state {
+        case .idle, .error: return false
+        case .recording, .transcribing, .processing, .inserting: return true
+        }
+    }
+
+    /// Applies a whole configuration in one actor step. During a session it is kept for the next
+    /// one instead, so a settings change (engine, model, prompt) never switches the provider or
+    /// model a recording in progress finishes with.
     func apply(_ configuration: DictationConfiguration) async {
+        if isSessionActive {
+            deferredConfiguration = configuration
+            return
+        }
+        applyNow(configuration)
+        await updateSelectedTextEnabled(configuration.selectedTextEnabled)
+        await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
+    }
+
+    private func applyDeferredConfigurationIfIdle() async {
+        guard !isSessionActive, let deferred = deferredConfiguration else { return }
+        deferredConfiguration = nil
+        await apply(deferred)
+    }
+
+    private func applyNow(_ configuration: DictationConfiguration) {
         if let provider = configuration.transcriber { transcriber = provider }
         transcriberSettings = configuration.transcriberSettings
         llm = configuration.llm
@@ -846,8 +887,6 @@ actor DictationController {
         screenContextEnabled = configuration.screenContextEnabled
         screenContextCaptureMode = configuration.screenContextCaptureMode
         updateClipboardContextEnabled(configuration.clipboardContextEnabled)
-        await updateSelectedTextEnabled(configuration.selectedTextEnabled)
-        await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
         screenImageEnabled = configuration.screenImageEnabled
         autoMuteEnabled = configuration.autoMuteEnabled
     }

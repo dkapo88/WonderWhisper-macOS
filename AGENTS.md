@@ -111,7 +111,18 @@ discovering the shared FluidAudio models. Tests that need installed Parakeet mod
 with `TEST_RUNNER_WW_RUN_MODEL_TESTS=1`; FluidAudio E2E tests use
 `TEST_RUNNER_WW_PARAKEET_E2E=1`. Qwen model tests inject explicit scratch model directories through
 `TEST_RUNNER_QWEN_{GOOD,TRUNC,ZEROTAIL}_MODEL_DIR`; `QwenASRE2ETests` uses the good scratch model
-and synthesizes its own audio with `say`.
+and synthesizes its own audio with `say`. Provider tests that depend on the selected Parakeet model
+inject `selectedModel:` rather than reading the shared scratch `parakeet.version`, which
+view-model tests write.
+
+Hands-on QA runs a Debug build re-signed with a different bundle identifier
+(`AppConfig.isQABuild`): its own defaults domain, Keychain service and storage under `$WW_QA_ROOT`,
+including every FluidAudio model (Parakeet, Bark Clean, CTC, diarizer) and the Qwen cache. A QA
+build never changes the default microphone or raises its input gain. Release builds never isolate.
+
+`Date.<=` and `Date.>=` are back-deployed from the macOS 27.2 SDK and crash on pre-release 27.2
+builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`).
+`DateBackDeployImportTests` fails if either symbol is imported again.
 
 ## Feature Scope & Providers
 - The main window sidebar holds work surfaces only, grouped as Library (History, Meetings),
@@ -339,6 +350,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-02: Fixed the released modifier-hotkey crash (issue #16): `Date.<=`/`>=` from the 27.2
+  SDK are null on pre-release 27.2; hotkey suppression uses an uptime deadline, three wall-clock
+  comparisons use `isOnOrAfter`. One transcription picker lists Bark Clean, Unified, Ultra and Qwen
+  by name with model-specific status and Download/Retry; model changes mid-dictation apply next
+  dictation; QA builds isolate all model caches and leave the microphone settings alone.
 - 2026-11-02: Released 2026-11-02 with Bark Clean as the default local dictation model and faster local dictation (phase 1).
 - 2026-11-02: Bark Clean (Underdog Bark 3.0 Clean via FluidAudio 0.18.0) is the default local
   dictation model for new installs (issue #10); existing installs keep theirs via a per-Mac pin

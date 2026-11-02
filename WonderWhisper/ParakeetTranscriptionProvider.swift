@@ -124,6 +124,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private var lastUnloadAt: TimeInterval?
     private let padsInput: Bool
     private let isInstalled: @Sendable (ParakeetModelKind) -> Bool
+    // The dictation model selection (`parakeet.version`), for work not tied to a transcription.
+    private let selectedModel: @Sendable () -> ParakeetModelKind
     private let prewarmRunner: PrewarmRunner?
     // Told once per selected/used pair when a missing Bark Clean falls back to another model.
     private var onModelFallback: (@Sendable (_ selected: ParakeetModelKind, _ used: ParakeetModelKind) async -> Void)?
@@ -136,6 +138,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private let backendLoader: BackendLoader?
     // Track which model is loaded to allow switching between Unified and Ultra
     private var loadedKind: ParakeetModelKind?
+    // Published runtime state (`ParakeetRuntimeSnapshot`): the model being loaded and the last
+    // load failure per model, cleared when that model's next load starts.
+    private var loadingKind: ParakeetModelKind?
+    private var loadFailures: [ParakeetModelKind: String] = [:]
+    private var runtimeSequence = 0
+    private var runtimeObserver: (@Sendable (ParakeetRuntimeSnapshot) -> Void)?
 
     // Raw mode: VoiceInk-style minimal processing (no preprocessing, no source hint, immediate cleanup)
     private var rawMode: Bool {
@@ -161,10 +169,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         isInstalled: @escaping @Sendable (ParakeetModelKind) -> Bool = { kind in
             ParakeetManager.missingFiles(kind.requiredFiles, in: ParakeetManager.modelDirectory(for: kind)).isEmpty
         },
+        selectedModel: @escaping @Sendable () -> ParakeetModelKind = { ParakeetModelKind.selected },
         backendLoader: BackendLoader? = nil,
         prewarmRunner: PrewarmRunner? = nil
     ) {
         self.backendLoader = backendLoader
+        self.selectedModel = selectedModel
         self.residency = residency
         self.padsInput = padsInput
         self.isInstalled = isInstalled
@@ -185,6 +195,37 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         _ callback: (@Sendable (_ selected: ParakeetModelKind, _ used: ParakeetModelKind) async -> Void)?
     ) {
         onModelFallback = callback
+    }
+
+    /// Receives every change to what this provider has loaded, loading or failed, starting with
+    /// the current state.
+    func setRuntimeObserver(_ observer: (@Sendable (ParakeetRuntimeSnapshot) -> Void)?) {
+        runtimeObserver = observer
+        publishRuntime()
+    }
+
+    private func publishRuntime() {
+        guard let runtimeObserver else { return }
+        runtimeSequence += 1
+        let resident = loadedKind.flatMap { isLoaded($0) ? $0 : nil }
+        runtimeObserver(ParakeetRuntimeSnapshot(
+            sequence: runtimeSequence,
+            loading: loadingKind,
+            resident: resident,
+            failures: loadFailures
+        ))
+    }
+
+    private func beginLoad(_ kind: ParakeetModelKind) {
+        loadingKind = kind
+        loadFailures[kind] = nil
+        publishRuntime()
+    }
+
+    private func endLoad(_ kind: ParakeetModelKind, error: Error?) {
+        if loadingKind == kind { loadingKind = nil }
+        if let error { loadFailures[kind] = (error as NSError).localizedDescription }
+        publishRuntime()
     }
 
     /// Terms to boost right now, from the injected preferences.
@@ -268,6 +309,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         unifiedManager = nil
         if hadModels { loadedKind = nil }
         await releaseTdtManager()
+        if hadModels { publishRuntime() }
     }
 
     /// Detaches the TDT manager (Ultra or Bark Clean), then cleans it up under the TDT lock: a
@@ -453,13 +495,16 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             loadGeneration += 1
             let generation = loadGeneration
             let task = Task {
+                self.beginLoad(kind)
                 do {
                     try await self.performModelLoad(kind: kind)
                 } catch {
                     self.finishLoad(generation: generation)
+                    self.endLoad(kind, error: error)
                     throw error
                 }
                 self.finishLoad(generation: generation)
+                self.endLoad(kind, error: nil)
             }
             loadTask = task
             try await task.value
@@ -608,13 +653,11 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     /// or a deleted model never blocks on a download mid-dictation. With no model downloaded,
     /// Bark Clean is downloaded on demand as before. Never anything off-device.
     private func effectiveKind(for settings: TranscriptionSettings?) -> ParakeetModelKind {
-        let requested = preferredKind(for: settings)
-        guard requested == .barkClean, !(loadedKind == .barkClean && isLoaded(.barkClean)),
-              !isInstalled(.barkClean) else { return requested }
-        guard let fallback = ParakeetModelKind.barkCleanFallbackOrder.first(where: isInstalled) else {
-            return requested
-        }
-        return fallback
+        ParakeetModelKind.effective(
+            requested: preferredKind(for: settings),
+            barkCleanResident: loadedKind == .barkClean && isLoaded(.barkClean),
+            isInstalled: isInstalled
+        )
     }
 
     private func reportFallbackIfNeeded(selected: ParakeetModelKind, used: ParakeetModelKind) async {
@@ -892,7 +935,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         if let model = settings?.model {
             if let kind = ParakeetModelKind(modelIdentifier: model) { return kind }
         }
-        return ParakeetModelKind.selected
+        return selectedModel()
     }
 
     private static func stats(samples: [Float]) -> (meanAbs: Double, peak: Double) {
@@ -1023,6 +1066,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         padsInput: Bool = false
     ) {}
     func isResident(for settings: TranscriptionSettings? = nil) -> Bool { false }
+    func setRuntimeObserver(_ observer: (@Sendable (ParakeetRuntimeSnapshot) -> Void)?) {}
     func setSelected(_ selected: Bool) async {}
     func handleMemoryPressure() async {}
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {

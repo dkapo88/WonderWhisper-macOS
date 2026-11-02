@@ -78,6 +78,54 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
     /// Downloaded models that stand in, in order, for a Bark Clean that is not downloaded.
     static let barkCleanFallbackOrder: [ParakeetModelKind] = [.unified, .ultra]
 
+    /// The model a dictation that asked for `requested` actually runs. Bark Clean that is
+    /// neither resident nor downloaded runs the first downloaded fallback; with none downloaded
+    /// it stays Bark Clean and downloads on demand. Shared by the provider and Settings so the
+    /// status never disagrees with what runs.
+    static func effective(
+        requested: ParakeetModelKind,
+        barkCleanResident: Bool,
+        isInstalled: (ParakeetModelKind) -> Bool
+    ) -> ParakeetModelKind {
+        guard requested == .barkClean, !barkCleanResident, !isInstalled(.barkClean) else {
+            return requested
+        }
+        return barkCleanFallbackOrder.first(where: isInstalled) ?? requested
+    }
+
+    /// The transcription model id that names this model (`parakeet-bark-clean`,
+    /// `parakeet-unified`, `parakeet-ultra`). A dictation's configuration carries it instead of
+    /// `parakeet-local`, so a model change mid-recording applies to the next dictation.
+    var transcriptionModelIdentifier: String { "parakeet-\(rawValue)" }
+
+    /// A Parakeet transcription model id resolved to a concrete model: an id that already names
+    /// one (a prompt override) is kept; `parakeet-local` becomes the selected model's id.
+    static func sessionModelIdentifier(
+        for model: String,
+        selected: @autoclosure () -> ParakeetModelKind = ParakeetModelKind.selected
+    ) -> String {
+        if ParakeetModelKind(modelIdentifier: model) != nil { return model }
+        return selected().transcriptionModelIdentifier
+    }
+
+    /// Name in the Settings transcription picker.
+    var pickerName: String {
+        switch self {
+        case .barkClean: return "Bark Clean (On-device, English)"
+        case .unified: return "Parakeet Unified (On-device, English)"
+        case .ultra: return "Parakeet Ultra (On-device, multilingual)"
+        }
+    }
+
+    /// Short name for status lines.
+    var shortName: String {
+        switch self {
+        case .barkClean: return "Bark Clean"
+        case .unified: return "Parakeet Unified"
+        case .ultra: return "Parakeet Ultra"
+        }
+    }
+
     var displayName: String {
         switch self {
         case .barkClean: return "Clean English (Bark Clean)"
