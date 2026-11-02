@@ -408,11 +408,15 @@ dictation. An explicit prompt voice override keeps its own model.
 **LocalModelStatus**: what Settings shows beside the selected on-device model, computed from
 runtime state owned by `TranscriptionModelStatusCenter` (per model: download operation id,
 progress and failure) and the dictation `ParakeetTranscriptionProvider`
-(`ParakeetRuntimeSnapshot`: the model loading, the model resident, and the last load failure per
-model, with a sequence number so late deliveries never overwrite newer state). States: framework
-missing, not downloaded, downloading, download failed, downloaded (files present, not loaded),
-loading, ready (resident), load failed. Files on disk alone never read as ready. A completion
-whose operation id is no longer current is ignored. The effective model and any fallback come
+(`ParakeetRuntimeSnapshot`: the model a load is downloading files for, with progress, the model
+loading, the model resident, and the last load failure per model, with a sequence number so late
+deliveries never overwrite newer state) and the shared Qwen runtime (`QwenRuntimeSnapshot`:
+loaded, health, and `loadsStarted` as its load generation). States: framework missing, not
+downloaded, downloading, download failed, downloaded (files present, not loaded), loading, ready
+(resident), load failed. Files on disk alone never read as ready. A completion whose operation id
+is no longer current is ignored. A model that loads supersedes its older download failure, and a
+fresh download hides a load failure until a newer load reports. Retry after a load failure
+re-fetches (Parakeet TDT `force`; Qwen moves the failing weights to the Bin first). The effective model and any fallback come
 from `ParakeetModelKind.effective(requested:barkCleanResident:isInstalled:)`, the same rule the
 provider runs.
 

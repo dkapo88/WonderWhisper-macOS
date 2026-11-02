@@ -1449,8 +1449,16 @@ final class DictationViewModel: ObservableObject {
     /// A model finished downloading: re-read the files and, if it is the dictation model, load
     /// it in the background now rather than on the next dictation.
     private func modelFilesDidDownload(_ model: LocalTranscriptionModel) {
-        guard case .parakeet = model, parakeetResidencySelected == true,
-              let provider = dictationParakeet else { return }
+        if model == .qwen {
+            // Fresh Qwen weights: drop any unhealthy engine and verify them now if Qwen is chosen.
+            guard simpleVoiceEngine == .qwenLocal else { return }
+            Task {
+                await QwenASRRuntime.shared.resetForReload(reason: "weights downloaded")
+                try? await QwenASRRuntime.shared.warmUp()
+            }
+            return
+        }
+        guard parakeetResidencySelected == true, let provider = dictationParakeet else { return }
         let previous = parakeetResidencyTask
         parakeetResidencyTask = Task {
             await previous?.value

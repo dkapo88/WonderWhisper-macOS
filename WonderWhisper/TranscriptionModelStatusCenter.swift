@@ -26,7 +26,7 @@ final class TranscriptionModelStatusCenter: ObservableObject {
   @Published private(set) var downloads: [LocalTranscriptionModel: DownloadOperation] = [:]
   @Published private(set) var downloadFailures: [LocalTranscriptionModel: String] = [:]
   @Published private(set) var parakeetRuntime = ParakeetRuntimeSnapshot()
-  @Published private(set) var qwenResident = false
+  @Published private(set) var qwenRuntime = QwenRuntimeSnapshot()
   /// Bumped when files may have changed on disk, so views re-read presence.
   @Published private(set) var diskRevision = 0
 
@@ -37,6 +37,8 @@ final class TranscriptionModelStatusCenter: ObservableObject {
   private let filesPresent: (LocalTranscriptionModel) -> Bool
   /// Per model, the runtime sequence at which a fresh download superseded an old load failure.
   private var failureMaskedThrough: [ParakeetModelKind: Int] = [:]
+  /// The Qwen load generation a fresh download superseded, likewise.
+  private var qwenFailureMaskedThrough: Int?
 
   init(
     downloader: @escaping Downloader = TranscriptionModelStatusCenter.liveDownload,
@@ -57,7 +59,7 @@ final class TranscriptionModelStatusCenter: ObservableObject {
       download: downloads[model],
       downloadFailure: downloadFailures[model],
       runtime: visibleRuntime(for: model),
-      qwenResident: qwenResident
+      qwen: visibleQwenRuntime
     )
   }
 
@@ -82,16 +84,32 @@ final class TranscriptionModelStatusCenter: ObservableObject {
     return runtime
   }
 
+  /// Qwen's state with a failure from a load older than a fresh download hidden.
+  private var visibleQwenRuntime: QwenRuntimeSnapshot {
+    guard let masked = qwenFailureMaskedThrough, qwenRuntime.loadsStarted <= masked,
+          case .unhealthy = qwenRuntime.health else { return qwenRuntime }
+    var runtime = qwenRuntime
+    runtime.health = .unknown
+    return runtime
+  }
+
   // MARK: - Runtime updates
 
-  /// A snapshot from the dictation provider. Older deliveries never overwrite newer ones.
+  /// A snapshot from the dictation provider. Older deliveries never overwrite newer ones. A model
+  /// that loaded since supersedes its older download failure (a dictation fetched it).
   func apply(_ snapshot: ParakeetRuntimeSnapshot) {
     guard snapshot.sequence > parakeetRuntime.sequence else { return }
     parakeetRuntime = snapshot
+    if let resident = snapshot.resident, downloadFailures[.parakeet(resident)] != nil {
+      downloadFailures[.parakeet(resident)] = nil
+    }
   }
 
-  func setQwenResident(_ resident: Bool) {
-    if qwenResident != resident { qwenResident = resident }
+  /// What the shared Qwen runtime reports (read while Settings shows Qwen).
+  func apply(_ snapshot: QwenRuntimeSnapshot) {
+    guard snapshot != qwenRuntime else { return }
+    qwenRuntime = snapshot
+    if snapshot.loaded, downloadFailures[.qwen] != nil { downloadFailures[.qwen] = nil }
   }
 
   func refreshDisk() { diskRevision += 1 }
@@ -142,8 +160,9 @@ final class TranscriptionModelStatusCenter: ObservableObject {
       downloadFailures[model] = failure
       return
     }
-    if case .parakeet(let kind) = model {
-      failureMaskedThrough[kind] = parakeetRuntime.sequence
+    switch model {
+    case .parakeet(let kind): failureMaskedThrough[kind] = parakeetRuntime.sequence
+    case .qwen: qwenFailureMaskedThrough = qwenRuntime.loadsStarted
     }
     onDownloadFinished?(model)
   }
@@ -194,6 +213,10 @@ final class TranscriptionModelStatusCenter: ObservableObject {
       #endif
     case .qwen:
       #if canImport(Qwen3ASR)
+      if force, let installed = QwenASRManager.installedModelDirectory() {
+        // Weights that are present but fail verification: move them to the Bin and fetch again.
+        try FileManager.default.trashItem(at: installed, resultingItemURL: nil)
+      }
       try await QwenASRManager.downloadModel { fraction, _ in progress(fraction) }
       #else
       throw QwenASRError.frameworkMissing

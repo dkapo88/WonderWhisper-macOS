@@ -180,6 +180,11 @@ actor QwenASRRuntime {
 
   var isEngineLoaded: Bool { engine != nil }
 
+  /// Loaded state, health and load generation, for Settings.
+  func statusSnapshot() -> QwenRuntimeSnapshot {
+    QwenRuntimeSnapshot(loaded: engine != nil, health: health, loadsStarted: loadsStarted)
+  }
+
   /// Drops the current engine (and supersedes any in-progress load) so the
   /// next caller performs a fresh verified load.
   func resetForReload(reason: String) async {

@@ -7,6 +7,8 @@ import SwiftUI
 struct LocalModelStatusRow: View {
   let model: LocalTranscriptionModel
   @ObservedObject var status: TranscriptionModelStatusCenter
+  /// The dictation language, which decides Qwen's fallback.
+  var language: String?
 
   var body: some View {
     let current = status.status(for: model)
@@ -30,6 +32,9 @@ struct LocalModelStatusRow: View {
 
     if case .parakeet(let kind) = model, let fallback = status.fallback(for: kind) {
       StatusBadge(.warning, "Dictation uses \(fallback.shortName) until \(kind.shortName) is downloaded.")
+    }
+    if model == .qwen, case .loadFailed = current {
+      StatusBadge(.warning, "Until Qwen loads, dictation falls back to \(qwenFallbackName).")
     }
   }
 
@@ -66,6 +71,14 @@ struct LocalModelStatusRow: View {
       StatusBadge(.ok, model == .qwen ? "Loaded and ready" : "Ready")
     case .loadFailed(let message):
       StatusBadge(.error, "Couldn't load \(model.displayName): \(message)")
+    }
+  }
+
+  /// The engine Qwen's fallback runs for this language (`QwenASRFallback`).
+  private var qwenFallbackName: String {
+    switch QwenASRFallback.choice(language: language) {
+    case .parakeet(let kind): return kind.shortName
+    case .groq: return "Groq Whisper (cloud)"
     }
   }
 

@@ -38,10 +38,10 @@ struct TranscriptionSettingsPane: View {
       qwenSection
     }
     .task(id: choice.localModel) {
-      // Qwen's runtime owns its loaded state; re-read it while Settings shows Qwen.
+      // Qwen's runtime owns its loaded and health state; re-read it while Settings shows Qwen.
       guard choice.localModel == .qwen else { return }
       while !Task.isCancelled {
-        vm.modelStatus.setQwenResident(await QwenASRRuntime.shared.isEngineLoaded)
+        vm.modelStatus.apply(await QwenASRRuntime.shared.statusSnapshot())
         try? await Task.sleep(nanoseconds: 1_000_000_000)
       }
     }
@@ -97,7 +97,7 @@ struct TranscriptionSettingsPane: View {
       }
 
       if let model = choice.localModel {
-        LocalModelStatusRow(model: model, status: vm.modelStatus)
+        LocalModelStatusRow(model: model, status: vm.modelStatus, language: vm.transcriptionLanguage)
       }
 
       Picker(selection: $vm.transcriptionLanguage) {

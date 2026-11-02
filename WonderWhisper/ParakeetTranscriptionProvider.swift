@@ -141,6 +141,9 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     // Published runtime state (`ParakeetRuntimeSnapshot`): the model being loaded and the last
     // load failure per model, cleared when that model's next load starts.
     private var loadingKind: ParakeetModelKind?
+    // A load that found the files missing is fetching them first (with FluidAudio's fraction).
+    private var downloadingKind: ParakeetModelKind?
+    private var downloadProgress: Double?
     private var loadFailures: [ParakeetModelKind: String] = [:]
     private var runtimeSequence = 0
     private var runtimeObserver: (@Sendable (ParakeetRuntimeSnapshot) -> Void)?
@@ -210,6 +213,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         let resident = loadedKind.flatMap { isLoaded($0) ? $0 : nil }
         runtimeObserver(ParakeetRuntimeSnapshot(
             sequence: runtimeSequence,
+            downloading: downloadingKind,
+            downloadProgress: downloadProgress,
             loading: loadingKind,
             resident: resident,
             failures: loadFailures
@@ -224,6 +229,10 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
 
     private func endLoad(_ kind: ParakeetModelKind, error: Error?) {
         if loadingKind == kind { loadingKind = nil }
+        if downloadingKind == kind {
+            downloadingKind = nil
+            downloadProgress = nil
+        }
         if let error { loadFailures[kind] = (error as NSError).localizedDescription }
         publishRuntime()
     }
@@ -520,6 +529,12 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
     private func performModelLoad(kind: ParakeetModelKind) async throws {
         // Free the other backend to keep only one model resident in memory.
         await unloadOtherBackend(keeping: kind)
+        if !isInstalled(kind) {
+            // The load fetches the files first: report that as downloading, not loading.
+            downloadingKind = kind
+            downloadProgress = nil
+            publishRuntime()
+        }
         if let backendLoader {
             switch try await backendLoader(kind) {
             case .unified(let manager): unifiedManager = manager
@@ -563,13 +578,42 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         // Ultra and Bark Clean each ship a single encoder build (no precision variants).
         // The canonical folder (FluidAudio's default in a normal launch; scratch in QA builds).
-        let models = try await AsrModels.downloadAndLoad(to: modelsDirectory, version: version)
+        let models = try await AsrModels.downloadAndLoad(
+            to: modelsDirectory,
+            version: version,
+            progressHandler: downloadProgressHandler(for: kind)
+        )
         let mgr = AsrManager(config: kind == .barkClean ? Self.barkCleanConfig : .default)
         try await mgr.loadModels(models)
         let available = await mgr.isAvailable
         log.notice("[Parakeet] manager available=\(available, privacy: .public)")
         AppLog.dictation.log("[Parakeet] manager available=\(available)")
         asrManager = mgr
+    }
+
+    /// Forwards FluidAudio's download progress for `kind` into the published runtime state.
+    private func downloadProgressHandler(for kind: ParakeetModelKind) -> ProgressHandler {
+        { progress in
+            let compiling: Bool
+            if case .compiling = progress.phase { compiling = true } else { compiling = false }
+            let fraction = progress.fractionCompleted
+            Task { await self.noteDownloadProgress(kind, fraction: fraction, compiling: compiling) }
+        }
+    }
+
+    private func noteDownloadProgress(_ kind: ParakeetModelKind, fraction: Double, compiling: Bool) {
+        guard downloadingKind == kind else { return }
+        if compiling {
+            // Files are in; what remains is loading.
+            downloadingKind = nil
+            downloadProgress = nil
+            publishRuntime()
+            return
+        }
+        let clamped = max(0, min(1, fraction))
+        if let current = downloadProgress, abs(current - clamped) < 0.01 { return }
+        downloadProgress = clamped
+        publishRuntime()
     }
 
     private func loadUnifiedModel() async throws {
@@ -582,7 +626,7 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
         // Downloads the "offline" (full-attention 15 s) variant if missing,
         // then loads it. `baseDir` is the FluidAudio/Models root; the manager
         // appends the repo folder itself.
-        try await mgr.loadModels(to: baseDir)
+        try await mgr.loadModels(to: baseDir, progressHandler: downloadProgressHandler(for: .unified))
         unifiedManager = mgr
         AppLog.dictation.log("[Parakeet] unified manager loaded")
     }

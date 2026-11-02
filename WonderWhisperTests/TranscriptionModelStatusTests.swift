@@ -186,18 +186,80 @@ struct TranscriptionModelStatusTests {
     #expect(center.fallback(for: .barkClean) == nil)
   }
 
-  @Test func qwenReadinessComesFromItsRuntime() {
-    let disk = Disk()
-    let center = makeCenter(gate: DownloadGate(), disk: disk)
+  @Test func aDictationThatDownloadsTheModelShowsDownloadingThenLoading() {
+    let center = makeCenter(gate: DownloadGate(), disk: Disk())
+    center.apply(ParakeetRuntimeSnapshot(sequence: 1, downloading: .barkClean, loading: .barkClean))
+    #expect(center.status(for: bark) == .downloading(progress: nil))
+    center.apply(ParakeetRuntimeSnapshot(sequence: 2, downloading: .barkClean, downloadProgress: 0.5,
+                                         loading: .barkClean))
+    #expect(center.status(for: bark) == .downloading(progress: 0.5))
+    #expect(center.status(for: unified) == .notDownloaded)
+    center.apply(ParakeetRuntimeSnapshot(sequence: 3, loading: .barkClean))
+    #expect(center.status(for: bark) == .loading)
+  }
+
+  @Test func aLaterSuccessfulLoadSupersedesAnOldDownloadFailure() async {
+    let gate = DownloadGate(), disk = Disk()
+    let center = makeCenter(gate: gate, disk: disk)
+    center.download(bark)
+    await waitUntil { gate.isWaiting(bark) }
+    gate.finish(bark, error: DownloadError())
+    await waitUntil { center.status(for: bark) == .downloadFailed("network down") }
+    // Connectivity returns; a dictation downloads and loads Bark Clean itself.
+    center.apply(ParakeetRuntimeSnapshot(sequence: 1, downloading: .barkClean, loading: .barkClean))
+    #expect(center.status(for: bark) == .downloading(progress: nil))
+    disk.set(bark, true)
+    center.apply(ParakeetRuntimeSnapshot(sequence: 2, resident: .barkClean))
+    #expect(center.status(for: bark) == .ready)
+    // Unloaded later (memory pressure): downloaded, not the stale failure.
+    center.apply(ParakeetRuntimeSnapshot(sequence: 3))
+    #expect(center.status(for: bark) == .downloaded)
+  }
+
+  @Test func qwenStateComesFromItsRuntimeWithGenerationAwareFailures() async {
+    let gate = DownloadGate(), disk = Disk()
+    let center = makeCenter(gate: gate, disk: disk)
     guard TranscriptionModelStatusCenter.isLinked(.qwen),
           TranscriptionModelStatusCenter.unsupportedReason(.qwen) == nil else { return }
     #expect(center.status(for: .qwen) == .notDownloaded)
     disk.set(.qwen, true)
     #expect(center.status(for: .qwen) == .downloaded)
-    center.setQwenResident(true)
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .verifying, loadsStarted: 1))
+    #expect(center.status(for: .qwen) == .loading)
+    center.apply(QwenRuntimeSnapshot(loaded: true, health: .healthy, loadsStarted: 1))
     #expect(center.status(for: .qwen) == .ready)
     // A Parakeet snapshot never touches Qwen.
     center.apply(ParakeetRuntimeSnapshot(sequence: 9, loading: .unified))
     #expect(center.status(for: .qwen) == .ready)
+
+    // Corrupt weights: verification fails and the engine unloads.
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .unhealthy("canary mismatch"), loadsStarted: 2))
+    #expect(center.status(for: .qwen) == .loadFailed("canary mismatch"))
+    center.download(.qwen)
+    await waitUntil { gate.isWaiting(.qwen) }
+    #expect(gate.forced[.qwen] == true, "Retry after a failed load refetches the weights")
+    gate.finish(.qwen)
+    // Fresh weights hide the failure from the old load generation.
+    await waitUntil { center.status(for: .qwen) == .downloaded }
+    #expect(center.status(for: .qwen) == .downloaded)
+    // The reload verifies them; a new failure (newer generation) shows again.
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .unhealthy("still bad"), loadsStarted: 3))
+    #expect(center.status(for: .qwen) == .loadFailed("still bad"))
+  }
+
+  @Test func qwenDownloadFailureClearsOnceItLoads() async {
+    let gate = DownloadGate(), disk = Disk()
+    let center = makeCenter(gate: gate, disk: disk)
+    guard TranscriptionModelStatusCenter.isLinked(.qwen),
+          TranscriptionModelStatusCenter.unsupportedReason(.qwen) == nil else { return }
+    center.download(.qwen)
+    await waitUntil { gate.isWaiting(.qwen) }
+    gate.finish(.qwen, error: DownloadError())
+    await waitUntil { center.status(for: .qwen) == .downloadFailed("network down") }
+    disk.set(.qwen, true)
+    center.apply(QwenRuntimeSnapshot(loaded: true, health: .healthy, loadsStarted: 1))
+    #expect(center.status(for: .qwen) == .ready)
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .healthy, loadsStarted: 1))
+    #expect(center.status(for: .qwen) == .downloaded)
   }
 }
