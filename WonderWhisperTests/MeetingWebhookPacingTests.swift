@@ -718,7 +718,9 @@ struct MeetingWebhookPacingTests {
 
   @MainActor
   @Test func unsplitSendsStillRunAlongsideEachOther() async throws {
-    let transport = PacingTestTransport(holdNanoseconds: 30_000_000)
+    // A long hold, so the second send starts while the first is in flight even when the full
+    // suite loads the machine (30 ms was not enough there).
+    let transport = PacingTestTransport(holdNanoseconds: 500_000_000)
     let (center, store) = try Self.center(transport: transport)
     let endpoint = MeetingWebhookEndpoint(name: "Bot", url: "https://example.com/hook")
     try store.upsert(endpoint, signingSecret: nil, headers: [:])
