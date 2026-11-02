@@ -262,4 +262,24 @@ struct TranscriptionModelStatusTests {
     center.apply(QwenRuntimeSnapshot(loaded: false, health: .healthy, loadsStarted: 1))
     #expect(center.status(for: .qwen) == .downloaded)
   }
+
+  @Test func aHealthyQwenLoadSupersedesADownloadFailureEvenAfterItUnloads() async {
+    let gate = DownloadGate(), disk = Disk()
+    let center = makeCenter(gate: gate, disk: disk)
+    guard TranscriptionModelStatusCenter.isLinked(.qwen),
+          TranscriptionModelStatusCenter.unsupportedReason(.qwen) == nil else { return }
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .unknown, loadsStarted: 2))
+    center.download(.qwen)
+    await waitUntil { gate.isWaiting(.qwen) }
+    gate.finish(.qwen, error: DownloadError())
+    await waitUntil { center.status(for: .qwen) == .downloadFailed("network down") }
+    // The same generation still healthy from before: not a newer load.
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .healthy, loadsStarted: 2))
+    #expect(center.status(for: .qwen) == .downloadFailed("network down"))
+    // Weights arrive another way; a dictation loads them while Settings is closed, and the engine
+    // has unloaded by the time Settings reads the runtime again.
+    disk.set(.qwen, true)
+    center.apply(QwenRuntimeSnapshot(loaded: false, health: .healthy, loadsStarted: 3))
+    #expect(center.status(for: .qwen) == .downloaded)
+  }
 }

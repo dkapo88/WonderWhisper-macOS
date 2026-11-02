@@ -46,11 +46,9 @@ final class SettingsSyncService: ObservableObject {
   }
 
   static let shared: SettingsSyncService = {
-    if AppConfig.isTestRun || AppConfig.isQABuild {
-      // Unit tests run inside the app host, and QA builds stand in for the user's app; never let
-      // either near the real iCloud settings file.
+    if AppConfig.isTestRun {
+      // Unit tests run inside the app host; never let the shared instance near real iCloud.
       let scratch = (AppConfig.testScratchApplicationSupport
-        ?? AppConfig.qaApplicationSupport
         ?? FileManager.default.temporaryDirectory)
         .appendingPathComponent("SettingsSyncShared", isDirectory: true)
       return SettingsSyncService(
@@ -58,6 +56,17 @@ final class SettingsSyncService: ObservableObject {
         directory: scratch.appendingPathComponent(SettingsSyncFileStore.folderName),
         iCloudRoot: scratch,
         observesChanges: false
+      )
+    }
+    if let qa = AppConfig.qaApplicationSupport {
+      // A QA build syncs through a stand-in "iCloud Drive" folder in its scratch root, never the
+      // real one. It observes changes like a normal launch, so sync itself can be QA'd.
+      let root = qa.deletingLastPathComponent().appendingPathComponent("iCloud Drive", isDirectory: true)
+      try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      return SettingsSyncService(
+        defaults: AppConfig.defaults,
+        directory: root.appendingPathComponent(SettingsSyncFileStore.folderName, isDirectory: true),
+        iCloudRoot: root
       )
     }
     let root = SettingsSyncFileStore.iCloudDriveRoot

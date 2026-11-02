@@ -39,6 +39,9 @@ final class TranscriptionModelStatusCenter: ObservableObject {
   private var failureMaskedThrough: [ParakeetModelKind: Int] = [:]
   /// The Qwen load generation a fresh download superseded, likewise.
   private var qwenFailureMaskedThrough: Int?
+  /// The Qwen load generation when its last download failed: a healthy load started after it
+  /// supersedes that failure, even once the engine has unloaded again.
+  private var qwenDownloadFailedAtGeneration: Int?
 
   init(
     downloader: @escaping Downloader = TranscriptionModelStatusCenter.liveDownload,
@@ -109,7 +112,10 @@ final class TranscriptionModelStatusCenter: ObservableObject {
   func apply(_ snapshot: QwenRuntimeSnapshot) {
     guard snapshot != qwenRuntime else { return }
     qwenRuntime = snapshot
-    if snapshot.loaded, downloadFailures[.qwen] != nil { downloadFailures[.qwen] = nil }
+    guard downloadFailures[.qwen] != nil else { return }
+    let loadedSinceFailure = snapshot.health == .healthy
+      && snapshot.loadsStarted > (qwenDownloadFailedAtGeneration ?? -1)
+    if snapshot.loaded || loadedSinceFailure { downloadFailures[.qwen] = nil }
   }
 
   func refreshDisk() { diskRevision += 1 }
@@ -158,6 +164,7 @@ final class TranscriptionModelStatusCenter: ObservableObject {
     diskRevision += 1
     if let failure {
       downloadFailures[model] = failure
+      if model == .qwen { qwenDownloadFailedAtGeneration = qwenRuntime.loadsStarted }
       return
     }
     switch model {
