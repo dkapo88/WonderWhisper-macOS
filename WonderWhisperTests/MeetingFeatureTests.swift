@@ -15,8 +15,12 @@ struct MeetingFeatureTests {
     #expect(transcript != MeetingOverlayTabPicker(selection: .notes) { _ in })
     transcript.onSelect(.context)
     #expect(picked == .context)
-    // Nothing meeting-scoped is stored, so nothing meeting-scoped can drive its identity.
-    #expect(Mirror(reflecting: transcript).children.compactMap(\.label) == ["selection", "onSelect"])
+    // Nothing meeting-scoped is stored, so nothing meeting-scoped can drive its identity. The
+    // namespace is view-local animation identity and plays no part in equality.
+    #expect(
+      Mirror(reflecting: transcript).children.compactMap(\.label)
+        == ["selection", "onSelect", "_selectionNamespace"]
+    )
     #expect(MeetingOverlayTabPicker.maxWidth == 320)
   }
 
