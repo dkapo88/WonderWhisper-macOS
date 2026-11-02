@@ -79,6 +79,7 @@ actor DictationController {
 
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
     private var autoMuteEnabled: Bool = false
+    var autoMuteEnabledForTesting: Bool { autoMuteEnabled }
 
     /// The streaming provider instance captured at session start. Finalizing this exact
     /// instance (instead of re-reading `transcriber`) prevents a mid-session provider swap
@@ -882,10 +883,19 @@ actor DictationController {
             return
         }
         var override = configuration
-        if !replacingTranscriber {
+        // A streaming provider that was not started with the recording has heard none of it,
+        // so the session keeps the transcriber that has.
+        let startsUnheardStream = override.transcriber is SonioxStreamingProvider
+            || override.transcriber is XAIStreamingTranscriptionProvider
+        if !replacingTranscriber || startsUnheardStream {
+            if replacingTranscriber {
+                AppLog.dictation.log("Prompt override names a streaming engine; keeping this session's transcriber")
+            }
             override.transcriber = nil
             override.transcriberSettings = transcriberSettings
         }
+        // The session muted (or not) at start; it must restore on the same terms.
+        override.autoMuteEnabled = autoMuteEnabled
         applyNow(override)
         await updateSelectedTextEnabled(override.selectedTextEnabled)
         await updateActiveTextFieldEnabled(override.activeTextFieldEnabled)

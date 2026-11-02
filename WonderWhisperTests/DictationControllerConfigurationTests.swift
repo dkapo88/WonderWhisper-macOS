@@ -133,4 +133,33 @@ struct DictationControllerConfigurationTests {
     #expect(inserter.inserted == ["from groq "])
     #expect(await groq.models == ["groq-streaming"])
   }
+
+  @Test func aSessionPromptOverrideKeepsTheSessionAutoMuteState() async {
+    let recorder = Session.FakeRecorder(samples: speech())
+    let bark = NamedTranscriber("from bark")
+    let inserter = Session.FakeInserter()
+    let controller = await makeController(recorder: recorder, transcriber: bark, inserter: inserter)
+    var start = configuration(bark, model: "parakeet-bark-clean")
+    start.autoMuteEnabled = true
+    await controller.toggle(userPrompt: "", configuration: start)
+    // Settings turned auto-mute off mid-recording; the override built from them must not stop
+    // this session restoring what it muted.
+    await controller.applySessionOverride(configuration(bark, model: "parakeet-bark-clean"), replacingTranscriber: false)
+    #expect(await controller.autoMuteEnabledForTesting)
+    await controller.cancel()
+  }
+
+  @Test func aSessionPromptNamingAStreamingEngineKeepsTheSessionTranscriber() async {
+    let recorder = Session.FakeRecorder(samples: speech())
+    let bark = NamedTranscriber("from bark")
+    let inserter = Session.FakeInserter()
+    let controller = await makeController(recorder: recorder, transcriber: bark, inserter: inserter)
+    await controller.toggle(userPrompt: "", configuration: configuration(bark, model: "parakeet-bark-clean"))
+    var override = configuration(bark, model: "soniox-streaming")
+    override.transcriber = SonioxStreamingProvider(apiKeyProvider: { nil })
+    await controller.applySessionOverride(override, replacingTranscriber: true)
+    await controller.finish(userPrompt: "")
+    #expect(inserter.inserted == ["from bark "])
+    #expect(await bark.models == ["parakeet-bark-clean"])
+  }
 }
