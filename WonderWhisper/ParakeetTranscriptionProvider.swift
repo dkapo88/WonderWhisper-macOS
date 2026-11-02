@@ -517,7 +517,8 @@ actor ParakeetTranscriptionProvider: TranscriptionProvider {
             AppLog.dictation.log("[Parakeet] \(name) files missing=\(String(describing: missing)); downloading")
         }
         // Ultra and Bark Clean each ship a single encoder build (no precision variants).
-        let models = try await AsrModels.downloadAndLoad(version: version)
+        // The canonical folder (FluidAudio's default in a normal launch; scratch in QA builds).
+        let models = try await AsrModels.downloadAndLoad(to: modelsDirectory, version: version)
         let mgr = AsrManager(config: kind == .barkClean ? Self.barkCleanConfig : .default)
         try await mgr.loadModels(models)
         let available = await mgr.isAvailable

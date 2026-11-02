@@ -384,7 +384,11 @@ actor QwenASRRuntime {
     progress: (@Sendable (Double, String) -> Void)? = nil
   ) async throws {
     guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
-    let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: QwenASRManager.modelId)
+    // QA builds download into their scratch cache root; a normal launch keeps the library's default.
+    let cacheDir = try HuggingFaceDownloader.getCacheDirectory(
+      for: QwenASRManager.modelId,
+      basePath: AppConfig.isQABuild ? QwenASRManager.cacheRoot : nil
+    )
     AppLog.dictation.log("[QwenASR] downloading weights to \(cacheDir.path)")
     try await HuggingFaceDownloader.downloadWeights(
       modelId: QwenASRManager.modelId,

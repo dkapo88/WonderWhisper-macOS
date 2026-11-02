@@ -192,9 +192,23 @@ enum ParakeetModelKind: String, CaseIterable, Identifiable {
 }
 
 enum ParakeetManager {
+    /// The Application Support folder model files live under: the real one, or a QA build's
+    /// scratch stand-in, so QA never discovers, downloads into or loads the shared models.
+    static var applicationSupportBase: URL? {
+        if let qa = AppConfig.qaApplicationSupport { return qa }
+        return try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+    }
+
     // Preferred location to place/download models
     static var modelsDirectory: URL {
         let fm = FileManager.default
+        if let qa = AppConfig.qaApplicationSupport {
+            let dir = qa.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
         do {
             let appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             return appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
@@ -262,7 +276,7 @@ enum ParakeetManager {
     // MARK: - Discovery
     private static func discoverInstalledModelDirectory() -> URL? {
         let fm = FileManager.default
-        let appSupport = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let appSupport = applicationSupportBase
         // Candidates we know about
         var candidates: [URL] = []
         // FluidAudio default cache path and known nested model roots
@@ -343,7 +357,7 @@ enum ParakeetManager {
     // Remove all known model caches (new + legacy paths) for a clean reset
     static func removeAllModels() {
         let fm = FileManager.default
-        let appSupport = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let appSupport = applicationSupportBase
         var targets: [URL] = []
         if let appSupport { targets.append(appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)) }
         if let appSupport { targets.append(appSupport.appendingPathComponent("ParakeetModels", isDirectory: true)) }

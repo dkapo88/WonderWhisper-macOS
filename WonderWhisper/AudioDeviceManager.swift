@@ -173,6 +173,11 @@ enum AudioDeviceManager {
 
     @discardableResult
     static func setInputVolume(uid: String, volume: Float) -> Bool {
+        // QA builds never change the Mac's microphone gain.
+        guard !AppConfig.isQABuild else {
+            AppLog.dictation.log("[QA] input volume change skipped")
+            return false
+        }
         guard let dev = deviceID(forUID: uid) else { return false }
         var vol = max(0, min(1, volume))
         for var addr in volumePropertyAddresses(for: dev) {
@@ -271,6 +276,11 @@ enum AudioDeviceManager {
 
     @discardableResult
     static func setSystemDefaultInput(toUID uid: String) -> Bool {
+        // QA builds never change the Mac's default microphone.
+        guard !AppConfig.isQABuild else {
+            AppLog.dictation.log("[QA] default input change skipped")
+            return false
+        }
         guard let dev = deviceID(forUID: uid) else { return false }
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var newDev = dev
