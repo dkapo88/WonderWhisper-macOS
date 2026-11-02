@@ -5,6 +5,20 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-11-02.1</title>
+      <pubDate>Mon, 02 Nov 2026 06:07:59 +0000</pubDate>
+      <sparkle:version>2026110201</sparkle:version>
+      <sparkle:shortVersionString>2026-11-02.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>Fixes a dictation crash on affected pre-release macOS 27.2 builds, including keyboard-paste fallback paths.</li>
+<li>Lists Bark Clean, Parakeet Unified, Parakeet Ultra and Qwen directly in one transcription model picker.</li>
+<li>Shows accurate download, loading, ready, failure and fallback status with Download/Retry controls.</li>
+<li>Applies model changes to the next recording while preserving explicit prompt and language overrides.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-11-02.1/WonderWhisper-2026-11-02.1.dmg" sparkle:edSignature="WfSAbtpCLqXW9luYBZ6gh4bTKib+dxjJ4n7JrT/b39y3F/JbZ2361978B8CdMA9VX/ip4anBDeVzpO8jG0jcAA==" length="27147431" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-11-02</title>
       <pubDate>Mon, 02 Nov 2026 01:11:59 +0000</pubDate>
       <sparkle:version>2026110200</sparkle:version>
