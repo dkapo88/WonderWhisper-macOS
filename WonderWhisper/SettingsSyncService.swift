@@ -46,9 +46,11 @@ final class SettingsSyncService: ObservableObject {
   }
 
   static let shared: SettingsSyncService = {
-    if AppConfig.isTestRun {
-      // Unit tests run inside the app host; never let the shared instance near real iCloud.
+    if AppConfig.isTestRun || AppConfig.isQABuild {
+      // Unit tests run inside the app host, and QA builds stand in for the user's app; never let
+      // either near the real iCloud settings file.
       let scratch = (AppConfig.testScratchApplicationSupport
+        ?? AppConfig.qaApplicationSupport
         ?? FileManager.default.temporaryDirectory)
         .appendingPathComponent("SettingsSyncShared", isDirectory: true)
       return SettingsSyncService(
