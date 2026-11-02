@@ -5,6 +5,21 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-11-02</title>
+      <pubDate>Mon, 02 Nov 2026 01:11:59 +0000</pubDate>
+      <sparkle:version>2026110200</sparkle:version>
+      <sparkle:shortVersionString>2026-11-02</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**New default local model: Bark Clean.** On-device dictation now uses Underdog Bark 3.0 Clean on new installs. In our tests it got about a third as many words wrong as Parakeet Unified (4% vs 12.5%), took out almost all the "um"s and "ah"s, and was roughly twice as fast. Existing installs keep the model they have; Settings → Transcription shows a one-time note if you'd like to switch. Bark Clean downloads once (about 460 MB). Until it's downloaded, dictation keeps using your other local model.</li>
+<li>**Faster local dictation.** The local model now stays ready while it's selected, so dictation starts sooner and short clips come back much faster after a break.</li>
+<li>**Fewer cut-off words.** Recording carries on for a moment after you let go of the key, so your last word isn't clipped. Short clips are padded so the model doesn't drop words at the end.</li>
+<li>**Silence is ignored.** If nothing was said, nothing is transcribed or pasted.</li>
+<li>**Credit:** Bark Clean is NVIDIA Parakeet TDT 0.6B v3, fine-tuned by Conway Research as Underdog Bark 3.0 Clean and converted to Core ML by FluidInference, under CC BY 4.0. See Settings and About.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-11-02/WonderWhisper-2026-11-02.dmg" sparkle:edSignature="ubWToYxG4Avgb8DVu31vGys2JA/goIwsei2sBrJxiHwpeU0Xy6MQHriHeY4d8R0cm4ugk9oVYF5QyP/rboyaDA==" length="27114424" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-10-23</title>
       <pubDate>Sun, 01 Nov 2026 07:51:35 +0000</pubDate>
       <sparkle:version>2026102300</sparkle:version>
