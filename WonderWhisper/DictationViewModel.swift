@@ -5763,9 +5763,17 @@ final class DictationViewModel: ObservableObject {
         let configuration = makeConfiguration(using: prompt)
         let replacingTranscriber = prompt?.voiceModelOverride?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        // A language the prompt sets itself still applies when the session keeps its model.
+        let hasLanguageOverride = prompt?.voiceLanguageOverride?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let languageOverride = hasLanguageOverride ? configuration.transcriberSettings.language : nil
         let task = Task {
             guard !Task.isCancelled else { return }
-            await controller.applySessionOverride(configuration, replacingTranscriber: replacingTranscriber)
+            await controller.applySessionOverride(
+                configuration,
+                replacingTranscriber: replacingTranscriber,
+                languageOverride: languageOverride
+            )
         }
         providerUpdateTask = task
         await task.value

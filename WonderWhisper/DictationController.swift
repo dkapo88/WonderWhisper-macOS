@@ -876,8 +876,13 @@ actor DictationController {
     /// Applies a prompt switch that belongs to the session in progress (a selected-text prompt
     /// chosen at stop) at once. The session keeps the transcriber it started with unless
     /// `replacingTranscriber` (the prompt names its own voice model), so a settings change
-    /// mid-recording still applies only to the next dictation.
-    func applySessionOverride(_ configuration: DictationConfiguration, replacingTranscriber: Bool) async {
+    /// mid-recording still applies only to the next dictation. A prompt's own voice language
+    /// (`languageOverride`) applies to the kept transcriber.
+    func applySessionOverride(
+        _ configuration: DictationConfiguration,
+        replacingTranscriber: Bool,
+        languageOverride: String? = nil
+    ) async {
         guard isSessionActive else {
             await apply(configuration)
             return
@@ -892,7 +897,15 @@ actor DictationController {
                 AppLog.dictation.log("Prompt override names a streaming engine; keeping this session's transcriber")
             }
             override.transcriber = nil
-            override.transcriberSettings = transcriberSettings
+            let session = transcriberSettings
+            override.transcriberSettings = TranscriptionSettings(
+                endpoint: session.endpoint,
+                model: session.model,
+                timeout: session.timeout,
+                language: languageOverride ?? session.language,
+                vocabularyTerms: session.vocabularyTerms,
+                context: session.context
+            )
         }
         // The session muted (or not) at start; it must restore on the same terms.
         override.autoMuteEnabled = autoMuteEnabled

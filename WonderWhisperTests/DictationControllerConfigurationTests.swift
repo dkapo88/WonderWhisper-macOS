@@ -11,9 +11,11 @@ struct DictationControllerConfigurationTests {
   actor NamedTranscriber: TranscriptionProvider {
     let text: String
     private(set) var models: [String] = []
+    private(set) var languages: [String?] = []
     init(_ text: String) { self.text = text }
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
       models.append(settings.model)
+      languages.append(settings.language)
       return text
     }
   }
@@ -161,5 +163,21 @@ struct DictationControllerConfigurationTests {
     await controller.finish(userPrompt: "")
     #expect(inserter.inserted == ["from bark "])
     #expect(await bark.models == ["parakeet-bark-clean"])
+  }
+
+  @Test func aSessionPromptLanguageOverrideAppliesToTheKeptTranscriber() async {
+    let recorder = Session.FakeRecorder(samples: speech())
+    let qwen = NamedTranscriber("bonjour")
+    let other = NamedTranscriber("other")
+    let inserter = Session.FakeInserter()
+    let controller = await makeController(recorder: recorder, transcriber: qwen, inserter: inserter)
+    await controller.toggle(userPrompt: "", configuration: configuration(qwen, model: "qwen-local"))
+    await controller.applySessionOverride(
+      configuration(other, model: "groq-streaming"), replacingTranscriber: false, languageOverride: "fr"
+    )
+    await controller.finish(userPrompt: "")
+    #expect(await qwen.models == ["qwen-local"])
+    #expect(await qwen.languages == ["fr"])
+    #expect(await other.models.isEmpty)
   }
 }
