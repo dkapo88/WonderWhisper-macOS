@@ -38,7 +38,15 @@ actor DictationController {
         var transcriptionSeconds: Double
         var totalSeconds: Double
     }
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            // A configuration that arrived mid-session lands once the session is over.
+            guard deferredConfiguration != nil, !isSessionActive else { return }
+            Task { await self.applyDeferredConfigurationIfIdle() }
+        }
+    }
+    /// The newest configuration received while a session was active (see `apply`).
+    private var deferredConfiguration: DictationConfiguration?
 
     private let recorder: DictationAudioCapturing
     private var transcriber: TranscriptionProvider
@@ -71,6 +79,7 @@ actor DictationController {
 
     private var screenContextCaptureMode: ScreenContextCaptureMode = .image
     private var autoMuteEnabled: Bool = false
+    var autoMuteEnabledForTesting: Bool { autoMuteEnabled }
 
     /// The streaming provider instance captured at session start. Finalizing this exact
     /// instance (instead of re-reading `transcriber`) prevents a mid-session provider swap
@@ -144,8 +153,15 @@ actor DictationController {
         self.currentPrompt = activePrompt
         switch state {
         case .idle, .error:
-            // Apply the session's own configuration before anything else, in one step.
-            if let configuration { await apply(configuration) }
+            // Apply the session's own configuration before anything else, in one step. It was
+            // built from the latest settings, so it supersedes any deferred one.
+            if let configuration {
+                deferredConfiguration = nil
+                await apply(configuration)
+            } else if let deferred = deferredConfiguration {
+                deferredConfiguration = nil
+                await apply(deferred)
+            }
             sessionEpoch += 1
             recordingFinishedCleanly = false
             timingSessionCounter += 1
@@ -836,8 +852,75 @@ actor DictationController {
 
     // MARK: - Session configuration, release tail, recording completion
 
-    /// Applies a whole configuration in one actor step.
+    /// Whether a dictation is between its start and its end (recording through inserting).
+    private var isSessionActive: Bool {
+        switch state {
+        case .idle, .error: return false
+        case .recording, .transcribing, .processing, .inserting: return true
+        }
+    }
+
+    /// Applies a whole configuration in one actor step. During a session it is kept for the next
+    /// one instead, so a settings change (engine, model, prompt) never switches the provider or
+    /// model a recording in progress finishes with.
     func apply(_ configuration: DictationConfiguration) async {
+        if isSessionActive {
+            deferredConfiguration = configuration
+            return
+        }
+        applyNow(configuration)
+        await updateSelectedTextEnabled(configuration.selectedTextEnabled)
+        await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
+    }
+
+    /// Applies a prompt switch that belongs to the session in progress (a selected-text prompt
+    /// chosen at stop) at once. The session keeps the transcriber it started with unless
+    /// `replacingTranscriber` (the prompt names its own voice model), so a settings change
+    /// mid-recording still applies only to the next dictation. A prompt's own voice language
+    /// (`languageOverride`) applies to the kept transcriber.
+    func applySessionOverride(
+        _ configuration: DictationConfiguration,
+        replacingTranscriber: Bool,
+        languageOverride: String? = nil
+    ) async {
+        guard isSessionActive else {
+            await apply(configuration)
+            return
+        }
+        var override = configuration
+        // A streaming provider that was not started with the recording has heard none of it,
+        // so the session keeps the transcriber that has.
+        let startsUnheardStream = override.transcriber is SonioxStreamingProvider
+            || override.transcriber is XAIStreamingTranscriptionProvider
+        if !replacingTranscriber || startsUnheardStream {
+            if replacingTranscriber {
+                AppLog.dictation.log("Prompt override names a streaming engine; keeping this session's transcriber")
+            }
+            override.transcriber = nil
+            let session = transcriberSettings
+            override.transcriberSettings = TranscriptionSettings(
+                endpoint: session.endpoint,
+                model: session.model,
+                timeout: session.timeout,
+                language: languageOverride ?? session.language,
+                vocabularyTerms: session.vocabularyTerms,
+                context: session.context
+            )
+        }
+        // The session muted (or not) at start; it must restore on the same terms.
+        override.autoMuteEnabled = autoMuteEnabled
+        applyNow(override)
+        await updateSelectedTextEnabled(override.selectedTextEnabled)
+        await updateActiveTextFieldEnabled(override.activeTextFieldEnabled)
+    }
+
+    private func applyDeferredConfigurationIfIdle() async {
+        guard !isSessionActive, let deferred = deferredConfiguration else { return }
+        deferredConfiguration = nil
+        await apply(deferred)
+    }
+
+    private func applyNow(_ configuration: DictationConfiguration) {
         if let provider = configuration.transcriber { transcriber = provider }
         transcriberSettings = configuration.transcriberSettings
         llm = configuration.llm
@@ -846,8 +929,6 @@ actor DictationController {
         screenContextEnabled = configuration.screenContextEnabled
         screenContextCaptureMode = configuration.screenContextCaptureMode
         updateClipboardContextEnabled(configuration.clipboardContextEnabled)
-        await updateSelectedTextEnabled(configuration.selectedTextEnabled)
-        await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
         screenImageEnabled = configuration.screenImageEnabled
         autoMuteEnabled = configuration.autoMuteEnabled
     }

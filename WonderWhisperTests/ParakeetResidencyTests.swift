@@ -42,6 +42,8 @@ struct ParakeetResidencyTests {
       boostingEnabled: { false },
       vocabularyTerms: { [] },
       isInstalled: { _ in true },
+      // Independent of the shared scratch defaults other suites may be writing.
+      selectedModel: { ParakeetModelKind.newInstallDefault },
       backendLoader: { kind in await gate.load(kind) },
       prewarmRunner: { kind in await gate.prewarm(kind) }
     )
@@ -214,6 +216,8 @@ struct ParakeetResidencyTests {
       boostingEnabled: { false },
       vocabularyTerms: { [] },
       isInstalled: { _ in true },
+      // Independent of the shared scratch defaults other suites may be writing.
+      selectedModel: { ParakeetModelKind.newInstallDefault },
       backendLoader: { kind in await gate.load(kind) },
       prewarmRunner: { kind in await gate.prewarm(kind) }
     )

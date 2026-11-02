@@ -67,7 +67,8 @@ private actor MeetingOfflineDiarizerRunner {
     for track: MeetingSystemTrackAudioSource
   ) async throws -> [MeetingSpeakerRelabeler.Segment] {
     let manager = self.manager ?? OfflineDiarizerManager()
-    try await manager.prepareModels()
+    // The FluidAudio models root (its default in a normal launch; scratch in QA builds).
+    try await manager.prepareModels(directory: ParakeetManager.modelsDirectory)
     self.manager = manager
     let result = try await manager.process(audioSource: track, audioLoadingSeconds: 0)
     return result.segments.map {

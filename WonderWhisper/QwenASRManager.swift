@@ -34,6 +34,9 @@ enum QwenASRManager {
   }
 
   static var cacheRoot: URL {
+    if let qa = AppConfig.qaCaches {
+      return qa.appendingPathComponent(cacheDirectoryName, isDirectory: true)
+    }
     let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
       ?? FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Caches", isDirectory: true)

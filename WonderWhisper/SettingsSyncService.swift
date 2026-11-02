@@ -58,6 +58,17 @@ final class SettingsSyncService: ObservableObject {
         observesChanges: false
       )
     }
+    if let qa = AppConfig.qaApplicationSupport {
+      // A QA build syncs through a stand-in "iCloud Drive" folder in its scratch root, never the
+      // real one. It observes changes like a normal launch, so sync itself can be QA'd.
+      let root = qa.deletingLastPathComponent().appendingPathComponent("iCloud Drive", isDirectory: true)
+      try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      return SettingsSyncService(
+        defaults: AppConfig.defaults,
+        directory: root.appendingPathComponent(SettingsSyncFileStore.folderName, isDirectory: true),
+        iCloudRoot: root
+      )
+    }
     let root = SettingsSyncFileStore.iCloudDriveRoot
     return SettingsSyncService(
       defaults: AppConfig.defaults,

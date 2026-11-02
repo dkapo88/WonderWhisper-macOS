@@ -10,17 +10,11 @@ struct TranscriptionSettingsPane: View {
   @State private var openRouterVoiceModels: [OpenRouterModel] = []
   @State private var isLoadingOpenRouterVoiceModels = false
   @State private var openRouterVoiceModelError: String?
-  @State private var isDownloadingParakeet = false
-  @State private var parakeetDownloadError: String?
-  @State private var isDownloadingQwen = false
-  @State private var qwenDownloadProgress: Double = 0
-  @State private var qwenDownloadStatus = ""
-  @State private var qwenDownloadError: String?
   @State private var isDownloadingCtc = false
   @State private var ctcDownloadError: String?
-  // Selected on-device Parakeet model, persisted under "parakeet.version". Stored
-  // as a raw optional string so unset (new-install or pinned default) and a legacy "v3"
-  // resolve exactly as in ParakeetModelKind.resolved(stored:).
+  // Read only, so the picker re-renders when `parakeet.version` changes (here or through sync).
+  // Stored as a raw optional string so an unset value (new-install or pinned default) and a
+  // legacy "v3" resolve exactly as in ParakeetModelKind.resolved(stored:). Never written here.
   @AppStorage(ParakeetModelKind.defaultsKey, store: AppConfig.defaults)
   private var parakeetVersion: String?
   // One-time "new recommended model" note for installs that kept their old model.
@@ -43,6 +37,14 @@ struct TranscriptionSettingsPane: View {
       parakeetSection
       qwenSection
     }
+    .task(id: choice.localModel) {
+      // Qwen's runtime owns its loaded and health state; re-read it while Settings shows Qwen.
+      guard choice.localModel == .qwen else { return }
+      while !Task.isCancelled {
+        vm.modelStatus.apply(await QwenASRRuntime.shared.statusSnapshot())
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+      }
+    }
     .task {
       guard vm.simpleVoiceEngine == .openRouterTranscription else { return }
       await loadOpenRouterVoiceModelsIfNeeded()
@@ -53,17 +55,49 @@ struct TranscriptionSettingsPane: View {
     }
   }
 
-  // MARK: - Engine
+  // MARK: - Model
+
+  /// The picker's current choice, read from the stored engine and Parakeet model (never written
+  /// by reading).
+  private var choice: TranscriptionChoice {
+    TranscriptionChoice.current(engine: vm.simpleVoiceEngine, storedParakeetVersion: parakeetVersion)
+  }
+
+  private var choiceBinding: Binding<TranscriptionChoice> {
+    Binding(
+      get: { choice },
+      set: { vm.selectTranscriptionChoice($0) }
+    )
+  }
 
   private var engineSection: some View {
     Section {
-      Picker(selection: $vm.simpleVoiceEngine) {
-        ForEach(SimpleVoiceEngine.availableEngines) { engine in
-          Text(engine.displayName).tag(engine)
+      if barkRecommendationPending, choice != .parakeet(.barkClean) {
+        barkRecommendation
+      }
+
+      Picker(selection: choiceBinding) {
+        Section("On-device") {
+          ForEach(TranscriptionChoice.available.filter { $0.localModel != nil }) { option in
+            Text(option.displayName).tag(option)
+          }
+        }
+        Section("Cloud") {
+          ForEach(TranscriptionChoice.available.filter { $0.localModel == nil }) { option in
+            Text(option.displayName).tag(option)
+          }
         }
       } label: {
-        Text("Engine")
-        Text(vm.simpleVoiceEngine.detail)
+        Text("Model")
+        Text(choice.detail)
+      }
+
+      if let credit = choice.parakeetModel?.credit {
+        ParakeetModelCreditView(credit: credit)
+      }
+
+      if let model = choice.localModel {
+        LocalModelStatusRow(model: model, status: vm.modelStatus, language: vm.transcriptionLanguage)
       }
 
       Picker(selection: $vm.transcriptionLanguage) {
@@ -75,7 +109,11 @@ struct TranscriptionSettingsPane: View {
         Text("Used by Grok STT and local Qwen3-ASR. Auto-detect sends no language hint.")
       }
     } header: {
-      Text("Dictation engine")
+      Text("Dictation model")
+    } footer: {
+      Text("Changing the model during a dictation applies from the next one. Meetings always "
+        + "use Parakeet Unified.")
+        .settingsFootnote()
     }
   }
 
@@ -165,20 +203,6 @@ struct TranscriptionSettingsPane: View {
 
   // MARK: - On-device models
 
-  private var parakeetModel: ParakeetModelKind {
-    ParakeetModelKind.resolved(stored: parakeetVersion)
-  }
-
-  private var parakeetModelBinding: Binding<ParakeetModelKind> {
-    Binding(
-      get: { ParakeetModelKind.resolved(stored: parakeetVersion) },
-      set: {
-        parakeetVersion = $0.rawValue
-        if $0 == .barkClean { barkRecommendationPending = false }
-      }
-    )
-  }
-
   private var vocabularyTermCount: Int {
     VoiceVocabularyKeyterms.terms(
       customVocabulary: vm.vocabCustom,
@@ -188,50 +212,6 @@ struct TranscriptionSettingsPane: View {
 
   private var parakeetSection: some View {
     Section {
-      if barkRecommendationPending, parakeetModel != .barkClean {
-        barkRecommendation
-      }
-
-      Picker(selection: parakeetModelBinding) {
-        ForEach(ParakeetModelKind.allCases) { kind in
-          Text(kind.displayName).tag(kind)
-        }
-      } label: {
-        Text("Model")
-        Text(parakeetModel.detail)
-      }
-
-      if let credit = parakeetModel.credit {
-        ParakeetModelCreditView(credit: credit)
-      }
-
-      LabeledContent("Status") {
-        parakeetStatus
-      }
-
-      LabeledContent {
-        HStack(spacing: DesignTokens.Spacing.xSmall) {
-          Button("Show in Finder") {
-            NSWorkspace.shared.selectFile(
-              ParakeetManager.effectiveModelsDirectory(for: parakeetModel).path,
-              inFileViewerRootedAtPath: ""
-            )
-          }
-          Button(isDownloadingParakeet ? "Downloading…" : "Download") {
-            downloadParakeet()
-          }
-          .disabled(isDownloadingParakeet || !ParakeetManager.isLinked)
-        }
-      } label: {
-        Text("Model files")
-        Text("\(parakeetModel.approximateDownloadSize). Download ahead of your first "
-          + "dictation to avoid a cold start.")
-      }
-
-      if let parakeetDownloadError {
-        StatusBadge(.error, "Download failed: \(parakeetDownloadError)")
-      }
-
       Toggle(isOn: $parakeetVocabularyBoosting) {
         Text("Boost vocabulary")
         Text(vocabularyBoostingDetail)
@@ -268,7 +248,7 @@ struct TranscriptionSettingsPane: View {
         }
       }
     } header: {
-      Text("Parakeet (on-device)")
+      Text("Parakeet vocabulary (on-device)")
     } footer: {
       Text("Vocabulary boosting applies to English (Bark Clean and Unified) dictation and to "
         + "Parakeet meetings, where corrections land in the final transcript when the meeting "
@@ -282,14 +262,16 @@ struct TranscriptionSettingsPane: View {
       Text("New recommended model: \(ParakeetModelKind.barkClean.displayName)")
         .font(.headline)
       Text("Bark Clean removes ums, false starts and repeated words as you dictate. "
-        + "Your current model stays selected until you switch.")
+        + "Your current choice stays selected until you switch.")
         .settingsFootnote()
       HStack(spacing: DesignTokens.Spacing.xSmall) {
         Button("Use Bark Clean") {
-          parakeetVersion = ParakeetModelKind.barkClean.rawValue
+          // Selects Bark Clean whatever the engine, including a cloud one.
+          vm.selectTranscriptionChoice(.parakeet(.barkClean))
           barkRecommendationPending = false
         }
         Button("Dismiss") {
+          // Keeps the current choice.
           barkRecommendationPending = false
         }
       }
@@ -318,64 +300,8 @@ struct TranscriptionSettingsPane: View {
     }
   }
 
-  @ViewBuilder private var parakeetStatus: some View {
-    if !ParakeetManager.isLinked {
-      StatusBadge(.error, "Framework missing")
-    } else if let standIn = barkStandIn {
-      // Bark Clean selected but missing: dictation runs a downloaded model instead.
-      StatusBadge(.warning, "Not downloaded. Using \(standIn.displayName) until you download it")
-    } else {
-      StatusBadge.presence(
-        ParakeetManager.modelsPresent(for: parakeetModel),
-        present: "Downloaded",
-        missing: "Not downloaded"
-      )
-    }
-  }
-
-  /// The downloaded model dictation uses while a selected Bark Clean is not downloaded.
-  private var barkStandIn: ParakeetModelKind? {
-    guard parakeetModel == .barkClean, !ParakeetManager.modelsPresent(for: .barkClean) else { return nil }
-    return ParakeetModelKind.barkCleanFallbackOrder.first(where: ParakeetManager.modelsPresent(for:))
-  }
-
   private var qwenSection: some View {
     Section {
-      LabeledContent("Status") {
-        qwenStatus
-      }
-
-      LabeledContent {
-        HStack(spacing: DesignTokens.Spacing.xSmall) {
-          Button("Show in Finder") {
-            NSWorkspace.shared.selectFile(
-              QwenASRManager.effectiveCacheDirectory().path,
-              inFileViewerRootedAtPath: ""
-            )
-          }
-          Button(isDownloadingQwen ? "Downloading…" : "Download") {
-            downloadQwen()
-          }
-          .disabled(
-            isDownloadingQwen || !QwenASRManager.isLinked || !QwenASRManager.isAppleSilicon
-          )
-        }
-      } label: {
-        Text("Model files")
-        Text("About 1 GB from Hugging Face, then fully offline.")
-      }
-
-      if isDownloadingQwen {
-        ProgressView(value: qwenDownloadProgress, total: 1) {
-          Text(qwenDownloadStatus.isEmpty ? "Downloading…" : qwenDownloadStatus)
-            .settingsFootnote()
-        }
-      }
-
-      if let qwenDownloadError {
-        StatusBadge(.error, "Download failed: \(qwenDownloadError)")
-      }
-
       Toggle(isOn: $injectQwenVocabulary) {
         Text("Inject vocabulary into Qwen")
         Text("Sends Vocabulary names into the decoder. Turn off if Qwen appends the list; "
@@ -386,20 +312,6 @@ struct TranscriptionSettingsPane: View {
     } footer: {
       Text("Qwen decodes the recording after you stop. Dictation only; not used for meetings.")
         .settingsFootnote()
-    }
-  }
-
-  @ViewBuilder private var qwenStatus: some View {
-    if !QwenASRManager.isLinked {
-      StatusBadge(.error, "Framework missing")
-    } else if !QwenASRManager.isAppleSilicon {
-      StatusBadge(.error, "Requires Apple Silicon")
-    } else {
-      StatusBadge.presence(
-        QwenASRManager.modelsPresent(),
-        present: "Downloaded",
-        missing: "Not downloaded"
-      )
     }
   }
 
@@ -429,34 +341,6 @@ struct TranscriptionSettingsPane: View {
     }
   }
 
-  private func downloadParakeet() {
-    #if canImport(FluidAudio)
-    isDownloadingParakeet = true
-    parakeetDownloadError = nil
-    let kind = parakeetModel
-    Task {
-      defer { isDownloadingParakeet = false }
-      do {
-        switch kind {
-        case .ultra, .barkClean:
-          // Download only; the provider loads it on first dictation.
-          if let version = kind.tdtVersion {
-            _ = try await AsrModels.download(version: version)
-          }
-        case .unified:
-          let manager = UnifiedAsrManager()
-          try await manager.loadModels(to: ParakeetManager.modelsDirectory)
-        }
-      } catch {
-        // Surface the failure so a silent error can't masquerade as success.
-        let message = (error as NSError).localizedDescription
-        parakeetDownloadError = message
-        AppLog.dictation.error("[Parakeet] \(kind.rawValue) download failed: \(message)")
-      }
-    }
-    #endif
-  }
-
   private func downloadCtc() {
     #if canImport(FluidAudio)
     isDownloadingCtc = true
@@ -472,31 +356,5 @@ struct TranscriptionSettingsPane: View {
       }
     }
     #endif
-  }
-
-  private func downloadQwen() {
-    isDownloadingQwen = true
-    qwenDownloadError = nil
-    qwenDownloadProgress = 0
-    qwenDownloadStatus = "Starting…"
-    Task {
-      defer { isDownloadingQwen = false }
-      do {
-        #if canImport(Qwen3ASR)
-        try await QwenASRManager.downloadModel { progress, status in
-          Task { @MainActor in
-            qwenDownloadProgress = progress
-            qwenDownloadStatus = status
-          }
-        }
-        #else
-        throw QwenASRError.frameworkMissing
-        #endif
-      } catch {
-        let message = (error as NSError).localizedDescription
-        qwenDownloadError = message
-        AppLog.dictation.error("[QwenASR] download failed: \(message)")
-      }
-    }
   }
 }

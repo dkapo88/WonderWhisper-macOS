@@ -718,6 +718,15 @@ final class DictationViewModel: ObservableObject {
     private var dictationParakeet: ParakeetTranscriptionProvider?
     private var parakeetResidencySelected: Bool?
     private var parakeetResidencyKind: ParakeetModelKind?
+    /// The selected Parakeet model the controller's configuration was last built from (nil when
+    /// it used another engine or a prompt's explicit model), so a model-only change, here or
+    /// from another Mac, refreshes it.
+    private var configuredParakeetKind: ParakeetModelKind?
+    /// The engine whose side effects (`simpleVoiceEngineDidChange`) last ran, so the deferred
+    /// `didSet` hop after `selectTranscriptionChoice` handled it synchronously is a no-op.
+    private var handledVoiceEngine: SimpleVoiceEngine?
+    /// Download, load and readiness state for the on-device models (Settings → Transcription).
+    let modelStatus = TranscriptionModelStatusCenter()
     private var parakeetResidencyTask: Task<Void, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var parakeetDefaultsObserver: NSObjectProtocol?
@@ -926,7 +935,10 @@ final class DictationViewModel: ObservableObject {
                 await MainActor.run { self?.dictationError = message }
             }
         }
-        if let initialParakeet { wireParakeetFallbackNotice(initialParakeet) }
+        if let initialParakeet { wireParakeetObservers(initialParakeet) }
+        modelStatus.onDownloadFinished = { [weak self] model in
+            self?.modelFilesDidDownload(model)
+        }
 
         promptHotkeyManager.onPromptEvent = { [weak self] id, phase, eventTime in
             let trigger = DictationTriggerTimes(keyEvent: eventTime)
@@ -1376,12 +1388,19 @@ final class DictationViewModel: ObservableObject {
         if let dictationParakeet { return dictationParakeet }
         let provider = Self.makeDictationParakeet()
         dictationParakeet = provider
-        wireParakeetFallbackNotice(provider)
+        wireParakeetObservers(provider)
         return provider
     }
 
-    /// Bark Clean selected but not downloaded: say once which downloaded model ran instead.
-    private func wireParakeetFallbackNotice(_ provider: ParakeetTranscriptionProvider) {
+    /// Feeds the provider's load state to `modelStatus`, and says once which downloaded model ran
+    /// when Bark Clean is selected but not downloaded.
+    private func wireParakeetObservers(_ provider: ParakeetTranscriptionProvider) {
+        let status = modelStatus
+        Task {
+            await provider.setRuntimeObserver { snapshot in
+                Task { @MainActor in status.apply(snapshot) }
+            }
+        }
         Task {
             await provider.setOnModelFallback { [weak self] selected, used in
                 let message = "\(selected.displayName) isn't downloaded yet, so this dictation used "
@@ -1419,6 +1438,83 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// `parakeet.version` changed (Settings, or another Mac through sync) while the engine stayed
+    /// the same: rebuild the controller's configuration, which names the concrete model.
+    private func refreshConfigurationForParakeetModelChange() {
+        let kind = ParakeetModelKind.selected
+        guard let configured = configuredParakeetKind, configured != kind else { return }
+        updateProviders()
+    }
+
+    /// A model finished downloading: re-read the files and, if it is the dictation model, load
+    /// it in the background now rather than on the next dictation.
+    private func modelFilesDidDownload(_ model: LocalTranscriptionModel) {
+        if model == .qwen {
+            // Fresh Qwen weights: drop any unhealthy engine and verify them now if Qwen is chosen.
+            guard simpleVoiceEngine == .qwenLocal else { return }
+            Task {
+                await QwenASRRuntime.shared.resetForReload(reason: "weights downloaded")
+                try? await QwenASRRuntime.shared.warmUp()
+            }
+            return
+        }
+        guard parakeetResidencySelected == true, let provider = dictationParakeet else { return }
+        let previous = parakeetResidencyTask
+        parakeetResidencyTask = Task {
+            await previous?.value
+            await provider.setSelected(true)
+        }
+    }
+
+    // MARK: - Transcription choice
+
+    /// The transcription model a dictation with `prompt` starts with. `parakeet-local` names the
+    /// selected Parakeet model (`selectedParakeet`) now, so changing it mid-recording applies to the
+    /// next dictation; a prompt's explicit model is kept as is.
+    func sessionVoiceModel(
+        for prompt: PromptConfiguration?
+    ) -> (model: String, selectedParakeet: ParakeetModelKind?) {
+        let voiceModel = resolvedVoiceModel(for: prompt)
+        guard voiceModel.lowercased().contains("parakeet"),
+              ParakeetModelKind(modelIdentifier: voiceModel) == nil else { return (voiceModel, nil) }
+        let selected = ParakeetModelKind.selected
+        return (ParakeetModelKind.sessionModelIdentifier(for: voiceModel, selected: selected), selected)
+    }
+
+    /// The choice the Settings picker shows, read from `simple.voiceEngine` and
+    /// `parakeet.version` without writing either.
+    var transcriptionChoice: TranscriptionChoice {
+        TranscriptionChoice.current(
+            engine: simpleVoiceEngine,
+            storedParakeetVersion: AppConfig.defaults.string(forKey: ParakeetModelKind.defaultsKey)
+        )
+    }
+
+    /// Applies a picker choice as one synchronous step: the Parakeet model (if any) and the
+    /// engine are both stored before providers refresh once, so nothing in between can see one
+    /// without the other. A choice of the current selection writes nothing.
+    func selectTranscriptionChoice(_ choice: TranscriptionChoice) {
+        guard choice != transcriptionChoice else { return }
+        let defaults = AppConfig.defaults
+        if let kind = choice.parakeetModel {
+            if defaults.string(forKey: ParakeetModelKind.defaultsKey) != kind.rawValue {
+                defaults.set(kind.rawValue, forKey: ParakeetModelKind.defaultsKey)
+            }
+            if kind == .barkClean { ParakeetModelDefaults.dismissRecommendation(defaults: defaults) }
+        }
+        let engine = choice.engine
+        if simpleVoiceEngine != engine {
+            let previous = simpleVoiceEngine
+            simpleVoiceEngine = engine
+            // Run the side effects now; the didSet's deferred hop then finds them done.
+            simpleVoiceEngineDidChange(oldValue: previous)
+        } else {
+            // Same engine, another Parakeet model: rebuild the configuration that names it.
+            updateProvidersImmediately()
+        }
+        refreshParakeetResidency()
+    }
+
     private func startParakeetResidencyMonitoring() {
         // The Parakeet model picker writes `parakeet.version` straight to defaults.
         parakeetDefaultsObserver = NotificationCenter.default.addObserver(
@@ -1426,7 +1522,10 @@ final class DictationViewModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.refreshParakeetResidency() }
+            Task { @MainActor in
+                self?.refreshParakeetResidency()
+                self?.refreshConfigurationForParakeetModelChange()
+            }
         }
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
@@ -2334,6 +2433,12 @@ final class DictationViewModel: ObservableObject {
 
     private func simpleVoiceEngineDidChange(oldValue: SimpleVoiceEngine) {
         if simpleVoiceEngine == oldValue { return }
+        // Already handled synchronously (`selectTranscriptionChoice`) and stored.
+        if simpleVoiceEngine == handledVoiceEngine,
+           AppConfig.defaults.string(forKey: SimpleDefaultsKey.voiceEngine) == simpleVoiceEngine.rawValue {
+            return
+        }
+        handledVoiceEngine = simpleVoiceEngine
         AppConfig.defaults.set(simpleVoiceEngine.rawValue, forKey: SimpleDefaultsKey.voiceEngine)
         transcriptionModel = Self.voiceModel(
             for: simpleVoiceEngine,
@@ -4263,7 +4368,7 @@ final class DictationViewModel: ObservableObject {
             .filter { message in
                 if hadCursor { return true }
                 guard let timestamp = message.timestamp else { return false }
-                return timestamp >= baselineDate
+                return timestamp.isOnOrAfter(baselineDate)
             }
             .filter(\.isIncomingText)
             .sorted(by: sortBeeperMessagesAscending)
@@ -5517,7 +5622,9 @@ final class DictationViewModel: ObservableObject {
         systemPromptOverride: String? = nil
     ) -> DictationConfiguration {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
-        let voiceModel = resolvedVoiceModel(for: prompt)
+        let session = sessionVoiceModel(for: prompt)
+        let voiceModel = session.model
+        configuredParakeetKind = session.selectedParakeet
         let voiceLanguage = resolvedVoiceLanguage(for: prompt)
         let voiceVocabularyTerms = VoiceVocabularyKeyterms.terms(
             customVocabulary: vocabCustom,
@@ -5649,9 +5756,25 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
 
-        // Use the selected text prompt override for provider updates, and wait for it so the
-        // stop that follows processes with the override applied.
-        let task = applyProviders(using: selectedTextPromptOverride)
+        // Use the selected text prompt override for this session, and wait for it so the stop
+        // that follows processes with the override applied. It replaces the transcriber only
+        // when the prompt names its own voice model.
+        let prompt = selectedTextPromptOverride
+        let configuration = makeConfiguration(using: prompt)
+        let replacingTranscriber = prompt?.voiceModelOverride?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        // A language the prompt sets itself still applies when the session keeps its model.
+        let hasLanguageOverride = prompt?.voiceLanguageOverride?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let languageOverride = hasLanguageOverride ? configuration.transcriberSettings.language : nil
+        let task = Task {
+            guard !Task.isCancelled else { return }
+            await controller.applySessionOverride(
+                configuration,
+                replacingTranscriber: replacingTranscriber,
+                languageOverride: languageOverride
+            )
+        }
         providerUpdateTask = task
         await task.value
     }

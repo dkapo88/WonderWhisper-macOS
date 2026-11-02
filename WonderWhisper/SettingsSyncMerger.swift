@@ -125,7 +125,9 @@ enum SettingsSyncMerger {
       merged.entries[key] = entry
     }
     for (id, device) in other.devices {
-      if let existing = merged.devices[id], existing.lastWriteAt >= device.lastWriteAt { continue }
+      if let existing = merged.devices[id], existing.lastWriteAt.isOnOrAfter(device.lastWriteAt) {
+        continue
+      }
       merged.devices[id] = device
     }
     return merged

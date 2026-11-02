@@ -180,6 +180,11 @@ actor QwenASRRuntime {
 
   var isEngineLoaded: Bool { engine != nil }
 
+  /// Loaded state, health and load generation, for Settings.
+  func statusSnapshot() -> QwenRuntimeSnapshot {
+    QwenRuntimeSnapshot(loaded: engine != nil, health: health, loadsStarted: loadsStarted)
+  }
+
   /// Drops the current engine (and supersedes any in-progress load) so the
   /// next caller performs a fresh verified load.
   func resetForReload(reason: String) async {
@@ -384,7 +389,11 @@ actor QwenASRRuntime {
     progress: (@Sendable (Double, String) -> Void)? = nil
   ) async throws {
     guard QwenASRManager.isAppleSilicon else { throw QwenASRError.requiresAppleSilicon }
-    let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: QwenASRManager.modelId)
+    // QA builds download into their scratch cache root; a normal launch keeps the library's default.
+    let cacheDir = try HuggingFaceDownloader.getCacheDirectory(
+      for: QwenASRManager.modelId,
+      basePath: AppConfig.isQABuild ? QwenASRManager.cacheRoot : nil
+    )
     AppLog.dictation.log("[QwenASR] downloading weights to \(cacheDir.path)")
     try await HuggingFaceDownloader.downloadWeights(
       modelId: QwenASRManager.modelId,

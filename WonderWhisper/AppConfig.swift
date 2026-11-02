@@ -78,6 +78,15 @@ struct AppConfig {
         return scratchDirectory(root.appendingPathComponent("Application Support", isDirectory: true))
     }
 
+    /// True in a QA build (see `qaBundleIdentifier`).
+    static var isQABuild: Bool { qaBundleIdentifier != nil }
+
+    /// Stand-in for `~/Library/Caches` in a QA build, beside `qaApplicationSupport`, so shared
+    /// model caches (Qwen) are never read or written. Nil outside QA builds.
+    static let qaCaches: URL? = qaApplicationSupport.map {
+        scratchDirectory($0.deletingLastPathComponent().appendingPathComponent("Caches", isDirectory: true))
+    }
+
     private static func scratchDirectory(_ url: URL) -> URL {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

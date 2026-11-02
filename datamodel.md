@@ -391,6 +391,35 @@ erDiagram
 | `xai-stt` | xAI Grok Speech-to-Text over HTTPS multipart upload | `xai-stt` service endpoint |
 | `soniox-streaming` | Soniox V5 real-time streaming with live preview | `stt-rt-v5` |
 
+**TranscriptionChoice** (presentation only, never stored): one entry in the single Settings →
+Transcription picker. `.parakeet(kind)` lists Bark Clean, Parakeet Unified and Parakeet Ultra
+by name and maps to `simple.voiceEngine` = `parakeetLocal` plus `parakeet.version` = `kind`;
+`.engine(engine)` maps to every other `SimpleVoiceEngine` (Qwen and the cloud engines). The current
+choice is read from those two stored values without writing either; an unset `parakeet.version`
+stays unset until the user picks a Parakeet model. `DictationViewModel.selectTranscriptionChoice`
+writes both in one synchronous main-actor step, then refreshes providers once.
+
+**Session model snapshot**: a dictation resolves `parakeet-local` to the concrete model id
+(`parakeet-bark-clean`, `parakeet-unified`, `parakeet-ultra`) when its configuration is built at
+start, and `DictationController.apply` defers configurations that arrive while a session is
+active to the next start. A picker change during a recording therefore applies to the next
+dictation. An explicit prompt voice override keeps its own model.
+
+**LocalModelStatus**: what Settings shows beside the selected on-device model, computed from
+runtime state owned by `TranscriptionModelStatusCenter` (per model: download operation id,
+progress and failure) and the dictation `ParakeetTranscriptionProvider`
+(`ParakeetRuntimeSnapshot`: the model a load is downloading files for, with progress, the model
+loading, the model resident, and the last load failure per model, with a sequence number so late
+deliveries never overwrite newer state) and the shared Qwen runtime (`QwenRuntimeSnapshot`:
+loaded, health, and `loadsStarted` as its load generation). States: framework missing, not
+downloaded, downloading, download failed, downloaded (files present, not loaded), loading, ready
+(resident), load failed. Files on disk alone never read as ready. A completion whose operation id
+is no longer current is ignored. A model that loads supersedes its older download failure, and a
+fresh download hides a load failure until a newer load reports. Retry after a load failure
+re-fetches (Parakeet TDT `force`; Qwen moves the failing weights to the Bin first). The effective model and any fallback come
+from `ParakeetModelKind.effective(requested:barkCleanResident:isInstalled:)`, the same rule the
+provider runs.
+
 ---
 
 ## Service Models
@@ -438,6 +467,11 @@ erDiagram
 ```
 
 **Shortcut**: Key combination (e.g., Cmd+V) using Carbon API constants
+
+**ActivationSuppressionWindow**: in-memory only. `HotkeyManager.suppressActivation(for:)` arms it
+around the app's own synthetic paste so a prompt hotkey can't fire from it. The deadline is a
+lock-protected `TimeInterval` on the uptime clock (`DictationClock.now`), sampled once per read;
+the window is active strictly before the deadline and cleared once read at or after it.
 
 **Selection**: Single modifier key for push-to-talk/toggle recording:
 - `.fnGlobe` - Fn/Globe key
@@ -859,6 +893,13 @@ struct AppConfig {
 - After updates: adjust migrations (if applicable), update tests, and verify any storage paths referenced in code and in AGENTS.md.
 
 ### Changelog
+
+- **v1.28 (November 2, 2026)**: No stored-key or schema changes. Settings → Transcription now
+  has one picker (`TranscriptionChoice`) over the existing `simple.voiceEngine` and
+  `parakeet.version` values, with model-specific status from `LocalModelStatus`. A dictation
+  snapshots its resolved Parakeet model at start. Hotkey suppression uses an uptime deadline
+  instead of a `Date`. QA builds (`AppConfig.isQABuild`) keep FluidAudio, CTC, diarizer and Qwen
+  models under the QA scratch root and never change the default microphone or its gain.
 
 - **v1.27 (November 2, 2026)**: Added Bark Clean (`parakeet.version` = `bark-clean`) as the
   new-install dictation default. Existing installs keep their model: the one-time launch migration
