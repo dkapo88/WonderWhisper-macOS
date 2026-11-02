@@ -247,6 +247,7 @@ final class PromptHotkeyManager {
 
     private func handleFlagsChanged(event: CGEvent) {
         if HotkeyManager.isActivationSuppressed {
+            AppLog.hotkeys.log("Modifier event ignored during synthetic-paste suppression")
             leftCmdDown = false
             rightCmdDown = false
             leftOptDown = false

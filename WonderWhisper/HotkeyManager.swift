@@ -12,6 +12,7 @@ final class HotkeyManager {
 
   static func suppressActivation(for duration: TimeInterval) {
     activationSuppression.suppress(for: duration)
+    AppLog.hotkeys.log("Activation suppressed for \(duration, privacy: .public)s (synthetic paste)")
   }
 
   static var isActivationSuppressed: Bool {
