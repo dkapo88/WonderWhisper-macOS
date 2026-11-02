@@ -339,6 +339,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-02: Released 2026-11-02 with Bark Clean as the default local dictation model and faster local dictation (phase 1).
 - 2026-11-02: Bark Clean (Underdog Bark 3.0 Clean via FluidAudio 0.18.0) is the default local
   dictation model for new installs (issue #10); existing installs keep theirs via a per-Mac pin
   (`ParakeetModelDefaults`, see `datamodel.md` v1.27). Meetings stay on Unified.
