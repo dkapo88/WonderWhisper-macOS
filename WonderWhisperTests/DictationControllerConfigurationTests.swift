@@ -103,4 +103,34 @@ struct DictationControllerConfigurationTests {
     #expect(inserter.inserted == ["first ", "fresh "])
     #expect(await stale.models.isEmpty)
   }
+
+  @Test func aSessionPromptOverrideAppliesNowButKeepsTheSessionTranscriber() async {
+    let recorder = Session.FakeRecorder(samples: speech())
+    let bark = NamedTranscriber("from bark")
+    let other = NamedTranscriber("from other")
+    let inserter = Session.FakeInserter()
+    let controller = await makeController(recorder: recorder, transcriber: bark, inserter: inserter)
+    await controller.toggle(userPrompt: "", configuration: configuration(bark, model: "parakeet-bark-clean"))
+    // A selected-text prompt chosen at stop, built after the picker moved to another model.
+    var override = configuration(other, model: "parakeet-unified")
+    override.screenImageEnabled = true
+    await controller.applySessionOverride(override, replacingTranscriber: false)
+    await controller.finish(userPrompt: "")
+    #expect(inserter.inserted == ["from bark "])
+    #expect(await bark.models == ["parakeet-bark-clean"])
+    #expect(await other.models.isEmpty)
+  }
+
+  @Test func aSessionPromptWithItsOwnVoiceModelReplacesTheTranscriber() async {
+    let recorder = Session.FakeRecorder(samples: speech())
+    let bark = NamedTranscriber("from bark")
+    let groq = NamedTranscriber("from groq")
+    let inserter = Session.FakeInserter()
+    let controller = await makeController(recorder: recorder, transcriber: bark, inserter: inserter)
+    await controller.toggle(userPrompt: "", configuration: configuration(bark, model: "parakeet-bark-clean"))
+    await controller.applySessionOverride(configuration(groq, model: "groq-streaming"), replacingTranscriber: true)
+    await controller.finish(userPrompt: "")
+    #expect(inserter.inserted == ["from groq "])
+    #expect(await groq.models == ["groq-streaming"])
+  }
 }

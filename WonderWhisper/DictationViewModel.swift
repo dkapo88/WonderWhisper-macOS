@@ -5756,9 +5756,17 @@ final class DictationViewModel: ObservableObject {
         providerUpdateTimer = nil
         providerUpdateTask?.cancel()
 
-        // Use the selected text prompt override for provider updates, and wait for it so the
-        // stop that follows processes with the override applied.
-        let task = applyProviders(using: selectedTextPromptOverride)
+        // Use the selected text prompt override for this session, and wait for it so the stop
+        // that follows processes with the override applied. It replaces the transcriber only
+        // when the prompt names its own voice model.
+        let prompt = selectedTextPromptOverride
+        let configuration = makeConfiguration(using: prompt)
+        let replacingTranscriber = prompt?.voiceModelOverride?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let task = Task {
+            guard !Task.isCancelled else { return }
+            await controller.applySessionOverride(configuration, replacingTranscriber: replacingTranscriber)
+        }
         providerUpdateTask = task
         await task.value
     }

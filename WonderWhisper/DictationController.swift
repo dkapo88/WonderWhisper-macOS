@@ -872,6 +872,25 @@ actor DictationController {
         await updateActiveTextFieldEnabled(configuration.activeTextFieldEnabled)
     }
 
+    /// Applies a prompt switch that belongs to the session in progress (a selected-text prompt
+    /// chosen at stop) at once. The session keeps the transcriber it started with unless
+    /// `replacingTranscriber` (the prompt names its own voice model), so a settings change
+    /// mid-recording still applies only to the next dictation.
+    func applySessionOverride(_ configuration: DictationConfiguration, replacingTranscriber: Bool) async {
+        guard isSessionActive else {
+            await apply(configuration)
+            return
+        }
+        var override = configuration
+        if !replacingTranscriber {
+            override.transcriber = nil
+            override.transcriberSettings = transcriberSettings
+        }
+        applyNow(override)
+        await updateSelectedTextEnabled(override.selectedTextEnabled)
+        await updateActiveTextFieldEnabled(override.activeTextFieldEnabled)
+    }
+
     private func applyDeferredConfigurationIfIdle() async {
         guard !isSessionActive, let deferred = deferredConfiguration else { return }
         deferredConfiguration = nil
