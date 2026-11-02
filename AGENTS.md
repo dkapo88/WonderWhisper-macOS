@@ -350,6 +350,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-02: Released 2026-11-02.1 with the pre-release macOS 27.2 dictation crash fix and a unified transcription model picker with runtime status.
 - 2026-11-02: Fixed the released modifier-hotkey crash (issue #16): `Date.<=`/`>=` from the 27.2
   SDK are null on pre-release 27.2; hotkey suppression uses an uptime deadline, three wall-clock
   comparisons use `isOnOrAfter`. One transcription picker lists Bark Clean, Unified, Ultra and Qwen
