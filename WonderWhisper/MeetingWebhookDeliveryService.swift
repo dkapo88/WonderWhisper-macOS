@@ -198,7 +198,7 @@ actor MeetingWebhookDeliveryService {
       at: now
     )
     queued.nextAttemptAt = notBefore
-    if let cooldown, cooldown >= notBefore {
+    if let cooldown, cooldown.isOnOrAfter(notBefore) {
       queued.isRateLimitWait = true
     }
     await onUpdate(queued)

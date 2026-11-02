@@ -5,22 +5,17 @@ import Cocoa
 /// Shared shortcut types and the single legacy Carbon hotkey still in use: Paste Last.
 /// Prompt activation is owned by `PromptHotkeyManager`.
 final class HotkeyManager {
-  private static let suppressionLock = NSLock()
-  private static var suppressedUntil: Date?
+  /// Armed around the app's own synthetic paste so it can't trigger a prompt hotkey. An uptime
+  /// deadline, not a `Date`: comparing dates with `<=` crashed on pre-release macOS 27.2 (see
+  /// `DateOrdering`).
+  private static let activationSuppression = ActivationSuppressionWindow()
 
   static func suppressActivation(for duration: TimeInterval) {
-    suppressionLock.lock()
-    suppressedUntil = Date().addingTimeInterval(duration)
-    suppressionLock.unlock()
+    activationSuppression.suppress(for: duration)
   }
 
   static var isActivationSuppressed: Bool {
-    suppressionLock.lock()
-    defer { suppressionLock.unlock() }
-    if let deadline = suppressedUntil, deadline <= Date() {
-      suppressedUntil = nil
-    }
-    return suppressedUntil.map { $0 > Date() } ?? false
+    activationSuppression.isActive
   }
 
   enum Selection: String, CaseIterable, Codable {

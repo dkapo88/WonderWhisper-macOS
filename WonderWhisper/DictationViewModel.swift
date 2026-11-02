@@ -4263,7 +4263,7 @@ final class DictationViewModel: ObservableObject {
             .filter { message in
                 if hadCursor { return true }
                 guard let timestamp = message.timestamp else { return false }
-                return timestamp >= baselineDate
+                return timestamp.isOnOrAfter(baselineDate)
             }
             .filter(\.isIncomingText)
             .sorted(by: sortBeeperMessagesAscending)
