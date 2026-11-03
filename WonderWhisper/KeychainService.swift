@@ -34,6 +34,22 @@ final class KeychainService {
     private static let service = AppConfig.qaBundleIdentifier ?? AppConfig.bundleIdentifier
     private static let originalService = AppConfig.qaBundleIdentifier ?? AppConfig.originalBundleIdentifier
 
+    /// QA builds only (compiled out of Release): a key handed to this launch through the
+    /// `WW_QA_KEY_<alias>` environment variable, so hands-on QA never reads, writes or
+    /// prompts for Keychain items.
+    private static func qaLaunchSecret(forKey key: String) -> String? {
+        #if DEBUG
+        guard AppConfig.isQABuild,
+              let value = ProcessInfo.processInfo.environment["WW_QA_KEY_\(key)"] else {
+            return nil
+        }
+        let normalized = normalizedSecret(value)
+        return normalized.isEmpty ? nil : normalized
+        #else
+        return nil
+        #endif
+    }
+
     static func normalizedSecret(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -75,6 +91,7 @@ final class KeychainService {
     }
 
     func getSecret(forKey key: String) -> String? {
+        if let value = Self.qaLaunchSecret(forKey: key) { return value }
         if let value = getSecret(forKey: key, service: Self.service) {
             return value
         }
@@ -90,6 +107,7 @@ final class KeychainService {
     /// Like `getSecret(forKey:)`, but reports a read failure (locked Keychain, denied access)
     /// separately from a missing item, so callers never mistake one for the other.
     func readSecret(forKey key: String) -> KeychainReadResult {
+        if let value = Self.qaLaunchSecret(forKey: key) { return .found(value) }
         let current = readSecret(forKey: key, service: Self.service)
         guard current == .notFound else { return current }
         let original = readSecret(forKey: key, service: Self.originalService)

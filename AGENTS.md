@@ -50,6 +50,9 @@ is unchanged. Meeting recovery and Qwen fallbacks keep their own idle-unload ins
 
 Debug builds launched under another bundle identifier (QA builds, e.g. `...hermeswhisper.qa`) keep
 their storage (`$WW_QA_ROOT` or `$TMPDIR/WonderWhisper-QA`) and Keychain items apart from the user's.
+A QA build also takes API keys from `WW_QA_KEY_<alias>` launch environment variables (for example
+`WW_QA_KEY_SONIOX_API_KEY`), reads `qa.*` switches (`QADefaultsKey`), and pastes only into the
+bundle named by `qa.insertion.targetBundle`; all of this is compiled out of Release.
 
 ### Microphone Selection
 The app includes persistent microphone priority ordering in **Settings → Audio**. Users can choose
