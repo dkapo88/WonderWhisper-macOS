@@ -20,6 +20,17 @@ final class InsertionService: DictationTextInserting {
         let activatedTarget = activateTargetApplicationIfNeeded(processIdentifier: targetProcessIdentifier)
         let activeFront = NSWorkspace.shared.frontmostApplication
         AppLog.insertion.log("Insertion active target=\(activatedTarget, privacy: .public) alreadyFrontmost=\(targetWasFrontmost, privacy: .public) frontmost=\(activeFront?.bundleIdentifier ?? "?", privacy: .public)")
+        #if DEBUG
+        // QA only: never paste anywhere but the designated QA target app.
+        if AppConfig.isQABuild,
+           let allowed = AppConfig.defaults.string(forKey: QADefaultsKey.insertionTargetBundle),
+           !allowed.isEmpty,
+           activeFront?.bundleIdentifier != allowed {
+            let front = activeFront?.bundleIdentifier ?? "?"
+            AppLog.insertion.error("Insertion: QA guard skipped paste into \(front, privacy: .public)")
+            return
+        }
+        #endif
         // Let a freshly activated app settle before pasting. A target that was already
         // frontmost needs no settling, so it skips the wait.
         if Self.needsActivationSettle(activatedTarget: activatedTarget, targetWasFrontmost: targetWasFrontmost) {

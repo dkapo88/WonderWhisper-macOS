@@ -9,5 +9,7 @@ enum QADefaultsKey {
   static let forceFullRecovery = "qa.meetings.forceFullRecovery"
   /// Make Soniox async recovery fail, so the local recovery fallback can be exercised.
   static let failSonioxAsyncRecovery = "qa.meetings.failSonioxAsyncRecovery"
+  /// The only app a QA build may paste into; any other frontmost app gets nothing.
+  static let insertionTargetBundle = "qa.insertion.targetBundle"
 }
 #endif

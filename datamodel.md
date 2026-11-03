@@ -731,6 +731,7 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
 | `qa.meetings.forceFullRecovery` | Bool | Debug QA builds only (compiled out of Release): rebuild the whole meeting transcript from retained audio at Stop |
+| `qa.insertion.targetBundle` | String | Debug QA builds only (compiled out of Release): the only bundle id a QA build may paste into |
 | `qa.meetings.failSonioxAsyncRecovery` | Bool | Debug QA builds only (compiled out of Release): make Soniox async recovery fail so local recovery runs |
 | `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet`, `soniox-separate`, or `xai-grok`; retired `soniox` reads as `soniox-separate`); defaults to local Parakeet when unset or unknown |
 | `meeting.userName` | String | The user's name for the microphone in transcripts, notes and exports; "You" when empty |
