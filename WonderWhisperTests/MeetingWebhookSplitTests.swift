@@ -54,7 +54,7 @@ struct MeetingWebhookSplitTests {
     content: MeetingWebhookContent = .full
   ) -> MeetingWebhookEndpoint {
     MeetingWebhookEndpoint(
-      name: "Grok Bot",
+      name: "Notes Bot",
       url: "https://example.com/hook",
       splitIntoParts: split,
       maxBodyCharacters: max,
@@ -103,7 +103,13 @@ struct MeetingWebhookSplitTests {
     #expect(!parts.isEmpty)
     for (offset, part) in parts.enumerated() {
       #expect(part.body.count <= max, "part \(offset + 1) is \(part.body.count) bytes")
-      #expect(part.part == MeetingWebhookPayload.Part(index: offset + 1, total: parts.count))
+      let chunk = MeetingWebhookPayloadSplitter.chunk(of: part)
+      let sha256 = MeetingWebhookFingerprint.of(chunk)
+      #expect(part.part == MeetingWebhookPayload.Part(
+        index: offset + 1,
+        total: parts.count,
+        sha256: sha256
+      ))
       #expect(part.sendId == sendID)
       #expect(part.note.id == noteID)
       let json = try #require(
@@ -243,7 +249,13 @@ struct MeetingWebhookSplitTests {
     #expect(parts.map(MeetingWebhookPayloadSplitter.chunk(of:)).joined() == full)
     for (offset, part) in parts.enumerated() {
       #expect(part.body.count <= 3_800)
-      #expect(part.part == MeetingWebhookPayload.Part(index: offset + 1, total: parts.count))
+      let chunk = MeetingWebhookPayloadSplitter.chunk(of: part)
+      let sha256 = MeetingWebhookFingerprint.of(chunk)
+      #expect(part.part == MeetingWebhookPayload.Part(
+        index: offset + 1,
+        total: parts.count,
+        sha256: sha256
+      ))
       #expect(part.sendId == sendID)
       #expect(part.note.id == session.id)
       let body = Self.text(part)
@@ -252,7 +264,8 @@ struct MeetingWebhookSplitTests {
       ))
       #expect(body.contains(
         "\"part\":{\"index\":\(offset + 1),\"total\":\(parts.count),"
-          + "\"endMarker\":\"END-OF-PAYLOAD part \(offset + 1) of \(parts.count)\"},\"note\":{"
+          + "\"endMarker\":\"END-OF-PAYLOAD part \(offset + 1) of \(parts.count)\","
+          + "\"sha256\":\"\(sha256)\"},\"note\":{"
       ))
     }
     #expect(Set(parts.map(\.deliveryId)).count == parts.count)
@@ -309,7 +322,7 @@ struct MeetingWebhookSplitTests {
   @Test func partCountCrossingNineToTenStaysUnderTheLimit() throws {
     let base = Self.base(String(repeating: "word ", count: 2_000))
     var counts = Set<Int>()
-    for max in stride(from: 1_700, through: 1_200, by: -5) {
+    for max in stride(from: 2_400, through: 1_200, by: -5) {
       let parts = try MeetingWebhookPayloadSplitter.parts(of: base, sendID: UUID(), maxBytes: max)
       counts.insert(parts.count)
       #expect(parts.allSatisfy { $0.body.count <= max })
@@ -321,7 +334,7 @@ struct MeetingWebhookSplitTests {
   // MARK: - Endpoint settings
 
   @Test func oldEndpointJSONDecodesWithSplitOffAndFullContent() throws {
-    let json = #"[{"id":"\#(UUID().uuidString)","name":"Grok Bot","#
+    let json = #"[{"id":"\#(UUID().uuidString)","name":"Notes Bot","#
       + #""url":"https://example.com/hook","isEnabled":true,"headerNames":[],"hasSecret":false}]"#
     let endpoint = try #require(
       try JSONDecoder().decode([MeetingWebhookEndpoint].self, from: Data(json.utf8)).first
@@ -387,14 +400,14 @@ struct MeetingWebhookSplitTests {
     #expect(records.map(\.state) == [.delivered, .delivered, .delivered])
     #expect(transport.requests.map(\.httpBody) == jobs.map(\.body))
     #expect(transport.requests.map { $0.value(forHTTPHeaderField: "X-WonderWhisper-Delivery") }
-      == jobs.map { $0.deliveryID.uuidString.lowercased() })
+      == jobs.map { $0.deliveryID.uuidString })
     #expect(transport.requests.allSatisfy {
       $0.value(forHTTPHeaderField: "X-WonderWhisper-Signature") != nil
         && $0.value(forHTTPHeaderField: "Authorization") == "Bearer abc"
     })
     let summary = MeetingWebhookStatusFormatter.representative(of: records)
     #expect(summary.map { MeetingWebhookStatusFormatter.text(for: $0, now: Self.fixedDate) }
-      == "Sent to Grok Bot (3 parts) just now")
+      == "Sent to Notes Bot (3 parts) just now")
   }
 
   @Test func aPermanentlyFailedPartSkipsTheRest() async {
@@ -409,7 +422,7 @@ struct MeetingWebhookSplitTests {
     #expect(records[2].isSkipped)
     let summary = MeetingWebhookStatusFormatter.representative(of: records)
     #expect(summary.map { MeetingWebhookStatusFormatter.text(for: $0) }
-      == "Grok Bot failed at part 2 of 3: HTTP 400")
+      == "Notes Bot failed at part 2 of 3: HTTP 400")
   }
 
   @Test func retryingAPartDoesNotResendEarlierParts() async {
@@ -426,22 +439,22 @@ struct MeetingWebhookSplitTests {
 
   @Test func statusTextDescribesPartsInFlight() {
     var record = MeetingWebhookDeliveryRecord(
-      id: UUID(), endpointID: UUID(), endpointName: "Grok Bot", noteID: Self.noteID,
+      id: UUID(), endpointID: UUID(), endpointName: "Notes Bot", noteID: Self.noteID,
       noteTitle: "Planning", event: .noteCompleted, state: .sending, attempts: 0,
       maximumAttempts: 5, lastStatusCode: nil, lastError: nil,
       createdAt: Self.fixedDate, updatedAt: Self.fixedDate,
       sendID: UUID(), partIndex: 2, partTotal: 3
     )
-    #expect(MeetingWebhookStatusFormatter.text(for: record) == "Sending Grok Bot part 2 of 3")
+    #expect(MeetingWebhookStatusFormatter.text(for: record) == "Sending Notes Bot part 2 of 3")
     record.state = .retrying
     record.attempts = 1
     #expect(MeetingWebhookStatusFormatter.text(for: record)
-      == "Retrying Grok Bot part 2 of 3 (attempt 2 of 5)")
+      == "Retrying Notes Bot part 2 of 3 (attempt 2 of 5)")
   }
 
   @Test func oldDeliveryRecordsDecodeAsUnsplit() throws {
     let json = #"{"id":"\#(UUID().uuidString)","endpointID":"\#(UUID().uuidString)","#
-      + #""endpointName":"Grok Bot","noteID":"\#(UUID().uuidString)","noteTitle":"Planning","#
+      + #""endpointName":"Notes Bot","noteID":"\#(UUID().uuidString)","noteTitle":"Planning","#
       + #""event":"meeting.note.completed","state":"delivered","attempts":1,"#
       + #""maximumAttempts":5,"createdAt":"2025-10-09T08:53:20Z","#
       + #""updatedAt":"2025-10-09T08:53:20Z"}"#

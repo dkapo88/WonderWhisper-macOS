@@ -61,3 +61,5 @@ dist/
 
 # LLVM coverage output from test runs
 *.profraw
+
+__pycache__/

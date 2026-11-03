@@ -102,12 +102,13 @@ final class MeetingWebhookCenter: ObservableObject {
     if let message = MeetingWebhookURLValidator.validate(endpoint.url).message {
       return message
     }
-    for name in (headers ?? [:]).keys {
+    let isMausBot = MeetingWebhookMausBotAddress.matches(endpoint.url)
+    for name in (headers ?? [:]).keys.sorted() {
       guard MeetingWebhookRequestBuilder.isValidHeaderName(name) else {
         return "\"\(name)\" is not a valid header name."
       }
-      guard !MeetingWebhookRequestBuilder.isReservedHeader(name) else {
-        return "\(name) is set by WonderWhisper and can't be overridden."
+      if let message = Self.reservedHeaderMessage(name, forMausBot: isMausBot) {
+        return message
       }
     }
     let previous = endpoints.first { $0.id == endpoint.id }
@@ -124,6 +125,18 @@ final class MeetingWebhookCenter: ObservableObject {
     } else if let previous,
               previous.url != endpoint.url || signingSecret != nil || headers != nil {
       cancelDeliveries(for: endpoint.id, reason: Self.editedReason)
+    }
+    return nil
+  }
+
+  /// Why a custom header can't be used, or nil when it can.
+  nonisolated static func reservedHeaderMessage(_ name: String, forMausBot: Bool) -> String? {
+    let trimmed = name.trimmingCharacters(in: .whitespaces)
+    if MeetingWebhookRequestBuilder.isReservedHeader(trimmed) {
+      return "\(trimmed) is set by WonderWhisper and can't be overridden."
+    }
+    if MeetingWebhookRequestBuilder.isReservedHeader(trimmed, forMausBot: forMausBot) {
+      return "\(trimmed) can't be added for a MausBot address."
     }
     return nil
   }
@@ -278,7 +291,8 @@ final class MeetingWebhookCenter: ObservableObject {
         chunkBudget: chunkBudget,
         total: send.total,
         indexes: indexes,
-        maxBytes: maxBody
+        maxBytes: maxBody,
+        maxFormattedLength: MeetingWebhookPayloadBuilder.formattedLengthLimit(for: endpoint)
       )
     } catch let error as MeetingWebhookPayloadSplitter.ResendError {
       return .refused(error.message)

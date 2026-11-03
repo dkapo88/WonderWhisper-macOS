@@ -7,17 +7,37 @@ import Foundation
 /// character count, so the limit holds whatever the receiver counts. Every part carries the
 /// same metadata plus `sendId` and `part`; only `note.markdown` differs. Each part's Markdown
 /// ends with a blank line and `END-OF-PAYLOAD part N of M`; with that suffix removed, the
-/// parts' Markdown joins back into the original exactly.
+/// parts' Markdown joins back into the original exactly, and `part.sha256` is the SHA-256 of
+/// that chunk.
+///
+/// For a MausBot address the parts must also stay under a formatted length: the body as
+/// `JSON.stringify(JSON.parse(body), null, 2)` counts it in JavaScript, the form MausBot shows
+/// its automation and cuts at 48,000 characters. Every Markdown character costs at most as
+/// many UTF-16 code units formatted as it costs UTF-8 bytes escaped, so cutting chunks to the
+/// smaller of the two budgets keeps both limits.
 enum MeetingWebhookPayloadSplitter {
   enum SplitError: Error, Equatable {
     /// Even the smallest possible part needs `required` bytes, more than `limit`.
     case limitTooSmall(required: Int, limit: Int)
+    /// MausBot address: even a part with no Markdown is `required` characters once MausBot
+    /// formats it, leaving no room under `limit`.
+    case tooLongForMausBot(required: Int, limit: Int)
+    /// MausBot address with splitting off: the single body formats to `length` characters,
+    /// over `limit`, so MausBot would cut it.
+    case unsplitTooLongForMausBot(length: Int, limit: Int)
 
     var message: String {
       switch self {
       case let .limitTooSmall(required, limit):
         return "Max body size \(limit) is too small for this note; a part needs at least "
           + "\(required) characters."
+      case let .tooLongForMausBot(required, _):
+        return "Too long for MausBot: the note details alone come to "
+          + "\(required.formatted()) characters as MausBot shows them, leaving no room for the "
+          + "note under its 48,000-character cut. Shorten the title or attendee list."
+      case .unsplitTooLongForMausBot:
+        return "Too long for MausBot: it would cut this note at 48,000 characters. Turn on "
+          + "Split into multiple webhooks for this webhook."
       }
     }
   }
@@ -26,7 +46,8 @@ enum MeetingWebhookPayloadSplitter {
   enum ResendError: Error, Equatable {
     /// The note, or the way it is cut, is not what was sent.
     case noteChanged
-    /// The part would now be longer than the max body size (for example a longer app version).
+    /// The part would now be longer than the max body size (for example a longer app version),
+    /// or than MausBot's formatted limit.
     case partTooLarge(index: Int)
 
     var message: String {
@@ -62,16 +83,28 @@ enum MeetingWebhookPayloadSplitter {
     of base: MeetingWebhookPayload,
     sendID: UUID,
     maxBytes: Int,
+    maxFormattedLength: Int? = nil,
     makeDeliveryID: () -> UUID = { UUID() }
   ) throws -> [MeetingWebhookPayload] {
-    try split(of: base, sendID: sendID, maxBytes: maxBytes, makeDeliveryID: makeDeliveryID).parts
+    try split(
+      of: base,
+      sendID: sendID,
+      maxBytes: maxBytes,
+      maxFormattedLength: maxFormattedLength,
+      makeDeliveryID: makeDeliveryID
+    ).parts
   }
 
-  /// Splits `base` so every whole body, end marker included, is at most `maxBytes`.
+  /// A placeholder `part.sha256` for sizing: every real value has the same length.
+  private static let sha256Placeholder = String(repeating: "0", count: 64)
+
+  /// Splits `base` so every whole body, end marker included, is at most `maxBytes`, and, when
+  /// `maxFormattedLength` is set (MausBot), formats to at most that many characters.
   static func split(
     of base: MeetingWebhookPayload,
     sendID: UUID,
     maxBytes: Int,
+    maxFormattedLength: Int? = nil,
     makeDeliveryID: () -> UUID = { UUID() }
   ) throws -> Split {
     // `part.total` and the end marker appear in every body, so size the metadata for the
@@ -81,14 +114,28 @@ enum MeetingWebhookPayloadSplitter {
       let widest = largestNumber(digits: width)
       var template = base
       template.sendId = sendID
-      let widestPart = MeetingWebhookPayload.Part(index: widest, total: widest)
+      let widestPart = MeetingWebhookPayload.Part(
+        index: widest,
+        total: widest,
+        sha256: sha256Placeholder
+      )
       template.part = widestPart
       template.note.markdown = widestPart.markdownSuffix
       let overhead = template.body.count
       guard overhead <= maxBytes else {
         throw SplitError.limitTooSmall(required: overhead, limit: maxBytes)
       }
-      let budget = maxBytes - overhead
+      var budget = maxBytes - overhead
+      if let maxFormattedLength {
+        let formattedOverhead = template.jsonValue.javaScriptFormattedLength
+        guard formattedOverhead < maxFormattedLength else {
+          throw SplitError.tooLongForMausBot(
+            required: formattedOverhead,
+            limit: maxFormattedLength
+          )
+        }
+        budget = min(budget, maxFormattedLength - formattedOverhead)
+      }
       let chunks: [String]
       do {
         chunks = try chunk(base.note.markdown, budget: budget)
@@ -106,6 +153,12 @@ enum MeetingWebhookPayloadSplitter {
             chunk: markdown
           )
         }
+        // The budgets above guarantee both limits; check anyway, so a mistake fails the send
+        // instead of sending a body the receiver would cut.
+        for part in parts where !fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) {
+          let length = part.jsonValue.javaScriptFormattedLength
+          throw SplitError.tooLongForMausBot(required: length, limit: maxFormattedLength ?? 0)
+        }
         return Split(parts: parts, chunks: chunks, chunkBudget: budget)
       }
       width += 1
@@ -114,7 +167,9 @@ enum MeetingWebhookPayloadSplitter {
 
   /// Cuts the note exactly as an earlier send did (same `chunkBudget`) and rebuilds only the
   /// parts at `indexes`, each with a fresh delivery ID, the original `sendID` and `total`.
-  /// Returns the chunks too, so the caller can compare their fingerprints with the log.
+  /// Returns the chunks too, so the caller can compare their fingerprints with the log. A part
+  /// that only fits without `part.sha256` (a send made before the checksum existed, cut without
+  /// room for it) is rebuilt without it.
   static func resend(
     of base: MeetingWebhookPayload,
     sendID: UUID,
@@ -122,6 +177,7 @@ enum MeetingWebhookPayloadSplitter {
     total: Int,
     indexes: [Int],
     maxBytes: Int,
+    maxFormattedLength: Int? = nil,
     makeDeliveryID: () -> UUID = { UUID() }
   ) throws -> (parts: [MeetingWebhookPayload], chunks: [String]) {
     guard chunkBudget > 0, let chunks = try? chunk(base.note.markdown, budget: chunkBudget),
@@ -131,7 +187,7 @@ enum MeetingWebhookPayloadSplitter {
     var parts: [MeetingWebhookPayload] = []
     for index in indexes {
       guard (1...total).contains(index) else { throw ResendError.noteChanged }
-      let part = payload(
+      var part = payload(
         base,
         sendID: sendID,
         deliveryID: makeDeliveryID(),
@@ -139,8 +195,13 @@ enum MeetingWebhookPayloadSplitter {
         total: total,
         chunk: chunks[index - 1]
       )
-      guard part.body.count <= maxBytes else {
-        throw ResendError.partTooLarge(index: index)
+      if !fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) {
+        // A send made before `part.sha256` existed was cut without room for it: resend that
+        // part in its original layout, without the checksum.
+        part.part = MeetingWebhookPayload.Part(index: index, total: total)
+        guard fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) else {
+          throw ResendError.partTooLarge(index: index)
+        }
       }
       parts.append(part)
     }
@@ -161,18 +222,36 @@ enum MeetingWebhookPayloadSplitter {
     return String(chunk)
   }
 
+  /// Whether `part` is at most `maxBytes` UTF-8 bytes and, when set, `maxFormatted`
+  /// characters as JavaScript formats it.
+  static func fits(
+    _ part: MeetingWebhookPayload,
+    maxBytes: Int,
+    maxFormatted: Int?
+  ) -> Bool {
+    let value = part.jsonValue
+    guard value.data.count <= maxBytes else { return false }
+    guard let maxFormatted else { return true }
+    return value.javaScriptFormattedLength <= maxFormatted
+  }
+
   private static func payload(
     _ base: MeetingWebhookPayload,
     sendID: UUID,
     deliveryID: UUID,
     index: Int,
     total: Int,
-    chunk: String
+    chunk: String,
+    includeChecksum: Bool = true
   ) -> MeetingWebhookPayload {
     var part = base
     part.deliveryId = deliveryID
     part.sendId = sendID
-    let info = MeetingWebhookPayload.Part(index: index, total: total)
+    let info = MeetingWebhookPayload.Part(
+      index: index,
+      total: total,
+      sha256: includeChecksum ? MeetingWebhookFingerprint.of(chunk) : nil
+    )
     part.part = info
     part.note.markdown = chunk + info.markdownSuffix
     return part

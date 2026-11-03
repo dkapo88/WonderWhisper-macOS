@@ -61,6 +61,12 @@ open build/Build/Products/Debug/WonderWhisper.app
 ## Important Files
 - `AGENTS.md` - Detailed project guidelines and changelog
 - `datamodel.md` - Data model reference
+- `docs/spec.md`, `docs/decisions.md`, `docs/webhooks.md` - Product spec, decisions, webhooks guide
+
+## Design
+- Paper is the source of truth for look and flow: https://app.paper.design/file/01M6GKS8FVWXGT8D1EYZP0F4DQ
+  (pages per screen, for example "Meetings › Webhooks"). Take design values from the Paper file, not
+  screenshots.
 
 ## Security
 - API keys stored in macOS Keychain via `KeychainService`

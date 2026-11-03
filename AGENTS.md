@@ -225,7 +225,7 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   last key of the body and a receiver that keeps only the start still gets all metadata:
   `event` (`meeting.note.completed`, `meeting.note.resent`, `webhook.test`), `schemaVersion`,
   `deliveryId` (reused across retries), [`sendId`], `sentAt`, `app` (`name`, `version`,
-  `build`), [`part` (`index`, `total`, `endMarker`)], `note` (`id`, `title`, `startedAt`,
+  `build`), [`part` (`index`, `total`, `endMarker`, `sha256`)], `note` (`id`, `title`, `startedAt`,
   `endedAt`, `durationSeconds`, `recordedSeconds`, `elapsedSeconds`, `detectedApp`,
   [`attendees`], [`content`], `markdown`). Bracketed fields are additive and absent from an
   unsplit full-note body. `durationSeconds` and `recordedSeconds` are both the recorded time
@@ -245,7 +245,8 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   repeats the metadata (dropping `detectedApp` and `elapsedSeconds` when null) with a shared
   `sendId`, its own `deliveryId` and `part`, and its Markdown ends with a blank line plus
   `END-OF-PAYLOAD part N of M` (also `part.endMarker`); removing that suffix, the parts join
-  back exactly. Split sends are paced: one request in flight per endpoint (a FIFO of sends,
+  back exactly, and `part.sha256` is the lowercase hex SHA-256 of that chunk (UTF-8, the value
+  the delivery log stores as the part fingerprint). Split sends are paced: one request in flight per endpoint (a FIFO of sends,
   including tests, shown as "Queued for X (behind N notes)"), `partDelaySeconds` after each
   delivered part, `noteDelaySeconds` between the last request of one send and the first of the
   next, and 429/503 back off by `Retry-After` or else 30s, 60s, 120s, 240s while later parts and
@@ -269,11 +270,25 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   number stamped once at enqueue on every part record, strictly increasing within a run and
   seeded synchronously from the saved log when the center starts, kept numeric because the
   log's ISO 8601 dates drop fractional seconds; older records fall back to `sendCreatedAt`,
-  then `createdAt`), so an older send resuming from backoff never hides a newer one. Headers
+  then `createdAt`), so an older send resuming from backoff never hides a newer one. The first part a
+  receiver ignored, else the first it only captured as a setup check, speaks for the send ahead
+  of parts still in flight or failed. Headers
   (per part, signature over that part's body): `X-WonderWhisper-Event`, `-Delivery`,
   `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature:
-  sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">`; custom headers cannot override
-  `Content-Type` or `X-WonderWhisper-*`. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter,
+  sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">`, plus `Idempotency-Key` and
+  `X-Webhook-Event`. Body `deliveryId`, `Idempotency-Key` and `X-WonderWhisper-Delivery` carry
+  one identical string (uppercase UUID, reused across retries); `X-Webhook-Event` repeats the
+  event. Custom headers cannot use `Content-Type`, `Idempotency-Key`, `X-Webhook-Event` or
+  `X-WonderWhisper-*` (any case), nor, for a MausBot address, `X-GitHub-Event`,
+  `X-Event-Type`, `CE-Type`, `X-Webhook-Id` or `Webhook-Id`; a saved header that is now
+  reserved is not sent and the editor flags it. For a 2xx response the transport
+  (`MeetingWebhookURLSessionTransport`, per-task delegate) reads at most 4 KB of the body
+  (`MeetingWebhookReceiverOutcome`): a JSON object whose `ignored`, `captured` or `duplicate` is
+  a literal `true` sets the record's `receiverOutcome`; ignored shows orange "Reached X, but it
+  ignored this event type", captured grey "Reached X. Its automation is off, so it saved this
+  as a setup check only", both delivered and never retried; duplicate, an overflowing, non-JSON
+  or non-object body, and a body read failure after the 2xx status are a plain "Sent". Reply
+  bodies are never stored, logged or put in error text. Up to 5 attempts (2s, 10s, 30s, 120s plus jitter,
   `Retry-After` capped at 10 min) on network errors, 408, 425, 429 and 5xx; other 4xx and all
   3xx fail at once (redirects are refused). `https` is required except for localhost, private
   ranges and Tailscale `100.64.0.0/10`. Endpoints live in `meeting.webhooks.endpoints`
@@ -281,7 +296,22 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   `meeting.webhook.<id>.signingSecret` and `meeting.webhook.<id>.headers` (JSON). The delivery
   log `meeting-webhook-deliveries.json` (app support root, newest 200) never stores bodies,
   secrets or header values (split parts store SHA-256 fingerprints only); queued and in-flight
-  records become failed on the next launch.
+  records become failed on the next launch. MausBot addresses (`MeetingWebhookMausBotAddress`:
+  path `/hooks/wh_<id>` with an optional `/<secret>` on a host the validator accepts): the editor
+  (`MeetingWebhookEditorDraft`) moves the secret of a complete pasted address (`whsec_` plus 43
+  base64url characters after one percent-decode, no query or fragment) out of the URL into a
+  masked `Authorization: Bearer` header draft, replacing any Authorization draft, shows the green
+  "MausBot address recognised" badge, and on a new webhook applies once the full note, split,
+  40,000 bytes, 30 s and 30 s; the secret reaches the Keychain only on Save, and pointing the URL
+  elsewhere clears the moved header. Saved secret-in-URL addresses are not migrated. Before
+  sending to a MausBot address every part must format, as `JSON.stringify(JSON.parse(body),
+  null, 2)` counts it in UTF-16 code units (`MeetingWebhookJSONValue.javaScriptFormattedLength`),
+  to at most 47,000 characters (MausBot cuts at 48,000), so the splitter cuts the Markdown to
+  the smaller of the byte and formatted budgets; when even an empty part can't fit, or an
+  unsplit body would be cut, the send fails with "Too long for MausBot..." without sending, and
+  partial resends check the same limit. `Scripts/webhook-receiver/assemble_meeting_note.py`
+  (Python standard library, tests beside it) reassembles parts on the receiving side; see
+  `docs/webhooks.md`.
 - All LLM requests route through OpenRouter or the Vercel AI Gateway
   (`https://ai-gateway.vercel.sh/v1`, OpenAI-compatible), decided per model: the model browser
   offers both catalogs, and favorites saved from the Vercel catalog carry a `vercel:` ID prefix.
@@ -339,6 +369,9 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 
 ## Documentation Index
 - `datamodel.md` — Canonical data model reference (entities, relationships, invariants, storage). Update this whenever schema/types, field names, relationships, storage paths, or configuration keys change. Include breaking change notes and update tests.
+- `docs/spec.md` — Product spec by screen, linked to the Paper designs (source of truth for look and flow).
+- `docs/decisions.md` — Product and technical decisions with the rejected alternatives.
+- `docs/webhooks.md` — Sending meeting notes to webhooks and MausBot automations, the payload, and the receiver helper.
 
 ## Agent Workflow & Maintenance
 - If you change build/test/run commands, directory layout, coding style/lint rules, or security practices, update this document in the same change.
@@ -350,6 +383,11 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-03: Meeting webhooks work with MausBot automations (issue #20): `Idempotency-Key` and
+  `X-Webhook-Event` with one delivery id string, reserved header names, ignored/captured reply
+  statuses from at most 4 KB of a 2xx reply, the 48,000-character formatted-length guard,
+  `part.sha256`, the editor's MausBot secret move and defaults, and the
+  `Scripts/webhook-receiver/assemble_meeting_note.py` receiver helper.
 - 2026-11-02: Released 2026-11-02.1 with the pre-release macOS 27.2 dictation crash fix and a unified transcription model picker with runtime status.
 - 2026-11-02: Fixed the released modifier-hotkey crash (issue #16): `Date.<=`/`>=` from the 27.2
   SDK are null on pre-release 27.2; hotkey suppression uses an uptime deadline, three wall-clock

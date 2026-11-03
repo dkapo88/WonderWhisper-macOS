@@ -4,7 +4,8 @@ import Foundation
 ///
 /// Keys are written in a fixed order with `note.markdown` last, so a receiver that keeps only
 /// the start of a long body still gets every metadata field:
-/// `event, schemaVersion, deliveryId, [sendId], sentAt, app, [part], note` and inside `note`
+/// `event, schemaVersion, deliveryId, [sendId], sentAt, app, [part], note`, inside `part`
+/// `index, total, endMarker, sha256`, and inside `note`
 /// `id, title, startedAt, endedAt, durationSeconds, recordedSeconds, elapsedSeconds,
 /// detectedApp, [attendees], [content], markdown`. `sendId` and `part` appear only on split
 /// sends; `note.attendees` only when the meeting has attendees; `note.content` only on
@@ -59,6 +60,15 @@ struct MeetingWebhookPayload: Equatable, Sendable {
   struct Part: Equatable, Sendable {
     let index: Int
     let total: Int
+    /// Lowercase hex SHA-256 of this part's chunk of the note (UTF-8, without the end-marker
+    /// suffix), sent as `part.sha256` so a receiver can prove it copied the part exactly.
+    let sha256: String?
+
+    init(index: Int, total: Int, sha256: String? = nil) {
+      self.index = index
+      self.total = total
+      self.sha256 = sha256
+    }
 
     /// The last line of the part's Markdown, also sent as `part.endMarker`, so a receiver can
     /// tell a complete part from a truncated one.
@@ -94,7 +104,7 @@ struct MeetingWebhookPayload: Equatable, Sendable {
     var top: [(key: String, value: MeetingWebhookJSONValue)] = [
       ("event", .string(event.rawValue)),
       ("schemaVersion", .int(schemaVersion)),
-      ("deliveryId", .string(deliveryId.uuidString))
+      ("deliveryId", .string(MeetingWebhookRequestBuilder.deliveryIDString(deliveryId)))
     ]
     if let sendId {
       top.append(("sendId", .string(sendId.uuidString)))
@@ -106,11 +116,15 @@ struct MeetingWebhookPayload: Equatable, Sendable {
       ("build", .string(app.build))
     ])))
     if let part {
-      top.append(("part", .object([
+      var members: [(key: String, value: MeetingWebhookJSONValue)] = [
         ("index", .int(part.index)),
         ("total", .int(part.total)),
         ("endMarker", .string(part.endMarker))
-      ])))
+      ]
+      if let sha256 = part.sha256 {
+        members.append(("sha256", .string(sha256)))
+      }
+      top.append(("part", .object(members)))
     }
     let isPart = part != nil
     var noteMembers: [(key: String, value: MeetingWebhookJSONValue)] = [

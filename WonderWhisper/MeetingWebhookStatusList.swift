@@ -29,7 +29,7 @@ struct MeetingWebhookStatusList: View {
     HStack(spacing: DesignTokens.Spacing.xSmall) {
       switch record.state {
       case .delivered:
-        StatusBadge(.ok, text)
+        StatusBadge(StatusBadge.Kind.webhookDelivered(record), text)
       case .failed:
         StatusBadge(.error, text)
         Button(record.supportsPartialResend ? "Resend Missing Parts" : "Retry") {
@@ -45,5 +45,17 @@ struct MeetingWebhookStatusList: View {
     }
     .font(.footnote)
     .lineLimit(2)
+  }
+}
+
+extension StatusBadge.Kind {
+  /// A delivered webhook record: green for an ordinary delivery, orange when the receiver
+  /// ignored the event type, grey when it only saved the request as a setup check.
+  static func webhookDelivered(_ record: MeetingWebhookDeliveryRecord) -> StatusBadge.Kind {
+    switch record.receiverOutcome {
+    case .ignored: return .warning
+    case .captured: return .info
+    case .duplicate, nil: return .ok
+    }
   }
 }

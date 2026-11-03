@@ -47,7 +47,7 @@ struct MeetingWebhookPayloadBuilder: Sendable {
 
   /// The payloads one send to `endpoint` POSTs, in order: one unsplit payload, or the parts
   /// when the endpoint splits. Throws `MeetingWebhookPayloadSplitter.SplitError` when the
-  /// endpoint's body limit can't fit even the metadata.
+  /// endpoint's body limit can't fit even the metadata, or MausBot would cut the note.
   func payloads(
     for session: MeetingSession,
     event: MeetingWebhookEvent,
@@ -83,7 +83,17 @@ struct MeetingWebhookPayloadBuilder: Sendable {
       sentAt: sentAt,
       content: endpoint.content
     )
+    let formattedLimit = Self.formattedLengthLimit(for: endpoint)
     guard endpoint.splitIntoParts else {
+      if let formattedLimit {
+        let length = base.jsonValue.javaScriptFormattedLength
+        guard length <= formattedLimit else {
+          throw MeetingWebhookPayloadSplitter.SplitError.unsplitTooLongForMausBot(
+            length: length,
+            limit: formattedLimit
+          )
+        }
+      }
       return MeetingWebhookSendPlan(payloads: [base], split: nil)
     }
     let maxBytes = MeetingWebhookEndpoint.clampedMaxBody(endpoint.maxBodyCharacters)
@@ -91,6 +101,7 @@ struct MeetingWebhookPayloadBuilder: Sendable {
       of: base,
       sendID: sendID,
       maxBytes: maxBytes,
+      maxFormattedLength: formattedLimit,
       makeDeliveryID: makeDeliveryID
     )
     let info = MeetingWebhookSplitInfo(
@@ -101,6 +112,14 @@ struct MeetingWebhookPayloadBuilder: Sendable {
       partFingerprints: split.chunks.map(MeetingWebhookFingerprint.of)
     )
     return MeetingWebhookSendPlan(payloads: split.parts, split: info)
+  }
+
+  /// MausBot addresses: the most characters a body may format to (see
+  /// `MeetingWebhookJSONValue.javaScriptFormattedLength`); nil for every other address.
+  static func formattedLengthLimit(for endpoint: MeetingWebhookEndpoint) -> Int? {
+    MeetingWebhookMausBotAddress.matches(endpoint.url)
+      ? MeetingWebhookMausBotAddress.formattedCharacterBudget
+      : nil
   }
 
   /// The request body: compact JSON with keys in the documented order, `note.markdown` last.

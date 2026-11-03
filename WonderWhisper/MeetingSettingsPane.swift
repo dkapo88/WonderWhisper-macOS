@@ -394,7 +394,7 @@ struct MeetingSettingsPane: View {
     let text = prefix + MeetingWebhookStatusFormatter.text(for: record)
     switch record.state {
     case .delivered:
-      StatusBadge(.ok, text)
+      StatusBadge(StatusBadge.Kind.webhookDelivered(record), text)
     case .failed:
       StatusBadge(.error, text)
     case .queued, .sending, .retrying:

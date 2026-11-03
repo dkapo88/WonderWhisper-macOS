@@ -61,6 +61,7 @@ actor MeetingWebhookDeliveryService {
       }
       record.attempts += 1
       record.nextAttemptAt = nil
+      record.receiverOutcome = nil
       let request = MeetingWebhookRequestBuilder.request(for: job, at: clock())
       var retryAfter: TimeInterval?
       var rateLimited = false
@@ -70,6 +71,8 @@ actor MeetingWebhookDeliveryService {
         record.lastStatusCode = response.statusCode
         switch MeetingWebhookRetryPolicy.outcome(forStatus: response.statusCode) {
         case .delivered:
+          // An ignored or captured reply is still delivered: a retry would get the same answer.
+          record.receiverOutcome = response.receiverOutcome
           return await finish(&record, state: .delivered, error: nil, onUpdate: onUpdate)
         case .failed:
           return await finish(
@@ -252,8 +255,9 @@ actor MeetingWebhookDeliveryService {
     record.updatedAt = clock()
     record.nextAttemptAt = nil
     let status = record.lastStatusCode.map(String.init) ?? "none"
+    let outcome = record.receiverOutcome.map { ", receiver \($0.rawValue)" } ?? ""
     let summary = "Webhook \(record.id.uuidString) \(state.rawValue) after "
-      + "\(record.attempts) attempt(s), status \(status)"
+      + "\(record.attempts) attempt(s), status \(status)\(outcome)"
     logger.log("\(summary, privacy: .public)")
     let final = record
     await onUpdate(final)

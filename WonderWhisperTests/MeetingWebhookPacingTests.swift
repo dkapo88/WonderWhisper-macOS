@@ -105,7 +105,7 @@ struct MeetingWebhookPacingTests {
   // MARK: - Helpers
 
   private static func splitEndpoint(
-    name: String = "Grok Bot",
+    name: String = "Notes Bot",
     host: String = "example.com",
     partDelay: Int = 7,
     noteDelay: Int = 30
@@ -412,7 +412,7 @@ struct MeetingWebhookPacingTests {
     let first = try #require(waiting.first)
     #expect(first.nextAttemptAt == Self.fixedDate.addingTimeInterval(7))
     #expect(MeetingWebhookStatusFormatter.text(for: first, now: Self.fixedDate)
-      == "Sending Grok Bot part 2 of 3 (next in 7s)")
+      == "Sending Notes Bot part 2 of 3 (next in 7s)")
   }
 
   @Test func rateLimitsHonourRetryAfterAndHoldLaterParts() async {
@@ -470,11 +470,11 @@ struct MeetingWebhookPacingTests {
     #expect(MeetingWebhookStatusFormatter.text(
       for: waiting,
       now: Self.fixedDate.addingTimeInterval(2_400)
-    ) == "Waiting for Grok Bot rate limit (10m)")
+    ) == "Waiting for Notes Bot rate limit (10m)")
     #expect(MeetingWebhookStatusFormatter.text(
       for: waiting,
       now: Self.fixedDate.addingTimeInterval(2_955)
-    ) == "Waiting for Grok Bot rate limit (45s)")
+    ) == "Waiting for Notes Bot rate limit (45s)")
   }
 
   @Test func anExhaustedRateLimitWithoutRetryAfterHoldsTheNextNoteForTheNextBackoff() async {
@@ -604,7 +604,7 @@ struct MeetingWebhookPacingTests {
       #expect(queued.state == .queued)
       #expect(queued.queuedBehind == 1)
       #expect(MeetingWebhookStatusFormatter.text(for: queued)
-        == "Queued for Grok Bot (behind 1 note)")
+        == "Queued for Notes Bot (behind 1 note)")
 
       let done = await Self.waitUntil {
         !center.deliveries.isEmpty && center.deliveries.allSatisfy { $0.state == .delivered }
@@ -640,7 +640,7 @@ struct MeetingWebhookPacingTests {
       #expect(test.event == .test)
       #expect(test.state == .queued)
       #expect(MeetingWebhookStatusFormatter.text(for: test)
-        == "Queued for Grok Bot (behind 1 note)")
+        == "Queued for Notes Bot (behind 1 note)")
       let firstPartSent = await Self.waitUntil { transport.requests.count == 1 }
       #expect(firstPartSent)
       // The note is waiting out its part delay, so the test is still queued.
@@ -684,7 +684,7 @@ struct MeetingWebhookPacingTests {
     let gate = BackoffGate()
     let transport = PacingTestTransport(gate: gate)
     let (center, store) = try Self.center(transport: transport)
-    var endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+    var endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
     try store.upsert(endpoint, signingSecret: nil, headers: [:])
     center.reloadEndpoints()
     #expect(center.send(Self.longSession("Unsplit"), event: .noteCompleted) == 1)
@@ -698,7 +698,7 @@ struct MeetingWebhookPacingTests {
     let waiting = try #require(center.latestRecords(forNote: split.id).first)
     #expect(waiting.state == .queued)
     #expect(MeetingWebhookStatusFormatter.text(for: waiting)
-      == "Queued for Grok Bot (behind 1 note)")
+      == "Queued for Notes Bot (behind 1 note)")
     try? await Task.sleep(nanoseconds: 50_000_000)
     #expect(transport.requests.count == 1)
 
@@ -824,7 +824,7 @@ struct MeetingWebhookPacingTests {
       let summary = try #require(center.latestRecords(forNote: session.id).first)
       #expect(summary.state == .delivered)
       #expect(MeetingWebhookStatusFormatter.text(for: summary)
-        .hasPrefix("Sent to Grok Bot (\(total) parts)"))
+        .hasPrefix("Sent to Notes Bot (\(total) parts)"))
       #expect(center.resumableSend(noteID: session.id, endpointID: endpoint.id)?
         .missingIndexes == [])
       #expect(center.resendParts(session, endpointID: endpoint.id, selection: .missing)
@@ -904,7 +904,7 @@ struct MeetingWebhookPacingTests {
   // MARK: - Decoding older data
 
   @Test func oldEndpointJSONDecodesWithPacingDefaults() throws {
-    let json = #"{"id":"\#(UUID().uuidString)","name":"Grok Bot","#
+    let json = #"{"id":"\#(UUID().uuidString)","name":"Notes Bot","#
       + #""url":"https://example.com/hook","isEnabled":true,"headerNames":[],"#
       + #""hasSecret":false,"splitIntoParts":true,"maxBodyCharacters":3800}"#
     let endpoint = try JSONDecoder().decode(MeetingWebhookEndpoint.self, from: Data(json.utf8))
@@ -925,7 +925,7 @@ struct MeetingWebhookPacingTests {
 
   @Test func oldDeliveryRecordsDecodeWithoutPacingOrSplitDetails() throws {
     let json = #"{"id":"\#(UUID().uuidString)","endpointID":"\#(UUID().uuidString)","#
-      + #""endpointName":"Grok Bot","noteID":"\#(UUID().uuidString)","noteTitle":"Planning","#
+      + #""endpointName":"Notes Bot","noteID":"\#(UUID().uuidString)","noteTitle":"Planning","#
       + #""event":"meeting.note.completed","state":"failed","attempts":1,"#
       + #""maximumAttempts":5,"createdAt":"2025-10-09T08:53:20Z","#
       + #""updatedAt":"2025-10-09T08:53:20Z","sendID":"\#(UUID().uuidString)","#

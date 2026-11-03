@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The single way the app shows a status ("Saved", "Missing", "Enabled", "Not downloaded").
@@ -9,6 +10,8 @@ struct StatusBadge: View {
     case warning
     case error
     case neutral
+    /// Grey information: something happened that is neither a success nor a problem.
+    case info
 
     var symbol: String {
       switch self {
@@ -16,6 +19,7 @@ struct StatusBadge: View {
       case .warning: return "exclamationmark.triangle.fill"
       case .error: return "xmark.octagon.fill"
       case .neutral: return "minus.circle.fill"
+      case .info: return "info.circle.fill"
       }
     }
 
@@ -25,6 +29,7 @@ struct StatusBadge: View {
       case .warning: return .orange
       case .error: return .red
       case .neutral: return .secondary
+      case .info: return Color(nsColor: .systemGray)
       }
     }
   }

@@ -7,6 +7,8 @@ import Testing
 final class FakeMeetingWebhookTransport: MeetingWebhookTransport, @unchecked Sendable {
   enum Step {
     case status(Int, retryAfter: String? = nil)
+    /// A 2xx (or other) status whose reply reported a receiver outcome.
+    case reply(Int, MeetingWebhookReceiverOutcome?)
     case failure(Error)
   }
 
@@ -34,6 +36,8 @@ final class FakeMeetingWebhookTransport: MeetingWebhookTransport, @unchecked Sen
     switch step {
     case let .status(code, retryAfter):
       return MeetingWebhookTransportResponse(statusCode: code, retryAfter: retryAfter)
+    case let .reply(code, outcome):
+      return MeetingWebhookTransportResponse(statusCode: code, receiverOutcome: outcome)
     case let .failure(error):
       throw error
     }
@@ -88,7 +92,7 @@ struct MeetingWebhookTests {
   ) -> MeetingWebhookDeliveryJob {
     MeetingWebhookDeliveryJob(
       deliveryID: UUID(),
-      endpoint: MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook"),
+      endpoint: MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook"),
       url: URL(string: "https://example.com/hook") ?? URL(fileURLWithPath: "/"),
       event: .noteCompleted,
       noteID: UUID(),
@@ -202,7 +206,7 @@ struct MeetingWebhookTests {
     #expect(headers["x-wonderwhisper-event"] == nil)
     #expect(headers["Bad Header"] == nil)
     #expect(headers["X-WonderWhisper-Event"] == "meeting.note.completed")
-    #expect(headers["X-WonderWhisper-Delivery"] == deliveryID.uuidString.lowercased())
+    #expect(headers["X-WonderWhisper-Delivery"] == deliveryID.uuidString)
     #expect(headers["X-WonderWhisper-Timestamp"] == "1700000000")
     #expect(
       headers["X-WonderWhisper-Signature"]
@@ -282,7 +286,7 @@ struct MeetingWebhookTests {
     let deliveryIDs = Set(transport.requests.compactMap {
       $0.value(forHTTPHeaderField: "X-WonderWhisper-Delivery")
     })
-    #expect(deliveryIDs == [job.deliveryID.uuidString.lowercased()])
+    #expect(deliveryIDs == [job.deliveryID.uuidString])
     #expect(transport.requests.allSatisfy { $0.httpBody == job.body })
   }
 
@@ -376,23 +380,23 @@ struct MeetingWebhookTests {
 
   @Test func statusTextDescribesEachState() {
     let record = MeetingWebhookDeliveryRecord(
-      id: UUID(), endpointID: UUID(), endpointName: "Grok Bot", noteID: UUID(),
+      id: UUID(), endpointID: UUID(), endpointName: "Notes Bot", noteID: UUID(),
       noteTitle: "Planning", event: .noteCompleted, state: .retrying, attempts: 2,
       maximumAttempts: 5, lastStatusCode: 500, lastError: "HTTP 500",
       createdAt: Self.fixedDate, updatedAt: Self.fixedDate
     )
-    #expect(MeetingWebhookStatusFormatter.text(for: record) == "Retrying Grok Bot (attempt 3 of 5)")
+    #expect(MeetingWebhookStatusFormatter.text(for: record) == "Retrying Notes Bot (attempt 3 of 5)")
     var failed = record
     failed.state = .failed
     failed.lastError = "HTTP 401"
-    #expect(MeetingWebhookStatusFormatter.text(for: failed) == "Grok Bot failed: HTTP 401")
+    #expect(MeetingWebhookStatusFormatter.text(for: failed) == "Notes Bot failed: HTTP 401")
     var delivered = record
     delivered.state = .delivered
     let text = MeetingWebhookStatusFormatter.text(
       for: delivered,
       now: Self.fixedDate.addingTimeInterval(10)
     )
-    #expect(text == "Sent to Grok Bot just now")
+    #expect(text == "Sent to Notes Bot just now")
   }
 
   // MARK: - Sync registry

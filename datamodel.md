@@ -347,6 +347,63 @@ states are visible in the meeting overlay.
 
 ---
 
+### 4a. Meeting Webhooks
+
+```mermaid
+erDiagram
+    MeetingWebhookEndpoint ||--o{ MeetingWebhookDeliveryRecord : "delivers"
+
+    MeetingWebhookEndpoint {
+        UUID id PK
+        String name
+        String url "never holds a moved MausBot secret"
+        Bool isEnabled
+        String[] headerNames "display only; values in Keychain"
+        Bool hasSecret "display only; secret in Keychain"
+        Bool splitIntoParts
+        Int maxBodyCharacters "UTF-8 bytes of the whole body, 1000 to 1000000"
+        String content "full | summary"
+        Int partDelaySeconds
+        Int noteDelaySeconds
+    }
+
+    MeetingWebhookDeliveryRecord {
+        UUID id PK "deliveryId, Idempotency-Key, X-WonderWhisper-Delivery"
+        UUID endpointID FK
+        UUID noteID
+        String event "meeting.note.completed | meeting.note.resent | webhook.test"
+        String state "queued | sending | retrying | delivered | failed"
+        Int attempts
+        Int lastStatusCode "optional"
+        String lastError "optional, never a reply body"
+        UUID sendID "optional"
+        Double sendOrder "optional"
+        Int partIndex "optional"
+        Int partTotal "optional"
+        String partFingerprint "optional, SHA-256 of the part's chunk"
+        String receiverOutcome "optional: ignored | captured | duplicate"
+    }
+```
+
+**MeetingWebhookEndpoint**: One user-configured webhook, stored as JSON in
+`meeting.webhooks.endpoints` (excluded from settings sync). Secrets live in the Keychain:
+`meeting.webhook.<id>.signingSecret` and `meeting.webhook.<id>.headers` (JSON object of custom
+header values). A MausBot address (`/hooks/wh_<id>`) pasted with its secret is saved without the
+secret, which becomes an `Authorization: Bearer` custom header; endpoints saved earlier with the
+secret in the URL are not migrated and keep working.
+
+**MeetingWebhookDeliveryRecord**: One delivery of one note, or one part of a split send, to one
+endpoint, kept newest first (200 records) in `meeting-webhook-deliveries.json` under the app
+support root. Records never hold request or reply bodies, secrets or header values; split parts
+keep SHA-256 fingerprints of the note and of their chunk (the same value the body sends as
+`part.sha256`). `receiverOutcome` (added 2026-11-03, absent in older records) is what a 2xx reply
+reported, read from at most 4 KB of it: `ignored` (the receiver's event filter skipped the event;
+shown as an orange warning), `captured` (its automation is off and it kept the request as a setup
+check; grey), or `duplicate` (shown as a normal delivery). All three are delivered states and are
+never retried. The payload format is described in `AGENTS.md` and `docs/webhooks.md`.
+
+---
+
 ### 5. Simple Mode System
 
 ```mermaid
@@ -690,6 +747,7 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `meeting.context.model` | String | Fast OpenRouter model used only for live topic extraction and context briefs; defaults to `openai/gpt-5.4-nano` |
 | `meeting.overlay.enabled` | Bool | Show the compact translucent transcript/context companion while recording; defaults to true |
 | `meeting.ticketBaseURL` | String | Optional Jira browse base URL for live ticket links; defaults to Hapana Jira |
+| `meeting.webhooks.endpoints` | Data | JSON-encoded `MeetingWebhookEndpoint[]` (non-secret fields only); excluded from settings sync |
 | `hermes.agent.enabled` | Bool | Enable the dedicated Hermes voice hotkey |
 | `hermes.api.baseURL` | String | Hermes API server URL; blank by default, root and `/v1` URLs are both accepted |
 | `hermes.conversation.name` | String | Hermes conversation prefix used when creating new sessions |
@@ -809,6 +867,8 @@ the original service, so it never sees the user's keys.
 | `SONIOX_API_KEY` | Soniox API authentication |
 | `HERMES_API_SERVER_KEY` | Hermes API server bearer token |
 | `BEEPER_ACCESS_TOKEN` | Beeper Desktop API access token |
+| `meeting.webhook.<id>.signingSecret` | Meeting webhook signing secret |
+| `meeting.webhook.<id>.headers` | Meeting webhook custom header values (JSON), including a moved MausBot `Authorization` header |
 
 ---
 

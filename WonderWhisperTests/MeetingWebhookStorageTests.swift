@@ -11,7 +11,7 @@ struct MeetingWebhookStorageTests {
     createdAt: Date = Date()
   ) -> MeetingWebhookDeliveryRecord {
     MeetingWebhookDeliveryRecord(
-      id: UUID(), endpointID: UUID(), endpointName: "Grok Bot", noteID: UUID(),
+      id: UUID(), endpointID: UUID(), endpointName: "Notes Bot", noteID: UUID(),
       noteTitle: "Planning", event: .noteCompleted, state: state, attempts: 1,
       maximumAttempts: 5, lastStatusCode: nil, lastError: nil,
       createdAt: createdAt, updatedAt: createdAt
@@ -32,7 +32,7 @@ struct MeetingWebhookStorageTests {
 
     let secrets = MeetingWebhookInMemorySecretStore()
     let store = MeetingWebhookEndpointStore(defaults: { AppConfig.defaults }, secrets: secrets)
-    let endpoint = MeetingWebhookEndpoint(name: " Grok Bot ", url: "https://example.com/hook")
+    let endpoint = MeetingWebhookEndpoint(name: " Notes Bot ", url: "https://example.com/hook")
     try store.upsert(
       endpoint,
       signingSecret: "topsecret",
@@ -41,7 +41,7 @@ struct MeetingWebhookStorageTests {
 
     let loaded = store.load()
     #expect(loaded.count == 1)
-    #expect(loaded.first?.name == "Grok Bot")
+    #expect(loaded.first?.name == "Notes Bot")
     #expect(loaded.first?.hasSecret == true)
     #expect(loaded.first?.headerNames == ["Authorization"])
     #expect(try store.signingSecret(for: endpoint.id) == "topsecret")
@@ -168,7 +168,7 @@ struct MeetingWebhookStorageTests {
         secrets: secrets,
         transport: FakeMeetingWebhookTransport([])
       )
-      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      let endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: "topsecret", headers: ["Authorization": "B"])
       center.reloadEndpoints()
 
@@ -182,14 +182,14 @@ struct MeetingWebhookStorageTests {
       let headers = MeetingWebhookEditorSheet.headersToSave(loaded: nil, edited: [:], isNew: false)
       #expect(headers == nil)
       var renamed = endpoint
-      renamed.name = "Grok Bot 2"
+      renamed.name = "Notes Bot 2"
       #expect(center.saveEndpoint(renamed, signingSecret: nil, headers: headers) == nil)
 
       secrets.isUnreadable = false
       #expect(try store.signingSecret(for: endpoint.id) == "topsecret")
       #expect(try store.headers(for: endpoint.id) == ["Authorization": "B"])
       let saved = try #require(store.load().first)
-      #expect(saved.name == "Grok Bot 2")
+      #expect(saved.name == "Notes Bot 2")
       #expect(saved.hasSecret)
       #expect(saved.headerNames == ["Authorization"])
 
@@ -211,7 +211,7 @@ struct MeetingWebhookStorageTests {
       let secrets = ToggleableSecretStore()
       let transport = FakeMeetingWebhookTransport([.status(200)])
       let (center, store) = Self.scratchCenter(secrets: secrets, transport: transport)
-      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      let endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: "topsecret", headers: ["Authorization": "B"])
       center.reloadEndpoints()
       var surfaced: String?
@@ -242,7 +242,7 @@ struct MeetingWebhookStorageTests {
         // Real, cancellation-aware wait: long enough that only cancellation can end it.
         sleeper: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
       )
-      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      let endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: nil, headers: [:])
       center.reloadEndpoints()
       var surfaced: String?
@@ -270,7 +270,7 @@ struct MeetingWebhookStorageTests {
         transport: transport,
         sleeper: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
       )
-      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      let endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: "topsecret", headers: ["Authorization": "B"])
       center.reloadEndpoints()
 
@@ -298,7 +298,7 @@ struct MeetingWebhookStorageTests {
         transport: transport,
         sleeper: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
       )
-      let endpoint = MeetingWebhookEndpoint(name: "Grok Bot", url: "https://example.com/hook")
+      let endpoint = MeetingWebhookEndpoint(name: "Notes Bot", url: "https://example.com/hook")
       try store.upsert(endpoint, signingSecret: nil, headers: [:])
       center.reloadEndpoints()
 
@@ -344,7 +344,7 @@ struct MeetingWebhookStorageTests {
         transport: transport
       )
       let endpoint = MeetingWebhookEndpoint(
-        name: "Grok Bot",
+        name: "Notes Bot",
         url: "https://example.com/hook",
         splitIntoParts: true,
         maxBodyCharacters: 3_800,
@@ -372,7 +372,7 @@ struct MeetingWebhookStorageTests {
       let summary = try #require(center.latestRecords(forNote: session.id).first)
       #expect(summary.partIndex == summary.partTotal)
       #expect(MeetingWebhookStatusFormatter.text(for: summary).hasPrefix(
-        "Sent to Grok Bot (\(firstRequests.count) parts)"
+        "Sent to Notes Bot (\(firstRequests.count) parts)"
       ))
 
       // Resend: every part again, with a new sendId and new deliveryIds.
@@ -403,7 +403,7 @@ struct MeetingWebhookStorageTests {
         transport: transport
       )
       let endpoint = MeetingWebhookEndpoint(
-        name: "Grok Bot",
+        name: "Notes Bot",
         url: "https://example.com/hook",
         splitIntoParts: true,
         maxBodyCharacters: 1_000
