@@ -470,13 +470,15 @@ actor MeetingTranscriptionService {
     },
     languageProvider: @escaping () -> String? = {
       AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
-    }
+    },
+    endpoint: URL? = SonioxStreamingProvider.realtimeURL
   ) async -> SonioxStreamingProvider {
     let provider = SonioxStreamingProvider(
       apiKeyProvider: apiKeyProvider,
       contextTerms: terms,
       languageProvider: languageProvider,
-      realtimeOptions: source == .systemAudio ? .remoteMeeting : .meeting
+      realtimeOptions: source == .systemAudio ? .remoteMeeting : .meeting,
+      endpoint: endpoint
     )
     await provider.setInputSampleRate(16_000)
     return provider

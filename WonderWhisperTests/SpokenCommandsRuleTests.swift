@@ -205,15 +205,18 @@ struct SpokenCommandsRuleTests {
     "book the room for Tuesday scratch that book it for Wednesday new line "
     + "the trial period ends on the 15th full stop"
 
-  private func runDictation(llmEnabled: Bool) async -> [String] {
+  private func runDictation(
+    llmEnabled: Bool,
+    endpoint: URL = AppConfig.openrouterChatCompletions,
+    apiKey: String? = nil
+  ) async -> [String] {
     let recorder = DictationControllerSessionTests.FakeRecorder(
       samples: DictationAudioFixtures.sine(seconds: 0.5, rmsDBFS: -25)
     )
     let inserter = DictationControllerSessionTests.FakeInserter()
-    var llmSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: "test")
-    llmSettings = LLMSettings(
-      endpoint: llmSettings.endpoint,
-      model: llmSettings.model,
+    let llmSettings = LLMSettings(
+      endpoint: endpoint,
+      model: "test",
       systemPrompt: SimplePromptComposer.systemPrompt(
         settings: SimpleModeDefaults.settings(for: .dictation)
       )
@@ -224,8 +227,8 @@ struct SpokenCommandsRuleTests {
       transcriberSettings: TranscriptionSettings(
         endpoint: URL(string: "https://localhost")!, model: "parakeet-local"
       ),
-      // No key: every cleanup request fails before reaching the network.
-      llm: OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { nil })),
+      // Without a key every cleanup request fails before reaching the network.
+      llm: OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { apiKey })),
       llmSettings: llmSettings,
       inserter: inserter,
       releaseTail: 0
@@ -239,6 +242,39 @@ struct SpokenCommandsRuleTests {
     await controller.finish(userPrompt: "")
     if let url = recorder.recordingURL { try? FileManager.default.removeItem(at: url) }
     return inserter.inserted
+  }
+
+  /// A successful cleanup: the request carries the default rules with the spoken commands
+  /// bullet and the raw words, and the model's cleaned text is what gets inserted.
+  @Test func successfulCleanupSendsTheRuleAndInsertsTheCleanedText() async throws {
+    let cleaned = "Book it for Wednesday.\nThe trial period ends on the 15th."
+    let reply = try JSONSerialization.data(withJSONObject: [
+      "choices": [["message": ["role": "assistant", "content": "<OUTPUT>\(cleaned)</OUTPUT>"]]]
+    ])
+    let server = try LocalWireServer(mode: .http(responseBody: reply))
+    let port = try await server.start()
+    defer { server.stop() }
+    let endpoint = try #require(URL(string: "http://127.0.0.1:\(port)/api/v1/chat/completions"))
+
+    let inserted = await runDictation(llmEnabled: true, endpoint: endpoint, apiKey: "test-llm-key")
+
+    #expect(inserted == [cleaned + " "])
+    let request = try #require(server.httpRequests.first)
+    let body = try #require(
+      try JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+    )
+    let messages = try #require(body["messages"] as? [[String: Any]])
+    let system = messages.first { $0["role"] as? String == "system" }
+    let user = messages.first { $0["role"] as? String == "user" }
+    let systemText = Self.text(of: system)
+    #expect(systemText.contains(try #require(Self.spokenCommandsLine)))
+    #expect(Self.text(of: user).contains("<TRANSCRIPT>\n\(Self.spoken)\n</TRANSCRIPT>"))
+  }
+
+  private static func text(of message: [String: Any]?) -> String {
+    if let text = message?["content"] as? String { return text }
+    let parts = message?["content"] as? [[String: Any]] ?? []
+    return parts.compactMap { $0["text"] as? String }.joined()
   }
 
   @Test func cleanupOffInsertsTheCommandsAsSpokenWords() async {

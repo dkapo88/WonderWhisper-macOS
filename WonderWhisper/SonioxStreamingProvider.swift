@@ -81,6 +81,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   private let contextTerms: [String]?
   private let languageProvider: () -> String?
   private let realtimeOptions: RealtimeOptions
+  /// The real-time endpoint; tests point it at a local server to capture the handshake.
+  private let endpoint: URL?
   private nonisolated let audioChunkSource = SonioxStreamingAudioChunkSource()
 
   private var webSocketTask: URLSessionWebSocketTask?
@@ -124,12 +126,14 @@ actor SonioxStreamingProvider: TranscriptionProvider {
        vocabularyProvider: @escaping () -> String? = { nil },
        contextTerms: [String]? = nil,
        languageProvider: @escaping () -> String? = { nil },
-       realtimeOptions: RealtimeOptions = RealtimeOptions()) {
+       realtimeOptions: RealtimeOptions = RealtimeOptions(),
+       endpoint: URL? = SonioxStreamingProvider.realtimeURL) {
     self.apiKeyProvider = apiKeyProvider
     self.vocabularyProvider = vocabularyProvider
     self.contextTerms = contextTerms
     self.languageProvider = languageProvider
     self.realtimeOptions = realtimeOptions
+    self.endpoint = endpoint
   }
 
   // MARK: - TranscriptionProvider (file-based fallback)
@@ -633,7 +637,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   /// The connection request and start message this provider sends for its next session.
   /// `beginRealtime` sends exactly this, so tests can inspect what goes on the wire.
   func startRequest(apiKey: String) throws -> StartRequest {
-    let request = try Self.connectionRequest(apiKey: apiKey)
+    let request = try Self.connectionRequest(apiKey: apiKey, url: endpoint)
     let config = Self.startConfiguration(
       model: currentModel,
       sampleRate: inputSampleRate,
@@ -648,9 +652,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     return StartRequest(request: request, message: message)
   }
 
-  nonisolated static func connectionRequest(apiKey: String) throws -> URLRequest {
-    guard let realtimeURL else { throw ProviderError.invalidURL }
-    var request = URLRequest(url: realtimeURL)
+  nonisolated static func connectionRequest(
+    apiKey: String,
+    url: URL? = realtimeURL
+  ) throws -> URLRequest {
+    guard let url else { throw ProviderError.invalidURL }
+    var request = URLRequest(url: url)
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
     return request
   }

@@ -131,6 +131,88 @@ struct SonioxV6WireTests {
     #expect(system["enable_speaker_diarization"] as? Bool == true)
   }
 
+  // MARK: - Real-time, over a live socket
+
+  /// Runs `beginRealtime` against a loopback WebSocket server, sends one audio chunk, and
+  /// returns the upgrade headers and the start message the server actually received.
+  private static func liveHandshake(
+    _ makeProvider: (URL) async -> SonioxStreamingProvider
+  ) async throws -> (headers: [String: String], startMessage: [String: Any]) {
+    let server = try LocalWireServer(mode: .webSocket)
+    let port = try await server.start()
+    defer { server.stop() }
+    let url = try #require(URL(string: "ws://127.0.0.1:\(port)/transcribe-websocket"))
+    let provider = await makeProvider(url)
+    try await provider.beginRealtime()
+    provider.enqueuePCM16(Data(count: 3_200))
+    let received = await server.wait {
+      $0.frames.contains { if case .binary = $0 { return true } else { return false } }
+    }
+    await provider.abort()
+    #expect(received, "the server never saw an audio frame")
+    let headers = try #require(server.headers.first)
+    // The start message is the first frame, before any audio.
+    guard case .text(let text) = try #require(server.frames.first) else {
+      Issue.record("first frame was not the start message: \(server.frames)")
+      return (headers, [:])
+    }
+    #expect(!text.contains(testKey))
+    return (headers, try json(text))
+  }
+
+  @Test func liveDictationSessionSendsTheHeaderAndAV6StartMessage() async throws {
+    let (headers, config) = try await Self.liveHandshake { url in
+      let provider = SonioxStreamingProvider(
+        apiKeyProvider: { " \(Self.testKey)\n" },
+        vocabularyProvider: { "WonderWhisper, CORE-759" },
+        languageProvider: { "en" },
+        realtimeOptions: .dictation,
+        endpoint: url
+      )
+      await provider.setInputSampleRate(48_000)
+      return provider
+    }
+    #expect(headers["authorization"] == "Bearer \(Self.testKey)")
+    #expect(config["model"] as? String == "stt-rt-v6")
+    #expect(config["api_key"] == nil)
+    #expect(config["sample_rate"] as? Int == 48_000)
+    #expect(config["audio_format"] as? String == "pcm_s16le")
+    #expect(config["num_channels"] as? Int == 1)
+    #expect(config["language_hints"] as? [String] == ["en"])
+    #expect(config["enable_language_identification"] as? Bool == true)
+    #expect(config["enable_endpoint_detection"] as? Bool == true)
+    #expect(config["max_endpoint_delay_ms"] == nil)
+    #expect(config["enable_speaker_diarization"] as? Bool == false)
+    #expect((config["context"] as? [String: Any])?["terms"] as? [String] == [
+      "WonderWhisper", "CORE-759"
+    ])
+  }
+
+  @Test func liveMeetingStreamsSendTheHeaderAndTheirOwnStartMessages() async throws {
+    let terms = Self.expectedMeetingTerms
+    for source in MeetingAudioSource.captureSources {
+      let (headers, config) = try await Self.liveHandshake { url in
+        await MeetingTranscriptionService.sonioxStreamProvider(
+          source: source,
+          terms: terms,
+          apiKeyProvider: { Self.testKey },
+          languageProvider: { "en" },
+          endpoint: url
+        )
+      }
+      #expect(headers["authorization"] == "Bearer \(Self.testKey)", "\(source)")
+      #expect(config["model"] as? String == "stt-rt-v6")
+      #expect(config["api_key"] == nil)
+      #expect(config["sample_rate"] as? Int == 16_000)
+      #expect(config["language_hints"] as? [String] == ["en"])
+      #expect(config["enable_language_identification"] as? Bool == true)
+      #expect(config["enable_endpoint_detection"] as? Bool == true)
+      #expect(config["max_endpoint_delay_ms"] as? Int == 1_500)
+      #expect(config["enable_speaker_diarization"] as? Bool == (source == .systemAudio))
+      #expect((config["context"] as? [String: Any])?["terms"] as? [String] == terms)
+    }
+  }
+
   @Test func meetingRealtimeOptionsAreUnchanged() {
     let microphone = SonioxStreamingProvider.RealtimeOptions.meeting
     let system = SonioxStreamingProvider.RealtimeOptions.remoteMeeting
