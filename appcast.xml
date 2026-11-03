@@ -5,6 +5,21 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-11-03</title>
+      <pubDate>Tue, 03 Nov 2026 13:42:37 +0000</pubDate>
+      <sparkle:version>2026110300</sparkle:version>
+      <sparkle:shortVersionString>2026-11-03</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>Meeting note webhooks now work with MausBot automations. Paste a MausBot webhook address and its secret moves into the Keychain, with delivery settings tuned for MausBot.</li>
+<li>Long notes are split to fit MausBot's size limit, and each part carries a checksum so the receiving automation can put the note back together exactly.</li>
+<li>New webhook statuses show when an automation ignored the event type, or only saved it as a setup check.</li>
+<li>Every webhook request carries an idempotency key and event header, so receivers can drop repeats and filter by event.</li>
+<li>Includes a small receiver helper script and setup docs for reassembling split notes.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-11-03/WonderWhisper-2026-11-03.dmg" sparkle:edSignature="bvMcDt1B9MxiD6UrNvFbuy6SqRJgmBqgJOQK0PNKJXmZDO68CtM4yzBbXzXJuWhw+WuaQGlEDSXR+FYq2RsIAg==" length="27221940" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-11-02.1</title>
       <pubDate>Mon, 02 Nov 2026 06:07:59 +0000</pubDate>
       <sparkle:version>2026110201</sparkle:version>
