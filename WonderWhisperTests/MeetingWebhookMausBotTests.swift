@@ -735,6 +735,35 @@ struct MeetingWebhookMausBotTests {
 
   // MARK: - Part checksum
 
+  @Test func resendingASendMadeBeforeTheChecksumKeepsItsLayout() throws {
+    // No break points, so every chunk is cut exactly full and the old budget leaves no room.
+    let base = Self.builder.payload(
+      for: Self.session(markdown: String(repeating: "x", count: 20_000)),
+      event: .noteResent, deliveryID: UUID(), sentAt: Self.fixedDate
+    )
+    let sendID = UUID()
+    let current = try MeetingWebhookPayloadSplitter.split(of: base, sendID: sendID,
+                                                          maxBytes: 4_000)
+    let checksumField = #","sha256":""# + String(repeating: "0", count: 64) + #"""#
+    let legacyBudget = current.chunkBudget + checksumField.utf8.count
+    let legacyChunks = try #require(MeetingWebhookPayloadSplitter.chunks(of: base.note.markdown,
+                                                                         budget: legacyBudget))
+    let resent = try MeetingWebhookPayloadSplitter.resend(
+      of: base, sendID: sendID, chunkBudget: legacyBudget, total: legacyChunks.count,
+      indexes: [1], maxBytes: 4_000
+    )
+    let part = try #require(resent.parts.first)
+    #expect(part.body.count <= 4_000)
+    #expect(part.part?.sha256 == nil)
+    #expect(MeetingWebhookPayloadSplitter.chunk(of: part) == legacyChunks[0])
+    // A current send keeps its checksum on resend.
+    let again = try MeetingWebhookPayloadSplitter.resend(
+      of: base, sendID: sendID, chunkBudget: current.chunkBudget, total: current.parts.count,
+      indexes: [1], maxBytes: 4_000
+    )
+    #expect(again.parts.first?.part?.sha256 == MeetingWebhookFingerprint.of(current.chunks[0]))
+  }
+
   @Test func splitPartsCarryTheirChunkChecksumAndUnsplitBodiesDoNot() throws {
     let endpoint = MeetingWebhookEndpoint(url: "https://example.com/hook", splitIntoParts: true,
                                           maxBodyCharacters: 1_500)

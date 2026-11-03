@@ -167,7 +167,9 @@ enum MeetingWebhookPayloadSplitter {
 
   /// Cuts the note exactly as an earlier send did (same `chunkBudget`) and rebuilds only the
   /// parts at `indexes`, each with a fresh delivery ID, the original `sendID` and `total`.
-  /// Returns the chunks too, so the caller can compare their fingerprints with the log.
+  /// Returns the chunks too, so the caller can compare their fingerprints with the log. A part
+  /// that only fits without `part.sha256` (a send made before the checksum existed, cut without
+  /// room for it) is rebuilt without it.
   static func resend(
     of base: MeetingWebhookPayload,
     sendID: UUID,
@@ -185,7 +187,7 @@ enum MeetingWebhookPayloadSplitter {
     var parts: [MeetingWebhookPayload] = []
     for index in indexes {
       guard (1...total).contains(index) else { throw ResendError.noteChanged }
-      let part = payload(
+      var part = payload(
         base,
         sendID: sendID,
         deliveryID: makeDeliveryID(),
@@ -193,8 +195,13 @@ enum MeetingWebhookPayloadSplitter {
         total: total,
         chunk: chunks[index - 1]
       )
-      guard fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) else {
-        throw ResendError.partTooLarge(index: index)
+      if !fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) {
+        // A send made before `part.sha256` existed was cut without room for it: resend that
+        // part in its original layout, without the checksum.
+        part.part = MeetingWebhookPayload.Part(index: index, total: total)
+        guard fits(part, maxBytes: maxBytes, maxFormatted: maxFormattedLength) else {
+          throw ResendError.partTooLarge(index: index)
+        }
       }
       parts.append(part)
     }
@@ -234,7 +241,8 @@ enum MeetingWebhookPayloadSplitter {
     deliveryID: UUID,
     index: Int,
     total: Int,
-    chunk: String
+    chunk: String,
+    includeChecksum: Bool = true
   ) -> MeetingWebhookPayload {
     var part = base
     part.deliveryId = deliveryID
@@ -242,7 +250,7 @@ enum MeetingWebhookPayloadSplitter {
     let info = MeetingWebhookPayload.Part(
       index: index,
       total: total,
-      sha256: MeetingWebhookFingerprint.of(chunk)
+      sha256: includeChecksum ? MeetingWebhookFingerprint.of(chunk) : nil
     )
     part.part = info
     part.note.markdown = chunk + info.markdownSuffix
