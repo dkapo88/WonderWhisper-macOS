@@ -31,6 +31,13 @@ fallback; the backup WAV still goes to history. The file-stable poll runs only w
 finish delegate did not report success; the 80 ms insertion settle runs only when the target app
 had to be activated.
 
+Dictation reliability invariants (keep them when touching streaming engines): `finalizeTranscript`
+is the single finalize path and falls back to the backup WAV when a stream returns nothing or
+fails (Soniox cannot transcribe files, so the injected Groq `fileFallbackTranscriber` does it);
+`activeStreamingProvider` is captured at session start and finalize uses it; Soniox drops only the
+exact `<fin>`/`<end>` control tokens; `DictationViewModel.toggleInFlight` guards `toggle()`; Soniox endpointing, diarization and
+language identification options stay as they are unless an issue says otherwise.
+
 Dictation uses one `ParakeetTranscriptionProvider` (`residency: .whileSelected`,
 `padsInput: true`), shared by every Parakeet model id and the controller's initial transcriber.
 While Parakeet is the engine (or a prompt's voice override) the selected backend loads in the
@@ -135,13 +142,13 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   surfaces; new settings should follow that pattern. `SettingsRouter.shared.show(_:)` opens a
   specific tab. Moving a control never changes its UserDefaults/Keychain key. Scratchpad, Pro
   mode, and file transcription workflows have been removed; keep new work within these surfaces.
-- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V5 (`soniox-streaming`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Parakeet runs English Parakeet Unified (default) or multilingual Parakeet Ultra (`parakeet.version`), and Unified rescores toward the Vocabulary list via FluidAudio CTC boosting (`ParakeetVocabularyBoosting`). Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
+- Transcription uses Groq Whisper Large V3 Turbo through stable file upload (legacy engine ID `groq-streaming`), local Parakeet (`parakeet-local`), local Qwen3-ASR 0.6B (`qwen-local`, MLX, offline file decode only), Soniox V6 (`soniox-streaming`, `stt-rt-v6`), OpenRouter speech-to-text models (`openrouter-transcription`), or xAI Grok Speech-to-Text (`xai-stt`). Users pick the engine in **Settings → Transcription**; default is Parakeet. Parakeet runs English Parakeet Unified (default) or multilingual Parakeet Ultra (`parakeet.version`), and Unified rescores toward the Vocabulary list via FluidAudio CTC boosting (`ParakeetVocabularyBoosting`). Do not reintroduce other providers without explicitly updating this document. Qwen is dictation-only and is not a meeting engine.
 - Meetings retain separate microphone and system-audio capture tracks. System audio comes from a
   private Core Audio process tap before output volume and device routing, while ScreenCaptureKit
   supplies the selected microphone. Speakers are "me by channel, them by diarizer, names by
   roster": everything on the microphone is the user (`meeting.userName`, else "You"), and only
   the call side is split into voices. Engines: Parakeet Unified (free, on-device, two source
-  streams, no live speaker split); Soniox V5 (`soniox-separate`, two WebSockets, diarization on
+  streams, no live speaker split); Soniox V6 (`soniox-separate`, `stt-rt-v6`, two WebSockets, diarization on
   the system stream only, about $0.24 per meeting hour); Grok Voice Transcribe 2.0 (`xai-grok`,
   `XAIMeetingStreamingProvider`, one two-channel WebSocket fed by `MeetingStereoAligner` with
   channel 0 the microphone and channel 1 the call, `diarize=true`, $0.20 per stream hour; whether
@@ -207,8 +214,13 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   text is transient UI only; Stop ends local capture immediately while final tokens, notes, and
   export finish in a session-scoped background task. Failed live-stream tails are recovered from
   retained CAF segments with local Parakeet Unified. Full Soniox failures first recover both retained
-  raw tracks with Soniox Async V5 so system-audio speaker labels survive; if that fails, local Parakeet
-  remains the fallback. One cumulative late 100 ms frame is tolerated on the Grok stream before full
+  raw tracks with Soniox Async V6 (`stt-async-v6`) so system-audio speaker labels survive; if that fails, local Parakeet
+  remains the fallback. The async request sends `context.terms` from the same builder as the live
+  streams (`MeetingTranscriptionService.vocabularyTerms`: the session's user and attendees first,
+  then vocabulary, then the fixed meeting terms), evaluated once when recovery starts and shared by
+  both source requests; live context is not stored, so recovery does not replay the historic terms.
+  Every Soniox WebSocket sends its key in the `Authorization: Bearer` header only (Soniox refuses a
+  key sent only in the start message from 15 January 2027); the start message carries no key. One cumulative late 100 ms frame is tolerated on the Grok stream before full
   recovery. Two-channel ingestion runs on a dedicated serial ingress actor so token and UI
   callbacks cannot starve audio delivery. If live ingestion falls behind, transcription pauses and is recovered
   later while durable audio capture continues uninterrupted. The companion includes a durable Manual notes
@@ -383,6 +395,15 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-04: Moved Soniox dictation and both live meeting streams to `stt-rt-v6` and meeting
+  async recovery to `stt-async-v6` (issue #23). `SonioxStreamingProvider.apiModel(for:)` maps
+  empty, `soniox-streaming` and `stt-rt-v3`/`v4`/`v5` to `stt-rt-v6`. The WebSocket key moved
+  to the `Authorization` header (start message carries no key). Async recovery sends the live
+  streams' `context.terms` built from the recovered session's names. The default dictation rules
+  gained a bounded spoken formatting commands bullet; a saved rules text that exactly matches an
+  earlier default (`SimpleModeDefaults.upgradedDictationRules`) is upgraded once, anything else is
+  untouched. Labels read Soniox V6; persisted engine ids are unchanged. Debug-only QA switches
+  (`QADefaultsKey`, QA builds only) force full meeting recovery or a Soniox async failure.
 - 2026-11-03: Released 2026-11-03 with meeting webhooks that work with MausBot automations (issue #20).
 - 2026-11-03: Meeting webhooks work with MausBot automations (issue #20): `Idempotency-Key` and
   `X-Webhook-Event` with one delivery id string, reserved header names, ignored/captured reply

@@ -5,6 +5,47 @@ Paper is the source of truth for look and flow:
 page. Take design values (copy, colours, spacing) from the Paper file, not from screenshots.
 Decisions and the alternatives they rule out are in [decisions.md](decisions.md).
 
+## Transcription
+
+Paper pages "Settings › Transcription" (Soniox V6 selected, the dictation model menu, spoken
+formatting commands notes) and "Meetings › Transcription" (Soniox V6 Cloud selected, the meeting
+engine menu). Issue #23.
+
+### Engines
+
+- Dictation engines: Parakeet (on-device), Qwen3-ASR 0.6B (on-device), Groq Whisper Turbo,
+  Soniox V6 (Real-time Cloud), OpenRouter Voice, Grok STT / xAI and Grok STT / xAI Streaming.
+- Meeting engines: Parakeet Unified (On-device), Soniox V6 (Cloud) and Grok Voice Transcribe 2.0
+  (Cloud).
+- Soniox dictation and both live meeting streams use `stt-rt-v6`. Saved model values that are
+  empty, `soniox-streaming` or `stt-rt-v3`/`v4`/`v5` run as `stt-rt-v6`; any other explicit value
+  is sent as is. Persisted engine ids (`soniox-streaming`, `soniox-separate`, `soniox`) never
+  change.
+- Every Soniox WebSocket sends the key in the `Authorization: Bearer` header. The start message
+  carries model, audio format, sample rate, channels, language hints, language identification,
+  endpointing, diarization and `context.terms`, never the key.
+- Meeting streams: the microphone is never diarized, the call side is. Both send the same
+  `context.terms`: the user and attendees first, then the user's vocabulary and spelling
+  correction targets, then the fixed meeting terms (case-insensitive duplicates removed, at most
+  100 terms of at most 50 characters).
+- When a Soniox meeting loses both live streams, recovery sends both retained tracks to
+  `stt-async-v6` with the same terms policy, evaluated once when recovery starts (live context is
+  not stored, so recovery does not replay the exact historic terms). If that fails, local
+  Parakeet recovery is used.
+
+### Spoken formatting commands
+
+- Applied by the default dictation cleanup rules whenever LLM cleanup runs, whatever the
+  transcription engine: "new line" (one line break), "new paragraph" (blank line), "period" or
+  "full stop", "comma", "question mark", "exclamation mark", and "scratch that".
+- "Scratch that" drops only the sentence spoken just before it in the same dictation, never
+  earlier dictations, selected text or anything else in the app.
+- Literal and quoted uses stay as words ("the trial period", "type the words new line").
+- Cleanup off, or cleanup failed: the words are inserted as spoken. Meeting transcripts and
+  notes never apply these commands. There is no local command parser.
+- A saved rules text that exactly matches an earlier default is upgraded to the new default once.
+  Edited rules, prompt templates, header, footer and every other setting stay as saved.
+
 ## Meetings › Webhooks
 
 Paper page "Meetings › Webhooks": the webhook editor with a MausBot address pasted (new

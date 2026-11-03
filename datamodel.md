@@ -726,10 +726,12 @@ Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift ca
 | `simple.model.custom` | Array<String> | Custom OpenRouter model IDs |
 | `simple.voice.engine` | String | Selected transcription engine (`parakeetLocal`, `qwenLocal`, `groqStreaming`, `openrouterTranscription`, `xaiSpeechToText`, `xaiStreamingSpeechToText`, or `sonioxStreaming`) |
 | `transcription.openrouter.model` | String | Selected OpenRouter speech-to-text model ID |
-| `simple.dictation.settings` | Data | Dictation prompt settings |
+| `simple.dictation.settings` | Data | Dictation prompt settings. On load, rules that exactly match an earlier default are upgraded once to the current default and saved; any other rules text is left as is |
 | `simple.command.settings` | Data | Command prompt settings |
 | `simple.dictation.promptTemplates` | Data | Custom dictation prompt templates |
 | `simple.sidebar.selection` | String | Selected sidebar item |
+| `qa.meetings.forceFullRecovery` | Bool | Debug QA builds only (compiled out of Release): rebuild the whole meeting transcript from retained audio at Stop |
+| `qa.meetings.failSonioxAsyncRecovery` | Bool | Debug QA builds only (compiled out of Release): make Soniox async recovery fail so local recovery runs |
 | `meeting.transcription.engine` | String | Meeting transcription engine (`parakeet`, `soniox-separate`, or `xai-grok`; retired `soniox` reads as `soniox-separate`); defaults to local Parakeet when unset or unknown |
 | `meeting.userName` | String | The user's name for the microphone in transcripts, notes and exports; "You" when empty |
 | `meeting.speakers.localPass` | Bool | After a meeting whose call side has no live speaker labels (Parakeet), diarize the call audio on this Mac and label the call's speakers; defaults to true |

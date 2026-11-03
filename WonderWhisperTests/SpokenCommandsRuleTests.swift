@@ -36,7 +36,7 @@ struct SpokenCommandsRuleTests {
     #expect(section.contains(line))
 
     for command in [
-      "\"new line\" → line break", "\"new paragraph\" → blank line",
+      "\"new line\" → one line break with no blank line", "\"new paragraph\" → a blank line",
       "\"period\" or \"full stop\" → \".\"", "\"comma\" → \",\"",
       "\"question mark\" → \"?\"", "\"exclamation mark\" → \"!\""
     ] {

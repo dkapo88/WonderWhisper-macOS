@@ -3,6 +3,19 @@
 Product and technical decisions, newest first, with what they rule out. The behaviour itself is
 in [spec.md](spec.md).
 
+## 2026-11-04: Soniox STT v6 for dictation and meetings (issue #23)
+
+| Choice | Rejected | Why |
+|---|---|---|
+| Switch to v6 now | Wait for the 15 Dec 2026 auto-route | We see the format changes in testing rather than in users' dictation. |
+| Spoken commands applied by the cleanup rules | A local parser on the transcript | Telling a command from a literal word ("trial period") needs context; a parser would misfire. |
+| Raw output stays verbatim | Applying commands without cleanup | Raw mode promises the words as heard. |
+| Upgrade only exact previous defaults | Overwrite all saved rules, or never upgrade | Keeps every customisation while unedited installs get the new rule. |
+| Auth header fix in this issue | A separate issue | Same file and the same live sessions to test; deadline 15 Jan 2027. |
+| Key in the header only, no `api_key` in the start message | Send both during the transition | A live v6 session confirmed the header alone authenticates, and a wrong header key is refused. |
+| Agent features unused | Turning on agent text input | They need the agent's own reply text, which dictation and meetings do not have. |
+| Recovery terms rebuilt at recovery time from the session's names | Persist the live terms with the session | Same builder policy as the live streams without a new stored field; names, the main win, come from the session either way. |
+
 ## 2026-11-03: Meeting webhooks for MausBot automations (issue #20)
 
 | Choice | Rejected | Why |
