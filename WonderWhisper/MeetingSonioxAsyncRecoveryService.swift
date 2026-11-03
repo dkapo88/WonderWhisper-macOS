@@ -157,6 +157,9 @@ actor MeetingSonioxAsyncRecoveryService {
     )
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
+    let summary = "model=\(Self.asyncModel) terms=\(request.terms.count) "
+      + "participants=\(participantNames.count)"
+    AppLog.dictation.log("MeetingTranscriptRecovery: Soniox async \(summary, privacy: .public)")
     async let microphoneTokens = recover(
       source: .microphone,
       segments: segments[.microphone] ?? [],
