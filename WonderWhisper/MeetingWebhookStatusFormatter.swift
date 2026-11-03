@@ -4,6 +4,9 @@ import Foundation
 enum MeetingWebhookStatusFormatter {
   static func text(for record: MeetingWebhookDeliveryRecord, now: Date = Date()) -> String {
     let name = record.endpointName
+    if record.state == .delivered, let notice = receiverNotice(for: record) {
+      return notice
+    }
     guard record.isPartOfSplit, let index = record.partIndex, let total = record.partTotal else {
       switch record.state {
       case .queued:
@@ -39,8 +42,24 @@ enum MeetingWebhookStatusFormatter {
     }
   }
 
-  /// "Queued for Grok Bot (behind 1 note)", "Queued for Grok Bot (next in 25s)", or for a
-  /// later part waiting out the delay between parts "Sending Grok Bot part 3 of 5 (next in 7s)".
+  /// The receiver accepted the request but did not act on it: its event filter ignored the
+  /// event, or its automation is off and it only saved the request as a setup check. Nil for an
+  /// ordinary delivery (a duplicate counts as ordinary).
+  static func receiverNotice(for record: MeetingWebhookDeliveryRecord) -> String? {
+    let name = record.endpointName
+    switch record.receiverOutcome {
+    case .ignored:
+      return "Reached \(name), but it ignored this event type"
+    case .captured:
+      return "Reached \(name). Its automation is off, so it saved this as a setup check only"
+    case .duplicate, nil:
+      return nil
+    }
+  }
+
+  /// "Queued for Notes Bot (behind 1 note)", "Queued for Notes Bot (next in 25s)", or for a
+  /// later part waiting out the delay between parts "Sending Notes Bot part 3 of 5 (next in
+  /// 7s)".
   private static func queuedText(for record: MeetingWebhookDeliveryRecord, now: Date) -> String {
     let name = record.endpointName
     if record.isRateLimitWait == true, let until = record.nextAttemptAt {
@@ -116,13 +135,18 @@ enum MeetingWebhookStatusFormatter {
   }
 
   /// The record that best describes one send's progress: the first part (by index) whose
-  /// newest record is not delivered, or the last part when every part was delivered.
+  /// newest record is not delivered; once every part was delivered, the first part the receiver
+  /// ignored, else the first it only captured as a setup check, else the last part. So one
+  /// ignored or captured part shows on the send's status.
   static func representative(
     of parts: [MeetingWebhookDeliveryRecord]
   ) -> MeetingWebhookDeliveryRecord? {
     let newest = newestPerPart(parts)
     let ordered = newest.keys.sorted().compactMap { newest[$0] }
-    return ordered.first { $0.state != .delivered } ?? ordered.last
+    if let pending = ordered.first(where: { $0.state != .delivered }) { return pending }
+    return ordered.first { $0.receiverOutcome == .ignored }
+      ?? ordered.first { $0.receiverOutcome == .captured }
+      ?? ordered.last
   }
 
   /// The newest record for each part index (unsplit records count as part 1). A partial

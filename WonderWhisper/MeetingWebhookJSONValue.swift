@@ -72,6 +72,59 @@ indirect enum MeetingWebhookJSONValue: Sendable {
     output += "\""
   }
 
+  // MARK: - Length as JavaScript formats it
+
+  /// The length of `JSON.stringify(JSON.parse(body), null, 2)` in JavaScript: re-indented with
+  /// 2 spaces and `": "` after keys, counted in UTF-16 code units. MausBot shows its automation
+  /// the payload in this form and cuts it at 48,000. Keys here are never integer-like, so
+  /// JavaScript keeps their order.
+  var javaScriptFormattedLength: Int {
+    formattedLength(depth: 0)
+  }
+
+  private func formattedLength(depth: Int) -> Int {
+    switch self {
+    case let .string(value):
+      return Self.javaScriptStringLength(value)
+    case let .int(value):
+      return String(value).utf16.count
+    case .null:
+      return 4
+    case let .array(elements):
+      guard !elements.isEmpty else { return 2 }
+      // "[" then each element on its own line indented one level deeper, "," between, then
+      // a newline, the closing indent and "]".
+      let inner = elements.reduce(0) { total, element in
+        total + 1 + 2 * (depth + 1) + element.formattedLength(depth: depth + 1)
+      }
+      return 1 + inner + (elements.count - 1) + 1 + 2 * depth + 1
+    case let .object(members):
+      guard !members.isEmpty else { return 2 }
+      let inner = members.reduce(0) { total, member in
+        total + 1 + 2 * (depth + 1) + Self.javaScriptStringLength(member.key) + 2
+          + member.value.formattedLength(depth: depth + 1)
+      }
+      return 1 + inner + (members.count - 1) + 1 + 2 * depth + 1
+    }
+  }
+
+  /// UTF-16 code units of `value` as `JSON.stringify` writes it, quotes included.
+  static func javaScriptStringLength(_ value: String) -> Int {
+    value.unicodeScalars.reduce(2) { $0 + javaScriptEscapedLength(of: $1) }
+  }
+
+  /// UTF-16 code units `scalar` takes once `JSON.stringify` escapes it: two for the short
+  /// escapes, six for other control characters, else its UTF-16 width (JavaScript does not
+  /// escape "/" or non-ASCII).
+  static func javaScriptEscapedLength(of scalar: Unicode.Scalar) -> Int {
+    switch scalar {
+    case "\"", "\\", "\n", "\r", "\t", "\u{08}", "\u{0C}":
+      return 2
+    default:
+      return scalar.value < 0x20 ? 6 : UTF16.width(scalar)
+    }
+  }
+
   /// UTF-8 bytes `scalar` takes once escaped inside a JSON string.
   static func escapedByteCount(of scalar: Unicode.Scalar) -> Int {
     switch scalar {

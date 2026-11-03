@@ -15,7 +15,8 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
     var isInFlight: Bool { self == .queued || self == .sending || self == .retrying }
   }
 
-  /// The delivery ID, reused across retries (`X-WonderWhisper-Delivery`).
+  /// The delivery ID, reused across retries (`deliveryId`, `X-WonderWhisper-Delivery` and
+  /// `Idempotency-Key`).
   let id: UUID
   let endpointID: UUID
   var endpointName: String
@@ -56,6 +57,10 @@ struct MeetingWebhookDeliveryRecord: Codable, Identifiable, Equatable, Sendable 
   var content: MeetingWebhookContent?
   var maxBodyCharacters: Int?
   var chunkBudget: Int?
+  /// Delivered records: what the receiver's reply said (ignored, captured as a setup check, or
+  /// a duplicate), when it said one. Only the outcome, never the reply body. Nil in older
+  /// records and for an ordinary delivery.
+  var receiverOutcome: MeetingWebhookReceiverOutcome?
 
   /// Groups the parts of one send; an older record is its own send.
   var sendKey: UUID { sendID ?? id }

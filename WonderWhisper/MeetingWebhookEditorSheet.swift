@@ -4,22 +4,18 @@ import SwiftUI
 /// Add or edit one webhook endpoint: name, URL, enabled, what to send and whether to split it,
 /// signing secret and custom headers.
 /// Secret values are written to the Keychain on Save and are never shown in plain text.
+///
+/// Pasting a complete MausBot address moves its secret into a masked Authorization header
+/// draft at once (`MeetingWebhookEditorDraft`); it reaches the Keychain only on Save.
 struct MeetingWebhookEditorSheet: View {
-  private struct HeaderDraft: Identifiable, Equatable {
-    let id = UUID()
-    var name: String
-    var value: String
-  }
-
   @ObservedObject var webhooks: MeetingWebhookCenter
   let isNew: Bool
   let onClose: () -> Void
 
-  @State private var endpoint: MeetingWebhookEndpoint
+  @State private var draft: MeetingWebhookEditorDraft
   @State private var secretDraft = ""
   @State private var clearsSecret = false
   @State private var generatedSecretCopied = false
-  @State private var headerDrafts: [HeaderDraft] = []
   /// The header set as read from the Keychain; nil when it could not be read.
   @State private var loadedHeaders: [String: String]? = [:]
   @State private var errorMessage: String?
@@ -33,20 +29,32 @@ struct MeetingWebhookEditorSheet: View {
     self.webhooks = webhooks
     self.isNew = endpoint == nil
     self.onClose = onClose
-    _endpoint = State(initialValue: endpoint ?? MeetingWebhookEndpoint())
+    _draft = State(initialValue: MeetingWebhookEditorDraft(
+      endpoint: endpoint ?? MeetingWebhookEndpoint(),
+      isNew: endpoint == nil
+    ))
   }
+
+  private var endpoint: MeetingWebhookEndpoint { draft.endpoint }
 
   var body: some View {
     VStack(spacing: 0) {
       Form {
         Section {
-          TextField("Name", text: $endpoint.name, prompt: Text("Grok Bot"))
-          TextField("URL", text: $endpoint.url, prompt: Text("https://example.com/hook"))
-          if let message = urlMessage {
-            StatusBadge(.warning, message)
-              .font(.footnote)
+          TextField("Name", text: $draft.endpoint.name, prompt: Text("MausBot"))
+          VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxSmall) {
+            TextField("URL", text: $draft.endpoint.url, prompt: Text("https://example.com/hook"))
+              .onChange(of: draft.endpoint.url) { _, _ in draft.urlChanged() }
+            if let message = urlMessage {
+              StatusBadge(.warning, message)
+                .font(.footnote)
+            } else if draft.showsMausBotBadge {
+              StatusBadge(.ok, Self.mausBotBadgeText)
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            }
           }
-          Toggle("Enabled", isOn: $endpoint.isEnabled)
+          Toggle("Enabled", isOn: $draft.endpoint.isEnabled)
         } header: {
           Text(isNew ? "New webhook" : "Edit webhook")
         }
@@ -80,34 +88,43 @@ struct MeetingWebhookEditorSheet: View {
 
   private var deliverySection: some View {
     Section {
-      Picker("Send", selection: $endpoint.content) {
+      Picker("Send", selection: $draft.endpoint.content) {
         ForEach(MeetingWebhookContent.allCases, id: \.self) { content in
           Text(content.label).tag(content)
         }
       }
-      Toggle("Split into multiple webhooks", isOn: $endpoint.splitIntoParts)
+      Toggle("Split into multiple webhooks", isOn: $draft.endpoint.splitIntoParts)
       if endpoint.splitIntoParts {
         TextField(
-          "Max body size (characters)",
-          value: $endpoint.maxBodyCharacters,
+          "Max body size (bytes)",
+          value: $draft.endpoint.maxBodyCharacters,
           format: .number.grouping(.never)
         )
         TextField(
           "Delay between parts (seconds)",
-          value: $endpoint.partDelaySeconds,
+          value: $draft.endpoint.partDelaySeconds,
           format: .number.grouping(.never)
         )
         TextField(
           "Delay between notes (seconds)",
-          value: $endpoint.noteDelaySeconds,
+          value: $draft.endpoint.noteDelaySeconds,
           format: .number.grouping(.never)
         )
       }
     } header: {
       Text("Delivery")
     } footer: {
-      Text(deliveryFootnote)
-        .settingsFootnote()
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxSmall) {
+        if draft.showsMausBotDefaults {
+          Text(Self.mausBotDefaultsText)
+            .font(.footnote)
+            .fontWeight(.medium)
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Text(deliveryFootnote)
+          .settingsFootnote()
+      }
     }
   }
 
@@ -173,35 +190,44 @@ struct MeetingWebhookEditorSheet: View {
 
   private var headersSection: some View {
     Section {
-      ForEach($headerDrafts) { $header in
-        HStack(spacing: DesignTokens.Spacing.xSmall) {
-          TextField("Header", text: $header.name, prompt: Text("Authorization"))
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 170)
-          SecureField("Value", text: $header.value, prompt: Text("Value"))
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-          Button {
-            headerDrafts.removeAll { $0.id == header.id }
-          } label: {
-            Image(systemName: "minus.circle")
+      ForEach($draft.headers) { $header in
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxSmall) {
+          HStack(spacing: DesignTokens.Spacing.xSmall) {
+            TextField("Header", text: $header.name, prompt: Text("Authorization"))
+              .labelsHidden()
+              .textFieldStyle(.roundedBorder)
+              .frame(width: 170)
+            SecureField("Value", text: $header.value, prompt: Text("Value"))
+              .labelsHidden()
+              .textFieldStyle(.roundedBorder)
+            Button {
+              draft.headers.removeAll { $0.id == header.id }
+            } label: {
+              Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Remove header \(header.name)")
           }
-          .buttonStyle(.borderless)
-          .accessibilityLabel("Remove header \(header.name)")
+          // A saved header whose name is now reserved is not sent; say so.
+          if let message = MeetingWebhookCenter.reservedHeaderMessage(
+            header.name,
+            forMausBot: draft.isMausBotURL
+          ) {
+            StatusBadge(.warning, message + " It is not sent.")
+              .font(.footnote)
+          }
         }
       }
       HStack {
         Spacer()
         Button("Add Header") {
-          headerDrafts.append(HeaderDraft(name: "", value: ""))
+          draft.headers.append(MeetingWebhookEditorDraft.Header(name: "", value: ""))
         }
       }
     } header: {
       Text("Custom headers")
     } footer: {
-      Text("Header values are stored in the Keychain. Content-Type and X-WonderWhisper-* "
-        + "headers can't be overridden.")
+      Text(Self.headersFootnote)
         .settingsFootnote()
     }
   }
@@ -225,6 +251,20 @@ struct MeetingWebhookEditorSheet: View {
     }
   }
 
+  // MARK: - Copy
+
+  static let mausBotBadgeText = "MausBot address recognised. Its secret moves to the "
+    + "Authorization header below and is saved in Keychain on Save."
+
+  static let mausBotDefaultsText = "MausBot settings applied: the full note in parts of up to "
+    + "40,000 bytes, 30 seconds apart, so MausBot reads every part in full. You can change "
+    + "them."
+
+  static let headersFootnote = "Header values are stored in the Keychain. Content-Type, "
+    + "Idempotency-Key, X-Webhook-Event and X-WonderWhisper-* headers can't be overridden. For "
+    + "a MausBot address, X-GitHub-Event, X-Event-Type, CE-Type, X-Webhook-Id and Webhook-Id "
+    + "can't be added either."
+
   // MARK: - Actions
 
   private var urlMessage: String? {
@@ -238,9 +278,9 @@ struct MeetingWebhookEditorSheet: View {
     do {
       let headers = try webhooks.headers(for: endpoint.id)
       loadedHeaders = headers
-      headerDrafts = headers
+      draft.headers = headers
         .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-        .map { HeaderDraft(name: $0.key, value: $0.value) }
+        .map { MeetingWebhookEditorDraft.Header(name: $0.key, value: $0.value) }
     } catch {
       // Leave the stored headers alone: saving only replaces them if the user edits them.
       loadedHeaders = nil
@@ -262,20 +302,13 @@ struct MeetingWebhookEditorSheet: View {
   }
 
   private func save() {
-    var headers: [String: String] = [:]
-    for draft in headerDrafts {
-      let name = draft.name.trimmingCharacters(in: .whitespaces)
-      let value = draft.value.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !name.isEmpty || !value.isEmpty else { continue }
-      guard !name.isEmpty else {
-        errorMessage = "Every header value needs a header name."
-        return
-      }
-      guard !value.isEmpty else {
-        errorMessage = "Header \(name) needs a value."
-        return
-      }
-      headers[name] = value
+    let headers: [String: String]
+    switch draft.editedHeaders() {
+    case let .success(edited):
+      headers = edited
+    case let .failure(error):
+      errorMessage = error.message
+      return
     }
     let secret: String?
     if !secretDraft.isEmpty {
@@ -285,6 +318,7 @@ struct MeetingWebhookEditorSheet: View {
     } else {
       secret = nil
     }
+    var endpoint = draft.endpoint
     endpoint.maxBodyCharacters = MeetingWebhookEndpoint.clampedMaxBody(
       endpoint.maxBodyCharacters
     )
@@ -296,6 +330,7 @@ struct MeetingWebhookEditorSheet: View {
       endpoint.noteDelaySeconds,
       to: MeetingWebhookEndpoint.noteDelaySecondsRange
     )
+    draft.endpoint = endpoint
     let headersToSave = Self.headersToSave(
       loaded: loadedHeaders,
       edited: headers,

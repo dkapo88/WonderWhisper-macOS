@@ -6,12 +6,27 @@ enum MeetingWebhookRequestBuilder {
   static let deliveryHeader = "X-WonderWhisper-Delivery"
   static let timestampHeader = "X-WonderWhisper-Timestamp"
   static let signatureHeader = "X-WonderWhisper-Signature"
+  /// The delivery ID again, under the name MausBot and most receivers use for duplicates.
+  static let idempotencyHeader = "Idempotency-Key"
+  /// The event again, under a name MausBot's event filter reads.
+  static let webhookEventHeader = "X-Webhook-Event"
   static let reservedPrefix = "x-wonderwhisper-"
 
-  /// Custom headers may not replace `Content-Type` or any `X-WonderWhisper-*` header.
-  static func isReservedHeader(_ name: String) -> Bool {
+  /// Custom headers may not replace `Content-Type`, `Idempotency-Key`, `X-Webhook-Event` or
+  /// any `X-WonderWhisper-*` header (any case). For a MausBot address (`forMausBot`) they also
+  /// may not set the other names MausBot reads as the event type or delivery ID.
+  static func isReservedHeader(_ name: String, forMausBot: Bool = false) -> Bool {
     let lowered = name.trimmingCharacters(in: .whitespaces).lowercased()
-    return lowered == "content-type" || lowered.hasPrefix(reservedPrefix)
+    if lowered.hasPrefix(reservedPrefix)
+        || MeetingWebhookMausBotAddress.alwaysReservedHeaders.contains(lowered) {
+      return true
+    }
+    return forMausBot && MeetingWebhookMausBotAddress.mausBotReservedHeaders.contains(lowered)
+  }
+
+  /// The delivery ID as sent in the body's `deliveryId` and in both delivery headers.
+  static func deliveryIDString(_ id: UUID) -> String {
+    id.uuidString
   }
 
   /// A header name must be a non-empty HTTP token.
@@ -30,12 +45,16 @@ enum MeetingWebhookRequestBuilder {
     body: Data,
     signingSecret: String?,
     userAgent: String,
-    customHeaders: [String: String]
+    customHeaders: [String: String],
+    forMausBot: Bool = false
   ) -> [String: String] {
     var headers: [String: String] = ["User-Agent": userAgent]
     for (name, value) in customHeaders.sorted(by: { $0.key < $1.key }) {
       let trimmed = name.trimmingCharacters(in: .whitespaces)
-      guard isValidHeaderName(trimmed), !isReservedHeader(trimmed) else { continue }
+      // A saved header that is now reserved is never sent (the editor flags it).
+      guard isValidHeaderName(trimmed), !isReservedHeader(trimmed, forMausBot: forMausBot) else {
+        continue
+      }
       // Case-insensitive replacement, so a custom User-Agent wins over the default.
       if let existing = headers.keys.first(where: { $0.lowercased() == trimmed.lowercased() }) {
         headers.removeValue(forKey: existing)
@@ -44,7 +63,10 @@ enum MeetingWebhookRequestBuilder {
     }
     headers["Content-Type"] = "application/json"
     headers[eventHeader] = event.rawValue
-    headers[deliveryHeader] = deliveryID.uuidString.lowercased()
+    headers[webhookEventHeader] = event.rawValue
+    let delivery = deliveryIDString(deliveryID)
+    headers[deliveryHeader] = delivery
+    headers[idempotencyHeader] = delivery
     headers[timestampHeader] = String(timestamp)
     if let signingSecret, !signingSecret.isEmpty {
       headers[signatureHeader] = MeetingWebhookSigner.signature(
@@ -73,7 +95,8 @@ enum MeetingWebhookRequestBuilder {
       body: job.body,
       signingSecret: job.signingSecret,
       userAgent: job.userAgent,
-      customHeaders: job.customHeaders
+      customHeaders: job.customHeaders,
+      forMausBot: MeetingWebhookMausBotAddress.matches(job.url.absoluteString)
     )
     for (name, value) in headers {
       request.setValue(value, forHTTPHeaderField: name)
