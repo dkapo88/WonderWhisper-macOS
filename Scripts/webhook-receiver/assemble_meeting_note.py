@@ -106,6 +106,12 @@ def parse(payload):
             or not isinstance(note.get("id"), str) or not isinstance(note.get("markdown"), str)):
         raise Outcome("invalid", "Not a WonderWhisper meeting note payload (schemaVersion 1).")
     markdown = note["markdown"]
+    try:
+        markdown.encode("utf-8")
+    except UnicodeEncodeError:
+        # An unpaired surrogate escape, for example half of a copied emoji.
+        raise Outcome("mismatch", "The note's Markdown is not valid Unicode, so it was copied "
+                      "wrongly; copy the payload again.")
     part = payload.get("part")
     if part is None:
         send_id = payload.get("sendId") or delivery_id
@@ -135,6 +141,8 @@ def parse(payload):
                               "copy the payload again.", index=index, total=total)
     if not isinstance(send_id, str) or not SEND_ID.match(send_id):
         raise Outcome("invalid", "sendId is not a safe identifier.")
+    if not SEND_ID.match(note["id"]):
+        raise Outcome("invalid", "note.id is not a safe identifier.")
     return {
         "event": event,
         "sendId": send_id,
@@ -273,6 +281,9 @@ def run(store, payload_path):
     except OSError as error:
         result["status"] = "invalid"
         result["message"] = f"Could not use the store: {error.strerror}."
+    except (UnicodeError, ValueError) as error:
+        result["status"] = "invalid"
+        result["message"] = f"The payload could not be used: {type(error).__name__}."
     ordered = {"status": result.pop("status")}
     ordered.update(result)
     return ordered

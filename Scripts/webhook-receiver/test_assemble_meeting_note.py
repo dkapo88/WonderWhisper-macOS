@@ -174,6 +174,13 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(self.deliver(None, raw=b'{"event": "meeting.note')["status"],
                          "mismatch")
 
+    def test_an_unpaired_surrogate_is_a_mismatch(self):
+        payload = split_payloads(["a"])[0]
+        raw = json.dumps(payload).replace('"markdown": "a', '"markdown": "\\ud83d')
+        result = self.deliver(None, raw=raw.encode("utf-8"))
+        self.assertEqual(result["status"], "mismatch")
+        self.assertEqual(self.snapshot(), {})
+
     def test_parts_without_a_checksum_still_assemble(self):
         for payload in split_payloads(CHUNKS, with_sha=False):
             result = self.deliver(payload)

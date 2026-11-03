@@ -134,18 +134,21 @@ enum MeetingWebhookStatusFormatter {
     return representative(of: records.filter { $0.sendKey == newest.sendKey })
   }
 
-  /// The record that best describes one send's progress: the first part (by index) whose
-  /// newest record is not delivered; once every part was delivered, the first part the receiver
-  /// ignored, else the first it only captured as a setup check, else the last part. So one
-  /// ignored or captured part shows on the send's status.
+  /// The record that best describes one send, from the newest record of every part (by index):
+  /// while a part is still queued, sending or retrying, the first such part (the send's
+  /// progress); then the first part the receiver ignored, else the first it only captured as a
+  /// setup check, so one such part shows on the send's status even when another part failed
+  /// (the reason is usually the same: a receiver that ignores or parks the event); then the
+  /// first failed part; else the last part.
   static func representative(
     of parts: [MeetingWebhookDeliveryRecord]
   ) -> MeetingWebhookDeliveryRecord? {
     let newest = newestPerPart(parts)
     let ordered = newest.keys.sorted().compactMap { newest[$0] }
-    if let pending = ordered.first(where: { $0.state != .delivered }) { return pending }
-    return ordered.first { $0.receiverOutcome == .ignored }
-      ?? ordered.first { $0.receiverOutcome == .captured }
+    if let pending = ordered.first(where: { $0.state.isInFlight }) { return pending }
+    return ordered.first { $0.state == .delivered && $0.receiverOutcome == .ignored }
+      ?? ordered.first { $0.state == .delivered && $0.receiverOutcome == .captured }
+      ?? ordered.first { $0.state == .failed }
       ?? ordered.last
   }
 

@@ -46,13 +46,23 @@ final class MeetingWebhookURLSessionTransport: NSObject, MeetingWebhookTransport
     private var continuation: CheckedContinuation<MeetingWebhookTransportResponse, Error>?
     private var response: HTTPURLResponse?
     private var body = Data()
-    private var finished = false
+    /// The outcome once known. Kept so a continuation registered after the task already
+    /// finished (cancelled before `start`) still resumes.
+    private var result: Result<MeetingWebhookTransportResponse, Error>?
 
     func start(
       _ task: URLSessionDataTask,
       continuation: CheckedContinuation<MeetingWebhookTransportResponse, Error>
     ) {
-      lock.withLock { self.continuation = continuation }
+      let earlier: Result<MeetingWebhookTransportResponse, Error>? = lock.withLock {
+        if let result { return result }
+        self.continuation = continuation
+        return nil
+      }
+      if let earlier {
+        continuation.resume(with: earlier)
+        return
+      }
       task.resume()
     }
 
@@ -126,16 +136,18 @@ final class MeetingWebhookURLSessionTransport: NSObject, MeetingWebhookTransport
       finish(.success(Self.result(response, outcome: outcome)))
     }
 
-    private func finish(_ result: Result<MeetingWebhookTransportResponse, Error>) {
+    /// Records the outcome once; resumes the caller now if it is already waiting, else when it
+    /// registers in `start`.
+    private func finish(_ outcome: Result<MeetingWebhookTransportResponse, Error>) {
       let continuation: CheckedContinuation<MeetingWebhookTransportResponse, Error>? =
         lock.withLock {
-          guard !finished else { return nil }
-          finished = true
+          guard result == nil else { return nil }
+          result = outcome
           body = Data()
           defer { self.continuation = nil }
           return self.continuation
         }
-      continuation?.resume(with: result)
+      continuation?.resume(with: outcome)
     }
 
     private static func result(

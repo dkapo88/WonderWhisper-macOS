@@ -522,6 +522,45 @@ struct MeetingWebhookMausBotTests {
       == jobs.count)
   }
 
+  @Test func aReceiverNoticeOutranksAFailedPartButNotProgress() throws {
+    let sendID = UUID()
+    func part(
+      _ index: Int,
+      _ state: MeetingWebhookDeliveryRecord.State,
+      _ outcome: MeetingWebhookReceiverOutcome? = nil
+    ) -> MeetingWebhookDeliveryRecord {
+      var record = MeetingWebhookDeliveryRecord(
+        id: UUID(), endpointID: UUID(), endpointName: "Notes Bot", noteID: UUID(),
+        noteTitle: "t", event: .noteCompleted, state: state, attempts: 1, maximumAttempts: 5,
+        lastStatusCode: state == .failed ? 409 : 202, lastError: nil,
+        createdAt: Self.fixedDate, updatedAt: Self.fixedDate, sendID: sendID, sendOrder: 1,
+        partIndex: index, partTotal: 3
+      )
+      record.receiverOutcome = outcome
+      return record
+    }
+    // Captured part 1, then the paused automation refuses part 2 (409): the setup-check
+    // notice explains it.
+    let captured = try #require(MeetingWebhookStatusFormatter.representative(
+      of: [part(1, .delivered, .captured), part(2, .failed), part(3, .failed)]
+    ))
+    #expect(captured.partIndex == 1)
+    #expect(MeetingWebhookStatusFormatter.text(for: captured, now: Self.fixedDate)
+      == "Reached Notes Bot. Its automation is off, so it saved this as a setup check only")
+    // Ignored outranks captured.
+    #expect(MeetingWebhookStatusFormatter.representative(
+      of: [part(1, .delivered, .captured), part(2, .delivered, .ignored), part(3, .delivered)]
+    )?.partIndex == 2)
+    // While a part is still on its way, the row shows progress.
+    #expect(MeetingWebhookStatusFormatter.representative(
+      of: [part(1, .delivered, .ignored), part(2, .retrying), part(3, .queued)]
+    )?.partIndex == 2)
+    // Without a notice a failed part still speaks for the send.
+    #expect(MeetingWebhookStatusFormatter.representative(
+      of: [part(1, .delivered), part(2, .failed), part(3, .failed)]
+    )?.partIndex == 2)
+  }
+
   @Test func recordsNeverHoldTheReplyBody() throws {
     var record = MeetingWebhookDeliveryRecord(
       id: UUID(), endpointID: UUID(), endpointName: "Notes Bot", noteID: UUID(),
@@ -559,6 +598,21 @@ struct MeetingWebhookMausBotTests {
       let response = try await transport.send(request)
       #expect(response.statusCode == status)
       #expect(response.receiverOutcome == outcome)
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aSendCancelledBeforeItStartsFinishes() async throws {
+    let transport = StubWebhookURLProtocol.transport(
+      .init(status: 202, body: Data(#"{"accepted":true}"#.utf8))
+    )
+    var request = URLRequest(url: try #require(URL(string: "https://stub.example/hook")))
+    request.httpMethod = "POST"
+    for _ in 0..<20 {
+      let task = Task { try await transport.send(request) }
+      task.cancel()
+      // Must end (cancelled, or delivered if the stub was faster), never hang.
+      _ = await task.result
     }
   }
 
