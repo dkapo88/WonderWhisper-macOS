@@ -383,6 +383,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-03: Released 2026-11-03 with meeting webhooks that work with MausBot automations (issue #20).
 - 2026-11-03: Meeting webhooks work with MausBot automations (issue #20): `Idempotency-Key` and
   `X-Webhook-Event` with one delivery id string, reserved header names, ignored/captured reply
   statuses from at most 4 KB of a 2xx reply, the 48,000-character formatted-length guard,
