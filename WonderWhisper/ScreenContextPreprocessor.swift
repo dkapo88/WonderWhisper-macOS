@@ -43,7 +43,7 @@ final class ScreenContextPreprocessor {
       "OpenRouter",
       "OpenRouter Voice",
       "Soniox",
-      "Soniox V5",
+      "Soniox V6",
       "Parakeet",
       "Parakeet V3",
       "Groq",

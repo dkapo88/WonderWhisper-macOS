@@ -406,8 +406,10 @@ actor MeetingTranscriptionService {
 
   private func prepareSeparateSoniox() async throws {
     // Only the call is split into speakers: everything on the microphone is the user.
-    let system = await makeSonioxProvider(source: .systemAudio, realtimeOptions: .remoteMeeting)
-    let microphone = await makeSonioxProvider(source: .microphone, realtimeOptions: .meeting)
+    // One terms snapshot for both streams, so both are biased towards the same context.
+    let terms = currentVocabularyTerms()
+    let system = await makeSonioxProvider(source: .systemAudio, terms: terms)
+    let microphone = await makeSonioxProvider(source: .microphone, terms: terms)
     sonioxProviders = [
       .systemAudio: system,
       .microphone: microphone
@@ -417,7 +419,7 @@ actor MeetingTranscriptionService {
       async let systemStart: Void = system.beginRealtime()
       async let microphoneStart: Void = microphone.beginRealtime()
       _ = try await (systemStart, microphoneStart)
-      AppLog.dictation.log("MeetingTranscription: two Soniox V5 streams accepting audio")
+      AppLog.dictation.log("MeetingTranscription: two Soniox V6 streams accepting audio")
     } catch {
       await system.abort()
       await microphone.abort()
@@ -458,23 +460,33 @@ actor MeetingTranscriptionService {
     )
   }
 
+  /// The live Soniox stream for one meeting source. Only the call side is diarized: everything
+  /// on the microphone is the user. `terms` go out verbatim as `context.terms`.
+  nonisolated static func sonioxStreamProvider(
+    source: MeetingAudioSource,
+    terms: [String],
+    apiKeyProvider: @escaping () -> String? = {
+      KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias)
+    },
+    languageProvider: @escaping () -> String? = {
+      AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
+    }
+  ) async -> SonioxStreamingProvider {
+    let provider = SonioxStreamingProvider(
+      apiKeyProvider: apiKeyProvider,
+      contextTerms: terms,
+      languageProvider: languageProvider,
+      realtimeOptions: source == .systemAudio ? .remoteMeeting : .meeting
+    )
+    await provider.setInputSampleRate(16_000)
+    return provider
+  }
+
   private func makeSonioxProvider(
     source: MeetingAudioSource,
-    realtimeOptions: SonioxStreamingProvider.RealtimeOptions
+    terms: [String]
   ) async -> SonioxStreamingProvider {
-    let terms = currentVocabularyTerms().joined(separator: ", ")
-    let provider = SonioxStreamingProvider(
-      apiKeyProvider: {
-        KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias)
-      },
-      vocabularyProvider: { terms },
-      languageProvider: {
-        AppConfig.defaults.string(forKey: "transcription.language") ?? "en"
-      },
-      realtimeOptions: realtimeOptions
-    )
-
-    await provider.setInputSampleRate(16_000)
+    let provider = await Self.sonioxStreamProvider(source: source, terms: terms)
     await provider.setOnFinalTokens { [weak self] tokens in
       await self?.emitSoniox(tokens, source: source)
     }

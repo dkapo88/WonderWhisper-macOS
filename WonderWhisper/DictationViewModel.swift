@@ -5800,7 +5800,8 @@ final class DictationViewModel: ObservableObject {
             let sonioxProvider = SonioxStreamingProvider(
                 apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias) },
                 vocabularyProvider: { [weak self] in self?.vocabCustom },
-                languageProvider: { [weak self] in self?.transcriptionLanguage }
+                languageProvider: { [weak self] in self?.transcriptionLanguage },
+                realtimeOptions: .dictation
             )
             // Wire up preview callback for live transcript overlay
             Task {
@@ -5852,7 +5853,7 @@ private struct PromptBootstrap {
     let activeUser: String
 }
 
-private enum SimpleDefaultsKey {
+enum SimpleDefaultsKey {
     static let dictationSettings = "simple.dictation.settings"
     static let commandSettings = "simple.command.settings"
     static let dictationPromptTemplates = "simple.dictation.promptTemplates"
@@ -5952,27 +5953,6 @@ private extension DictationViewModel {
                 errorMessage: error.localizedDescription
             )
         }
-    }
-
-    static func loadSimpleSettings(for kind: SimplePromptKind) -> SimplePromptSettings {
-        let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
-        if let data = AppConfig.defaults.data(forKey: key),
-           let decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
-            var sanitized = decoded
-            if sanitized.rules.isEmpty {
-                sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
-            }
-            sanitized.rules = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.rules)
-            if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
-            }
-            if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
-            }
-            sanitized.footer = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.footer)
-            return sanitized
-        }
-        return SimpleModeDefaults.settings(for: kind)
     }
 
     static func loadSimpleSelectedModel() -> String {
@@ -6244,5 +6224,41 @@ private extension DictationViewModel {
         }
         let fallback = transcriptionLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? "en" : fallback
+    }
+}
+
+extension DictationViewModel {
+    static func loadSimpleSettings(
+        for kind: SimplePromptKind,
+        defaults: UserDefaults = AppConfig.defaults
+    ) -> SimplePromptSettings {
+        let key: String = (kind == .dictation) ? SimpleDefaultsKey.dictationSettings : SimpleDefaultsKey.commandSettings
+        if let data = defaults.data(forKey: key),
+           var decoded = try? JSONDecoder().decode(SimplePromptSettings.self, from: data) {
+            // An unedited earlier default gains the new default rules once; the upgraded text
+            // is saved so it is not re-evaluated. Edited rules and every other field stay.
+            if kind == .dictation,
+               let upgraded = SimpleModeDefaults.upgradedDictationRules(decoded.rules) {
+                decoded.rules = upgraded
+                if let upgradedData = try? JSONEncoder().encode(decoded) {
+                    defaults.set(upgradedData, forKey: key)
+                }
+                AppLog.dictation.log("SimpleSettings: upgraded unedited default dictation rules")
+            }
+            var sanitized = decoded
+            if sanitized.rules.isEmpty {
+                sanitized.rules = SimpleModeDefaults.defaultRules(for: kind)
+            }
+            sanitized.rules = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.rules)
+            if sanitized.header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sanitized.header = SimpleModeDefaults.systemHeader(for: kind)
+            }
+            if sanitized.footer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sanitized.footer = SimpleModeDefaults.systemFooter(for: kind)
+            }
+            sanitized.footer = SimpleModeDefaults.migratingLegacyScreenContextTag(in: sanitized.footer)
+            return sanitized
+        }
+        return SimpleModeDefaults.settings(for: kind)
     }
 }

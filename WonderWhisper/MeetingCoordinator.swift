@@ -822,7 +822,14 @@ final class MeetingCoordinator: ObservableObject {
           ?? "Transcription finalization failed: \(error.localizedDescription)"
       }
     }
-    let forcedRecovery = forcedFullRecoverySources.removeValue(forKey: sessionID) ?? []
+    var forcedRecovery = forcedFullRecoverySources.removeValue(forKey: sessionID) ?? []
+    #if DEBUG
+    // QA only: rebuild the whole transcript from retained audio, as after a failed stream.
+    if AppConfig.isQABuild, AppConfig.defaults.bool(forKey: QADefaultsKey.forceFullRecovery) {
+      forcedRecovery.formUnion(MeetingAudioSource.captureSources)
+      AppLog.dictation.log("MeetingTranscriptRecovery: QA forced full recovery")
+    }
+    #endif
     let recoverySources = (await transcriber?.sourcesNeedingRecovery() ?? [])
       .union(forcedRecovery)
     let fullRecoverySources = (await transcriber?.sourcesNeedingFullRecovery() ?? [])
@@ -835,67 +842,65 @@ final class MeetingCoordinator: ObservableObject {
        !interruptedSession.audioFiles.isEmpty {
       do {
         let directory = try await store.directory(for: sessionID)
-        var output: (
-          tokens: [MeetingTranscriptToken],
-          sources: Set<MeetingAudioSource>,
-          method: String
-        )?
-        var asyncFallbackWarning: String?
-
-        if interruptedSession.transcriptionEngine?.usesSoniox == true,
-           fullRecoverySources.isSuperset(of: MeetingAudioSource.captureSources) {
-          do {
-            output = (
-              try await sonioxAsyncRecovery.recover(
-                sessionDirectory: directory,
-                audioFilenames: interruptedSession.audioFiles,
-                microphoneGate: MeetingMicrophoneGateSettings(session: interruptedSession)
-              ),
-              MeetingAudioSource.captureSources,
-              "with Soniox async diarization"
+        let recoverySession = interruptedSession
+        let sonioxAsyncRecovery = sonioxAsyncRecovery
+        let transcriptRecovery = transcriptRecovery
+        let microphoneGate = MeetingMicrophoneGateSettings(session: recoverySession)
+        let participantNames = Self.participantNames(
+          userName: MeetingSpeakerDirectory.currentUserName(),
+          attendees: recoverySession.attendees
+        )
+        let output = try await Self.recoverRetainedTranscript(
+          usesSoniox: recoverySession.transcriptionEngine?.usesSoniox == true,
+          fullRecoverySources: fullRecoverySources,
+          remote: {
+            #if DEBUG
+            if AppConfig.isQABuild,
+               AppConfig.defaults.bool(forKey: QADefaultsKey.failSonioxAsyncRecovery) {
+              throw MeetingSonioxAsyncRecoveryService.RecoveryError.failed(
+                "QA forced Soniox async recovery failure."
+              )
+            }
+            #endif
+            return try await sonioxAsyncRecovery.recover(
+              sessionDirectory: directory,
+              audioFilenames: recoverySession.audioFiles,
+              participantNames: participantNames,
+              microphoneGate: microphoneGate
             )
-          } catch {
-            let description = error.localizedDescription
-            asyncFallbackWarning = "Soniox async diarization failed; local recovery was used: "
-              + description
-            AppLog.dictation.error(
-              "MeetingTranscriptRecovery: Soniox async failed: \(description, privacy: .public)"
+          },
+          local: {
+            let result = try await transcriptRecovery.recover(
+              sessionDirectory: directory,
+              audioFilenames: recoverySession.audioFiles,
+              existingTokens: recoverySession.transcriptTokens,
+              sourcesNeedingRecovery: recoverySources,
+              fullRecoverySources: fullRecoverySources,
+              microphoneGate: microphoneGate
             )
+            return (result.tokens, result.recoveredSources)
           }
-        }
+        )
+        let asyncFallbackWarning = output.asyncFallbackWarning
 
-        if output == nil {
-          let result = try await transcriptRecovery.recover(
-            sessionDirectory: directory,
-            audioFilenames: interruptedSession.audioFiles,
-            existingTokens: interruptedSession.transcriptTokens,
-            sourcesNeedingRecovery: recoverySources,
-            fullRecoverySources: fullRecoverySources,
-            microphoneGate: MeetingMicrophoneGateSettings(session: interruptedSession)
+        interruptedSession.transcriptTokens = output.tokens
+        if interruptedSession.errorMessage?.hasPrefix("Live transcription warning:") == true {
+          interruptedSession.errorMessage = nil
+        }
+        replace(interruptedSession)
+        await persist(interruptedSession)
+        if output.sources.isSuperset(of: recoverySources) {
+          warning = asyncFallbackWarning
+          let recoveryResult = "restored \(output.sources.count) source(s) \(output.method)"
+          AppLog.dictation.log(
+            "MeetingTranscriptRecovery: \(recoveryResult, privacy: .public)"
           )
-          output = (result.tokens, result.recoveredSources, "locally")
-        }
-
-        if let output {
-          interruptedSession.transcriptTokens = output.tokens
-          if interruptedSession.errorMessage?.hasPrefix("Live transcription warning:") == true {
-            interruptedSession.errorMessage = nil
-          }
-          replace(interruptedSession)
-          await persist(interruptedSession)
-          if output.sources.isSuperset(of: recoverySources) {
-            warning = asyncFallbackWarning
-            let recoveryResult = "restored \(output.sources.count) source(s) \(output.method)"
-            AppLog.dictation.log(
-              "MeetingTranscriptRecovery: \(recoveryResult, privacy: .public)"
-            )
-          } else {
-            let missing = recoverySources.subtracting(output.sources)
-              .map(\.displayName)
-              .sorted()
-              .joined(separator: ", ")
-            warning = "Transcript recovery had no retained audio for: \(missing)."
-          }
+        } else {
+          let missing = recoverySources.subtracting(output.sources)
+            .map(\.displayName)
+            .sorted()
+            .joined(separator: ", ")
+          warning = "Transcript recovery had no retained audio for: \(missing)."
         }
       } catch {
         warning = "Transcript recovery failed: \(error.localizedDescription)"
@@ -1512,6 +1517,49 @@ final class MeetingCoordinator: ObservableObject {
         "MeetingSpeakerNames: suggestion failed: \(error.localizedDescription, privacy: .public)"
       )
     }
+  }
+
+  struct RecoveredTranscript {
+    let tokens: [MeetingTranscriptToken]
+    let sources: Set<MeetingAudioSource>
+    let method: String
+    /// Set when Soniox async recovery failed and local recovery was used instead.
+    let asyncFallbackWarning: String?
+  }
+
+  /// Rebuilds a transcript from retained audio. A Soniox meeting that lost both sources whole
+  /// tries Soniox async first; any failure there falls back to local recovery.
+  static func recoverRetainedTranscript(
+    usesSoniox: Bool,
+    fullRecoverySources: Set<MeetingAudioSource>,
+    remote: () async throws -> [MeetingTranscriptToken],
+    local: () async throws -> (tokens: [MeetingTranscriptToken], sources: Set<MeetingAudioSource>)
+  ) async throws -> RecoveredTranscript {
+    var asyncFallbackWarning: String?
+    if usesSoniox, fullRecoverySources.isSuperset(of: MeetingAudioSource.captureSources) {
+      do {
+        return RecoveredTranscript(
+          tokens: try await remote(),
+          sources: MeetingAudioSource.captureSources,
+          method: "with Soniox async diarization",
+          asyncFallbackWarning: nil
+        )
+      } catch {
+        let description = error.localizedDescription
+        asyncFallbackWarning = "Soniox async diarization failed; local recovery was used: "
+          + description
+        AppLog.dictation.error(
+          "MeetingTranscriptRecovery: Soniox async failed: \(description, privacy: .public)"
+        )
+      }
+    }
+    let result = try await local()
+    return RecoveredTranscript(
+      tokens: result.tokens,
+      sources: result.sources,
+      method: "locally",
+      asyncFallbackWarning: asyncFallbackWarning
+    )
   }
 
   /// The names cloud recognition is biased towards: the user, then the attendees.

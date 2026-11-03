@@ -14,7 +14,9 @@ struct SonioxRealtimeToken: Equatable, Sendable {
 /// Unlike batch providers, this streams audio in real-time and receives preview/final tokens continuously.
 ///
 /// Key behavior:
-/// - Connects to wss://stt-rt.soniox.com/transcribe-websocket
+/// - Connects to wss://stt-rt.soniox.com/transcribe-websocket with the key in the
+///   `Authorization: Bearer` header (Soniox refuses a key sent only in the start message
+///   from 15 January 2027)
 /// - Sends PCM16 audio as binary frames
 /// - Receives token-by-token results with is_final flag
 /// - On stop: finalizes immediately, then briefly waits for catch-up tokens
@@ -42,6 +44,9 @@ actor SonioxStreamingProvider: TranscriptionProvider {
       self.finalizationWaitMs = finalizationWaitMs
     }
 
+    /// Dictation: endpoint detection on, no diarization, short finalize wait.
+    static let dictation = RealtimeOptions()
+
     /// The microphone side of a meeting: always the user, so never diarized.
     static let meeting = RealtimeOptions(
       enableEndpointDetection: true,
@@ -61,7 +66,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     )
   }
 
-  private static let defaultRealtimeModel = "stt-rt-v5"
+  static let defaultRealtimeModel = "stt-rt-v6"
+  static let realtimeURL = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket")
   private static let verboseLoggingDefaultsKey = "soniox.debugMessages"
   private static let previewUpdateInterval: TimeInterval = 0.05
   private static let finalizeSilenceMs = 200
@@ -70,6 +76,9 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   private let apiKeyProvider: () -> String?
   private let vocabularyProvider: () -> String?
+  /// Exact context terms (meetings). When set, sent verbatim instead of splitting
+  /// `vocabularyProvider` on commas, so a term that contains a comma survives.
+  private let contextTerms: [String]?
   private let languageProvider: () -> String?
   private let realtimeOptions: RealtimeOptions
   private nonisolated let audioChunkSource = SonioxStreamingAudioChunkSource()
@@ -94,7 +103,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
   // Audio format - dynamically set based on actual input
   private var inputSampleRate: Double = 16_000 // Default to 16k, but will be updated
 
-  // Configuration - use the active V5 realtime model per Soniox documentation.
+  // Configuration - use the active V6 realtime model per Soniox documentation.
   private var currentModel: String = SonioxStreamingProvider.defaultRealtimeModel
 
   // Callback for live transcript updates
@@ -113,10 +122,12 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   init(apiKeyProvider: @escaping () -> String?,
        vocabularyProvider: @escaping () -> String? = { nil },
+       contextTerms: [String]? = nil,
        languageProvider: @escaping () -> String? = { nil },
        realtimeOptions: RealtimeOptions = RealtimeOptions()) {
     self.apiKeyProvider = apiKeyProvider
     self.vocabularyProvider = vocabularyProvider
+    self.contextTerms = contextTerms
     self.languageProvider = languageProvider
     self.realtimeOptions = realtimeOptions
   }
@@ -168,9 +179,10 @@ actor SonioxStreamingProvider: TranscriptionProvider {
 
   /// Begin a streaming transcription session
   func beginRealtime() async throws {
-    guard let apiKey = apiKeyProvider(), !apiKey.isEmpty else {
-      throw ProviderError.missingAPIKey
-    }
+    guard let rawKey = apiKeyProvider() else { throw ProviderError.missingAPIKey }
+    let apiKey = KeychainService.normalizedSecret(rawKey)
+    guard !apiKey.isEmpty else { throw ProviderError.missingAPIKey }
+    let start = try startRequest(apiKey: apiKey)
 
     // Clean up any existing session
     if isStreaming {
@@ -224,12 +236,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     self.sessionDelegate = delegate
     urlSession = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
 
-    // Connect to Soniox WebSocket
-    guard let url = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket") else {
-      throw ProviderError.invalidURL
-    }
-
-    webSocketTask = urlSession?.webSocketTask(with: url)
+    // Connect to Soniox WebSocket. The key travels in the Authorization header only.
+    webSocketTask = urlSession?.webSocketTask(with: start.request)
     guard let task = webSocketTask else {
       throw ProviderError.invalidURL
     }
@@ -249,7 +257,7 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     // the first words while URLSession opens the WebSocket.
     startupTask = Task { [weak self] in
       guard let self else { return }
-      await self.finishStartup(apiKey: apiKey, task: task, sessionID: sessionID)
+      await self.finishStartup(startMessage: start.message, task: task, sessionID: sessionID)
     }
     AppLog.dictation.log("SonioxStreaming: Session accepting audio while configuration completes")
   }
@@ -509,7 +517,8 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     if trimmed.isEmpty
       || normalized == "soniox-streaming"
       || normalized == "stt-rt-v3"
-      || normalized == "stt-rt-v4" {
+      || normalized == "stt-rt-v4"
+      || normalized == "stt-rt-v5" {
       return defaultRealtimeModel
     }
     return trimmed
@@ -589,9 +598,13 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     await onStreamError?(message)
   }
 
-  private func finishStartup(apiKey: String, task: URLSessionWebSocketTask, sessionID: UUID) async {
+  private func finishStartup(
+    startMessage: String,
+    task: URLSessionWebSocketTask,
+    sessionID: UUID
+  ) async {
     do {
-      try await sendConfiguration(apiKey: apiKey)
+      try await sendConfiguration(startMessage)
       guard isActiveSession(sessionID, task: task) else { return }
       if !isEnding {
         startKeepaliveTimer(for: task, sessionID: sessionID)
@@ -610,61 +623,87 @@ actor SonioxStreamingProvider: TranscriptionProvider {
     isStreaming && activeSessionID == sessionID && webSocketTask === task
   }
 
-  private func sendConfiguration(apiKey: String) async throws {
-    guard let task = webSocketTask else { return }
+  struct StartRequest {
+    /// The WebSocket upgrade request, with the key in the `Authorization` header.
+    let request: URLRequest
+    /// The JSON start message. It carries no key, so it is safe to log as is.
+    let message: String
+  }
 
-    // Build configuration per Soniox WebSocket API docs
+  /// The connection request and start message this provider sends for its next session.
+  /// `beginRealtime` sends exactly this, so tests can inspect what goes on the wire.
+  func startRequest(apiKey: String) throws -> StartRequest {
+    let request = try Self.connectionRequest(apiKey: apiKey)
+    let config = Self.startConfiguration(
+      model: currentModel,
+      sampleRate: inputSampleRate,
+      language: languageProvider(),
+      options: realtimeOptions,
+      terms: contextTerms ?? Self.terms(fromCommaSeparated: vocabularyProvider())
+    )
+    guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
+          let message = String(data: data, encoding: .utf8) else {
+      throw ProviderError.decodingFailed
+    }
+    return StartRequest(request: request, message: message)
+  }
+
+  nonisolated static func connectionRequest(apiKey: String) throws -> URLRequest {
+    guard let realtimeURL else { throw ProviderError.invalidURL }
+    var request = URLRequest(url: realtimeURL)
+    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    return request
+  }
+
+  nonisolated static func terms(fromCommaSeparated vocabulary: String?) -> [String] {
+    (vocabulary ?? "")
+      .components(separatedBy: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  /// The start message per the Soniox WebSocket API docs. The key is not part of it.
+  nonisolated static func startConfiguration(
+    model: String,
+    sampleRate: Double,
+    language rawLanguage: String?,
+    options: RealtimeOptions,
+    terms: [String]
+  ) -> [String: Any] {
     var config: [String: Any] = [
-      "api_key": apiKey,
-      "model": currentModel,
+      "model": model,
       "audio_format": "pcm_s16le",  // 16-bit signed little-endian PCM
-      "sample_rate": Int(inputSampleRate),  // Use actual input sample rate!
+      "sample_rate": Int(sampleRate),  // Use actual input sample rate!
       "num_channels": 1  // Mono audio (not num_audio_channels)
     ]
 
     // Add language hints if available. Leave hints unset for explicit auto-detect mode.
-    let language = languageProvider()?
+    let language = rawLanguage?
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
     if let language, !language.isEmpty, language != "auto" {
       // Soniox expects an array of language codes
       config["language_hints"] = [language]
-      // Also enable language identification to be robust
-      config["enable_language_identification"] = true
-    } else {
-      // Enable ID to support auto-switching if user speaks something else (model supports it)
-      config["enable_language_identification"] = true
     }
-    
-    config["enable_endpoint_detection"] = realtimeOptions.enableEndpointDetection
-    if let maxEndpointDelayMs = realtimeOptions.maxEndpointDelayMs {
+    // Language identification stays on in both cases so a switch of language is followed.
+    config["enable_language_identification"] = true
+
+    config["enable_endpoint_detection"] = options.enableEndpointDetection
+    if let maxEndpointDelayMs = options.maxEndpointDelayMs {
       config["max_endpoint_delay_ms"] = maxEndpointDelayMs
     }
-    config["enable_speaker_diarization"] = realtimeOptions.enableSpeakerDiarization
+    config["enable_speaker_diarization"] = options.enableSpeakerDiarization
 
-    // Add vocabulary terms as context
-    if let vocab = vocabularyProvider(), !vocab.isEmpty {
-      // Parse comma-separated vocabulary into array of terms
-      let terms = vocab
-        .components(separatedBy: ",")
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-
-      if !terms.isEmpty {
-        config["context"] = ["terms": terms]
-      }
+    if !terms.isEmpty {
+      config["context"] = ["terms": terms]
     }
+    return config
+  }
 
-    guard let data = try? JSONSerialization.data(withJSONObject: config),
-          let jsonString = String(data: data, encoding: .utf8) else {
-      throw ProviderError.decodingFailed
-    }
+  private func sendConfiguration(_ jsonString: String) async throws {
+    guard let task = webSocketTask else { return }
 
-    var diagnosticConfig = config
-    diagnosticConfig["api_key"] = "<redacted>"
-    let diagnosticData = try? JSONSerialization.data(withJSONObject: diagnosticConfig)
-    let diagnosticString = diagnosticData.flatMap { String(data: $0, encoding: .utf8) } ?? "<unavailable>"
-    AppLog.dictation.log("SonioxStreaming: Sending config: \(diagnosticString, privacy: .public)")
+    AppLog.dictation.log("SonioxStreaming: Sending config: \(jsonString, privacy: .public)")
     let message = URLSessionWebSocketTask.Message.string(jsonString)
     try await task.send(message)
 

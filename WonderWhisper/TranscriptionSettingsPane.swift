@@ -189,7 +189,7 @@ struct TranscriptionSettingsPane: View {
       APIKeyRow(
         title: "Soniox",
         alias: AppConfig.sonioxAPIKeyAlias,
-        detail: "Soniox V5 dictation and meetings.",
+        detail: "Soniox V6 dictation and meetings.",
         onSave: vm.saveSonioxApiKey
       )
     } header: {

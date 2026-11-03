@@ -80,11 +80,11 @@ struct PromptBuilderTests {
             activeTextField: nil,
             appName: "Slack",
             screenContents: "Raw OCR paragraph that should not be sent when terms exist",
-            screenContextTerms: "Dane Kapoor, OpenRouter Voice, Soniox V5, CORE-759",
+            screenContextTerms: "Dane Kapoor, OpenRouter Voice, Soniox V6, CORE-759",
             customVocabulary: nil
         )
 
-        #expect(message.contains("<SCREEN_CONTEXT_TERMS>\nDane Kapoor, OpenRouter Voice, Soniox V5, CORE-759\n</SCREEN_CONTEXT_TERMS>"))
+        #expect(message.contains("<SCREEN_CONTEXT_TERMS>\nDane Kapoor, OpenRouter Voice, Soniox V6, CORE-759\n</SCREEN_CONTEXT_TERMS>"))
         #expect(!message.contains("<SCREEN_CONTENTS>"))
         #expect(!message.contains("Raw OCR paragraph"))
     }
@@ -180,7 +180,7 @@ struct ScreenContextTermExtractorTests {
     @Test func extractorKeepsNamesProductsAcronymsAndTicketIds() {
         let text = """
         Slack thread with Dane Kapoor and Luis about WonderWhisper.
-        Please compare OpenRouter Voice, Soniox V5, Apple Intelligence, and CORE-759.
+        Please compare OpenRouter Voice, Soniox V6, Apple Intelligence, and CORE-759.
         The WonderWhisper context path should preserve API names and GPT-4o-mini-transcribe.
         """
 
@@ -190,7 +190,7 @@ struct ScreenContextTermExtractorTests {
         #expect(terms.contains("Luis"), "Terms: \(terms)")
         #expect(terms.contains("WonderWhisper"), "Terms: \(terms)")
         #expect(terms.contains("OpenRouter Voice"), "Terms: \(terms)")
-        #expect(terms.contains("Soniox V5"), "Terms: \(terms)")
+        #expect(terms.contains("Soniox V6"), "Terms: \(terms)")
         #expect(terms.contains("Apple Intelligence"), "Terms: \(terms)")
         #expect(terms.contains("CORE-759"), "Terms: \(terms)")
         #expect(terms.contains("GPT-4o-mini-transcribe"), "Terms: \(terms)")
@@ -200,13 +200,13 @@ struct ScreenContextTermExtractorTests {
         let preprocessor = ScreenContextPreprocessor(useAppleIntelligence: false)
 
         let result = await preprocessor.preprocess(
-            ocrText: "Dane Kapoor is testing OpenRouter Voice with Soniox V5 in WonderWhisper."
+            ocrText: "Dane Kapoor is testing OpenRouter Voice with Soniox V6 in WonderWhisper."
         )
 
         #expect(result?.method == .localKeywords)
         #expect(result?.contextText.contains("Dane Kapoor") == true)
         #expect(result?.contextText.contains("OpenRouter Voice") == true)
-        #expect(result?.contextText.contains("Soniox V5") == true)
+        #expect(result?.contextText.contains("Soniox V6") == true)
         #expect(result?.contextText.contains("WonderWhisper") == true)
     }
 
@@ -240,13 +240,13 @@ struct ScreenContextTermExtractorTests {
 
     @Test func normalizerRepairsCloseMatchesToKnownCorrectionHints() {
         let terms = ScreenContextTermExtractor.normalizeCommaSeparated(
-            "OpenR0uter Voice, Soniox V5, GPT-4o-mini-transcribe",
+            "OpenR0uter Voice, Soniox V6, GPT-4o-mini-transcribe",
             limit: 10,
-            correctionHints: ["OpenRouter Voice", "Soniox V5", "GPT-4o-mini-transcribe"]
+            correctionHints: ["OpenRouter Voice", "Soniox V6", "GPT-4o-mini-transcribe"]
         )
 
         #expect(terms.contains("OpenRouter Voice"), "Terms: \(terms)")
-        #expect(terms.contains("Soniox V5"), "Terms: \(terms)")
+        #expect(terms.contains("Soniox V6"), "Terms: \(terms)")
         #expect(terms.contains("GPT-4o-mini-transcribe"), "Terms: \(terms)")
         #expect(!terms.contains("OpenR0uter Voice"), "Terms: \(terms)")
     }
