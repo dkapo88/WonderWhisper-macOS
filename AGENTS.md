@@ -270,9 +270,9 @@ builds that lack them; use `isOnOrAfter` / `isOnOrBefore` (`DateOrdering.swift`)
   number stamped once at enqueue on every part record, strictly increasing within a run and
   seeded synchronously from the saved log when the center starts, kept numeric because the
   log's ISO 8601 dates drop fractional seconds; older records fall back to `sendCreatedAt`,
-  then `createdAt`), so an older send resuming from backoff never hides a newer one. Once every
-  part was delivered, the first part a receiver ignored, else the first it only captured as a
-  setup check, speaks for the send. Headers
+  then `createdAt`), so an older send resuming from backoff never hides a newer one. The first part a
+  receiver ignored, else the first it only captured as a setup check, speaks for the send ahead
+  of parts still in flight or failed. Headers
   (per part, signature over that part's body): `X-WonderWhisper-Event`, `-Delivery`,
   `-Timestamp` (unix seconds) and, with a signing secret, `X-WonderWhisper-Signature:
   sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">`, plus `Idempotency-Key` and

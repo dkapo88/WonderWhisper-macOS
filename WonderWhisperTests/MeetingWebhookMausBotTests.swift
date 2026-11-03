@@ -522,7 +522,7 @@ struct MeetingWebhookMausBotTests {
       == jobs.count)
   }
 
-  @Test func aReceiverNoticeOutranksAFailedPartButNotProgress() throws {
+  @Test func aReceiverNoticeOutranksProgressAndFailedParts() throws {
     let sendID = UUID()
     func part(
       _ index: Int,
@@ -551,9 +551,13 @@ struct MeetingWebhookMausBotTests {
     #expect(MeetingWebhookStatusFormatter.representative(
       of: [part(1, .delivered, .captured), part(2, .delivered, .ignored), part(3, .delivered)]
     )?.partIndex == 2)
-    // While a part is still on its way, the row shows progress.
+    // The notice also outranks parts still on their way.
     #expect(MeetingWebhookStatusFormatter.representative(
       of: [part(1, .delivered, .ignored), part(2, .retrying), part(3, .queued)]
+    )?.partIndex == 1)
+    // Without a notice the row shows progress while a part is on its way.
+    #expect(MeetingWebhookStatusFormatter.representative(
+      of: [part(1, .delivered), part(2, .retrying), part(3, .queued)]
     )?.partIndex == 2)
     // Without a notice a failed part still speaks for the send.
     #expect(MeetingWebhookStatusFormatter.representative(
