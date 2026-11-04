@@ -973,8 +973,12 @@ final class MeetingCoordinator: ObservableObject {
     let persisted = await persist(session)
     if Self.shouldSendCompletedWebhook(persisted: persisted, isCancelled: Task.isCancelled) {
       // Enqueues background deliveries and returns at once, so a slow webhook never delays
-      // "Meeting saved".
-      webhooks.send(session, event: .noteCompleted)
+      // "Meeting saved". Uses the webhook selection as it is now, so a meeting deselected
+      // while it was being saved is not sent.
+      webhooks.send(
+        Self.withLiveWebhookSelection(session, live: self.session(withID: sessionID)),
+        event: .noteCompleted
+      )
     }
     finalizationTasks.removeValue(forKey: sessionID)
     if finalizationTasks.isEmpty,
@@ -1264,8 +1268,42 @@ final class MeetingCoordinator: ObservableObject {
       return
     }
     let targets = endpointID.map { [$0] }
+    if let endpointID, let endpoint = webhooks.endpoint(withID: endpointID),
+       !endpoint.accepts(current) {
+      lastError = MeetingWebhookCenter.notSelectedMessage(endpoint.displayName)
+      return
+    }
     let started = webhooks.send(current, event: .noteResent, endpointIDs: targets)
     statusMessage = started == 0 ? "No webhook to send to" : "Sending to webhook"
+  }
+
+  /// The note to send at completion, carrying the webhook selection of the live session (the
+  /// user may have changed it while the note was being saved). No live session means no
+  /// selection.
+  nonisolated static func withLiveWebhookSelection(
+    _ session: MeetingSession,
+    live: MeetingSession?
+  ) -> MeetingSession {
+    var outgoing = session
+    outgoing.selectedWebhookEndpointIDs = live?.selectedWebhookEndpointIDs ?? []
+    return outgoing
+  }
+
+  /// Selects or deselects a meeting for an "only selected meetings" webhook. Only the user
+  /// calls this; nothing selects a meeting automatically. Deselecting stops any pending send
+  /// of the note to that webhook. Selecting a finished meeting does not send it: use Send to
+  /// Webhook.
+  func setWebhookSelection(_ isSelected: Bool, endpointID: UUID, for sessionID: UUID) {
+    guard var session = session(withID: sessionID) else { return }
+    var selected = session.selectedWebhookEndpointIDs.filter { $0 != endpointID }
+    if isSelected { selected.append(endpointID) }
+    guard selected != session.selectedWebhookEndpointIDs else { return }
+    session.selectedWebhookEndpointIDs = selected
+    replace(session)
+    schedulePersist(session)
+    if !isSelected {
+      webhooks.cancelDeliveries(noteID: sessionID, endpointID: endpointID)
+    }
   }
 
   /// Retries the send behind a delivery record. A failed part of the newest split send of a

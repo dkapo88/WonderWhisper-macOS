@@ -174,6 +174,9 @@ struct MeetingView: View {
         onRevealAudio: { Task { await coordinator.revealAudio(session) } },
         onDelete: { sessionPendingDeletion = session },
         webhookEndpoints: coordinator.webhooks.enabledEndpoints,
+        onWebhookSelectionChange: {
+          coordinator.setWebhookSelection($1, endpointID: $0, for: session.id)
+        },
         canSendToWebhooks: coordinator.canSendToWebhooks(session),
         onSendToWebhook: { coordinator.sendToWebhooks(session, endpointID: $0) },
         webhookRecords: coordinator.webhooks.latestRecords(forNote: session.id),
@@ -240,6 +243,7 @@ private struct MeetingDetailView: View {
   let onRevealAudio: () -> Void
   let onDelete: () -> Void
   let webhookEndpoints: [MeetingWebhookEndpoint]
+  let onWebhookSelectionChange: (UUID, Bool) -> Void
   let canSendToWebhooks: Bool
   let onSendToWebhook: (UUID?) -> Void
   let webhookRecords: [MeetingWebhookDeliveryRecord]
@@ -527,6 +531,8 @@ private struct MeetingDetailView: View {
 
       attendeesField
 
+      webhookSelectionRow
+
       speakersRow(speakers: speakers)
 
       speakerSuggestions(speakers: speakers)
@@ -593,6 +599,34 @@ private struct MeetingDetailView: View {
       .accessibilityLabel("Attendees")
     }
     .font(.callout)
+  }
+
+  /// One checkbox per enabled "only selected meetings" webhook. Off until the user ticks it;
+  /// a meeting is only ever sent to such a webhook when ticked.
+  @ViewBuilder private var webhookSelectionRow: some View {
+    let optIn = webhookEndpoints.filter(\.onlySelectedMeetings)
+    if !optIn.isEmpty {
+      HStack(spacing: DesignTokens.Spacing.medium) {
+        Image(systemName: "paperplane")
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        ForEach(optIn) { endpoint in
+          Toggle(
+            "Send to \(endpoint.displayName)",
+            isOn: Binding(
+              get: { session.selectedWebhookEndpointIDs.contains(endpoint.id) },
+              set: { onWebhookSelectionChange(endpoint.id, $0) }
+            )
+          )
+          .toggleStyle(.checkbox)
+          .help(session.status.isTerminal
+            ? "Allows this meeting to go to \(endpoint.displayName). Use Send to Webhook to "
+              + "send it now."
+            : "Sends this meeting to \(endpoint.displayName) when it finishes.")
+        }
+      }
+      .font(.callout)
+    }
   }
 
   private func commitAttendees() {
@@ -667,7 +701,7 @@ private struct MeetingDetailView: View {
         systemImage: "paperplane",
         action: { onSendToWebhook(only.id) }
       )
-      .disabled(!canSendToWebhooks)
+      .disabled(!canSendToWebhooks || !only.accepts(session))
       if only.splitIntoParts {
         resendPartsButtons(for: only, suffix: " to \(only.displayName)")
       }
@@ -677,6 +711,7 @@ private struct MeetingDetailView: View {
         Divider()
         ForEach(webhookEndpoints) { endpoint in
           Button(endpoint.displayName) { onSendToWebhook(endpoint.id) }
+            .disabled(!endpoint.accepts(session))
         }
         ForEach(webhookEndpoints.filter(\.splitIntoParts)) { endpoint in
           Section(endpoint.displayName) {
