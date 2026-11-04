@@ -5,6 +5,22 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-11-05</title>
+      <pubDate>Wed, 04 Nov 2026 16:23:53 +0000</pubDate>
+      <sparkle:version>2026110500</sparkle:version>
+      <sparkle:shortVersionString>2026-11-05</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>**Soniox V6.** Soniox dictation and both live meeting streams now use Soniox's real-time v6 model. Meeting recovery now uses its async v6 model. Soniox retires v5 on 15 December 2026, and saved Soniox choices move to V6 on their own. Settings and the meeting pickers now say "Soniox V6".</li>
+<li>**Key sent in the request header.** WonderWhisper now sends your Soniox key in the connection's `Authorization` header instead of in the first message, ahead of Soniox's planned change.</li>
+<li>**Spoken formatting commands.** With cleanup on, "new line", "new paragraph", "period", "comma", "question mark", "exclamation mark" and "scratch that" are applied to the words of that dictation. Literal uses such as "the trial period" stay as words. With cleanup off, or if cleanup fails, your words are kept as spoken. The same applies on every voice engine, not just Soniox.</li>
+<li>**Default rules updated once.** If your dictation rules are still an earlier default, they gain the spoken-commands rule once. Rules you've changed are left exactly as they are.</li>
+<li>**Names in recovered meetings.** When a meeting is rebuilt from its saved audio, Soniox now gets the same vocabulary list as the live meeting: your custom vocabulary, spelling corrections, and the names of the people in the meeting.</li>
+<li>Hands-on checks in the installed app are tracked in [#26](https://github.com/dkapo88/WonderWhisper-macOS/issues/26). Changes: [#25](https://github.com/dkapo88/WonderWhisper-macOS/pull/25).</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-11-05/WonderWhisper-2026-11-05.dmg" sparkle:edSignature="ThTbOz9VXhW1UAvNi2L++xn88xNj+OzWZJE+iET7AbQ+dXyRSC7nI4f4HFpatMWXJwMz2flaVEu1zyjTHaMPDA==" length="27214224" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-11-03</title>
       <pubDate>Tue, 03 Nov 2026 13:42:37 +0000</pubDate>
       <sparkle:version>2026110300</sparkle:version>
