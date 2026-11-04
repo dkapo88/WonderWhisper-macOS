@@ -101,13 +101,26 @@ struct SimpleModeModelTests {
     #expect(!QwenASRManager.weightsExist(in: dir))
   }
 
-  @Test func sonioxStreamingEngineUsesV5RealtimeModel() {
-    #expect(SimpleVoiceEngine.sonioxStreaming.displayName == "Soniox V5 (Real-time Cloud)")
-    #expect(SonioxStreamingProvider.apiModel(for: "") == "stt-rt-v5")
-    #expect(SonioxStreamingProvider.apiModel(for: "soniox-streaming") == "stt-rt-v5")
-    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v3") == "stt-rt-v5")
-    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v4") == "stt-rt-v5")
-    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v5") == "stt-rt-v5")
+  @Test func sonioxStreamingEngineUsesV6RealtimeModel() {
+    #expect(SimpleVoiceEngine.sonioxStreaming.displayName == "Soniox V6 (Real-time Cloud)")
+    #expect(SimpleVoiceEngine.sonioxStreaming.rawValue == "sonioxStreaming")
+    #expect(SonioxStreamingProvider.apiModel(for: "") == "stt-rt-v6")
+    #expect(SonioxStreamingProvider.apiModel(for: "soniox-streaming") == "stt-rt-v6")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v3") == "stt-rt-v6")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v4") == "stt-rt-v6")
+    #expect(SonioxStreamingProvider.apiModel(for: "stt-rt-v5") == "stt-rt-v6")
+  }
+
+  @Test func sonioxMeetingEnginesReadV6AndKeepTheirStoredIDs() {
+    #expect(MeetingTranscriptionEngine.sonioxSeparate.displayName == "Soniox V6 (Cloud)")
+    #expect(MeetingTranscriptionEngine.sonioxSeparate.rawValue == "soniox-separate")
+    #expect(MeetingTranscriptionEngine.soniox.rawValue == "soniox")
+    #expect(MeetingTranscriptionEngine.soniox.recordingLabel == "Soniox V6")
+    #expect(MeetingTranscriptionEngine.sonioxSeparate.recordingLabel == "Soniox V6")
+    #expect(MeetingTranscriptionEngine.selectableCases.map(\.displayName) == [
+      "Parakeet Unified (On-device)", "Soniox V6 (Cloud)", "Grok Voice Transcribe 2.0 (Cloud)"
+    ])
+    #expect(SimpleVoiceEngine.sonioxStreaming.transcriptionModel == "soniox-streaming")
   }
 
   @Test func openRouterChatRequestOmitsReasoningByDefault() throws {

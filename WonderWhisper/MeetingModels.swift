@@ -40,8 +40,8 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Se
   var displayName: String {
     switch self {
     case .parakeet: return "Parakeet Unified (On-device)"
-    case .soniox: return "Soniox V5 (Single stream, retired)"
-    case .sonioxSeparate: return "Soniox V5 (Cloud)"
+    case .soniox: return "Soniox V6 (Single stream, retired)"
+    case .sonioxSeparate: return "Soniox V6 (Cloud)"
     case .xaiGrok: return "Grok Voice Transcribe 2.0 (Cloud)"
     }
   }
@@ -49,7 +49,7 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable, Se
   var recordingLabel: String {
     switch self {
     case .parakeet: return "local Parakeet"
-    case .soniox, .sonioxSeparate: return "Soniox V5"
+    case .soniox, .sonioxSeparate: return "Soniox V6"
     case .xaiGrok: return "Grok Voice Transcribe"
     }
   }

@@ -55,30 +55,61 @@ actor MeetingSonioxAsyncRecoveryService {
     }
   }
 
+  static let asyncModel = "stt-async-v6"
+
+  /// The user's vocabulary as saved in Settings, read when a recovery starts.
+  struct VocabularySettings: Sendable {
+    let customVocabulary: String
+    let spellingCorrections: String
+
+    static func current() -> VocabularySettings {
+      VocabularySettings(
+        customVocabulary: AppConfig.defaults.string(forKey: "vocab.custom") ?? "",
+        spellingCorrections: AppConfig.defaults.string(forKey: "vocab.spelling") ?? ""
+      )
+    }
+  }
+
   private struct CreateRequest: Encodable {
-    let model = "stt-async-v5"
+    struct Context: Encodable {
+      let terms: [String]
+    }
+
+    let model = MeetingSonioxAsyncRecoveryService.asyncModel
     let fileID: String
     let languageHints: [String]?
     let enableSpeakerDiarization: Bool
+    let context: Context?
 
     enum CodingKeys: String, CodingKey {
       case model
       case fileID = "file_id"
       case languageHints = "language_hints"
       case enableSpeakerDiarization = "enable_speaker_diarization"
+      case context
     }
   }
 
   private let apiKeyProvider: @Sendable () -> String?
+  private let vocabularyProvider: @Sendable () -> VocabularySettings
+  private let languageProvider: @Sendable () -> String?
   private let session: URLSession
 
   init(
     apiKeyProvider: @escaping @Sendable () -> String? = {
       KeychainService().getSecret(forKey: AppConfig.sonioxAPIKeyAlias)
     },
+    vocabularyProvider: @escaping @Sendable () -> VocabularySettings = {
+      VocabularySettings.current()
+    },
+    languageProvider: @escaping @Sendable () -> String? = {
+      AppConfig.defaults.string(forKey: "transcription.language")
+    },
     session: URLSession? = nil
   ) {
     self.apiKeyProvider = apiKeyProvider
+    self.vocabularyProvider = vocabularyProvider
+    self.languageProvider = languageProvider
     if let session {
       self.session = session
     } else {
@@ -91,9 +122,13 @@ actor MeetingSonioxAsyncRecoveryService {
     }
   }
 
+  /// Recovers both sources with Soniox async. `participantNames` (the user, then the
+  /// attendees) bias recognition like the live streams: the terms come from the same
+  /// builder as the live streams, evaluated once here so both requests share one snapshot.
   func recover(
     sessionDirectory: URL,
     audioFilenames: [String],
+    participantNames: [String] = [],
     microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> [MeetingTranscriptToken] {
     guard let rawKey = apiKeyProvider() else {
@@ -105,6 +140,15 @@ actor MeetingSonioxAsyncRecoveryService {
     }
 
     let segments = try Self.orderedSegments(audioFilenames: audioFilenames)
+    let vocabulary = vocabularyProvider()
+    let request = RequestOptions(
+      languageHints: Self.languageHint(from: languageProvider()).map { [$0] },
+      terms: MeetingTranscriptionService.vocabularyTerms(
+        participantNames: participantNames,
+        customVocabulary: vocabulary.customVocabulary,
+        spellingCorrections: vocabulary.spellingCorrections
+      )
+    )
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("WonderWhisper-Soniox-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(
@@ -113,12 +157,16 @@ actor MeetingSonioxAsyncRecoveryService {
     )
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
+    let summary = "model=\(Self.asyncModel) terms=\(request.terms.count) "
+      + "participants=\(participantNames.count)"
+    AppLog.dictation.log("MeetingTranscriptRecovery: Soniox async \(summary, privacy: .public)")
     async let microphoneTokens = recover(
       source: .microphone,
       segments: segments[.microphone] ?? [],
       sessionDirectory: sessionDirectory,
       temporaryDirectory: temporaryDirectory,
       apiKey: apiKey,
+      request: request,
       microphoneGate: microphoneGate
     )
     async let systemTokens = recover(
@@ -126,7 +174,8 @@ actor MeetingSonioxAsyncRecoveryService {
       segments: segments[.systemAudio] ?? [],
       sessionDirectory: sessionDirectory,
       temporaryDirectory: temporaryDirectory,
-      apiKey: apiKey
+      apiKey: apiKey,
+      request: request
     )
     let (microphone, system) = try await (microphoneTokens, systemTokens)
     return MeetingTranscriptFormatter.chronologicalTokens(microphone + system)
@@ -164,12 +213,19 @@ actor MeetingSonioxAsyncRecoveryService {
     }
   }
 
+  /// What every create request of one recovery shares.
+  private struct RequestOptions: Sendable {
+    let languageHints: [String]?
+    let terms: [String]
+  }
+
   private func recover(
     source: MeetingAudioSource,
     segments: [RawSegment],
     sessionDirectory: URL,
     temporaryDirectory: URL,
     apiKey: String,
+    request options: RequestOptions,
     microphoneGate: MeetingMicrophoneGateSettings = .passThrough
   ) async throws -> [MeetingTranscriptToken] {
     let wavURL = temporaryDirectory.appendingPathComponent("\(source.filenamePrefix).wav")
@@ -199,6 +255,7 @@ actor MeetingSonioxAsyncRecoveryService {
       transcriptionID = try await createTranscription(
         fileID: fileID ?? "",
         diarize: source == .systemAudio,
+        options: options,
         apiKey: apiKey
       )
       try await waitUntilComplete(transcriptionID: transcriptionID ?? "", apiKey: apiKey)
@@ -383,6 +440,7 @@ actor MeetingSonioxAsyncRecoveryService {
   private func createTranscription(
     fileID: String,
     diarize: Bool,
+    options: RequestOptions,
     apiKey: String
   ) async throws -> String {
     var request = try authorizedRequest(
@@ -393,8 +451,9 @@ actor MeetingSonioxAsyncRecoveryService {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONEncoder().encode(CreateRequest(
       fileID: fileID,
-      languageHints: Self.languageHint().map { [$0] },
-      enableSpeakerDiarization: diarize
+      languageHints: options.languageHints,
+      enableSpeakerDiarization: diarize,
+      context: options.terms.isEmpty ? nil : CreateRequest.Context(terms: options.terms)
     ))
     let (data, response) = try await session.data(for: request)
     try validate(response: response, data: data)
@@ -560,8 +619,8 @@ actor MeetingSonioxAsyncRecoveryService {
     }
   }
 
-  private nonisolated static func languageHint() -> String? {
-    let value = AppConfig.defaults.string(forKey: "transcription.language")?
+  private nonisolated static func languageHint(from raw: String?) -> String? {
+    let value = raw?
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased() ?? ""
     return value.isEmpty || value == "auto" ? nil : value

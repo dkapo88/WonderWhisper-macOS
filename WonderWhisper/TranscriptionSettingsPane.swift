@@ -111,8 +111,8 @@ struct TranscriptionSettingsPane: View {
     } header: {
       Text("Dictation model")
     } footer: {
-      Text("Changing the model during a dictation applies from the next one. Meetings always "
-        + "use Parakeet Unified.")
+      Text("Changing the model during a dictation applies from the next one. On-device "
+        + "meetings always use Parakeet Unified.")
         .settingsFootnote()
     }
   }
@@ -189,7 +189,7 @@ struct TranscriptionSettingsPane: View {
       APIKeyRow(
         title: "Soniox",
         alias: AppConfig.sonioxAPIKeyAlias,
-        detail: "Soniox V5 dictation and meetings.",
+        detail: "Soniox V6 dictation and meetings.",
         onSave: vm.saveSonioxApiKey
       )
     } header: {
