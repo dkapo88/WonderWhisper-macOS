@@ -398,6 +398,7 @@ Never commit secrets; use local `.xcconfig` files or Keychain values instead. Re
 This repository includes Cursor-specific rules in `.cursor/rules/` covering project structure, Swift style, build/test commands, testing guidelines, security/config, and commit/PR conventions. These rules are automatically applied by Cursor but summarized above for other tools.
 
 ## Changelog
+- 2026-11-05: Released 2026-11-05 with Soniox V6 for dictation and meetings (issue #23, PR #25).
 - 2026-11-04: Moved Soniox dictation and both live meeting streams to `stt-rt-v6` and meeting
   async recovery to `stt-async-v6` (issue #23). `SonioxStreamingProvider.apiModel(for:)` maps
   empty, `soniox-streaming` and `stt-rt-v3`/`v4`/`v5` to `stt-rt-v6`. The WebSocket key moved
