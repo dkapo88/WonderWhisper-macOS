@@ -31,6 +31,11 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
   /// Split sends only: the minimum gap between the last request of one send and the first
   /// request of the next send to this endpoint.
   var noteDelaySeconds: Int
+  /// When on, a note goes to this endpoint only when the user selected the meeting for it
+  /// (`MeetingSession.selectedWebhookEndpointIDs`); every other note never leaves through it,
+  /// automatically or by hand. Off (the default, and for endpoints saved by older builds) keeps
+  /// today's behaviour: every finished note is sent.
+  var onlySelectedMeetings: Bool
 
   init(
     id: UUID = UUID(),
@@ -43,7 +48,8 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
     maxBodyCharacters: Int = MeetingWebhookEndpoint.defaultMaxBodyCharacters,
     content: MeetingWebhookContent = .full,
     partDelaySeconds: Int = MeetingWebhookEndpoint.defaultPartDelaySeconds,
-    noteDelaySeconds: Int = MeetingWebhookEndpoint.defaultNoteDelaySeconds
+    noteDelaySeconds: Int = MeetingWebhookEndpoint.defaultNoteDelaySeconds,
+    onlySelectedMeetings: Bool = false
   ) {
     self.id = id
     self.name = name
@@ -56,11 +62,13 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
     self.content = content
     self.partDelaySeconds = Self.clamped(partDelaySeconds, to: Self.partDelaySecondsRange)
     self.noteDelaySeconds = Self.clamped(noteDelaySeconds, to: Self.noteDelaySecondsRange)
+    self.onlySelectedMeetings = onlySelectedMeetings
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, name, url, isEnabled, headerNames, hasSecret
     case splitIntoParts, maxBodyCharacters, content, partDelaySeconds, noteDelaySeconds
+    case onlySelectedMeetings
   }
 
   init(from decoder: Decoder) throws {
@@ -88,6 +96,16 @@ struct MeetingWebhookEndpoint: Codable, Identifiable, Equatable, Hashable, Senda
         ?? Self.defaultNoteDelaySeconds,
       to: Self.noteDelaySecondsRange
     )
+    onlySelectedMeetings = (try? container.decodeIfPresent(
+      Bool.self,
+      forKey: .onlySelectedMeetings
+    )) ?? false
+  }
+
+  /// Whether a real note of `session` may be sent to this endpoint. A test send uses sample
+  /// data and is not gated.
+  func accepts(_ session: MeetingSession) -> Bool {
+    !onlySelectedMeetings || session.selectedWebhookEndpointIDs.contains(id)
   }
 
   static func clampedMaxBody(_ value: Int) -> Int {
