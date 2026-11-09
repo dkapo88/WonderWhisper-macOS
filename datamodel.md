@@ -679,9 +679,39 @@ QA Debug builds (see Overview) use the same layout under `$WW_QA_ROOT/Applicatio
     └── <uuid>/
         ├── manifest.json          # MeetingSession and MeetingTranscriptToken[]
         ├── manual-notes.md        # Atomically saved user-authored notes
+        ├── .resume-checkpoint.json # Pre-resume manifest/notes bytes and file inventory
         ├── microphone-0001.caf   # One-minute 16 kHz mono segments
         └── system-0001.caf       # One-minute 16 kHz mono segments
 ```
+
+As of 2026-11-09, before resuming, `MeetingSessionStore` atomically checkpoints the saved
+manifest and optional manual-notes sidecar plus the directory's filenames. Audio is not copied:
+capture appends new, non-overwriting CAF segments. Confirmed Discard aborts the active run and
+removes only files absent from that inventory, then restores the original metadata bytes. A new
+session instead deletes its directory. Normal Stop keeps the appended content. Checkpoints are
+cleaned up after successful Stop or rollback; they do not migrate any existing meetings. Run IDs
+fence abandoned transcription callbacks and storage writes. Discard cannot retract live cloud
+requests already sent.
+
+`MeetingSession.pendingDiscard` is optional (`runID`, `resuming`), absent on older manifests.
+The coordinator persists the request before awaiting capture/provider cleanup; the store persists
+it again in a failed, stopped session before deleting any files. Fresh discard deletes its manifest
+last, keeping the retry request discoverable while audio is removed. A failed
+discard stays retryable through the meeting detail's **Retry Discard**, including after relaunch;
+Resume is blocked until it succeeds, and the store independently refuses to overwrite its checkpoint.
+Successful rollback removes the checkpoint only after restoring the original manifest and notes.
+Checkpoint removal is best-effort after that commit point: cleanup failure does not turn an
+already-restored meeting into a failed discard, and a resolved leftover can safely be replaced.
+Normal Stop removes its checkpoint after successfully persisting the completed meeting. The entire
+manifest is restored, including title, attendees and speakers: confirmation says **all changes since
+resuming**. Active-run allowlists reject retired writes without accumulating discarded-run tombstones.
+Pending/in-flight discard blocks content edits, copying/export, webhook sends, summary generation
+and speaker suggestions at both the UI and coordinator boundary. Async results also re-check their
+source transcript before applying, so a result from discarded content cannot update the restored
+meeting. A permanently missing/corrupt checkpoint cannot be reconstructed automatically: retry
+preserves the earlier audio but needs a valid checkpoint restored from backup. Delete Meeting is
+whole-meeting deletion, not a repair for that condition. Provider cleanup may still stall; the
+durable pending request allows retry after relaunch, rather than promising bounded shutdown.
 
 Qwen3-ASR 0.6B weights are not stored under Application Support. speech-swift caches them at
 `~/Library/Caches/qwen3-speech/` (`aufklarer/Qwen3-ASR-0.6B-MLX-4bit`, about 1 GB). A CLI
@@ -956,6 +986,12 @@ struct AppConfig {
 - After updates: adjust migrations (if applicable), update tests, and verify any storage paths referenced in code and in AGENTS.md.
 
 ### Changelog
+
+- **v1.29 (November 9, 2026)**: Added the per-meeting `.resume-checkpoint.json` file for
+  discard of only the resumed portion: original manifest/notes bytes and a file inventory,
+  not audio copies. Optional `MeetingSession.pendingDiscard` (`runID`, `resuming`) keeps a
+  failed discard retryable after relaunch and blocks overwriting its checkpoint. Active-run
+  allowlists reject retired writes. Existing settings keys are unchanged; no migration.
 
 - **v1.28 (November 2, 2026)**: No stored-key or schema changes. Settings → Transcription now
   has one picker (`TranscriptionChoice`) over the existing `simple.voiceEngine` and
@@ -1285,6 +1321,6 @@ protocol TranscriptionProvider {
 
 ---
 
-**Document Version**: 1.18
-**Last Updated**: July 16, 2026
+**Document Version**: 1.29
+**Last Updated**: November 9, 2026
 **Maintainer**: WonderWhisper Development Team

@@ -638,6 +638,319 @@ struct MeetingFeatureTests {
     #expect(session.manualNotesMarkdown == nil)
   }
 
+  @Test(arguments: [false, true])
+  func discardedNewRecordingStaysDeletedAfterLateWritesAndRelaunch(automatic: Bool) async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = MeetingSessionStore(rootDirectory: directory)
+    let existing = MeetingSession(
+      title: "Keep this meeting", startedAt: Date(timeIntervalSince1970: 1_000), status: .completed
+    )
+    let recording = MeetingSession(title: "Accidental", automaticallyStarted: automatic)
+    let runID = UUID()
+    try await store.save(existing)
+    try await store.beginRecording(recording, runID: runID, resuming: false)
+    try await store.save(recording, runID: runID)
+    let sessionDirectory = try await store.directory(for: recording.id)
+    let writer = MeetingAudioSegmentWriter(directory: sessionDirectory, source: .microphone)
+    try writer.append(samples: [0.1, -0.2, 0.3])
+    writer.finish()
+    try await store.saveManualNotes("Discarded notes", for: recording.id, revision: 1, runID: runID)
+
+    #expect(try await store.discardRecording(recording, runID: runID, resuming: false) == nil)
+    try await store.save(recording, runID: runID)
+    try await store.saveManualNotes("Late notes", for: recording.id, revision: 99, runID: runID)
+    #expect(!FileManager.default.fileExists(atPath: sessionDirectory.path))
+    let reloaded = await MeetingSessionStore(rootDirectory: directory).loadAll()
+    #expect(reloaded == [existing])
+  }
+
+  @Test(arguments: [false, true])
+  func discardedResumeRestoresEarlierBytesAndContentAfterRelaunch(hasSidecar: Bool) async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = MeetingSessionStore(rootDirectory: directory)
+    let original = MeetingSession(
+      title: "Saved planning meeting",
+      startedAt: Date(timeIntervalSince1970: 1_000),
+      endedAt: Date(timeIntervalSince1970: 1_030),
+      recordedDuration: 30,
+      status: .completed,
+      transcriptTokens: [MeetingTranscriptToken(
+        source: .systemAudio, startTime: 2, endTime: 3, text: " Earlier decision"
+      )],
+      manualNotesMarkdown: "Earlier notes",
+      notesMarkdown: "Earlier summary",
+      audioFiles: ["microphone-0001.caf", "system-0001.caf"],
+      exportedMarkdownPath: "/synthetic/already-exported.md",
+      attendees: ["Alex", "Jamie"],
+      speakerNames: ["system:1": "Alex"],
+      microphoneMutedRanges: [MeetingTimeRange(start: 5, end: 7)]
+    )
+    try await store.save(original)
+    let sessionDirectory = try await store.directory(for: original.id)
+    for source in MeetingAudioSource.captureSources {
+      let writer = MeetingAudioSegmentWriter(directory: sessionDirectory, source: source)
+      try writer.append(samples: [0.1, -0.4, 0.2, -0.1])
+      writer.finish()
+    }
+    if hasSidecar {
+      try await store.saveManualNotes("Earlier sidecar notes", for: original.id, revision: 1)
+    }
+    let earlierFiles = try FileManager.default.contentsOfDirectory(atPath: sessionDirectory.path)
+    let earlierBytes = try Dictionary(uniqueKeysWithValues: earlierFiles.map {
+      ($0, try Data(contentsOf: sessionDirectory.appendingPathComponent($0)))
+    })
+    let runID = UUID()
+    try await store.beginRecording(original, runID: runID, resuming: true)
+    var resumed = original
+    resumed.status = .recording
+    resumed.recordingStartedAt = Date()
+    resumed.endedAt = nil
+    resumed.title = "Changed during resume"
+    resumed.attendees = ["New attendee"]
+    resumed.speakerNames = ["system:1": "Changed speaker"]
+    resumed.transcriptTokens.append(MeetingTranscriptToken(
+      source: .microphone, startTime: 31, endTime: 32, text: " New content"
+    ))
+    try await store.save(resumed, runID: runID)
+    try await store.saveManualNotes("New notes", for: original.id, revision: 2, runID: runID)
+    let plan = MeetingResumePlan(session: original)
+    for source in MeetingAudioSource.captureSources {
+      let writer = MeetingAudioSegmentWriter(
+        directory: sessionDirectory, source: source,
+        initialSegmentIndex: plan.initialSegmentIndexes[source] ?? 0,
+        timelineOffset: plan.timelineOffset
+      )
+      try writer.append(samples: [0.7, -0.8, 0.9])
+      writer.finish()
+    }
+
+    let restored = try #require(await store.discardRecording(resumed, runID: runID, resuming: true))
+    var expected = original
+    if hasSidecar { expected.manualNotesMarkdown = "Earlier sidecar notes" }
+    #expect(restored == expected)
+    try await store.save(resumed, runID: runID)
+    try await store.saveManualNotes("Late notes", for: original.id, revision: 99, runID: runID)
+    for (filename, bytes) in earlierBytes {
+      #expect(try Data(contentsOf: sessionDirectory.appendingPathComponent(filename)) == bytes)
+    }
+    #expect(await store.audioFiles(for: original.id) == original.audioFiles)
+    #expect(await MeetingSessionStore(rootDirectory: directory).loadAll() == [expected])
+
+    // A second resume starts from the restored meeting, not the discarded run.
+    let nextRunID = UUID()
+    try await store.beginRecording(expected, runID: nextRunID, resuming: true)
+    resumed = expected
+    resumed.status = .completed
+    resumed.notesMarkdown = "Saved by a later normal stop"
+    try await store.save(resumed, runID: nextRunID)
+    try await store.finishRecording(resumed)
+    #expect(!FileManager.default.fileExists(
+      atPath: sessionDirectory.appendingPathComponent(".resume-checkpoint.json").path
+    ))
+    #expect(try await !store.save(original, runID: runID))
+    #expect(try await !store.save(original, runID: nextRunID))
+    #expect(await MeetingSessionStore(rootDirectory: directory).loadAll() == [resumed])
+  }
+
+  @Test(arguments: [false, true]) @MainActor
+  func failedResumeDiscardIsRetryableAfterRelaunchAndCannotReplaceCheckpoint(
+    damagedCheckpoint: Bool
+  ) async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let failingFiles = MeetingDiscardFileManager { url in
+      if !damagedCheckpoint && url.lastPathComponent == "system-0002.caf" {
+        throw CocoaError(.fileWriteNoPermission)
+      }
+    }
+    let store = MeetingSessionStore(rootDirectory: directory, fileManager: failingFiles)
+    let original = MeetingSession(
+      title: "Keep earlier content", startedAt: Date(timeIntervalSince1970: 1_000),
+      endedAt: Date(timeIntervalSince1970: 1_010), status: .completed,
+      manualNotesMarkdown: "Earlier notes", audioFiles: ["microphone-0001.caf"]
+    )
+    try await store.save(original)
+    let sessionDirectory = try await store.directory(for: original.id)
+    let earlierAudio = sessionDirectory.appendingPathComponent("microphone-0001.caf")
+    let bytes = Data("earlier audio".utf8)
+    try bytes.write(to: earlierAudio)
+    let runID = UUID()
+    try await store.beginRecording(original, runID: runID, resuming: true)
+    let checkpoint = sessionDirectory.appendingPathComponent(".resume-checkpoint.json")
+    let checkpointBytes = try Data(contentsOf: checkpoint)
+    if damagedCheckpoint {
+      try Data("invalid checkpoint".utf8).write(to: checkpoint)
+    }
+    let protectedCheckpoint = try Data(contentsOf: checkpoint)
+    try Data("new audio".utf8).write(
+      to: sessionDirectory.appendingPathComponent("system-0002.caf")
+    )
+    do {
+      _ = try await store.discardRecording(original, runID: runID, resuming: true)
+      Issue.record("Discard should report the storage failure")
+    } catch {
+      #expect(try Data(contentsOf: earlierAudio) == bytes)
+    }
+    let coordinator = try await loadedCoordinator(store: store)
+    let failed = try #require(coordinator.sessions.first)
+    #expect(failed.pendingDiscard == .init(runID: runID, resuming: true))
+    #expect(!coordinator.canResumeMeeting(failed))
+    #expect(coordinator.canRetryDiscard(failed))
+    await coordinator.resumeMeeting(failed)
+    #expect(coordinator.activeSessionID == nil)
+    // Even a stale caller cannot overwrite the unresolved checkpoint at the store boundary.
+    await #expect(throws: CocoaError.self) {
+      try await store.beginRecording(original, runID: UUID(), resuming: true)
+    }
+    await coordinator.retryDiscard(failed.id)
+    #expect(coordinator.sessions.first?.pendingDiscard != nil)
+    #expect(coordinator.lastError?.contains("Retry Discard") == true)
+    #expect(try Data(contentsOf: checkpoint) == protectedCheckpoint)
+
+    // Repair the fault, relaunch with a fresh store, and retry through the application API.
+    try checkpointBytes.write(to: checkpoint)
+    let relaunched = try await loadedCoordinator(
+      store: MeetingSessionStore(rootDirectory: directory)
+    )
+    await relaunched.retryDiscard(failed.id)
+    #expect(relaunched.sessions == [original])
+    #expect(relaunched.canResumeMeeting(original))
+    #expect(relaunched.lastError == nil)
+    #expect(try Data(contentsOf: earlierAudio) == bytes)
+    #expect(!FileManager.default.fileExists(atPath: checkpoint.path))
+    #expect(!FileManager.default.fileExists(
+      atPath: sessionDirectory.appendingPathComponent("system-0002.caf").path
+    ))
+  }
+
+  @Test @MainActor func pendingDiscardBlocksContentActionsAndLateSummaryDuringRetry() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let removal = AsyncStream<Void>.makeStream()
+    let files = MeetingDiscardFileManager { url in
+      if url.lastPathComponent == "system-0002.caf" {
+        removal.continuation.yield(())
+        gate.wait()
+      }
+    }
+    let store = MeetingSessionStore(rootDirectory: directory, fileManager: files)
+    let original = MeetingSession(
+      title: "Earlier meeting", startedAt: Date(timeIntervalSince1970: 1_000), status: .completed,
+      transcriptTokens: [MeetingTranscriptToken(
+        source: .systemAudio, startTime: 1, endTime: 2, text: " Earlier decision", speaker: "1"
+      )], manualNotesMarkdown: "Earlier manual notes", notesMarkdown: "Earlier summary",
+      attendees: ["Alex"]
+    )
+    try await store.save(original)
+    let runID = UUID()
+    try await store.beginRecording(original, runID: runID, resuming: true)
+    let folder = try await store.directory(for: original.id)
+    try Data("resumed audio".utf8).write(to: folder.appendingPathComponent("system-0002.caf"))
+    var pending = original
+    pending.status = .failed
+    pending.pendingDiscard = .init(runID: runID, resuming: true)
+    pending.transcriptTokens.append(MeetingTranscriptToken(
+      source: .microphone, startTime: 5, endTime: 6, text: " Discarded new decision"
+    ))
+    pending.manualNotesMarkdown = "Discarded new manual notes"
+    pending.audioFiles = ["system-0002.caf"]
+    try await store.save(pending)
+    let unrelated = MeetingSession(
+      title: "Other saved meeting", status: .completed, manualNotesMarkdown: "Other notes",
+      notesMarkdown: "Old summary"
+    )
+    try await store.save(unrelated)
+    let generationReply = AsyncStream<Void>.makeStream()
+    let requests = AsyncStream<String>.makeStream()
+    let coordinator = try await loadedCoordinator(store: store, noteGenerator: { input, _, _ in
+      requests.continuation.yield(input.transcriptPlainText)
+      var replies = generationReply.stream.makeAsyncIterator()
+      _ = await replies.next()
+      return MeetingGeneratedNotes(
+        title: nil, markdown: input.id == unrelated.id
+          ? "Updated other summary" : "Summary of discarded new decision"
+      )
+    })
+    #expect(!coordinator.canUseMeetingContent(pending.id))
+    #expect(!coordinator.canSendToWebhooks(original)) // A stale snapshot cannot bypass pending.
+    coordinator.updateTitle("Wrong title", for: pending.id)
+    coordinator.updateAttendees("Wrong attendee", for: pending.id)
+    coordinator.renameSpeaker(.init(source: .systemAudio, label: "1"), to: "Wrong", in: pending.id)
+    #expect(coordinator.sessions.first(where: { $0.id == pending.id }) == pending)
+    // An unrelated summary remains eligible while this discard awaits I/O.
+    let unrelatedGeneration = Task { await coordinator.regenerateNotes(for: unrelated) }
+    var requested = requests.stream.makeAsyncIterator()
+    #expect(await requested.next() == unrelated.transcriptPlainText)
+    let retry = Task { await coordinator.retryDiscard(pending.id) }
+    var iterator = removal.stream.makeAsyncIterator()
+    await iterator.next()
+    #expect(coordinator.isStopping)
+    #expect(coordinator.canUseMeetingContent(unrelated.id))
+    generationReply.continuation.finish()
+    var regeneration: Task<Void, Never>?
+    await withCheckedContinuation { started in
+      regeneration = Task {
+        started.resume()
+        await coordinator.regenerateNotes(for: pending)
+      }
+    }
+    var deletion: Task<Void, Never>?
+    await withCheckedContinuation { started in
+      deletion = Task {
+        started.resume()
+        await coordinator.delete(pending)
+      }
+    }
+    gate.signal()
+    await deletion?.value
+    await retry.value
+    await unrelatedGeneration.value
+    await regeneration?.value
+    requests.continuation.finish()
+    var summarizedTranscripts: [String] = []
+    for await transcript in requests.stream { summarizedTranscripts.append(transcript) }
+    #expect(summarizedTranscripts.isEmpty)
+    #expect(coordinator.sessions.first(where: { $0.id == original.id }) == original)
+    let saved = await MeetingSessionStore(rootDirectory: directory).loadAll()
+    #expect(saved.first(where: { $0.id == original.id }) == original)
+    #expect(saved.first(where: { $0.id == unrelated.id })?.notesMarkdown == "Updated other summary")
+    #expect(coordinator.canUseMeetingContent(original.id))
+    #expect(coordinator.canSendToWebhooks(original))
+    // Once cleanup finishes, an intentional Delete remains available and stays deleted.
+    await coordinator.delete(original)
+    await coordinator.retryDiscard(original.id)
+    #expect(!coordinator.sessions.contains(where: { $0.id == original.id }))
+    #expect(await MeetingSessionStore(rootDirectory: directory).loadAll().count == 1)
+  }
+
+  @Test func failedFreshDiscardKeepsRetryManifestUntilAudioCleanupCompletes() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let files = MeetingDiscardFileManager { url in
+      if url.pathExtension == "caf" { throw CocoaError(.fileWriteNoPermission) }
+    }
+    let store = MeetingSessionStore(rootDirectory: directory, fileManager: files)
+    let recording = MeetingSession(title: "Discard this new meeting", status: .recording)
+    let runID = UUID()
+    try await store.beginRecording(recording, runID: runID, resuming: false)
+    try await store.save(recording, runID: runID)
+    let folder = try await store.directory(for: recording.id)
+    try Data("new audio".utf8).write(to: folder.appendingPathComponent("system-0001.caf"))
+    await #expect(throws: CocoaError.self) {
+      _ = try await store.discardRecording(recording, runID: runID, resuming: false)
+    }
+    let relaunched = MeetingSessionStore(rootDirectory: directory)
+    let pending = try #require(await relaunched.loadAll().first)
+    #expect(pending.pendingDiscard == .init(runID: runID, resuming: false))
+    #expect(pending.audioFiles == ["system-0001.caf"])
+    #expect(try await relaunched.discardRecording(pending, runID: runID, resuming: false) == nil)
+    #expect(!FileManager.default.fileExists(atPath: folder.path))
+  }
+
   @Test func manualNotesSidecarRestoresLatestTypedNotes() async throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -1696,6 +2009,24 @@ struct MeetingFeatureTests {
     return directory
   }
 
+  @MainActor
+  private func loadedCoordinator(
+    store: MeetingSessionStore,
+    noteGenerator: ((MeetingSession, String, String) async throws -> MeetingGeneratedNotes)? = nil
+  ) async throws -> MeetingCoordinator {
+    let coordinator: MeetingCoordinator
+    if let noteGenerator {
+      coordinator = MeetingCoordinator(store: store, noteGenerator: noteGenerator)
+    } else {
+      coordinator = MeetingCoordinator(store: store)
+    }
+    for _ in 0..<500 {
+      if !coordinator.isLoadingSessions { return coordinator }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    try #require(!coordinator.isLoadingSessions)
+    return coordinator
+  }
 
   @Test func placeholderMeetingTitlesAreReplaceableButUserTitlesArePreserved() {
     // Bare detector name, as used by an automatic start.
@@ -1742,5 +2073,19 @@ private actor MeetingRecoveryTranscriptionSpy {
 
   func calls() -> [String] {
     filenames
+  }
+}
+
+private final class MeetingDiscardFileManager: FileManager, @unchecked Sendable {
+  private let beforeRemoval: @Sendable (URL) throws -> Void
+
+  init(beforeRemoval: @escaping @Sendable (URL) throws -> Void) {
+    self.beforeRemoval = beforeRemoval
+    super.init()
+  }
+
+  override func removeItem(at url: URL) throws {
+    try beforeRemoval(url)
+    try super.removeItem(at: url)
   }
 }

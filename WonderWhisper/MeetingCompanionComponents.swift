@@ -117,19 +117,21 @@ struct MeetingRecordingPill: View {
   }
 }
 
-/// Title, live timer and the two session actions. The whole bar is the drag handle.
+/// Title, live timer and recording actions. The whole bar is the drag handle.
 struct MeetingCompanionHeader: View {
   let title: String
   let startedAt: Date
   let isStopping: Bool
   let onMinimize: () -> Void
   let onStop: () -> Void
+  var onDiscard: (() -> Void)?
+  var isDiscarding = false
   var isMicrophoneMuted = false
   /// Shows the microphone mute button when set.
   var onToggleMicrophoneMute: (() -> Void)?
 
   private func statusText(now: Date) -> String {
-    if isStopping { return "Saving…" }
+    if isStopping { return isDiscarding ? "Discarding…" : "Saving…" }
     let elapsed = MeetingCompanionStyle.elapsed(since: startedAt, now: now)
     return isMicrophoneMuted ? "Recording · \(elapsed) · Mic muted" : "Recording · \(elapsed)"
   }
@@ -186,6 +188,20 @@ struct MeetingCompanionHeader: View {
       }
       .buttonStyle(.plain)
       .help("Collapse to pill")
+      if let onDiscard {
+        Button(role: .destructive, action: onDiscard) {
+          Image(systemName: "trash")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 26, height: 26)
+            .background(Color.primary.opacity(0.06), in: Circle())
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isStopping)
+        .help("Discard this recording…")
+        .accessibilityLabel("Discard recording")
+      }
       Button(action: onStop) {
         Text(isStopping ? "Stopping" : "Stop")
           .font(.system(size: 12, weight: .semibold))

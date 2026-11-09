@@ -161,6 +161,7 @@ final class MeetingCoordinator: ObservableObject {
   @Published private(set) var isLoadingSessions = true
   @Published private(set) var isStarting = false
   @Published private(set) var isStopping = false
+  @Published private(set) var discardingSessionID: UUID?
   @Published private(set) var statusMessage = "Ready"
   @Published private(set) var lastError: String?
   @Published private(set) var noteGenerationSessionIDs: Set<UUID> = []
@@ -360,10 +361,10 @@ final class MeetingCoordinator: ObservableObject {
   @Published private(set) var isMicrophoneMuted = false
   private var microphoneMuteRecorder: MeetingMicrophoneMuteRecorder?
 
-  private let store = MeetingSessionStore()
+  private let store: MeetingSessionStore
   private let capture = MeetingCaptureService()
   private let detector = MeetingDetector()
-  private let noteGenerator = MeetingNoteGenerator()
+  private let noteGenerator: (MeetingSession, String, String) async throws -> MeetingGeneratedNotes
   private let vaultIndex = MeetingVaultIndex()
   private let contextSummarizer = MeetingContextSummarizer()
   // Unit tests never build the production recovery transcriber: it discovers the shared
@@ -416,6 +417,7 @@ final class MeetingCoordinator: ObservableObject {
   private var seenContextTerms: Set<String> = []
   private var generatedTitleEligibleSessionIDs: Set<UUID> = []
   private var resumedSessionIDs: Set<UUID> = []
+  private var recordingRunIDs: [UUID: UUID] = [:]
   private var forcedFullRecoverySources: [UUID: Set<MeetingAudioSource>] = [:]
   private var manualNotesDrafts: [UUID: String] = [:]
   private var manualNotesRevisions: [UUID: Int] = [:]
@@ -438,7 +440,21 @@ final class MeetingCoordinator: ObservableObject {
     KeychainService().getSecret(forKey: AppConfig.xaiAPIKeyAlias) != nil
   }
 
-  init() {
+  init(
+    store: MeetingSessionStore = MeetingSessionStore(),
+    noteGenerator: @escaping (MeetingSession, String, String) async throws -> MeetingGeneratedNotes = {
+      session, model, prompt in
+      try await MeetingNoteGenerator().generate(
+        transcript: session.transcriptPlainText,
+        manualNotes: session.manualNotesMarkdown,
+        participants: MeetingNoteGenerator.participants(for: session),
+        model: model,
+        prompt: prompt
+      )
+    }
+  ) {
+    self.store = store
+    self.noteGenerator = noteGenerator
     webhookChangeForwarding = webhooks.objectWillChange.sink { [weak self] _ in
       self?.objectWillChange.send()
     }
@@ -502,12 +518,25 @@ final class MeetingCoordinator: ObservableObject {
 
   func canResumeMeeting(_ session: MeetingSession) -> Bool {
     MeetingResumePlan.canResume(session)
+      && session.pendingDiscard == nil
       && activeSessionID == nil
       && !isLoadingSessions
       && !isStarting
       && !isStopping
       && finalizationTasks[session.id] == nil
       && !noteGenerationSessionIDs.contains(session.id)
+  }
+
+  func canRetryDiscard(_ session: MeetingSession) -> Bool {
+    session.pendingDiscard != nil && activeSessionID == nil
+      && !isLoadingSessions && !isStarting && !isStopping
+      && finalizationTasks[session.id] == nil
+      && !noteGenerationSessionIDs.contains(session.id)
+  }
+
+  func canUseMeetingContent(_ sessionID: UUID) -> Bool {
+    guard let current = session(withID: sessionID) else { return false }
+    return current.pendingDiscard == nil && discardingSessionID != sessionID
   }
 
   func resumeMeeting(_ session: MeetingSession) async {
@@ -561,10 +590,11 @@ final class MeetingCoordinator: ObservableObject {
     overlayMinimizedSessionID = nil
   }
 
-  func stopMeeting(suppressCurrentAutomaticCall: Bool = true) async {
+  func stopMeeting(suppressCurrentAutomaticCall: Bool = true, expectedRunID: UUID? = nil) async {
     guard !isStarting,
           !isStopping,
           let activeSessionID,
+          expectedRunID == nil || recordingRunIDs[activeSessionID] == expectedRunID,
           var session = session(withID: activeSessionID) else {
       return
     }
@@ -688,22 +718,49 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  func discardAutomaticMeeting(sessionID: UUID) async {
+  func recordingRunID(for sessionID: UUID) -> UUID? {
+    guard activeSessionID == sessionID else { return nil }
+    return recordingRunIDs[sessionID]
+  }
+
+  func isResumedRecording(_ sessionID: UUID) -> Bool {
+    resumedSessionIDs.contains(sessionID)
+  }
+
+  func discardMeeting(sessionID: UUID, runID: UUID) async {
     guard !isStarting,
           !isStopping,
           activeSessionID == sessionID,
-          var session = session(withID: sessionID),
-          session.automaticallyStarted else { return }
+          recordingRunIDs[sessionID] == runID,
+          var session = session(withID: sessionID) else { return }
 
     isStopping = true
+    discardingSessionID = sessionID
+    recordingRunIDs.removeValue(forKey: sessionID)
+    defer {
+      discardingSessionID = nil
+      isStopping = false
+      scheduleNextDetectorPoll()
+    }
+    await store.retireRecording(sessionID, runID: runID)
+    let resuming = resumedSessionIDs.contains(sessionID)
+    session.pendingDiscard = .init(runID: runID, resuming: resuming)
+    replace(session)
+    // Capture/provider shutdown can stall. Retain the confirmed intent across a relaunch.
+    do {
+      try await store.save(session)
+    } catch {
+      lastError = "Discard retry state could not be saved: \(error.localizedDescription)"
+    }
     let familyToSuppress = automaticCandidate?.bundleFamily
       ?? detector.currentCandidate(triggerRules: triggerRules)?.bundleFamily
       ?? lastDetectedFamily
     cancelContextTasks()
-    statusMessage = "Discarding automatic meeting…"
+    contextCards.removeAll()
+    statusMessage = "Discarding recording…"
 
     let audioFiles = await capture.stop()
-    // Kept in case the discard fails and the session is retained (it can be resumed).
+    // Retained for an honest failure state; pending discard cannot be resumed.
     let mutedRanges = microphoneMuteRecorder?.ranges
     microphoneMuteRecorder = nil
     isMicrophoneMuted = false
@@ -745,32 +802,84 @@ final class MeetingCoordinator: ObservableObject {
       self?.discardCleanupTasks.removeValue(forKey: sessionID)
     }
 
-    do {
-      try await store.delete(session)
-      sessions.removeAll { $0.id == sessionID }
-      forcedFullRecoverySources.removeValue(forKey: sessionID)
-      generatedTitleEligibleSessionIDs.remove(sessionID)
-      manualNotesDrafts.removeValue(forKey: sessionID)
-      manualNotesRevisions.removeValue(forKey: sessionID)
-      selectedSessionID = sessions.first?.id
-      lastError = nil
-      statusMessage = "Automatic meeting discarded"
-    } catch {
-      session.audioFiles = audioFiles
-      if let mutedRanges {
-        session.microphoneMutedRanges = mutedRanges
-      }
-      session.endedAt = Date()
-      session.status = .failed
-      session.errorMessage = "Meeting could not be discarded: \(error.localizedDescription)"
-      replace(session)
-      selectedSessionID = sessionID
-      await persist(session)
-      lastError = session.errorMessage
-      statusMessage = "Meeting retained because discard failed"
+    guard let latest = self.session(withID: sessionID) else { return }
+    session = latest
+    session.audioFiles = Array(Set(session.audioFiles + audioFiles)).sorted()
+    if let mutedRanges { session.microphoneMutedRanges = mutedRanges }
+    let endedAt = Date()
+    if let startedAt = session.recordingStartedAt {
+      session.recordedDuration = (session.recordedDuration ?? 0)
+        + max(0, endedAt.timeIntervalSince(startedAt))
     }
-    isStopping = false
-    scheduleNextDetectorPoll()
+    session.endedAt = endedAt
+    session.recordingStartedAt = nil
+    session.status = .failed
+    session.pendingDiscard = .init(runID: runID, resuming: resuming)
+    replace(session)
+    await completeDiscard(sessionID: sessionID)
+  }
+
+  func retryDiscard(_ sessionID: UUID) async {
+    guard let current = session(withID: sessionID), canRetryDiscard(current) else { return }
+    isStopping = true
+    discardingSessionID = sessionID
+    defer {
+      discardingSessionID = nil
+      isStopping = false
+      scheduleNextDetectorPoll()
+    }
+    statusMessage = "Retrying discard…"
+    await completeDiscard(sessionID: sessionID)
+  }
+
+  private func completeDiscard(sessionID: UUID) async {
+    var failure: Error?
+    // One immediate retry handles a transient filesystem failure; persistent failures
+    // remain explicit and retryable from the meeting detail, even after relaunch.
+    for _ in 0..<2 {
+      guard let current = session(withID: sessionID),
+            let request = current.pendingDiscard else { return }
+      do {
+        let restored = try await store.discardRecording(
+          current, runID: request.runID, resuming: request.resuming
+        )
+        guard session(withID: sessionID) != nil else { return }
+        if let restored {
+          replace(restored)
+          selectedSessionID = sessionID
+        } else {
+          sessions.removeAll { $0.id == sessionID }
+          selectedSessionID = sessions.first?.id
+        }
+        forcedFullRecoverySources.removeValue(forKey: sessionID)
+        generatedTitleEligibleSessionIDs.remove(sessionID)
+        resumedSessionIDs.remove(sessionID)
+        manualNotesDrafts.removeValue(forKey: sessionID)
+        manualNotesRevisions.removeValue(forKey: sessionID)
+        dirtySessionIDs.remove(sessionID)
+        lastError = nil
+        statusMessage = request.resuming
+          ? "Resumed recording discarded • earlier meeting kept" : "Recording discarded"
+        return
+      } catch {
+        failure = error
+      }
+    }
+    // Never resurrect a session removed by another action while storage was awaited.
+    guard var current = session(withID: sessionID), let failure else { return }
+    current.errorMessage = "Discard did not finish: \(failure.localizedDescription) "
+      + "Choose Retry Discard to finish cleanup."
+    replace(current)
+    selectedSessionID = sessionID
+    do {
+      try await store.save(current)
+    } catch {
+      current.errorMessage = "\(current.errorMessage ?? "") "
+        + "Retry state could not be saved: \(error.localizedDescription)"
+      replace(current)
+    }
+    lastError = current.errorMessage
+    statusMessage = "Meeting retained • Retry Discard required"
   }
 
   private func finalizeMeeting(
@@ -927,13 +1036,7 @@ final class MeetingCoordinator: ObservableObject {
     var notesWarning: String?
     if !Task.isCancelled, generateNotes, (!transcript.isEmpty || !manualNotes.isEmpty) {
       do {
-        generatedNotes = try await noteGenerator.generate(
-          transcript: transcript,
-          manualNotes: manualNotes,
-          participants: MeetingNoteGenerator.participants(for: transcribedSession),
-          model: noteModel,
-          prompt: notePrompt
-        )
+        generatedNotes = try await noteGenerator(transcribedSession, noteModel, notePrompt)
       } catch {
         notesWarning = "Meeting notes were not generated: \(error.localizedDescription)"
       }
@@ -971,6 +1074,18 @@ final class MeetingCoordinator: ObservableObject {
 
     replace(session)
     let persisted = await persist(session)
+    let runID = recordingRunIDs.removeValue(forKey: sessionID)
+    var checkpointWarning: String?
+    if persisted {
+      do {
+        try await store.finishRecording(session)
+      } catch {
+        checkpointWarning = "Meeting saved; checkpoint cleanup failed: \(error.localizedDescription)"
+      }
+    }
+    if let runID {
+      await store.retireRecording(sessionID, runID: runID)
+    }
     if Self.shouldSendCompletedWebhook(persisted: persisted, isCancelled: Task.isCancelled) {
       // Enqueues background deliveries and returns at once, so a slow webhook never delays
       // "Meeting saved".
@@ -981,14 +1096,11 @@ final class MeetingCoordinator: ObservableObject {
        activeSessionID == nil,
        !isStarting,
        !isStopping {
-      statusMessage = session.errorMessage == nil
+      let finalError = session.errorMessage ?? checkpointWarning
+      statusMessage = finalError == nil
         ? "Meeting saved"
         : "Meeting saved with warnings"
-      if let error = session.errorMessage {
-        lastError = error
-      } else {
-        lastError = nil
-      }
+      lastError = finalError
     }
   }
 
@@ -1112,7 +1224,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func exportToObsidian(_ session: MeetingSession) async {
-    guard let currentSession = self.session(withID: session.id),
+    guard canUseMeetingContent(session.id),
+          let currentSession = self.session(withID: session.id),
           currentSession.status.isTerminal,
           finalizationTasks[session.id] == nil,
           !noteGenerationSessionIDs.contains(session.id) else {
@@ -1139,7 +1252,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func regenerateNotes(for session: MeetingSession) async {
-    guard let currentSession = self.session(withID: session.id),
+    guard canUseMeetingContent(session.id),
+          let currentSession = self.session(withID: session.id),
           currentSession.status.isTerminal,
           finalizationTasks[session.id] == nil,
           noteGenerationSessionIDs.insert(session.id).inserted else {
@@ -1164,14 +1278,11 @@ final class MeetingCoordinator: ObservableObject {
       for: session.id
     )
     do {
-      let generated = try await noteGenerator.generate(
-        transcript: transcript,
-        manualNotes: manualNotes,
-        participants: MeetingNoteGenerator.participants(for: currentSession),
-        model: noteModel,
-        prompt: notePrompt
-      )
-      guard var updated = self.session(withID: session.id) else { return }
+      let generated = try await noteGenerator(currentSession, noteModel, notePrompt)
+      guard canUseMeetingContent(session.id),
+            var updated = self.session(withID: session.id),
+            updated.transcriptTokens == currentSession.transcriptTokens,
+            updated.manualNotesMarkdown == currentSession.manualNotesMarkdown else { return }
       updated.notesMarkdown = generated.markdown
       // The stall path never reached title generation, so a regenerate is the
       // user's only chance to replace the placeholder title.
@@ -1205,6 +1316,10 @@ final class MeetingCoordinator: ObservableObject {
         for: session.id
       )
     } catch {
+      guard canUseMeetingContent(session.id),
+            let current = self.session(withID: session.id),
+            current.transcriptTokens == currentSession.transcriptTokens,
+            current.manualNotesMarkdown == currentSession.manualNotesMarkdown else { return }
       if MeetingNoteRetryPolicy.isCancellation(error) {
         updateNoteGenerationStatus("Meeting summary generation cancelled", for: session.id)
         return
@@ -1249,7 +1364,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func canSendToWebhooks(_ session: MeetingSession) -> Bool {
-    guard let current = self.session(withID: session.id) else { return false }
+    guard canUseMeetingContent(session.id),
+          let current = self.session(withID: session.id) else { return false }
     return current.status.isTerminal
       && current.id != activeSessionID
       && finalizationTasks[current.id] == nil
@@ -1335,7 +1451,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func copyMarkdown(_ session: MeetingSession) {
-    guard !noteGenerationSessionIDs.contains(session.id),
+    guard canUseMeetingContent(session.id),
+          !noteGenerationSessionIDs.contains(session.id),
           let currentSession = self.session(withID: session.id) else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(
@@ -1346,7 +1463,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func revealAudio(_ session: MeetingSession) async {
-    guard let currentSession = self.session(withID: session.id) else { return }
+    guard canUseMeetingContent(session.id),
+          let currentSession = self.session(withID: session.id) else { return }
     do {
       let directory = try await store.directory(for: currentSession.id)
       let audioURLs = currentSession.audioFiles
@@ -1361,7 +1479,7 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func delete(_ session: MeetingSession) async {
-    guard session.id != activeSessionID else { return }
+    guard !isStarting, !isStopping, session.id != activeSessionID else { return }
     guard finalizationTasks[session.id] == nil,
           !noteGenerationSessionIDs.contains(session.id) else {
       lastError = "Wait for meeting processing to finish before deleting it."
@@ -1381,7 +1499,7 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   func updateTitle(_ title: String, for sessionID: UUID) {
-    guard var session = session(withID: sessionID) else { return }
+    guard canUseMeetingContent(sessionID), var session = session(withID: sessionID) else { return }
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     session.title = trimmed.isEmpty ? "Meeting" : trimmed
     generatedTitleEligibleSessionIDs.remove(sessionID)
@@ -1391,7 +1509,7 @@ final class MeetingCoordinator: ObservableObject {
 
   /// Saves the attendees typed as a comma separated list (trimmed, deduplicated).
   func updateAttendees(_ text: String, for sessionID: UUID) {
-    guard var session = session(withID: sessionID) else { return }
+    guard canUseMeetingContent(sessionID), var session = session(withID: sessionID) else { return }
     let attendees = MeetingAttendees.parse(text)
     guard attendees != session.attendees else { return }
     session.attendees = attendees
@@ -1438,18 +1556,20 @@ final class MeetingCoordinator: ObservableObject {
 
   /// Asks the summary model for names for the meeting's unnamed speakers.
   func requestSpeakerNameSuggestions(for sessionID: UUID) async {
-    guard let session = session(withID: sessionID), session.status.isTerminal else { return }
+    guard canUseMeetingContent(sessionID),
+          let session = session(withID: sessionID), session.status.isTerminal else { return }
     let model = noteModel.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
       ?? "openai/gpt-5.4-nano"
     await suggestSpeakerNames(for: sessionID, model: model)
-    guard let updated = self.session(withID: sessionID) else { return }
+    guard canUseMeetingContent(sessionID),
+          let updated = self.session(withID: sessionID) else { return }
     if updated.speakerSuggestions.isEmpty, activeSessionID == nil, !isStarting {
       statusMessage = "No speaker names found in the transcript"
     }
   }
 
   private func editSpeakers(in sessionID: UUID, _ edit: (inout MeetingSession) -> Void) {
-    guard var session = session(withID: sessionID) else { return }
+    guard canUseMeetingContent(sessionID), var session = session(withID: sessionID) else { return }
     let before = session
     edit(&session)
     guard session != before else { return }
@@ -1498,13 +1618,16 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   private func suggestSpeakerNames(for sessionID: UUID, model: String) async {
-    guard let session = session(withID: sessionID),
+    guard canUseMeetingContent(sessionID),
+          let session = session(withID: sessionID),
           !MeetingSpeakerNameSuggester.candidates(in: session.speakerDirectory).isEmpty,
           speakerSuggestionSessionIDs.insert(sessionID).inserted else { return }
     defer { speakerSuggestionSessionIDs.remove(sessionID) }
     do {
       let suggestions = try await speakerNameSuggester.suggest(for: session, model: model)
-      guard var updated = self.session(withID: sessionID) else { return }
+      guard canUseMeetingContent(sessionID),
+            var updated = self.session(withID: sessionID),
+            updated.transcriptTokens == session.transcriptTokens else { return }
       // Re-check against edits made while the model was thinking.
       let candidates = Set(
         MeetingSpeakerNameSuggester.candidates(in: updated.speakerDirectory).map(\.rawValue)
@@ -1580,16 +1703,20 @@ final class MeetingCoordinator: ObservableObject {
     manualNotesDrafts[sessionID] = savedNotes
     let revision = (manualNotesRevisions[sessionID] ?? 0) + 1
     manualNotesRevisions[sessionID] = revision
+    let runID = recordingRunIDs[sessionID]
     Task { [weak self] in
       guard let self,
             self.activeSessionID == sessionID,
+            self.recordingRunIDs[sessionID] == runID,
+            !self.isStopping,
             self.session(withID: sessionID) != nil,
             self.manualNotesRevisions[sessionID] == revision else { return }
       do {
         try await self.store.saveManualNotes(
           savedNotes.isEmpty ? nil : savedNotes,
           for: sessionID,
-          revision: revision
+          revision: revision,
+          runID: runID
         )
       } catch {
         guard self.session(withID: sessionID) != nil else { return }
@@ -1605,6 +1732,8 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   private func flushManualNotes(for sessionID: UUID) async -> MeetingSession? {
+    let runID = recordingRunIDs[sessionID]
+    guard discardingSessionID != sessionID else { return nil }
     guard var session = session(withID: sessionID),
           let draft = manualNotesDrafts.removeValue(forKey: sessionID) else {
       return session(withID: sessionID)
@@ -1617,11 +1746,13 @@ final class MeetingCoordinator: ObservableObject {
       try await store.saveManualNotes(
         session.manualNotesMarkdown,
         for: sessionID,
-        revision: revision
+        revision: revision,
+        runID: runID
       )
     } catch {
       lastError = "Manual notes could not be saved: \(error.localizedDescription)"
     }
+    guard discardingSessionID != sessionID else { return nil }
     if let latestSession = self.session(withID: sessionID) {
       await persist(latestSession)
       return latestSession
@@ -1674,6 +1805,17 @@ final class MeetingCoordinator: ObservableObject {
       return
     }
     isStarting = true
+    let runID = UUID()
+    if let resumedSession {
+      do {
+        try await store.beginRecording(resumedSession, runID: runID, resuming: true)
+      } catch {
+        isStarting = false
+        lastError = "Meeting could not be resumed safely: \(error.localizedDescription)"
+        statusMessage = "Earlier meeting kept • recording not started"
+        return
+      }
+    }
     SystemAudioController.shared.setMeetingCaptureActive(true)
     lastError = nil
     statusMessage = "Starting meeting capture…"
@@ -1712,6 +1854,10 @@ final class MeetingCoordinator: ObservableObject {
       )
       sessions.insert(session, at: 0)
     }
+    if resumedSession == nil {
+      try? await store.beginRecording(session, runID: runID, resuming: false)
+    }
+    recordingRunIDs[session.id] = runID
     let hasUserProvidedTitle = !automaticallyStarted
       && title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
     if !hasUserProvidedTitle {
@@ -1759,13 +1905,13 @@ final class MeetingCoordinator: ObservableObject {
         microphoneGateMode: session.microphoneGateMode ?? .off,
         microphoneMuteRecorder: muteRecorder,
         tokenHandler: { [weak self] tokens in
-          await self?.receive(tokens: tokens, for: sessionID)
+          await self?.receive(tokens: tokens, for: sessionID, runID: runID)
         },
         previewHandler: { [weak self] source, text in
-          await self?.receivePreview(text, source: source, for: sessionID)
+          await self?.receivePreview(text, source: source, for: sessionID, runID: runID)
         },
         correctionHandler: { [weak self] corrections in
-          await self?.receive(corrections: corrections, for: sessionID)
+          await self?.receive(corrections: corrections, for: sessionID, runID: runID)
         }
       )
       self.transcriber = transcriber
@@ -1790,7 +1936,7 @@ final class MeetingCoordinator: ObservableObject {
           do {
             try await transcriber.ingest(chunk)
           } catch {
-            await self?.recordIngestionWarning(error, for: sessionID)
+            await self?.recordIngestionWarning(error, for: sessionID, runID: runID)
           }
         }
       }
@@ -1817,7 +1963,8 @@ final class MeetingCoordinator: ObservableObject {
           if audioLevelGate.isEnabled {
             let level = MeetingAudioMeter.level(from: chunk.samples)
             Task { @MainActor [weak self] in
-              self?.receiveAudioLevel(
+              guard let self, self.acceptsRecordingCallback(sessionID, runID: runID) else { return }
+              self.receiveAudioLevel(
                 level,
                 source: chunk.source,
                 for: sessionID
@@ -1828,7 +1975,7 @@ final class MeetingCoordinator: ObservableObject {
              backlogGate.claim() {
             continuation.finish()
             Task { @MainActor [weak self] in
-              guard let self else { return }
+              guard let self, self.acceptsRecordingCallback(sessionID, runID: runID) else { return }
               self.pauseLiveTranscriptionForBacklog(
                 sessionID: sessionID,
                 recoverySources: MeetingIngestionBacklogPolicy.recoverySources
@@ -1838,7 +1985,8 @@ final class MeetingCoordinator: ObservableObject {
         },
         onError: { [weak self] error in
           Task { @MainActor [weak self] in
-            self?.handleCaptureError(error)
+            guard let self, self.acceptsRecordingCallback(sessionID, runID: runID) else { return }
+            self.handleCaptureError(error)
           }
         }
       )
@@ -1853,7 +2001,8 @@ final class MeetingCoordinator: ObservableObject {
         } catch is CancellationError {
           return
         } catch {
-          guard let self, activeSessionID == sessionID else { return }
+          guard let self, self.acceptsRecordingCallback(sessionID, runID: runID),
+                activeSessionID == sessionID else { return }
           lastError = "Live transcription unavailable: \(error.localizedDescription)"
           statusMessage = "Recording audio • transcription unavailable"
         }
@@ -1892,6 +2041,8 @@ final class MeetingCoordinator: ObservableObject {
       generatedTitleEligibleSessionIDs.remove(session.id)
       replace(session)
       await persist(session)
+      recordingRunIDs.removeValue(forKey: session.id)
+      await store.retireRecording(session.id, runID: runID)
       activeSessionID = nil
       transcriber = nil
       microphoneMuteRecorder = nil
@@ -1914,8 +2065,13 @@ final class MeetingCoordinator: ObservableObject {
     }
   }
 
-  private func receive(tokens: [MeetingTranscriptToken], for sessionID: UUID) {
-    guard var session = session(withID: sessionID),
+  private func acceptsRecordingCallback(_ sessionID: UUID, runID: UUID) -> Bool {
+    recordingRunIDs[sessionID] == runID
+  }
+
+  private func receive(tokens: [MeetingTranscriptToken], for sessionID: UUID, runID: UUID) {
+    guard acceptsRecordingCallback(sessionID, runID: runID),
+          var session = session(withID: sessionID),
           !tokens.isEmpty else { return }
     let incoming = MeetingTranscriptFormatter.chronologicalTokens(tokens)
     let existingLastStartTime = session.transcriptTokens.last?.startTime
@@ -1935,8 +2091,9 @@ final class MeetingCoordinator: ObservableObject {
   }
 
   /// Apply Parakeet vocabulary corrections to tokens already received live.
-  private func receive(corrections: [MeetingTokenCorrection], for sessionID: UUID) {
-    guard var session = session(withID: sessionID), !corrections.isEmpty else { return }
+  private func receive(corrections: [MeetingTokenCorrection], for sessionID: UUID, runID: UUID) {
+    guard acceptsRecordingCallback(sessionID, runID: runID),
+          var session = session(withID: sessionID), !corrections.isEmpty else { return }
     let corrected = MeetingVocabularyCorrector.apply(corrections, to: session.transcriptTokens)
     guard corrected != session.transcriptTokens else { return }
     session.transcriptTokens = corrected
@@ -1947,9 +2104,11 @@ final class MeetingCoordinator: ObservableObject {
   private func receivePreview(
     _ text: String,
     source: MeetingAudioSource,
-    for sessionID: UUID
+    for sessionID: UUID,
+    runID: UUID
   ) {
-    guard activeSessionID == sessionID else { return }
+    guard acceptsRecordingCallback(sessionID, runID: runID),
+          activeSessionID == sessionID else { return }
     if text.isEmpty {
       liveTranscriptPreviews.removeValue(forKey: source)
     } else {
@@ -2327,12 +2486,14 @@ final class MeetingCoordinator: ObservableObject {
     session.errorMessage = message
     replace(session)
     schedulePersist(session)
+    let runID = recordingRunIDs[activeSessionID]
     Task { [weak self] in
-      await self?.stopMeeting()
+      await self?.stopMeeting(expectedRunID: runID)
     }
   }
 
-  private func recordIngestionWarning(_ error: Error, for sessionID: UUID) {
+  private func recordIngestionWarning(_ error: Error, for sessionID: UUID, runID: UUID) {
+    guard acceptsRecordingCallback(sessionID, runID: runID) else { return }
     let message = "Live transcription warning: \(error.localizedDescription)"
     if var session = session(withID: sessionID), session.errorMessage == nil {
       session.errorMessage = message
@@ -2416,9 +2577,11 @@ final class MeetingCoordinator: ObservableObject {
   /// Saves the session, reporting failures through `lastError`. Returns whether it was saved.
   @discardableResult
   private func persist(_ session: MeetingSession) async -> Bool {
+    guard let latest = self.session(withID: session.id),
+          discardingSessionID != session.id else { return false }
+    let runID = recordingRunIDs[session.id]
     do {
-      try await store.save(session)
-      return true
+      return try await store.save(latest, runID: runID)
     } catch {
       lastError = "Meeting could not be saved: \(error.localizedDescription)"
       return false

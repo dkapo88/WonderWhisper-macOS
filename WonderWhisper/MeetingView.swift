@@ -166,6 +166,10 @@ struct MeetingView: View {
         isSuggestingSpeakerNames: coordinator.speakerSuggestionSessionIDs.contains(session.id),
         canResume: coordinator.canResumeMeeting(session),
         onResume: { Task { await coordinator.resumeMeeting(session) } },
+        canRetryDiscard: coordinator.canRetryDiscard(session),
+        onRetryDiscard: { Task { await coordinator.retryDiscard(session.id) } },
+        isStopping: coordinator.isStopping,
+        contentActionsDisabled: !coordinator.canUseMeetingContent(session.id),
         isGeneratingNotes: coordinator.noteGenerationSessionIDs.contains(session.id),
         onRegenerateNotes: { Task { await coordinator.regenerateNotes(for: session) } },
         onExport: { Task { await coordinator.exportToObsidian(session) } },
@@ -232,6 +236,10 @@ private struct MeetingDetailView: View {
   let isSuggestingSpeakerNames: Bool
   let canResume: Bool
   let onResume: () -> Void
+  let canRetryDiscard: Bool
+  let onRetryDiscard: () -> Void
+  let isStopping: Bool
+  let contentActionsDisabled: Bool
   let isGeneratingNotes: Bool
   let onRegenerateNotes: () -> Void
   let onExport: () -> Void
@@ -398,6 +406,7 @@ private struct MeetingDetailView: View {
       onSeparate: { speakerActions.separate(speaker) },
       label: label
     )
+    .disabled(contentActionsDisabled)
   }
 
   @ViewBuilder
@@ -526,10 +535,13 @@ private struct MeetingDetailView: View {
       .foregroundStyle(.secondary)
 
       attendeesField
+        .disabled(contentActionsDisabled)
 
       speakersRow(speakers: speakers)
+        .disabled(contentActionsDisabled)
 
       speakerSuggestions(speakers: speakers)
+        .disabled(contentActionsDisabled)
 
       if let error = session.errorMessage {
         StatusBadge(.warning, error)
@@ -537,6 +549,7 @@ private struct MeetingDetailView: View {
       }
 
       MeetingWebhookStatusList(records: webhookRecords, onRetry: onRetryWebhook)
+        .disabled(contentActionsDisabled)
     }
     .alert(
       "Rename \(speakerPendingRename.map { speakers.name(for: $0) } ?? "speaker")",
@@ -563,6 +576,7 @@ private struct MeetingDetailView: View {
     TextField("Meeting title", text: $titleDraft)
       .textFieldStyle(.plain)
       .font(.title2.weight(.semibold))
+      .disabled(contentActionsDisabled)
       .focused($titleIsFocused)
       .onSubmit(commitTitle)
       .onChange(of: titleIsFocused) { wasFocused, isFocused in
@@ -608,17 +622,23 @@ private struct MeetingDetailView: View {
 
   @ViewBuilder private var terminalActions: some View {
     HStack(spacing: DesignTokens.Spacing.xSmall) {
-      Button(action: onResume) {
-        Label("Resume Recording", systemImage: "record.circle")
+      if session.pendingDiscard != nil {
+        Button("Retry Discard", systemImage: "trash", action: onRetryDiscard)
+          .disabled(!canRetryDiscard)
+          .help("Finish the discard already confirmed")
+      } else {
+        Button(action: onResume) {
+          Label("Resume Recording", systemImage: "record.circle")
+        }
+        .disabled(!canResume)
+        .help("Continue recording into this meeting and regenerate its summary when done")
       }
-      .disabled(!canResume)
-      .help("Continue recording into this meeting and regenerate its summary when done")
 
       Button(
         session.exportedMarkdownPath == nil ? "Export to Obsidian" : "Re-export",
         action: onExport
       )
-      .disabled(isGeneratingNotes)
+      .disabled(contentActionsDisabled || isGeneratingNotes)
 
       Menu {
         Button(
@@ -626,10 +646,10 @@ private struct MeetingDetailView: View {
           systemImage: "arrow.clockwise",
           action: onRegenerateNotes
         )
-        .disabled(isGeneratingNotes)
+        .disabled(contentActionsDisabled || isGeneratingNotes)
 
         Button("Copy as Markdown", systemImage: "doc.on.doc", action: onCopyMarkdown)
-          .disabled(isGeneratingNotes)
+          .disabled(contentActionsDisabled || isGeneratingNotes)
 
         if !webhookEndpoints.isEmpty {
           sendToWebhookMenu
@@ -638,14 +658,16 @@ private struct MeetingDetailView: View {
         if let exportedPath = session.exportedMarkdownPath,
            FileManager.default.fileExists(atPath: exportedPath) {
           Button("Open in Obsidian", systemImage: "arrow.up.forward.app", action: onOpenExport)
+            .disabled(contentActionsDisabled)
         }
 
         Button("Show Audio in Finder", systemImage: "waveform", action: onRevealAudio)
+          .disabled(contentActionsDisabled)
 
         Divider()
 
         Button("Delete Meeting…", systemImage: "trash", role: .destructive, action: onDelete)
-          .disabled(isGeneratingNotes)
+          .disabled(isStopping || isGeneratingNotes)
       } label: {
         if isGeneratingNotes {
           ProgressView().controlSize(.small)

@@ -79,7 +79,9 @@ final class MeetingOverlayWindowController: NSObject, NSWindowDelegate {
     panel.animationBehavior = .utilityWindow
     panel.delegate = self
     panel.contentView = NSHostingView(
-      rootView: MeetingOverlayView(coordinator: coordinator)
+      rootView: MeetingOverlayView(coordinator: coordinator, onDiscard: { [weak self] in
+        self?.confirmDiscard()
+      })
     )
 
     bubblePanel.title = "Meeting Recording"
@@ -126,7 +128,18 @@ final class MeetingOverlayWindowController: NSObject, NSWindowDelegate {
     coordinator.$activeSessionID
       .removeDuplicates()
       .sink { [weak self] sessionID in
+        if let self, let sheet = self.panel.attachedSheet {
+          self.panel.endSheet(sheet, returnCode: .cancel)
+        }
         self?.updateAutoStartToast(sessionID: sessionID)
+      }
+      .store(in: &cancellables)
+
+    coordinator.$isStopping
+      .filter { $0 }
+      .sink { [weak self] _ in
+        guard let self, let sheet = panel.attachedSheet else { return }
+        panel.endSheet(sheet, returnCode: .cancel)
       }
       .store(in: &cancellables)
 
@@ -148,6 +161,42 @@ final class MeetingOverlayWindowController: NSObject, NSWindowDelegate {
       hasPositionedPanel = true
     }
     panel.orderFrontRegardless()
+  }
+
+  private func confirmDiscard() {
+    guard panel.attachedSheet == nil,
+          !coordinator.isStopping,
+          let sessionID = coordinator.activeSessionID,
+          let runID = coordinator.recordingRunID(for: sessionID) else { return }
+    coordinator.restoreMeetingOverlayForCurrentSession()
+    show()
+    let resumed = coordinator.isResumedRecording(sessionID)
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = resumed ? "Discard the resumed recording?" : "Discard this meeting recording?"
+    let explanation = resumed
+      ? "This stops recording and reverts all changes since resuming, including audio, "
+        + "transcript, notes, title, attendees and speaker edits. Your earlier saved meeting is kept."
+      : "This stops recording and permanently deletes its local audio, transcript and manual notes. "
+        + "It will not be processed or saved as a meeting."
+    alert.informativeText = explanation + " Live cloud requests already sent cannot be undone."
+    alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
+    // Neutral native styling avoids AppKit's red-on-red destructive label.
+    let discard = alert.addButton(withTitle: "Discard")
+    discard.keyEquivalent = ""
+    panel.makeKeyAndOrderFront(nil)
+    // Cancel owns Return, so AppKit does not also assign it Escape automatically.
+    let escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard event.keyCode == 53,
+            self?.panel.attachedSheet === alert.window else { return event }
+      self?.panel.endSheet(alert.window, returnCode: .cancel)
+      return nil
+    }
+    alert.beginSheetModal(for: panel) { [weak self] response in
+      if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+      guard response == .alertSecondButtonReturn, let self else { return }
+      Task { await self.coordinator.discardMeeting(sessionID: sessionID, runID: runID) }
+    }
   }
 
   private func positionPanel() {
@@ -206,9 +255,8 @@ final class MeetingOverlayWindowController: NSObject, NSWindowDelegate {
       appName: session.detectedApp ?? session.title,
       onDiscard: { [weak self] in
         guard let self else { return }
-        let sessionID = session.id
-        hideAutoStartToast(expectedSessionID: sessionID)
-        Task { await self.coordinator.discardAutomaticMeeting(sessionID: sessionID) }
+        guard coordinator.activeSessionID == session.id else { return }
+        confirmDiscard()
       },
       onKeep: { [weak self] in
         self?.hideAutoStartToast(expectedSessionID: session.id)
@@ -394,17 +442,21 @@ private final class MeetingOverlayDragHandleNSView: NSView {
 
 private struct MeetingOverlayView: View {
   @ObservedObject var coordinator: MeetingCoordinator
+  let onDiscard: () -> Void
   @State private var selectedTab: MeetingOverlayTab = .transcript
 
   var body: some View {
     VStack(spacing: 0) {
       if let session = coordinator.activeSession {
+        let runID = coordinator.recordingRunID(for: session.id)
         MeetingCompanionHeader(
           title: session.title,
           startedAt: session.startedAt,
           isStopping: coordinator.isStopping,
           onMinimize: coordinator.minimizeMeetingOverlayForCurrentSession,
-          onStop: { Task { await coordinator.stopMeeting() } },
+          onStop: { Task { await coordinator.stopMeeting(expectedRunID: runID) } },
+          onDiscard: onDiscard,
+          isDiscarding: coordinator.discardingSessionID == session.id,
           isMicrophoneMuted: coordinator.isMicrophoneMuted,
           onToggleMicrophoneMute: coordinator.toggleMicrophoneMute
         )
