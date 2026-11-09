@@ -19,7 +19,7 @@ final class MeetingWebhookCenter: ObservableObject {
   /// Running or queued sends, keyed by run ID (one task delivers the parts of one send, or of
   /// one partial resend, in order). A partial resend reuses its send's ID, so runs have their
   /// own IDs; a normal send's run ID is its send ID.
-  private var tasks: [UUID: (endpointID: UUID, task: Task<Void, Never>)] = [:]
+  private var tasks: [UUID: (endpointID: UUID, noteID: UUID, task: Task<Void, Never>)] = [:]
   /// Why a run was cancelled, keyed by run ID, so its final records say so.
   private var cancellationReasons: [UUID: String] = [:]
   /// Paced (split) runs per endpoint, in the order they will send: the first is running.
@@ -123,7 +123,10 @@ final class MeetingWebhookCenter: ObservableObject {
     if !endpoint.isEnabled {
       cancelDeliveries(for: endpoint.id, reason: Self.disabledReason)
     } else if let previous,
-              previous.url != endpoint.url || signingSecret != nil || headers != nil {
+              previous.url != endpoint.url || signingSecret != nil || headers != nil
+                || (endpoint.onlySelectedMeetings && !previous.onlySelectedMeetings) {
+      // Switching on "only selected meetings" also stops pending sends of notes it now
+      // excludes.
       cancelDeliveries(for: endpoint.id, reason: Self.editedReason)
     }
     return nil
@@ -144,6 +147,11 @@ final class MeetingWebhookCenter: ObservableObject {
   static let removedReason = "Cancelled: endpoint removed"
   static let disabledReason = "Cancelled: endpoint disabled"
   static let editedReason = "Cancelled: endpoint edited"
+  static let deselectedReason = "Cancelled: meeting no longer selected for this webhook"
+
+  nonisolated static func notSelectedMessage(_ name: String) -> String {
+    "This meeting isn't selected for \(name). Turn on Send to \(name) first."
+  }
 
   /// Disabling cancels this endpoint's pending deliveries (queued or waiting to retry), so
   /// nothing more is sent to it. An attempt already on the wire is aborted too: the delivery
@@ -173,10 +181,21 @@ final class MeetingWebhookCenter: ObservableObject {
     }
   }
 
+  /// Cancels the note's running and queued runs to the endpoint, for when the user deselects
+  /// the meeting for an "only selected meetings" webhook.
+  func cancelDeliveries(noteID: UUID, endpointID: UUID) {
+    for (runID, entry) in tasks where entry.endpointID == endpointID && entry.noteID == noteID {
+      cancellationReasons[runID] = Self.deselectedReason
+      entry.task.cancel()
+    }
+  }
+
   // MARK: - Sending
 
   /// Sends a finished note to the given endpoints (all enabled ones when nil). Returns the
-  /// number of sends started (one per endpoint, however many parts each has).
+  /// number of sends started (one per endpoint, however many parts each has). An "only
+  /// selected meetings" endpoint the meeting was not selected for is skipped before any
+  /// payload is built, so nothing about the note reaches it.
   @discardableResult
   func send(
     _ session: MeetingSession,
@@ -190,7 +209,8 @@ final class MeetingWebhookCenter: ObservableObject {
       targets = enabledEndpoints
     }
     var started = 0
-    for endpoint in targets where enqueue(session, event: event, endpoint: endpoint) {
+    for endpoint in targets where endpoint.accepts(session)
+      && enqueue(session, event: event, endpoint: endpoint) {
       started += 1
     }
     return started
@@ -234,6 +254,9 @@ final class MeetingWebhookCenter: ObservableObject {
       return .refused("That webhook no longer exists.")
     }
     let name = endpoint.displayName
+    guard endpoint.accepts(session) else {
+      return .refused(Self.notSelectedMessage(name))
+    }
     guard let send = resumableSend(noteID: session.id, endpointID: endpointID) else {
       return .refused("This note has no split send to \(name) to resume; use Send to Webhook.")
     }
@@ -359,6 +382,9 @@ final class MeetingWebhookCenter: ObservableObject {
     event: MeetingWebhookEvent,
     endpoint: MeetingWebhookEndpoint
   ) -> Bool {
+    // Defence in depth: `send` already filters, but no real note may ever be enqueued for an
+    // "only selected meetings" endpoint it was not selected for.
+    guard event == .test || endpoint.accepts(session) else { return false }
     let sendID = UUID()
     let now = Date()
     let sendOrder = nextSendOrder(at: now)
@@ -473,7 +499,7 @@ final class MeetingWebhookCenter: ObservableObject {
       }
       await self?.finish(runID: runID, endpointID: endpointID, records: records)
     }
-    tasks[runID] = (endpointID, task)
+    tasks[runID] = (endpointID, jobs.first?.noteID ?? runID, task)
     if isPaced {
       endpointQueues[endpointID, default: []].append(runID)
       endpointTails[endpointID] = task

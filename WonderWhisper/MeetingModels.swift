@@ -168,6 +168,10 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var microphoneGateMode: MeetingMicrophoneGateMode?
   /// When the user muted the microphone, on the meeting timeline. Never transcribed.
   var microphoneMutedRanges: [MeetingTimeRange]
+  /// The "only selected meetings" webhooks the user chose to send this meeting to. Only the
+  /// user sets it (never inferred from the title or transcript); empty by default and for
+  /// meetings saved before it existed.
+  var selectedWebhookEndpointIDs: [UUID]
 
   init(id: UUID = UUID(),
        title: String,
@@ -190,7 +194,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
        speakerMerges: [String: String] = [:],
        speakerSuggestions: [MeetingSpeakerSuggestion] = [],
        microphoneGateMode: MeetingMicrophoneGateMode? = nil,
-       microphoneMutedRanges: [MeetingTimeRange] = []) {
+       microphoneMutedRanges: [MeetingTimeRange] = [],
+       selectedWebhookEndpointIDs: [UUID] = []) {
     self.id = id
     self.title = title
     self.startedAt = startedAt
@@ -214,6 +219,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.speakerSuggestions = speakerSuggestions
     self.microphoneGateMode = microphoneGateMode
     self.microphoneMutedRanges = microphoneMutedRanges
+    self.selectedWebhookEndpointIDs = selectedWebhookEndpointIDs
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -222,7 +228,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     case manualNotesMarkdown, notesMarkdown, audioFiles, exportedMarkdownPath, errorMessage
     case pendingDiscard
     case attendees, speakerNames, speakerMerges, speakerSuggestions
-    case microphoneGateMode, microphoneMutedRanges
+    case microphoneGateMode, microphoneMutedRanges, selectedWebhookEndpointIDs
   }
 
   init(from decoder: Decoder) throws {
@@ -278,6 +284,11 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
       [MeetingTimeRange].self,
       forKey: .microphoneMutedRanges
     ) ?? []
+    // Unreadable selections fall back to none, so nothing is sent to an opt-in webhook.
+    selectedWebhookEndpointIDs = (try? container.decodeIfPresent(
+      [UUID].self,
+      forKey: .selectedWebhookEndpointIDs
+    )) ?? []
   }
 
   /// Recorded time: the sum of the recording runs, without pauses or the gap before a

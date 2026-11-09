@@ -93,6 +93,7 @@ struct MeetingWebhookEditorSheet: View {
           Text(content.label).tag(content)
         }
       }
+      Toggle("Only send meetings I select", isOn: $draft.endpoint.onlySelectedMeetings)
       Toggle("Split into multiple webhooks", isOn: $draft.endpoint.splitIntoParts)
       if endpoint.splitIntoParts {
         TextField(
@@ -129,9 +130,18 @@ struct MeetingWebhookEditorSheet: View {
   }
 
   private var deliveryFootnote: String {
+    let selection = endpoint.onlySelectedMeetings
+      ? "Only meetings you tick Send to \(endpoint.displayName) on are sent here; others "
+        + "never leave the Mac through this webhook. "
+      : ""
     guard endpoint.splitIntoParts else {
-      return "Summary only leaves out the transcript. The note is sent as one request."
+      return selection
+        + "Summary only leaves out the transcript. The note is sent as one request."
     }
+    return selection + splitFootnote
+  }
+
+  private var splitFootnote: String {
     let range = MeetingWebhookEndpoint.maxBodyCharactersRange
     let parts = MeetingWebhookEndpoint.partDelaySecondsRange
     let notes = MeetingWebhookEndpoint.noteDelaySecondsRange
