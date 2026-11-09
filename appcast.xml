@@ -5,6 +5,30 @@
     <description>Most recent updates to WonderWhisper</description>
     <language>en</language>
     <item>
+      <title>2026-11-09</title>
+      <pubDate>Mon, 09 Nov 2026 12:32:31 +0000</pubDate>
+      <sparkle:version>2026110900</sparkle:version>
+      <sparkle:shortVersionString>2026-11-09</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h2>WonderWhisper 2026-11-09</h2>
+<h2>Discard meeting recordings</h2>
+<ul>
+<li>Discard is always available beside Stop in the expanded meeting companion. A confirmation</li>
+</ul>
+<p>protects against accidental clicks; Cancel, Return and Escape leave recording running.</p>
+<ul>
+<li>Discarding a resumed recording restores the earlier saved meeting, removing all changes</li>
+</ul>
+<p>since resuming, including new audio, transcript, notes and metadata edits.</p>
+<ul>
+<li>If local cleanup fails, Retry Discard remains available after restarting the app. The earlier</li>
+</ul>
+<p>saved meeting is protected while cleanup is pending.</p>
+<p>Discard stops further processing and removes local material. Live cloud requests already sent</p>
+<p>cannot be undone. Normal Stop continues to save and process the meeting as before.</p>]]></description>
+      <enclosure url="https://github.com/dkapo88/WonderWhisper-macOS/releases/download/2026-11-09/WonderWhisper-2026-11-09.dmg" sparkle:edSignature="6D87n22e3PVBei083ArqrOWEA2WPF4KJPsNBYnXc2BcydSuLgZOA1edAzkFf1kBMNpDQ20FBIizp891nplr7Dw==" length="27259233" type="application/octet-stream" />
+    </item>
+    <item>
       <title>2026-11-05</title>
       <pubDate>Wed, 04 Nov 2026 16:23:53 +0000</pubDate>
       <sparkle:version>2026110500</sparkle:version>
