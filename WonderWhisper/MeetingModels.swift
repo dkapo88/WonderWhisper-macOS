@@ -129,6 +129,11 @@ enum MeetingStatus: String, Codable, Sendable {
 }
 
 struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
+  struct DiscardRequest: Codable, Equatable, Sendable {
+    let runID: UUID
+    let resuming: Bool
+  }
+
   let id: UUID
   var title: String
   let startedAt: Date
@@ -145,6 +150,8 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
   var audioFiles: [String]
   var exportedMarkdownPath: String?
   var errorMessage: String?
+  /// A durable request to retry cleanup, never a new resume baseline.
+  var pendingDiscard: DiscardRequest?
   /// Who attended, as typed by the user (trimmed, no case-insensitive duplicates). Empty for
   /// sessions saved before attendees existed.
   var attendees: [String]
@@ -200,6 +207,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     self.audioFiles = audioFiles
     self.exportedMarkdownPath = exportedMarkdownPath
     self.errorMessage = errorMessage
+    self.pendingDiscard = nil
     self.attendees = attendees
     self.speakerNames = speakerNames
     self.speakerMerges = speakerMerges
@@ -212,6 +220,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     case id, title, startedAt, endedAt, recordedDuration, recordingStartedAt, detectedApp
     case automaticallyStarted, transcriptionEngine, status, transcriptTokens
     case manualNotesMarkdown, notesMarkdown, audioFiles, exportedMarkdownPath, errorMessage
+    case pendingDiscard
     case attendees, speakerNames, speakerMerges, speakerSuggestions
     case microphoneGateMode, microphoneMutedRanges
   }
@@ -246,6 +255,7 @@ struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
       forKey: .exportedMarkdownPath
     )
     errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+    pendingDiscard = try container.decodeIfPresent(DiscardRequest.self, forKey: .pendingDiscard)
     attendees = try container.decodeIfPresent([String].self, forKey: .attendees) ?? []
     speakerNames = try container.decodeIfPresent(
       [String: String].self,
